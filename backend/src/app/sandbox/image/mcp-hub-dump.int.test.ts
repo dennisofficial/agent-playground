@@ -25,8 +25,8 @@ function findFreePort(): Promise<number> {
 
 describe('hub dump middleware — end to end', () => {
   let playgroundDir: string;
-  let hub: Hub;
-  let client: Client;
+  let hub: Hub | undefined;
+  let client: Client | undefined;
 
   beforeEach(() => {
     playgroundDir = mkdtempSync(join(tmpdir(), 'mcp-hub-dump-int-'));
@@ -34,6 +34,7 @@ describe('hub dump middleware — end to end', () => {
 
   afterEach(async () => {
     await client?.close();
+    await hub?.close();
     rmSync(playgroundDir, { recursive: true, force: true });
   });
 

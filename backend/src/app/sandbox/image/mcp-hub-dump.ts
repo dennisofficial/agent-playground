@@ -38,13 +38,13 @@ function tsCompact(date: Date): string {
   return `${y}${mo}${d}-${h}${mi}${s}`;
 }
 
-export interface DumpDeps {
+export type DumpDeps = {
   playgroundDir: string;
   writeFile: (path: string, data: string) => void;
   mkdir: (path: string) => void;
   now: () => Date;
   rand: () => string;
-}
+};
 
 const defaultDeps: DumpDeps = {
   playgroundDir: CONTAINER_PLAYGROUND,

@@ -33,7 +33,7 @@ import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } fr
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONTAINER_MCP_HUB_CONFIG, CONTAINER_MCP_HUB_DIR, MCP_HUB_PORT } from '../container-paths';
@@ -228,6 +228,7 @@ export class Hub {
   private readonly sessions = new Map<string, StreamableHTTPServerTransport>();
   private spawn: McpHubSpawnIdentity = { cwd: '/workspace', home: '/home/atlas', baseEnv: {} };
   private readonly setprivPath = findSetpriv();
+  private http: HttpServer | undefined;
 
   constructor(private readonly dumpDeps?: Partial<DumpDeps>) {}
 
@@ -244,7 +245,35 @@ export class Hub {
 
   listen(port: number): Promise<void> {
     const http = createServer((req, res) => void this.handle(req, res));
-    return new Promise((resolve) => http.listen(port, '127.0.0.1', () => resolve()));
+    this.http = http;
+    return new Promise((resolve, reject) => {
+      http.once('error', reject);
+      http.listen(port, '127.0.0.1', () => {
+        http.off('error', reject);
+        resolve();
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    const closeHttp =
+      this.http === undefined
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => {
+            this.http?.close((err) => (err ? reject(err) : resolve()));
+          });
+    this.http = undefined;
+    for (const transport of this.sessions.values()) {
+      await transport.close();
+    }
+    this.sessions.clear();
+    await Promise.all(
+      [...this.servers.values()].map((conn) => {
+        const close = (conn as { close?: () => Promise<void> }).close;
+        return close ? close.call(conn) : Promise.resolve();
+      }),
+    );
+    await closeHttp;
   }
 
   /** Route one HTTP request to its server's Streamable-HTTP transport (create the session on `initialize`,

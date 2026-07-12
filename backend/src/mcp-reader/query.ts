@@ -5,7 +5,17 @@ const DEFAULT_ROWS = 1000;
 const HARD_ROW_CEILING = 50_000;
 /** Byte guard on the serialized (post row-cap) rows, independent of row count — a handful of huge rows
  *  (e.g. wide text/jsonb columns) can blow up a response even under the row cap. */
-const MAX_RESULT_BYTES = 25 * 1024 * 1024; // 25 MB
+export const MAX_RESULT_BYTES = 25 * 1024 * 1024; // 25 MB
+
+function effectiveLimit(limit: number | undefined): number {
+  if (limit !== undefined && !Number.isFinite(limit)) {
+    throw new Error('limit must be a finite number');
+  }
+  return Math.min(
+    Math.max(Math.floor(limit ?? DEFAULT_ROWS), 1),
+    HARD_ROW_CEILING,
+  );
+}
 
 /**
  * App-layer guard: accept only a single read-only SELECT/WITH statement. Layered on top of the
@@ -33,10 +43,7 @@ export async function runReadOnlyQuery(
   limit?: number,
 ): Promise<{ rows: unknown[]; rowCount: number; truncated: boolean }> {
   const vetted = assertReadOnlySelect(sql);
-  const effective = Math.min(
-    Math.max(limit ?? DEFAULT_ROWS, 1),
-    HARD_ROW_CEILING,
-  );
+  const effective = effectiveLimit(limit);
   const wrapped = `SELECT * FROM (\n${vetted}\n) AS __atlas_q LIMIT ${effective + 1}`;
   const qr = ds.createQueryRunner();
   try {
@@ -62,11 +69,8 @@ export async function runReadOnlyQuery(
           total += comma + rowBytes;
           fit += 1;
         }
-        // Always keep at least one row (parity with the old loop) so a single oversized row is still
-        // returned rather than an empty result.
-        const keepCount = Math.max(fit, 1);
-        if (keepCount < kept.length) {
-          kept = kept.slice(0, keepCount);
+        if (fit < kept.length) {
+          kept = kept.slice(0, fit);
           truncated = true;
         }
       }

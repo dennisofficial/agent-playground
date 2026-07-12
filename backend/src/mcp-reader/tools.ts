@@ -56,6 +56,25 @@ function requireNonEmptyString(value: unknown, name: string): string {
   return value;
 }
 
+function parseQueryFormat(value: unknown): QueryFormat {
+  if (value === undefined) return 'json';
+  if (
+    typeof value === 'string' &&
+    QUERY_FORMATS.includes(value as QueryFormat)
+  ) {
+    return value as QueryFormat;
+  }
+  throw new Error(`format must be one of: ${QUERY_FORMATS.join(', ')}`);
+}
+
+function parseQueryLimit(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('limit must be a finite number');
+  }
+  return Math.floor(value);
+}
+
 async function loadJob(ctx: ToolCtx, jobId: unknown): Promise<JobEntity> {
   const id = requireNonEmptyString(jobId, 'jobId');
   const job = await ctx.ds.getRepository(JobEntity).findOne({ where: { id } });
@@ -92,22 +111,22 @@ async function atlasQuery(
   args: {
     sql: string;
     params?: unknown[];
-    format?: QueryFormat;
-    limit?: number;
+    format?: unknown;
+    limit?: unknown;
   },
 ): Promise<unknown> {
   const sql = requireNonEmptyString(args.sql, 'sql');
   // Stamp the SQL BEFORE running so a guard rejection / timeout / permission error still lands the SQL in
   // main.ts's failed-query audit line.
   ctx.audit.sql = sql;
-  const format: QueryFormat =
-    args.format && QUERY_FORMATS.includes(args.format) ? args.format : 'json';
+  const format = parseQueryFormat(args.format);
+  const limit = parseQueryLimit(args.limit);
   const params = Array.isArray(args.params) ? args.params : [];
   const { rows, rowCount, truncated } = await runReadOnlyQuery(
     ctx.ds,
     sql,
     params,
-    args.limit,
+    limit,
   );
   ctx.audit.rowCount = rowCount;
   if (format === 'json') return { format, rowCount, truncated, rows };
@@ -503,8 +522,8 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       args as unknown as {
         sql: string;
         params?: unknown[];
-        format?: QueryFormat;
-        limit?: number;
+        format?: unknown;
+        limit?: unknown;
       },
     ),
   atlas_schema: (ctx) => atlasSchema(ctx),
