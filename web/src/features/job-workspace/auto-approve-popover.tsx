@@ -1,6 +1,6 @@
 "use client";
 
-import { type RefObject, useEffect, useRef } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import {
@@ -13,6 +13,7 @@ import { composeMode } from "./auto-approve-mode";
 
 const MARGIN = 8;
 const WIDTH = 258;
+const MIN_WIDTH = 180;
 
 /**
  * The header "Auto" pill's popover — two independent switches (Plan gate / Ship gate) that compose into
@@ -35,6 +36,36 @@ export function AutoApprovePopover({
   onClose: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef(mode);
+  const [draftMode, setDraftMode] = useState(mode);
+
+  useEffect(() => {
+    draftRef.current = mode;
+    setDraftMode(mode);
+  }, [mode]);
+
+  const selectMode = useCallback(
+    (next: AutoApproveMode) => {
+      draftRef.current = next;
+      setDraftMode(next);
+      onSelect(next);
+    },
+    [onSelect],
+  );
+
+  const setPlan = useCallback(
+    (nextPlan: boolean) => {
+      selectMode(composeMode(nextPlan, modeApprovesShip(draftRef.current)));
+    },
+    [selectMode],
+  );
+
+  const setShip = useCallback(
+    (nextShip: boolean) => {
+      selectMode(composeMode(modeApprovesPlan(draftRef.current), nextShip));
+    },
+    [selectMode],
+  );
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -65,15 +96,18 @@ export function AutoApprovePopover({
 
   if (typeof document === "undefined") return null;
 
-  const right = Math.max(MARGIN, window.innerWidth - anchorRect.right - MARGIN);
+  const width = Math.min(
+    WIDTH,
+    Math.max(MIN_WIDTH, window.innerWidth - MARGIN * 2),
+  );
   const left = Math.min(
-    Math.max(MARGIN, anchorRect.right - WIDTH),
-    window.innerWidth - WIDTH - MARGIN,
+    Math.max(MARGIN, anchorRect.right - width),
+    Math.max(MARGIN, window.innerWidth - width - MARGIN),
   );
   const top = anchorRect.bottom + 6;
 
-  const plan = modeApprovesPlan(mode);
-  const ship = modeApprovesShip(mode);
+  const plan = modeApprovesPlan(draftMode);
+  const ship = modeApprovesShip(draftMode);
 
   return createPortal(
     <div
@@ -85,7 +119,7 @@ export function AutoApprovePopover({
       style={{
         left,
         top,
-        width: WIDTH,
+        width,
         boxShadow: "var(--shadow-menu)",
       }}
     >
@@ -114,14 +148,14 @@ export function AutoApprovePopover({
         checked={plan}
         first
         testId="auto-approve-plan"
-        onChange={(next) => onSelect(composeMode(next, ship))}
+        onChange={setPlan}
       />
       <SwitchRow
         title="Ship"
         description="Approve the ship-review gate automatically"
         checked={ship}
         testId="auto-approve-ship"
-        onChange={(next) => onSelect(composeMode(plan, next))}
+        onChange={setShip}
       />
 
       <div className="mt-2.5 border-t border-border pt-2.5 text-[10px] leading-relaxed text-faint">

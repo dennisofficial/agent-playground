@@ -115,8 +115,13 @@ function AutoApproveToggle({
 }) {
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [draftMode, setDraftMode] = useState(mode);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const view = autoPillView(mode);
+  const view = autoPillView(draftMode);
+
+  useEffect(() => {
+    setDraftMode(mode);
+  }, [mode]);
 
   return (
     <>
@@ -125,8 +130,8 @@ function AutoApproveToggle({
         type="button"
         aria-haspopup="true"
         aria-expanded={open}
-        aria-label={AUTO_APPROVE_TITLES[mode]}
-        title={AUTO_APPROVE_TITLES[mode]}
+        aria-label={AUTO_APPROVE_TITLES[draftMode]}
+        title={AUTO_APPROVE_TITLES[draftMode]}
         disabled={disabled}
         onClick={() => {
           setAnchorRect(btnRef.current?.getBoundingClientRect() ?? null);
@@ -149,8 +154,11 @@ function AutoApproveToggle({
         <AutoApprovePopover
           anchorRect={anchorRect}
           triggerRef={btnRef}
-          mode={mode}
-          onSelect={onChange}
+          mode={draftMode}
+          onSelect={(next) => {
+            setDraftMode(next);
+            onChange(next);
+          }}
           onClose={() => setOpen(false)}
         />
       ) : null}

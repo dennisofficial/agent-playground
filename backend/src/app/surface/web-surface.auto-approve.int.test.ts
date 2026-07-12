@@ -390,11 +390,19 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     // fallback → `AgentSessionManager.resolveApprovalDurably` (mirrors `web-surface.approval-dispatch.int.test.ts`).
     await waitFor(async () => {
       const row = await loadJobRow(PLAN_GATE_JOB);
-      return row?.status !== 'awaiting_approval';
+      return (
+        row?.status === 'running' &&
+        row.activity === 'base_check' &&
+        row.build_path === 'plan'
+      );
     });
 
     const after = await loadJobRow(PLAN_GATE_JOB);
-    expect(after).toMatchObject({ status: 'running', activity: 'base_check', build_path: 'plan' });
+    expect(after).toMatchObject({
+      status: 'running',
+      activity: 'base_check',
+      build_path: 'plan',
+    });
     // eslint-disable-next-line no-console
     console.log('OBSERVED CASE 3a DB row after auto-resolve:', JSON.stringify(after));
   });
@@ -424,7 +432,7 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
 
     await waitFor(async () => {
       const row = await loadJobRow(PLAN_GATE_BOTH_JOB);
-      return row?.status !== 'awaiting_approval';
+      return row?.status === 'running' && row.activity === 'base_check';
     });
 
     const after = await loadJobRow(PLAN_GATE_BOTH_JOB);
