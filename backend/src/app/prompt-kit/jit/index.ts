@@ -9,3 +9,4 @@ export * from './rules';
 export * from './svc-nudge';
 export * from './bg-task-cap';
 export * from './plan-approved';
+export * from './memory-recall';

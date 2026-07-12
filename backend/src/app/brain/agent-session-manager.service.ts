@@ -77,6 +77,7 @@ import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
+import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
 import {
   chunkKey,
   RESET_VERIFY_TEXT,
@@ -209,6 +210,11 @@ import {
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 
+type InjectedMemoryDedupState = {
+  sessionId: string | null;
+  factIds: Set<string>;
+};
+
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
  *
@@ -307,6 +313,11 @@ export class AgentSessionManager
    * grant that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
+
+  // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's current live
+  // SDK session, so a re-recalled fact is surfaced once but a fresh session can see it again. The first turn
+  // has no session id yet; the set is rebound when the engine emits the session event.
+  private readonly injectedMemoryByJob = new Map<string, InjectedMemoryDedupState>();
 
   /**
    * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
@@ -1384,7 +1395,14 @@ export class AgentSessionManager
       return;
     }
 
-    await this.stimulusStore.leaseChatStimuli(collected.ids);
+    const leased = await this.stimulusStore
+      .leaseChatStimuli(collected.ids)
+      .then(() => true)
+      .catch((err) => {
+        this.logger.warn(`pump: leaseChatStimuli failed for thread=${jobId}: ${err}`);
+        return false;
+      });
+    if (!leased) return;
     const ids = collected.ids;
     // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
     // message); the brain reads them together as this turn's task. Base fields come from the oldest.
@@ -2232,10 +2250,16 @@ export class AgentSessionManager
       });
     }
 
-    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder` (the reserved
-    // `memory` slot the follow-up recall job fills). Default render is empty → no chunk → byte-identical.
-    if (isOperatorAuthored(stimulus)) {
-      reminderChunks.push(...(this.jit?.collectOperatorPrepends({ jobId: stimulus.jobId }) ?? []));
+    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
+    // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
+    if (isOperatorAuthored(stimulus) && this.jit?.hasEnabledOperatorPrepends()) {
+      const prependText = (await this.buildMemoryRecallPrefix(stimulus, sessionId)) ?? undefined;
+      reminderChunks.push(
+        ...(this.jit?.collectOperatorPrepends({
+          jobId: stimulus.jobId,
+          ...(prependText ? { prependText } : {}),
+        }) ?? []),
+      );
     }
 
     // Compose the turn through the hub (d18): the operator path frames prefix chunks + chronological `<user>`
@@ -2457,6 +2481,9 @@ export class AgentSessionManager
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
       onEvent: (e) => {
+        if (e.kind === 'session' && e.sessionId) {
+          this.bindInjectedMemorySession(stimulus.jobId, e.sessionId);
+        }
         // Surface THIS turn's fully-assembled prompt on the `main` lane, once, on the turn-START `session`
         // event (see `promptEmitted` above for why this is the right hook). Fire-and-forget; insert-once by
         // stimulus id, so a re-drive/reattach of the same message never duplicates it.
@@ -2673,6 +2700,7 @@ export class AgentSessionManager
 
     // Persist the session_id for resume.
     if (result.sessionId && sandboxRow) {
+      this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
       sandboxRow.session_id = result.sessionId;
       await this.sandboxRows.save(sandboxRow);
     }
@@ -6807,6 +6835,59 @@ export class AgentSessionManager
   }
 
   /**
+   * Memory auto-retrieval turn-prefix (d1/d2/d5): on a substantive operator turn, recall project+team facts
+   * and format them for the reserved `system_reminder source="memory"` slot. Best-effort — any recall/embed
+   * failure yields null and never blocks the turn (mirrors the `recall` tool's catch). Two-layer kill-switch:
+   * the runtime `MEMORY_AUTORECALL_DISABLED` env guard here + the declarative `memoryPrependRule.enabled`.
+   * Per-session dedup suppresses a fact already injected earlier in the same live session.
+   */
+  private injectedMemoryFactIds(jobId: string, sessionId: string | null): Set<string> {
+    let state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId !== sessionId) {
+      state = { sessionId, factIds: new Set<string>() };
+      this.injectedMemoryByJob.set(jobId, state);
+    }
+    return state.factIds;
+  }
+
+  private bindInjectedMemorySession(jobId: string, sessionId: string): void {
+    const state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId === sessionId) return;
+    if (state.sessionId === null) {
+      state.sessionId = sessionId;
+      return;
+    }
+    this.injectedMemoryByJob.set(jobId, { sessionId, factIds: new Set<string>() });
+  }
+
+  private async buildMemoryRecallPrefix(
+    stimulus: ChatStimulus,
+    sessionId?: string,
+  ): Promise<string | null> {
+    if (this.env?.get('MEMORY_AUTORECALL_DISABLED') === 'on') return null;
+    if (!isSubstantiveQuery(stimulus.body)) return null;
+    try {
+      const facts = await this.memory.recall(stimulus.body, {
+        scopes: [`project:${stimulus.repoId}`, `team:${stimulus.orgId}`],
+        orgId: stimulus.orgId,
+        limit: 3,
+        floor: 0.45,
+      });
+      if (facts.length === 0) return null;
+      const seen = this.injectedMemoryFactIds(stimulus.jobId, sessionId ?? null);
+      const fresh = facts.filter((f) => !seen.has(f.id));
+      if (fresh.length === 0) return null;
+      const body = renderMemoryRecall(fresh.map((f) => ({ fact: f.fact, scope: f.scope })));
+      if (!body) return null;
+      for (const f of fresh) seen.add(f.id);
+      return body;
+    } catch (err) {
+      this.logger.debug(`memory auto-recall prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
    * The file-request analog of {@link buildOpenQuestionsPrefix}: an advisory reminder of the file-upload
    * cards still awaiting an upload (posted, not yet provided/withdrawn), so a fresh/compacted brain session
    * doesn't re-post a duplicate `request_file`. Lists each open card's id + destination path. Best-effort.
@@ -6867,13 +6948,19 @@ export class AgentSessionManager
 
   /** Post a reply in-thread AND append it to the durable transcript. */
   private async say(stimulus: ChatStimulus, text: string): Promise<void> {
-    const route = await this.store.route({
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      jobId: stimulus.jobId,
-    });
-    const channel = route.channel ?? stimulus.replyRoute.jobRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    let channel = stimulus.replyRoute.jobRef;
+    let threadTs = stimulus.replyRoute.jobRef;
+    try {
+      const route = await this.store.route({
+        orgId: stimulus.orgId,
+        repoId: stimulus.repoId,
+        jobId: stimulus.jobId,
+      });
+      channel = route.channel ?? channel;
+      threadTs = route.threadTs ?? threadTs;
+    } catch (err) {
+      this.logger.warn(`failed to resolve brain reply route: ${err}`);
+    }
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -6882,7 +6969,9 @@ export class AgentSessionManager
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
-    await this.store.appendAtlasMessage(stimulus.jobId, text);
+    await this.store
+      .appendAtlasMessage(stimulus.jobId, text)
+      .catch((err) => this.logger.warn(`failed to persist brain reply: ${err}`));
   }
 
   /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable
