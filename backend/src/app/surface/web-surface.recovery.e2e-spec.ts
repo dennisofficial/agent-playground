@@ -100,7 +100,7 @@ function nonJudgeBlockedRecord(): ThreadTerminalRecord {
     status: 'blocked',
     summary: 'Backend recovery mechanics HTTP e2e — held on a real failure, not a judge outage.',
     blocked: {
-      reason: 'failed',
+      reason: 'unverified',
       detail: 'the build genuinely failed static verification',
     },
   };

@@ -1123,6 +1123,22 @@ export class DriverStoreService {
     return res.affected ?? 0;
   }
 
+  /** Reset ONE thread's autonomous re-drive budget to 0 — the single-thread analog of
+   *  {@link rearmHaltedThreads}. Used by the operator "Retry now" lever so a fresh judge-cap budget is granted
+   *  to the TARGET thread only (never resetting a resting sibling that genuinely exhausted its defect budget),
+   *  and to clear a defect counter polluted by prior judge-outage retries. Returns 1 if a positive counter was
+   *  reset, else 0. */
+  async rearmThread(threadId: string): Promise<number> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ halt_fix_attempts: 0 })
+      .where('id = :threadId', { threadId })
+      .andWhere('halt_fix_attempts > 0')
+      .execute();
+    return res.affected ?? 0;
+  }
+
   // ── review children (post-build review fan-out as real child threads) ──────────────────────────
   // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
   // `threads` child (parent_thread_id = builder). Each lens is its OWN row with its OWN status +

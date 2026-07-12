@@ -632,11 +632,24 @@ export class ThreadDriver implements JobDispatcher {
     jobId: string,
     threadId: string,
   ): Promise<{ ok: boolean; reason?: string }> {
+    // Validate ownership/active/not-done + the judge-outage safety guard BEFORE any mutation (mirrors the
+    // sibling operatorAcceptStuckThread), so a refused retry — wrong job, active drive, already-done, or a
+    // non-judge hold — performs NO side effect. In particular the re-arm below must never fire on a request
+    // the subsequent redriveThread would reject.
+    if (this.active.has(jobId)) {
+      return { ok: false, reason: 'the build is running right now — retry momentarily' };
+    }
+    const owner = await this.store.threadJobId(threadId).catch(() => null);
+    if (owner !== jobId) return { ok: false, reason: 'thread is not part of this job' };
+    const cur = await this.store.getThread(threadId).catch(() => null);
+    if (cur?.status === 'done') return { ok: false, reason: 'thread is already complete' };
     const term = await this.store.getTerminalRecord(threadId).catch(() => null);
     if (term?.blocked?.reason !== 'judge_unavailable') {
       return { ok: false, reason: 'thread is not held on a verification-judge outage' };
     }
-    await this.store.rearmHaltedThreads(jobId).catch(() => 0); // fresh judge-cap budget
+    // Scope the re-arm to the TARGET thread only — never job-wide (`rearmHaltedThreads` would also silently
+    // reset a resting sibling that genuinely exhausted its 2-try defect budget, undoing that rest).
+    await this.store.rearmThread(threadId).catch(() => 0); // fresh judge-cap budget for this thread
     const r = await this.redriveThread(jobId, threadId, undefined); // omit cap; redriveThread promotes to judge cap
     return r.ok ? { ok: true } : { ok: false, reason: r.reason };
   }
@@ -1416,7 +1429,17 @@ export class ThreadDriver implements JobDispatcher {
           text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
         }
       } else {
-        const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        // The `halt_fix_attempts` counter is SHARED with the judge-outage patient-retry loop, whose cap
+        // (JUDGE_UNAVAILABLE_REDRIVE_CAP) is far higher than the defect cap. If prior judge_unavailable
+        // auto-retries inflated it and the block reason has now flipped to a genuine defect, this thread must
+        // still get its full defect budget. A defect-only flow can never push the counter ABOVE the defect cap
+        // (`claimHaltFixAttempt` refuses at the cap), so any value above it is stale judge-outage budget —
+        // reset it before deciding to rest, or a real failure would wedge with zero fix attempts.
+        let spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        if (spent > HALT_FIX_ATTEMPT_CAP) {
+          await this.store.rearmThread(thread.id).catch(() => undefined);
+          spent = 0;
+        }
         if (spent >= HALT_FIX_ATTEMPT_CAP) {
           // Autonomous budget exhausted → rest the job for the operator (no more brain wakes owed).
           const reason = term?.blocked?.detail ?? 'needs your input';

@@ -410,6 +410,14 @@ function makeStore(state: StoreState): {
       }
       return n;
     }),
+    rearmThread: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      if (s && (s.halt_fix_attempts ?? 0) > 0) {
+        s.halt_fix_attempts = 0;
+        return 1;
+      }
+      return 0;
+    }),
     // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
     setDoneWakeOwed: vi.fn(async (_threadId: string, _reason: 'final' | 'notable') => undefined),
     threadsAwaitingDoneWake: vi.fn(async (_jobId?: string) => []),
@@ -4103,7 +4111,8 @@ describe('ThreadDriver — judge_unavailable recovery mechanics (deadlock repro)
     const r = await h.driver.operatorRetryStuckThread(state.job.id, 'sec-be');
 
     expect(r.ok).toBe(true);
-    expect(h.store.rearmHaltedThreads).toHaveBeenCalledWith(state.job.id); // fresh judge-cap budget
+    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be'); // fresh judge-cap budget, scoped to the target thread
+    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled(); // never job-wide (would reset resting siblings)
     expect(h.store.clearTerminalRecord).toHaveBeenCalledWith('sec-be'); // redriveThread ran (stale record cleared)
     expect(h.store.setThreadStatus).toHaveBeenCalledWith('sec-be', 'executing'); // re-driven off paused
     await flush();
@@ -4139,7 +4148,8 @@ describe('ThreadDriver — judge_unavailable recovery mechanics (deadlock repro)
 
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/verification-judge/i);
-    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled(); // no re-arm, no re-drive
+    expect(h.store.rearmThread).not.toHaveBeenCalled(); // no re-arm, no re-drive
+    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled();
     expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
   });
 
