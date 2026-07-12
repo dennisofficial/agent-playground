@@ -74,6 +74,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
+import { parseGitDiff, type JobDiff } from './job-diff';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -182,6 +183,9 @@ export interface ContextFileContent {
 
 /** Preview cap — text is tiny, screenshots a few hundred KB; refuse anything pathological. */
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Diff size cap — beyond this a raw patch is parsed for headers/counts only (hunks dropped, truncated:true). */
+const MAX_DIFF_BYTES = 2_000_000;
 
 /**
  * One supervised process, its durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`) joined with
@@ -336,6 +340,8 @@ interface ReviewCommentItemDto {
   /** The selected/quoted text. */
   quote: string;
   note?: string;
+  /** Optional GitHub-style line anchor into a diff file. Omitted for markdown/plan/decision comments. */
+  lines?: { path: string; side: 'old' | 'new'; start: number; end: number };
 }
 interface ReviewCommentsDto {
   items: ReviewCommentItemDto[];
@@ -485,11 +491,19 @@ export function formatReviewComments(
     byFile.set(item.file, group);
   }
   const lines: string[] = [
-    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'} on the plan:`,
+    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'}:`,
   ];
   for (const [file, group] of byFile) {
     lines.push('', `**${file}**`);
     for (const item of group) {
+      if (item.lines) {
+        lines.push(`\`${item.lines.path}:${item.lines.start}-${item.lines.end}\` (${item.lines.side})`);
+        lines.push('```');
+        lines.push(item.quote);
+        lines.push('```');
+        if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
+        continue;
+      }
       lines.push(`> "${item.quote}"`);
       if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
     }
@@ -2024,6 +2038,30 @@ export class WebSurfaceController {
       mime,
       content: binary ? buf.toString('base64') : buf.toString('utf8'),
     };
+  }
+
+  /**
+   * `GET …/jobs/:jobId/diff` — the job's ACCUMULATED diff vs its base branch: `merge-base(baseRef, HEAD)`
+   * → the CURRENT worktree, so it includes both every commit made across the thread's turns AND any
+   * uncommitted edits from the turn in progress (GitHub-PR-like, but live). Empty result when the
+   * worktree is gone (closed/reset) or nothing differs.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff')
+  @UseGuards(OrgMembershipGuard)
+  async jobDiff(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<JobDiff> {
+    await this.requireThread(jobId, org.id);
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) return { files: [], truncated: false };
+    const baseRef = `origin/${await this.threadLifecycle.resolveBaseBranch(jobId, org.id)}`;
+    const [raw, numstat] = await Promise.all([
+      this.git.diffFromMergeBase(sandbox.worktreePath, baseRef),
+      this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef),
+    ]);
+    if (!raw) return { files: [], truncated: false };
+    return parseGitDiff(raw, numstat, { maxBytes: MAX_DIFF_BYTES });
   }
 
   /**

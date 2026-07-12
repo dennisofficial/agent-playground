@@ -55,7 +55,23 @@ describe('formatReviewComments', () => {
 
   it('singularizes the count line for exactly one comment', () => {
     const text = formatReviewComments([{ file: 'plan.md', quote: 'q' }]);
-    expect(text).toContain('1 review comment ');
+    expect(text).toContain('1 review comment:');
+  });
+
+  it('renders a line-anchored item GitHub-style instead of a blockquote', () => {
+    const text = formatReviewComments([
+      {
+        file: 'step-view.tsx',
+        quote: '<code>',
+        note: 'rename this',
+        lines: { path: 'web/src/features/job-workspace/step-view.tsx', side: 'new', start: 820, end: 822 },
+      },
+    ]);
+    expect(text).toContain('`web/src/features/job-workspace/step-view.tsx:820-822`');
+    expect(text).toContain('(new)');
+    expect(text).toContain('```\n<code>\n```');
+    expect(text).toContain('— rename this');
+    expect(text).not.toContain('> "<code>"');
   });
 });
 
