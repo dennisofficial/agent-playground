@@ -409,7 +409,7 @@ export function TranscriptView({
         onScroll={onScroll}
         onPointerOver={onPointerOver}
         onPointerLeave={onPointerLeave}
-        className="h-full overflow-y-auto px-7 pt-5"
+        className="h-full overflow-y-auto overflow-x-hidden px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (

@@ -951,7 +951,7 @@ export const Markdown = memo(function Markdown({
     return next;
   }, [resolveRelativeLink, resolveFileLink]);
   return (
-    <div className="text-[14px] leading-[1.62] text-text">
+    <div className="text-[14px] leading-[1.62] text-text [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
         components={components}
