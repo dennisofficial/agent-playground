@@ -1307,7 +1307,14 @@ export class WebSurfaceController {
     if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
-    const previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
+    // Best-effort recipe read — a transient DB failure here must NOT lose the seed: `markPreviewRequested`
+    // already stamped the card irreversibly, so degrade to 'no recipe' rather than throwing post-stamp.
+    let previewInstructions: string | null | undefined;
+    try {
+      previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
+    } catch {
+      previewInstructions = null;
+    }
     const ts =
       this.jit?.fireLifecycle('preview-requested', {
         repoId: thread.repo_id,
