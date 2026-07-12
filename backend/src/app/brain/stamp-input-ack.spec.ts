@@ -26,21 +26,26 @@ function stimulusStub(fields: Partial<ChatStimulus>): ChatStimulus {
 function makeManager(opts: {
   findChatStimulusById: ReturnType<typeof vi.fn>;
   getQuestionCard?: ReturnType<typeof vi.fn>;
+  markQuestionDelivered?: ReturnType<typeof vi.fn>;
   getSecretCard?: ReturnType<typeof vi.fn>;
+  markSecretDelivered?: ReturnType<typeof vi.fn>;
+  clearAwaitingSecret?: ReturnType<typeof vi.fn>;
   getFileCard?: ReturnType<typeof vi.fn>;
+  markFileDelivered?: ReturnType<typeof vi.fn>;
+  markChatDelivered?: ReturnType<typeof vi.fn>;
 }) {
   const store = {
     getQuestionCard: opts.getQuestionCard ?? vi.fn().mockResolvedValue(null),
-    markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
+    markQuestionDelivered: opts.markQuestionDelivered ?? vi.fn().mockResolvedValue(undefined),
     getSecretCard: opts.getSecretCard ?? vi.fn().mockResolvedValue(null),
-    markSecretDelivered: vi.fn().mockResolvedValue(undefined),
-    clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
+    markSecretDelivered: opts.markSecretDelivered ?? vi.fn().mockResolvedValue(undefined),
+    clearAwaitingSecret: opts.clearAwaitingSecret ?? vi.fn().mockResolvedValue(undefined),
     getFileCard: opts.getFileCard ?? vi.fn().mockResolvedValue(null),
-    markFileDelivered: vi.fn().mockResolvedValue(undefined),
+    markFileDelivered: opts.markFileDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const stimulusStore = {
     findChatStimulusById: opts.findChatStimulusById,
-    markChatDelivered: vi.fn().mockResolvedValue(undefined),
+    markChatDelivered: opts.markChatDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const inert = {} as never;
   const manager = new AgentSessionManager(
@@ -165,5 +170,69 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
 
     expect(store.markQuestionDelivered).not.toHaveBeenCalled();
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('st1');
+  });
+
+  it('does NOT mark the stimulus row delivered when the question card stamp fails', async () => {
+    const findChatStimulusById = vi
+      .fn()
+      .mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
+    const getQuestionCard = vi
+      .fn()
+      .mockResolvedValue({ answer: 'yes', deliveredAt: null });
+    const markQuestionDelivered = vi.fn().mockRejectedValue(new Error('db write failed'));
+    const { manager, stimulusStore } = makeManager({
+      findChatStimulusById,
+      getQuestionCard,
+      markQuestionDelivered,
+    });
+
+    callStampInputAck(manager, { kind: 'input_ack', id: 'st1' });
+    await flush();
+
+    expect(markQuestionDelivered).toHaveBeenCalledWith(JOB_ID, 'q1');
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+  });
+
+  it('clears the secret gate even when the secret card was already marked delivered', async () => {
+    const findChatStimulusById = vi
+      .fn()
+      .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
+    const getSecretCard = vi.fn().mockResolvedValue({
+      provided_at: new Date('2026-07-02T12:00:00Z'),
+      delivered_at: new Date('2026-07-02T12:00:01Z'),
+    });
+    const { manager, store, stimulusStore } = makeManager({
+      findChatStimulusById,
+      getSecretCard,
+    });
+
+    callStampInputAck(manager, { kind: 'input_ack', id: 'st1' });
+    await flush();
+
+    expect(store.markSecretDelivered).not.toHaveBeenCalled();
+    expect(store.clearAwaitingSecret).toHaveBeenCalledWith(JOB_ID, 's1');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('st1');
+  });
+
+  it('does NOT mark the stimulus row delivered when clearing the secret gate fails', async () => {
+    const findChatStimulusById = vi
+      .fn()
+      .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
+    const getSecretCard = vi
+      .fn()
+      .mockResolvedValue({ provided_at: new Date('2026-07-02T12:00:00Z'), delivered_at: null });
+    const clearAwaitingSecret = vi.fn().mockRejectedValue(new Error('gate clear failed'));
+    const { manager, store, stimulusStore } = makeManager({
+      findChatStimulusById,
+      getSecretCard,
+      clearAwaitingSecret,
+    });
+
+    callStampInputAck(manager, { kind: 'input_ack', id: 'st1' });
+    await flush();
+
+    expect(store.markSecretDelivered).toHaveBeenCalledWith(JOB_ID, 's1');
+    expect(clearAwaitingSecret).toHaveBeenCalledWith(JOB_ID, 's1');
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
   });
 });

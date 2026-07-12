@@ -1197,8 +1197,20 @@ export class AgentSessionManager
     // → markCardDeliveredForStimulus + markChatDelivered stamps BOTH card and row on real consumption, and if
     // the turn dies before the ack both stay un-stamped so the sweep re-drives (this is the bfe355ae fix — never
     // stamp a durable card on the XADD).
-    if (!isSeedCardDelivery(stimulus)) {
-      await this.stampSteeredSeedCard(stimulus);
+    if (isSeedCardDelivery(stimulus)) {
+      const durableRow = await this.stimulusStore
+        .findChatStimulusById(stimulus.id)
+        .catch((err) => {
+          this.logger.warn(
+            `seed-card durability lookup failed for ${stimulus.id}; deferring stamp to ack/sweep: ${err}`,
+          );
+          return undefined;
+        });
+      if (durableRow === null) {
+        await this.stampLegacySeedCard(stimulus);
+      }
+    } else {
+      await this.stampLegacySeedCard(stimulus);
     }
     // A completion/halt wake steered into a live turn is only marked delivered when the engine ACKS it (see
     // `stampInputAck`) — stamping here on the XADD would drop the wake if the turn dies before injecting it,
@@ -1259,7 +1271,7 @@ export class AgentSessionManager
    * an answered/provided, not-yet-delivered card is stamped. A plain chat message or bare nudge (no card id)
    * is a no-op.
    */
-  private async stampSteeredSeedCard(stimulus: ChatStimulus): Promise<void> {
+  private async stampLegacySeedCard(stimulus: ChatStimulus): Promise<void> {
     if (stimulus.seedQuestionId) {
       const card = await this.store
         .getQuestionCard(stimulus.jobId, stimulus.seedQuestionId)
@@ -1269,6 +1281,25 @@ export class AgentSessionManager
           .markQuestionDelivered(stimulus.jobId, stimulus.seedQuestionId)
           .catch((err) =>
             this.logger.warn(`markQuestionDelivered (steer) failed: ${err}`),
+          );
+      }
+    }
+    if (stimulus.seedSecretId) {
+      const card = await this.store
+        .getSecretCard(stimulus.jobId, stimulus.seedSecretId)
+        .catch(() => null);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store
+            .markSecretDelivered(stimulus.jobId, stimulus.seedSecretId)
+            .catch((err) =>
+              this.logger.warn(`markSecretDelivered (legacy seed) failed: ${err}`),
+            );
+        }
+        await this.store
+          .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
+          .catch((err) =>
+            this.logger.warn(`clearAwaitingSecret (legacy seed) failed: ${err}`),
           );
       }
     }
@@ -1294,12 +1325,12 @@ export class AgentSessionManager
    * card's own delivered state, so a redundant call (sweep re-drive, double ack) never re-stamps. A row with no
    * seed target (a plain operator message or pure notice) is a no-op.
    */
-  private async markCardDeliveredForStimulus(id: string): Promise<void> {
+  private async markCardDeliveredForStimulus(id: string): Promise<boolean> {
     // A genuinely-missing row is a clean no-op (null); a TRANSIENT lookup error must PROPAGATE so the caller
     // (stampSeedCardSuccessTails / stampInputAck) skips the trailing stimulus-row stamp and the sweep re-drives
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
-    if (!stimulus) return;
+    if (!stimulus) return false;
     const { jobId, seedQuestionId, seedSecretId, seedFileId } = stimulus;
 
     if (seedQuestionId) {
@@ -1308,28 +1339,20 @@ export class AgentSessionManager
       // (never stamping the row delivered while its card stays stranded, per this function's stated invariant).
       const card = await this.store.getQuestionCard(jobId, seedQuestionId);
       if (card?.answer != null && card.deliveredAt == null) {
-        await this.store
-          .markQuestionDelivered(jobId, seedQuestionId)
-          .catch((err) =>
-            this.logger.warn(`markQuestionDelivered (stimulus) failed: ${err}`),
-          );
+        await this.store.markQuestionDelivered(jobId, seedQuestionId);
       }
     }
 
     if (seedSecretId) {
       // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
       const card = await this.store.getSecretCard(jobId, seedSecretId);
-      if (card?.provided_at != null && card.delivered_at == null) {
-        await this.store
-          .markSecretDelivered(jobId, seedSecretId)
-          .catch((err) =>
-            this.logger.warn(`markSecretDelivered (stimulus) failed: ${err}`),
-          );
-        await this.store
-          .clearAwaitingSecret(jobId, seedSecretId)
-          .catch((err) =>
-            this.logger.warn(`clearAwaitingSecret (stimulus) failed: ${err}`),
-          );
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store.markSecretDelivered(jobId, seedSecretId);
+        }
+        // Clear even if the card was already marked delivered by a prior partial tail: the row must not be
+        // delivered until both the card stamp and the gate clear have succeeded.
+        await this.store.clearAwaitingSecret(jobId, seedSecretId);
       }
     }
 
@@ -1337,13 +1360,10 @@ export class AgentSessionManager
       // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
       const card = await this.store.getFileCard(jobId, seedFileId);
       if (card?.provided_at != null && card.delivered_at == null) {
-        await this.store
-          .markFileDelivered(jobId, seedFileId)
-          .catch((err) =>
-            this.logger.warn(`markFileDelivered (stimulus) failed: ${err}`),
-          );
+        await this.store.markFileDelivered(jobId, seedFileId);
       }
     }
+    return true;
   }
 
   /**
@@ -1353,16 +1373,19 @@ export class AgentSessionManager
    * the reconstructed `ChatStimulus.id` is the engine turn id, not the row. Best-effort: a failed stamp leaves
    * BOTH owed for the sweep (at-least-once).
    */
-  private async stampSeedCardSuccessTails(stimulusRowId: string): Promise<void> {
+  private async stampSeedCardSuccessTails(stimulusRowId: string): Promise<SeedCardStampResult> {
     // CARD first, ROW last: the sweep re-drives on `stimuli.delivered_at IS NULL`, so the row (its key) MUST
     // be the final write — a crash mid-tail then leaves the row un-stamped and the whole idempotent sequence
     // re-runs. If the card stamp fails, the row stamp is skipped (the throw propagates from
     // markCardDeliveredForStimulus), so a card is never stranded behind a delivered row. Best-effort overall.
     try {
-      await this.markCardDeliveredForStimulus(stimulusRowId);
+      const found = await this.markCardDeliveredForStimulus(stimulusRowId);
+      if (!found) return 'missing';
       await this.stimulusStore.markChatDelivered(stimulusRowId);
+      return 'stamped';
     } catch (err) {
       this.logger.warn(`stampSeedCardSuccessTails failed (sweep will re-drive): ${err}`);
+      return 'failed';
     }
   }
 
@@ -1378,7 +1401,8 @@ export class AgentSessionManager
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     if (isSeedCardDelivery(stimulus)) {
-      await this.stampSeedCardSuccessTails(stimulus.id);
+      const result = await this.stampSeedCardSuccessTails(stimulus.id);
+      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
       return;
     }
     opts?.onRegistered?.();
@@ -2158,48 +2182,10 @@ export class AgentSessionManager
     // old prose-linkage that opportunistically stamped the latest unanswered card was the bug where a
     // queued chat message got consumed as the answer to a later question.)
 
-    // Human-input gate delivery: a turn carrying a `seedQuestionId` IS the delivery turn for that exact
-    // `ask_question` card — the `/answer-question` endpoint (and the boot sweep) seed the answer via
-    // `seedSystemNotification` with `deliveredQuestionId`, which rides onto the stimulus. We stamp THAT card
-    // `deliveredAt` ONLY on the successful tail below — never on an early return / error — so a failed turn
-    // re-delivers (at-least-once). Tying the stamp to the answer-carrying seed (rather than scanning a shared
-    // pointer) means an unrelated operator turn can never prematurely mark a card delivered.
-    let deliveredQuestionId: string | null = null;
-    if (stimulus.seedQuestionId) {
-      const card = await this.store.getQuestionCard(
-        stimulus.jobId,
-        stimulus.seedQuestionId,
-      );
-      if (card?.answer != null && card.deliveredAt == null)
-        deliveredQuestionId = stimulus.seedQuestionId;
-    }
-
-    // Secret-gate delivery (same at-least-once shape): if the gate points at a PROVIDED, not-yet-DELIVERED
-    // secret card, THIS turn is its masked-confirmation delivery turn. Stamped + cleared only on the success
-    // tail below, so a failed turn re-delivers. The VALUE is never read here (it isn't on the card).
-    let deliveredSecretId: string | null = null;
-    const awaitingSecret = await this.store.awaitingSecretId(stimulus.jobId);
-    if (awaitingSecret) {
-      const card = await this.store.getSecretCard(
-        stimulus.jobId,
-        awaitingSecret,
-      );
-      if (card?.provided_at != null && card.delivered_at == null)
-        deliveredSecretId = awaitingSecret;
-    }
-
-    // File-gate delivery (per-card, so keyed on the seed's `seedFileId`, NOT a thread pointer): if this
-    // seed confirms a PROVIDED, not-yet-DELIVERED `request_file` card, THIS turn is its masked-confirmation
-    // delivery turn. Stamped only on the success tail below, so a failed turn re-delivers (at-least-once).
-    let deliveredFileId: string | null = null;
-    if (stimulus.seedFileId) {
-      const card = await this.store.getFileCard(
-        stimulus.jobId,
-        stimulus.seedFileId,
-      );
-      if (card?.provided_at != null && card.delivered_at == null)
-        deliveredFileId = stimulus.seedFileId;
-    }
+    // Seed-card delivery stamps are resolved at the SUCCESS tail from the exact durable stimulus row
+    // (`reply_route.seedQuestionId`/`seedSecretId`/`seedFileId`), with a legacy fallback for internal
+    // in-memory seeds. Do not precompute from mutable thread pointers here: an unrelated operator turn must
+    // never clear a provided secret gate or mark a card delivered.
 
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
@@ -2953,17 +2939,6 @@ export class AgentSessionManager
       result.usage,
     );
 
-    // SUCCESS TAIL ONLY: the brain consumed this seed's answer this turn, so stamp the card `deliveredAt`
-    // (the boot sweep won't re-deliver it). Reached only on the happy path; every early return / error above
-    // leaves the card undelivered for a re-seed by the boot sweep (at-least-once). Best-effort.
-    if (deliveredQuestionId) {
-      await this.store
-        .markQuestionDelivered(stimulus.jobId, deliveredQuestionId)
-        .catch((err) =>
-          this.logger.warn(`markQuestionDelivered failed: ${err}`),
-        );
-    }
-
     // SUCCESS TAIL — ADR 0004 Phase 3 halt wake + decision d1 completion wake: the brain actually TRIAGED /
     // reviewed this wake this turn, so stamp its (generation-keyed) dedup marker now. Reached only on the
     // happy path — a swallowed engine error / single-turn-guard hit / detach all `return` above WITHOUT
@@ -2971,31 +2946,13 @@ export class AgentSessionManager
     // success path (which runs outside this method) so both stamp identically.
     await this.stampWakeSuccessTails(stimulus);
 
-    // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
-    if (deliveredSecretId) {
-      await this.store
-        .markSecretDelivered(stimulus.jobId, deliveredSecretId)
-        .catch((err) => this.logger.warn(`markSecretDelivered failed: ${err}`));
-      await this.store
-        .clearAwaitingSecret(stimulus.jobId, deliveredSecretId)
-        .catch((err) => this.logger.warn(`clearAwaitingSecret failed: ${err}`));
-    }
-
-    // SUCCESS TAIL — the file upload's masked confirmation reached the brain this turn (per-card gate; no
-    // pointer to clear). Boot sweep re-delivers if this turn never lands.
-    if (deliveredFileId) {
-      await this.store
-        .markFileDelivered(stimulus.jobId, deliveredFileId)
-        .catch((err) => this.logger.warn(`markFileDelivered failed: ${err}`));
-    }
-
-    // SUCCESS TAIL — a solo seed-card fresh turn stamps its DURABLE stimulus row here (its `onRegistered`
-    // deferred it) so the row and the card above commit together: a register-then-fail turn leaves both
-    // unstamped and the sweep re-drives it. On this path `stimulus.id === stimuli.id` (seeds deliver solo).
+    // SUCCESS TAIL — a solo seed-card fresh turn stamps its DURABLE stimulus row + exact card together here
+    // (its `onRegistered` deferred the row stamp) so a register-then-fail turn leaves both unstamped and the
+    // sweep re-drives it. On this path `stimulus.id === stimuli.id` (seeds deliver solo). Internal legacy
+    // in-memory seeds have no row, so fall back to the old best-effort direct card stamp.
     if (isSeedCardDelivery(stimulus)) {
-      await this.stimulusStore
-        .markChatDelivered(stimulus.id)
-        .catch((err) => this.logger.warn(`seed markChatDelivered (fresh-turn tail) failed: ${err}`));
+      const result = await this.stampSeedCardSuccessTails(stimulus.id);
+      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
     }
 
     // SUCCESS TAIL — honor a pending `reset_sandbox`: tear the container down NOW (safe here — the engine
@@ -7226,6 +7183,8 @@ interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
   onRegistered?: () => void;
 }
+
+type SeedCardStampResult = 'stamped' | 'missing' | 'failed';
 
 const ATLAS_AUTHOR_ID = 'atlas';
 

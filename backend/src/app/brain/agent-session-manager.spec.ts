@@ -431,6 +431,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       mockClassifier,
@@ -2714,6 +2715,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     runningBrainTurn?: { turn_id: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
+    /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
+    stimulusRow?: ChatStimulus | null;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
@@ -2792,6 +2795,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       drainAndAdvance:
         opts.drainAndAdvance ?? vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
     } as unknown as PipelineAwarenessStore;
+    const stimulusStore = {
+      eligiblePendingChat: vi.fn().mockResolvedValue([]),
+      leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      markChatDelivered: vi.fn().mockResolvedValue(undefined),
+      undeliveredChatThreads: vi.fn().mockResolvedValue([]),
+      resetChatLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(opts.stimulusRow ?? null),
+    };
 
     const manager = new AgentSessionManager(
       store,
@@ -2809,13 +2820,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       surface,
       sandboxRows,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
-      {
-        eligiblePendingChat: async () => [],
-        leaseChatStimuli: async () => undefined,
-        markChatDelivered: async () => undefined,
-        undeliveredChatThreads: async () => [],
-        resetChatLeases: async () => undefined,
-      } as never, // stimulusStore
+      stimulusStore as never, // stimulusStore
       turnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
@@ -2848,7 +2853,20 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
-    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness, turnHarness };
+    return {
+      manager,
+      store,
+      lifecycle,
+      git,
+      surface,
+      sandboxRows,
+      dockerRunner,
+      liveTurns,
+      blockSink,
+      awareness,
+      turnHarness,
+      stimulusStore,
+    };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -3105,18 +3123,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(maxActive).toBe(1); // never two concurrent engine turns resuming the same session
   });
 
-  it('steers a queued question-answer into a LIVE brain turn instead of spawning a second turn (+ stamps the card)', async () => {
+  it('steers a queued durable question-answer into a LIVE brain turn and stamps only on input_ack', async () => {
     const steer = vi.fn().mockResolvedValue(undefined);
     const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
-    const { manager, dockerRunner, store } = makeManager({
-      findSandbox: { worktreePath: '/wt' },
-      run,
-      steer,
-      runningBrainTurn: { turn_id: 'T-live' },
-      // the answered, not-yet-delivered card the seed carries
-      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
-    });
-
     const answerSeed: ChatStimulus = {
       ...stimulus,
       id: 'seed-ans-1',
@@ -3125,13 +3134,30 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       seed: true,
       seedQuestionId: 'q-1',
     };
+    const { manager, dockerRunner, store, stimulusStore } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      run,
+      steer,
+      runningBrainTurn: { turn_id: 'T-live' },
+      stimulusRow: answerSeed,
+      // the answered, not-yet-delivered card the seed carries
+      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
+    });
+
     await manager.handleChatTurn(answerSeed);
 
     // Steered into the live turn; NO second engine turn kicked.
     expect(steer).toHaveBeenCalledWith('T-live', 'seed-ans-1', answerSeed.body);
     expect(dockerRunner.run).not.toHaveBeenCalled();
-    // The answered card is stamped delivered at steer time (stops it re-surfacing / re-seeding).
+    // A bare steer is not consumption; the durable row + card are stamped only on the engine input_ack.
+    expect(store.markQuestionDelivered).not.toHaveBeenCalled();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+
+    const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(manager);
+    stamp({ kind: 'input_ack', id: 'seed-ans-1' });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-1');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('seed-ans-1');
   });
 
   it('does NOT steer a reset-verify seed — it runs its own (guarded) turn even when a turn is live', async () => {
@@ -3290,14 +3316,21 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   it('a DELIVERY turn (seedQuestionId set) stamps exactly that card delivered on success', async () => {
     // The answer-delivery seed carries seedQuestionId; the success tail marks THAT card delivered (so the
     // boot sweep won't re-deliver it). An answered, not-yet-delivered card is the delivery target.
-    const { manager, store } = makeManager({
+    const deliveryStimulus: ChatStimulus = {
+      ...stimulus,
+      id: 'seed-deliver-row',
+      seed: true,
+      seedQuestionId: 'q-deliver',
+    };
+    const { manager, store, stimulusStore } = makeManager({
       pendingCard: { type: 'question_card', answer: 'dynamic', deliveredAt: null },
+      stimulusRow: deliveryStimulus,
     });
-    const deliveryStimulus: ChatStimulus = { ...stimulus, seed: true, seedQuestionId: 'q-deliver' };
 
     await manager.handleChatTurn(deliveryStimulus);
 
     expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-deliver');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('seed-deliver-row');
   });
 
   it('a normal operator turn (no seedQuestionId) never marks a card delivered', async () => {
@@ -3662,6 +3695,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
@@ -3820,6 +3854,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
@@ -3942,6 +3977,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       eligiblePendingEvents: vi.fn().mockResolvedValue(opts.events ?? []),
       resetEventLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(eventStimulus),
     };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null), // not yet delivered
@@ -4021,7 +4057,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
     const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(manager);
     stamp({ kind: 'input_ack', id: 'stim-evt-001' });
-    await Promise.resolve();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
 
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('stim-evt-001');
   });
@@ -4146,6 +4182,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(null),
     };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null),
@@ -4305,7 +4342,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     );
 
     stamp({ kind: 'input_ack', id: 's1' });
-    await Promise.resolve();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
 
     stimulusStore.markChatDelivered.mockClear();

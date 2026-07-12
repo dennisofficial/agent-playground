@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { ChatStimulus, ParsedEvent } from '../domain';
+import type { ChatStimulus, ParsedEvent, SeedRow } from '../domain';
 import { EventFilterService } from './event-filter.service';
 import {
   BRAIN_SINK,
@@ -143,7 +144,9 @@ export class StimulusIntake {
       body: stimulus.body,
       card: stimulus.card,
       priority: stimulus.priority,
-      systemChunk: stimulus.seedRow,
+      systemChunk: stimulus.seed
+        ? (stimulus.seedRow ?? genericSeedRow(stimulus))
+        : undefined,
       seedQuestionId: stimulus.seedQuestionId,
       seedSecretId: stimulus.seedSecretId,
       seedFileId: stimulus.seedFileId,
@@ -153,4 +156,14 @@ export class StimulusIntake {
     // silently lost). `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
     await this.sink.enqueueChat(recorded);
   }
+}
+
+function genericSeedRow(stimulus: ChatStimulus): Exclude<SeedRow, 'skip'> {
+  return {
+    label: 'A harness system notification was delivered to Atlas.',
+    chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1')
+      .update(stimulus.body)
+      .digest('hex')
+      .slice(0, 16)}`,
+  };
 }
