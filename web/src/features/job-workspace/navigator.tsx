@@ -608,6 +608,7 @@ export function Navigator({
           job={job}
           jobRef={jobRef}
           onConversation={onConversation}
+          onNotice={showToast}
         />
 
         {/* THREADS — the Main planning lane + each build lane, as an ACCORDION (design handoff "thread
@@ -1221,10 +1222,14 @@ function StateBanner({
   job,
   jobRef,
   onConversation,
+  onNotice,
 }: {
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
+  /** Surface a human-readable notice (the server's refusal `reason`) — a stuck-thread control that the
+   *  backend declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
+  onNotice: (message: string) => void;
 }) {
   const retry = useRetryJob(jobRef);
   const retryVerification = useRetryVerification(jobRef);
@@ -1242,10 +1247,24 @@ function StateBanner({
   );
   if (stuck) {
     const pending = retryVerification.isPending || acceptThread.isPending;
+    // The endpoints return HTTP 200 with `{ ok:false, reason }` for expected refusals (hold isn't
+    // judge_unavailable, static gate not passed, drive in flight, thread already done, …). `webJson` only
+    // throws on non-2xx, so those resolve as mutation "success" — inspect `res.ok` and toast the server's
+    // `reason` instead of navigating away as if the bypass worked.
     const onRetryNow = () =>
-      retryVerification.mutate(stuck.id, { onSuccess: onConversation });
+      retryVerification.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Retry was refused."),
+      });
     const onAccept = () =>
-      acceptThread.mutate(stuck.id, { onSuccess: onConversation });
+      acceptThread.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Accept was refused."),
+      });
     // "Skip & accept" shows only when the LIVE judge was the outage and the static gate already passed (d4);
     // "Retry now" is always safe (it just re-runs the judge), so it shows for any judge_unavailable hold.
     const canAccept = stuck.acceptableOnJudgeOutage === true;
