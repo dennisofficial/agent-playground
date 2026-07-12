@@ -12,11 +12,6 @@ const fullInput: PlanReviewInput = {
   jobId: 'job-1',
   orgId: 'org-1',
   goal: "Show each user's last login time on their profile.",
-  ticket: {
-    number: 42,
-    title: 'Surface last login on the profile page',
-    body: 'Users have asked to see when they last signed in.',
-  },
   overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
   decisions: [
     { decisionClass: 'data_model', title: 'Use a nullable timestamptz column', ruling: 'last_login_at' },
@@ -32,20 +27,19 @@ const minimalInput: PlanReviewInput = {
   jobId: 'job-2',
   orgId: 'org-1',
   goal: '',
-  ticket: null,
   overview: 'A bugfix with no separate goal string.',
   decisions: [],
   threadTitles: [],
 };
 
 describe('plan-review task golden snapshots', () => {
-  it('renderPlanForReview — full input (ticket + decisions + 2-thread steps)', async () => {
+  it('renderPlanForReview — full input (decisions + 2-thread steps)', async () => {
     await expect(renderPlanForReview(fullInput)).toMatchFileSnapshot(
       './__snapshots__/plan-review-full.txt',
     );
   });
 
-  it('renderPlanForReview — minimal input (empty goal/ticket/decisions/threads)', async () => {
+  it('renderPlanForReview — minimal input (empty goal/decisions/threads)', async () => {
     await expect(renderPlanForReview(minimalInput)).toMatchFileSnapshot(
       './__snapshots__/plan-review-minimal.txt',
     );

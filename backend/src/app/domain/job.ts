@@ -17,7 +17,7 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type { JobStatus, JobHalt, JobActivity } from '@workspace/shared';
+import type { JobStatus, JobHalt, JobActivity, AutoApproveMode } from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
 // Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
 // registry imports from `autofix`, which imports domain types.
@@ -129,8 +129,8 @@ export interface Job {
    *  ship gate reads it to distinguish "just parked" (null → park at `awaiting_ship_review`) from
    *  "approved, proceed" (set → ship). Cleared when a new build is dispatched. See {@link JobStatus}. */
   shipReviewApprovedAt: Date | null;
-  /** Per-job auto-approve: gates auto-advance with no human click when true (see jobs.auto_approve). */
-  autoApprove: boolean;
+  /** Per-job auto-approve mode: which gates auto-advance with no human click (see jobs.auto_approve_mode). */
+  autoApproveMode: AutoApproveMode;
   /** Who enabled auto-approve (users.id), used as the approver on auto-resolve; null if never enabled
    *  / enabling user deleted. */
   autoApproveBy: string | null;

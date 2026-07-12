@@ -1,6 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Sema } from 'async-sema';
+import { modeApprovesShip } from '@workspace/shared';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -25,10 +26,10 @@ import type {
   ThreadCondition,
 } from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
-import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
   EngineSessionLimitError,
+  cleanAuthHaltReason,
   isSessionLimitError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
@@ -133,7 +134,6 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
-import { TicketService } from '../tickets';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -294,10 +294,6 @@ export class ThreadDriver implements JobDispatcher {
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
     @Optional() private readonly conventions?: ConventionProfileResolver,
-    // The per-repo ticket board — a builder's `capture_ticket` drops a `bug` here for an out-of-scope defect
-    // it found but is deferring (too big to fix inline, not a blocker). @Global TicketsModule; @Optional so
-    // unit tests construct the driver without it (undefined → capture_ticket reports it's unavailable).
-    @Optional() private readonly tickets?: TicketService,
     // @Global OnboardingModule. @Optional so unit tests construct the driver without it (undefined → the
     // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
@@ -731,7 +727,7 @@ export class ThreadDriver implements JobDispatcher {
         await this.store
           .setJobHalt(jobId, {
             kind: 'blocked_credentials',
-            reason: err.message,
+            reason: cleanAuthHaltReason(err.message, err.engine),
             at: new Date().toISOString(),
           })
           .catch(() => undefined);
@@ -851,8 +847,9 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     const orgId = job?.orgId;
+    const isClaudeAuthHalt = err.engine !== 'codex';
     const selected =
-      orgId && this.claudeCreds
+      isClaudeAuthHalt && orgId && this.claudeCreds
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
     const refreshedAgoMs =
@@ -901,7 +898,7 @@ export class ThreadDriver implements JobDispatcher {
       err,
       markedReauth
         ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
-        : undefined,
+        : cleanAuthHaltReason(err.message, err.engine),
     );
   }
 
@@ -1221,7 +1218,7 @@ export class ThreadDriver implements JobDispatcher {
     // running (the just-parked status makes its CAS succeed) + stamps the marker; we return true so runJob
     // falls through to finalizeBuild in THIS drive (a re-entrant drive() would hit the single-flight guard).
     const fresh = await this.store.loadJob(job.id).catch(() => job);
-    if (!fresh.autoApprove) return false;
+    if (!modeApprovesShip(fresh.autoApproveMode)) return false;
     const approver = await this.resolveAutoApprover(fresh);
     const acted = await this.store.approveShip(job.id);
     if (!acted) return false;
@@ -2197,8 +2194,7 @@ export class ThreadDriver implements JobDispatcher {
 
     // OUT-OF-SCOPE routing (real builder lanes only, NOT the Codex master_review). A builder that trips over
     // something outside its assignment routes it by cost: a CHEAP, clearly-correct fix it makes inline and
-    // logs via `record_deviation`; an EXPENSIVE-but-known defect it defers via `capture_ticket` and keeps
-    // building; a genuine open DESIGN gap it hands up via `block_thread`. These two are the first two rungs.
+    // logs via `record_deviation`; a genuine open DESIGN gap it hands up via `block_thread`.
     if (thread.kind !== 'master_review') {
       // record_deviation — the builder made a small out-of-scope fix INLINE. Persist it to the durable
       // per-thread store, then re-project `/context/generated/deviations.md` (host-owned; the sandbox mount
@@ -2213,66 +2209,6 @@ export class ThreadDriver implements JobDispatcher {
         return { ok: true };
       };
 
-      // capture_ticket — the builder found an out-of-scope defect too big to fix inline (but not a blocker):
-      // drop a `bug` on the board and keep building. WRITE-ONLY — no list/update/promote (those stay on the
-      // brain). Resume-safe: a re-driven turn that re-captures the same title is deduped against this job's
-      // already-captured tickets (create always allocates a fresh number, so we must guard before creating).
-      tools.capture_ticket = async (args) => {
-        if (!this.tickets) {
-          return { ok: false, error: 'ticket board unavailable in this environment' };
-        }
-        const title = String(args['title'] ?? '').trim();
-        if (!title) {
-          return { ok: false, error: 'title is required (imperative one-line summary of the out-of-scope defect)' };
-        }
-        const body = String(args['body'] ?? '').trim() || undefined;
-        try {
-          const existing = await this.tickets
-            .list({ orgId: job.orgId, repoId: job.repoId, originJobId: job.id })
-            .catch(() => []);
-          const dup = existing.find((t) => t.title.trim().toLowerCase() === title.toLowerCase());
-          if (dup) {
-            return { ok: true, ticketId: dup.id, number: dup.number, alreadyCaptured: true };
-          }
-          // Semantic guard on top of the exact-title one: the builder has no human in the loop, so at the
-          // HIGH auto-skip bar collapse a near-identical capture into an existing OPEN ticket rather than
-          // filing a "same bug, one word off" duplicate (the #6/#7 case). Restricted to non-terminal
-          // statuses so a done/cancelled match never suppresses a fresh capture. Fail-soft (no key → skip).
-          const semantic = await this.tickets
-            .findSimilar({
-              orgId: job.orgId,
-              repoId: job.repoId,
-              title,
-              body,
-              minSim: TICKET_AUTO_SKIP_SIM,
-              limit: 1,
-              excludeStatuses: [...TICKET_TERMINAL_STATUSES],
-            })
-            .catch(() => ({ queryVector: null, matches: [] }));
-          const near = semantic.matches[0];
-          if (near) {
-            return { ok: true, ticketId: near.id, number: near.number, alreadyCaptured: true };
-          }
-          const ticket = await this.tickets.create({
-            orgId: job.orgId,
-            repoId: job.repoId,
-            title,
-            body,
-            kind: 'bug',
-            status: 'backlog',
-            originThreadId: job.id,
-            originDecisionRecordId: record?.id ?? job.decisionRecordId ?? null,
-          });
-          return {
-            ok: true,
-            ticketId: ticket.id,
-            number: ticket.number,
-            message: `Captured bug #${ticket.number}: ${title}. Keep building your assigned scope.`,
-          };
-        } catch (err) {
-          return { ok: false, error: shortReason(err) };
-        }
-      };
     }
 
     // LIVE TASK LIST for the Codex master-review thread (parity with Claude Code's TaskCreate/TaskUpdate).

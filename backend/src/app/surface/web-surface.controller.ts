@@ -39,6 +39,12 @@ import {
 } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
+import {
+  type AutoApproveMode,
+  isAutoApproveMode,
+  modeApprovesPlan,
+  modeApprovesShip,
+} from '@workspace/shared';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -105,7 +111,6 @@ import {
   realtimeDisabledStream,
   subscriptionToObservable,
 } from '../realtime';
-import { TicketEventBus } from '../tickets';
 import {
   renderReviewSeedXml,
   renderUploadedFilesXml,
@@ -318,6 +323,8 @@ interface CreateThreadDto {
   kind?: string;
   /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
   prNumber?: string | number;
+  /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
+  autoApproveMode?: string;
 }
 
 /**
@@ -352,7 +359,7 @@ interface RenameThreadDto {
   title: string;
 }
 interface SetAutoApproveDto {
-  enabled: boolean;
+  mode: AutoApproveMode;
 }
 interface ApproveDto {
   actionId: string;
@@ -531,7 +538,6 @@ export class WebSurfaceController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
-    private readonly ticketEvents: TicketEventBus,
     private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
@@ -746,6 +752,9 @@ export class WebSurfaceController {
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
     const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
+    // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
+    // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
+    const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -755,6 +764,9 @@ export class WebSurfaceController {
         title: placeholder,
         base_branch: body.baseBranch ?? null,
         ...(kind ? { kind } : {}),
+        ...(autoApproveMode && autoApproveMode !== 'off'
+          ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
+          : {}),
       }),
     );
     const operatorText = text ?? '';
@@ -1058,24 +1070,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    // Board mutations for this repo → a live `ticket_event`; the client invalidates its ticket queries.
-    // Carries no payload beyond the ids (the client refetches the authoritative ticket), matching the
-    // `message`-frame refetch model — and reaches the board even when the brain mutates tickets.
-    const tickets$ = this.ticketEvents.stream$.pipe(
-      filter((e) => e.repoId === repoId),
-      map(
-        (e): MessageEvent => ({
-          data: { type: 'ticket_event', ticketId: e.ticketId, kind: e.kind },
-        }),
-      ),
-    );
     // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
       filter((e) => e.orgId === orgId),
       map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
+    return merge(snapshot$, live$, messages$, meta$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
@@ -2353,34 +2354,32 @@ export class WebSurfaceController {
     @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
     @Body() body: SetAutoApproveDto,
-  ): Promise<{ ok: boolean; autoApprove: boolean }> {
-    if (typeof body?.enabled !== 'boolean') {
-      throw new BadRequestException('enabled is required');
+  ): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
+    if (!isAutoApproveMode(body?.mode)) {
+      throw new BadRequestException('mode is required');
     }
     // Resolve scoped to the org first (defense in depth beyond the guard) — capture the pre-update status so we
     // know whether a gate is already parked.
     const job = await this.requireThread(jobId, org.id);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
-      body.enabled ? { auto_approve: true, auto_approve_by: user.id } : { auto_approve: false },
+      { auto_approve_mode: body.mode, ...(body.mode !== 'off' ? { auto_approve_by: user.id } : {}) },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web set auto-approve=${body.enabled} on thread ${jobId} (org ${org.id})`);
-    // d2 — enabling while a gate is ALREADY parked immediately approves it, through the exact seam a real
+    this.logger.log(`web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`);
+    // d2 — enabling a gate the job is ALREADY parked on immediately approves it, through the exact seam a real
     // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
-    // the durable-restart fallback). Disable only affects future gates and never un-approves anything.
-    if (body.enabled) {
-      if (job.status === 'awaiting_approval') {
-        const value = JSON.stringify({
-          jobId,
-          ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
-        });
-        this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
-      } else if (job.status === 'awaiting_ship_review') {
-        this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
-      }
+    // the durable-restart fallback). Disabling a gate only affects future gates and never un-approves anything.
+    if (job.status === 'awaiting_approval' && modeApprovesPlan(body.mode)) {
+      const value = JSON.stringify({
+        jobId,
+        ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
+      });
+      this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
+    } else if (job.status === 'awaiting_ship_review' && modeApprovesShip(body.mode)) {
+      this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
-    return { ok: true, autoApprove: body.enabled };
+    return { ok: true, autoApproveMode: body.mode };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

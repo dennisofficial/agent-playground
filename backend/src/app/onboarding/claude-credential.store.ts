@@ -4,6 +4,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import {
   DataSource,
   EntityManager,
+  LessThan,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -470,20 +471,13 @@ export class ClaudeCredentialStore {
     await m.save(row);
   }
 
-  /**
-   * Every org's SELECTED `personal` credential whose access token expires within `withinMs` — the
-   * proactive-sweep worklist. Only `active`, refreshable (`refresh_token_enc` present) rows qualify.
-   */
-  async listSelectedExpiring(
+  /** Every `active` personal cred with a refresh token whose access token expires within `withinMs` —
+   *  the proactive-sweep worklist (ALL orgs' personal creds, selected or not). */
+  async listExpiringPersonal(
     withinMs: number,
   ): Promise<Array<{ orgId: string; credentialId: string }>> {
     const rows = await this.repo
       .createQueryBuilder('c')
-      .innerJoin(
-        OrganizationEntity,
-        'organization',
-        'organization.selected_claude_credential_id = c.id AND organization.id = c.org_id',
-      )
       .select(['c.id AS id', 'c.org_id AS org_id'])
       .where('c.kind = :kind', { kind: 'personal' })
       .andWhere('c.status = :status', { status: 'active' })
@@ -493,6 +487,22 @@ export class ClaudeCredentialStore {
       })
       .getRawMany<{ id: string; org_id: string }>();
     return rows.map((r) => ({ orgId: r.org_id, credentialId: r.id }));
+  }
+
+  /** Non-secret credential-health counts for the sweep heartbeat: `active` personal creds already PAST
+   *  expiry (the "sweep is behind" signal) and creds parked in `needs_reauth`. */
+  async credentialHealthSnapshot(): Promise<{
+    expiredActivePersonal: number;
+    needsReauth: number;
+  }> {
+    const now = new Date();
+    const [expiredActivePersonal, needsReauth] = await Promise.all([
+      this.repo.count({
+        where: { kind: 'personal', status: 'active', expires_at: LessThan(now) },
+      }),
+      this.repo.count({ where: { status: 'needs_reauth' } }),
+    ]);
+    return { expiredActivePersonal, needsReauth };
   }
 }
 

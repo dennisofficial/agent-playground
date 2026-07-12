@@ -1,5 +1,6 @@
 "use client";
 
+import type { AutoApproveMode } from "@workspace/shared";
 import { env } from "@/lib/env";
 import { fetchWithRefresh } from "./refresh";
 import type {
@@ -291,7 +292,9 @@ export function answerQuestion(
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
  *  procedure as a server-side seed turn (not the generic /say path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
-export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }> {
+export function spinUpPreview(
+  ref: JobRef,
+): Promise<{ ok: boolean; ts: string }> {
   return webJson(threadPath(ref, "/spin-up-preview"), { method: "POST" });
 }
 
@@ -446,15 +449,16 @@ export function renameJob(
   });
 }
 
-/** Flip the job's per-job auto-approve flag (`PATCH …/jobs/:jobId/auto-approve`). Enabling also resolves
- *  any gate the job is currently parked on; the flag is read back from the pipeline. */
+/** Set the job's per-job auto-approve mode (`PATCH …/jobs/:jobId/auto-approve`) — the header popover's
+ *  Plan/Ship switches compose into one of the four `AutoApproveMode` values. Enabling a gate the job is
+ *  currently parked on also resolves it; the mode is read back from the pipeline. */
 export function setAutoApprove(
   ref: JobRef,
-  enabled: boolean,
-): Promise<{ ok: boolean; autoApprove: boolean }> {
+  mode: AutoApproveMode,
+): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
   return webJson(threadPath(ref, "/auto-approve"), {
     method: "PATCH",
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ mode }),
   });
 }
 
@@ -584,6 +588,8 @@ export interface CreateThreadBody {
   kind?: OperatorJobKind;
   /** For `kind: "review"` — the PR number to review (seeds a <review> block on the brain's first turn). */
   prNumber?: string;
+  /** Arm auto-approve at creation; omit (or "off") to leave the job's gates waiting for a human. */
+  autoApproveMode?: AutoApproveMode;
 }
 
 export function createJob(
@@ -610,6 +616,7 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
+  if (body.autoApproveMode) form.append("autoApproveMode", body.autoApproveMode);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

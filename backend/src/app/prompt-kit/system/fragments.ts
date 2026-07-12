@@ -229,7 +229,7 @@ export const DOC_VERSION_VERIFY_NOTE =
   'on memory or a pattern from an older generation of the tool: read package.json / the lockfile / the ' +
   "existing imports for the REAL installed version, then confirm THAT version's true API shape — the " +
   'export/component names, config flags, supported params, CLI syntax — against its own docs (WebSearch / ' +
-  'WebFetch, or a Context7 docs tool when one is available; the sandbox has live web). Never mix patterns ' +
+  'WebFetch; the sandbox has live web). Never mix patterns ' +
   'from different versions or generations of the same tool. If the official docs, the installed version, and ' +
   'your approach do not clearly line up, STOP and surface the mismatch — name the options and the safest ' +
   'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +
@@ -277,7 +277,7 @@ export const DEVIATION_NOTE =
   "make the change; it is logged to `/context/generated/deviations.md`, the operator's deviation log (NOT " +
   'the PR body). If you do NOT have that tool (you are a writer subagent), report each such change on its ' +
   "own line starting 'DEVIATION:' in your summary back to the orchestrator, who records it. Reserve this for " +
-  'fixes you actually MADE — use `capture_ticket` for out-of-scope work you are deferring, not fixing.';
+  'fixes you actually MADE.';
 
 /**
  * CLARITY OVER COMMENTS — the house coding style for every persona that AUTHORS code (the brain's direct
@@ -298,7 +298,7 @@ export const CLARITY_OVER_COMMENTS_NOTE =
   'plainly-readable lines over one clever one-liner. Write a comment ONLY for a WHY the code genuinely ' +
   'cannot show — a hidden constraint, a non-obvious invariant, a workaround for a specific bug, something ' +
   'that would surprise the next reader. Never write a comment that just restates what the code does, and ' +
-  'never one that references the task, phase, ticket, or PR ("added for X", "handles the case from #123", ' +
+  'never one that references the task, phase, issue, or PR ("added for X", "handles the case from #123", ' +
   '"correct because…") — that belongs in the PR description and rots the moment it merges. TIEBREAKER: ' +
   'this is the default for new code you author; where the repo you are editing already follows a ' +
   'different, established comment style, match the repo.';
@@ -612,7 +612,7 @@ export const SPIKE_FIRST_NOTE =
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
- * change, so "before" is known and "after" is provable (the way an engineer reproduces a ticket first).
+ * change, so "before" is known and "after" is provable (the way an engineer reproduces an issue first).
  */
 export const BASELINE_FIRST_NOTE =
   'BASELINE THE CURRENT BEHAVIOR before you change it. WHEN the work modifies something that already ' +

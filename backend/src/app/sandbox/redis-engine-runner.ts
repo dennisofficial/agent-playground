@@ -21,6 +21,7 @@ import {
   CredentialNeedsReauthError,
   CredentialRefreshService,
 } from '../onboarding/credential-refresh.service';
+import type { SessionEngine } from '../domain';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
   CONTAINER_AGENT_HOME,
@@ -42,7 +43,7 @@ type EventFrame =
   | { t: 'event'; e: EngineEvent }
   | { t: 'heartbeat'; ts: number }
   | { t: 'final'; r: EngineRunResult }
-  | { t: 'error'; message: string; auth?: boolean; sessionId?: string };
+  | { t: 'error'; message: string; auth?: boolean; sessionId?: string; engine?: SessionEngine };
 
 /** How long the host waits with NO new event/heartbeat before checking container liveness (safety net). */
 export const TAIL_IDLE_TIMEOUT_MS = 120_000;
@@ -483,6 +484,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     let errorMsg: string | undefined;
     let errorAuth = false;
     let errorSession: string | undefined;
+    let errorEngine: SessionEngine | undefined;
 
     const onAbort = (): void => {
       // Cooperative cancel: the in-container engine subscribes to this channel and stops the SDK turn.
@@ -567,6 +569,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
             errorMsg = frame.message;
             errorAuth = !!frame.auth;
             errorSession = frame.sessionId;
+            errorEngine = frame.engine;
           }
           // 'heartbeat' just refreshes liveness (lastActivity above).
         }
@@ -581,7 +584,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     }
 
     if (errorMsg) {
-      if (errorAuth) throw new EngineAuthError(errorMsg, errorSession);
+      if (errorAuth) throw new EngineAuthError(errorMsg, errorSession, errorEngine);
       throw new Error(`in-sandbox engine turn failed: ${errorMsg}`);
     }
     if (!result) throw new Error(`in-sandbox engine turn produced no result (turn ${turnId})`);

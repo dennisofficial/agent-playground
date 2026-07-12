@@ -2,7 +2,7 @@ import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
 import type { ChatSurface, InboundChatMessage } from '../surface/chat-surface.port';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
-import { renderPlanApprovedSeed } from '../prompt-kit/jit';
+import { memoryPrependRule, renderPlanApprovedSeed } from '../prompt-kit/jit';
 import { JitHostExecutor } from './jit-host-executor';
 
 /** Captures the exact args a `seedSystemNotification` call receives — the parity proof. */
@@ -100,6 +100,24 @@ describe('JitHostExecutor', () => {
       expect(executor.collectOperatorPrepends({ jobId: 'j', prependText: 'recalled memory' })).toEqual([
         { kind: 'system_reminder', body: 'recalled memory', attrs: { reminderKind: 'memory' } },
       ]);
+    });
+
+    it('reports when an enabled operator turn-prefix rule exists', () => {
+      const executor = new JitHostExecutor(new FakeSurface());
+
+      expect(executor.hasEnabledOperatorPrepends()).toBe(true);
+    });
+
+    it('reports false and renders no chunks when the declarative rule is disabled', () => {
+      const executor = new JitHostExecutor(new FakeSurface());
+      const prev = memoryPrependRule.enabled;
+      memoryPrependRule.enabled = false;
+      try {
+        expect(executor.hasEnabledOperatorPrepends()).toBe(false);
+        expect(executor.collectOperatorPrepends({ jobId: 'j', prependText: 'recalled memory' })).toEqual([]);
+      } finally {
+        memoryPrependRule.enabled = prev;
+      }
     });
   });
 });

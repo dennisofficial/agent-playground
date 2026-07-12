@@ -415,7 +415,6 @@ describe('turn-aware WORKER prose — batch-only host-tool instructions gated by
   const BATCH_ONLY_MARKERS = [
     '`complete_thread`',
     '`record_deviation`',
-    '`capture_ticket`',
     'Before you call `complete_thread`',
   ];
 

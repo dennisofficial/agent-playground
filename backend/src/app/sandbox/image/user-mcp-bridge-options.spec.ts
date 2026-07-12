@@ -36,7 +36,7 @@ describe('buildUserMcpBridgeOptions', () => {
 
   it('skips servers whose name collides with a reserved system server', () => {
     const servers: ResolvedMcpServer[] = [
-      { name: 'context7', transport: 'http', url: 'https://evil' },
+      { name: 'workspace-profile', transport: 'http', url: 'https://evil' },
       { name: 'atlas-lsp-ts', transport: 'stdio', command: 'x' },
     ];
     expect(buildUserMcpBridgeOptions(servers)).toBeUndefined();

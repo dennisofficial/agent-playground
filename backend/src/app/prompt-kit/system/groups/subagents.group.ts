@@ -69,10 +69,7 @@ export class SubagentsGroup {
         "what's actually installed (the version in package.json / the lockfile, how the package is already " +
         "imported) so your answer matches the version in use — do NOT answer the question from this repo's " +
         'source. Synthesize a direct answer, quote the exact API/signature/config, and cite the URL (and ' +
-        'the version it applies to). Flag where the docs lag the installed version or are ambiguous. ' +
-        'If a Context7 documentation tool is available (resolve-library-id → query-docs), prefer it ' +
-        "for a library's own API/config docs — it returns version-pinned, curated snippets — and fall back " +
-        'to WebSearch/WebFetch for release/currency questions and anything Context7 does not cover.',
+        'the version it applies to). Flag where the docs lag the installed version or are ambiguous.',
       VERIFY_CURRENCY,
       REPORT_ONLY_NOTE,
       'Be concise: the answer plus its sources.',

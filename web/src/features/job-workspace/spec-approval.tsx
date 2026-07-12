@@ -1,8 +1,12 @@
 "use client";
 
-import { Check, ClipboardCheck, Lock, Undo2 } from "lucide-react";
+import { Check, ClipboardCheck, Globe, Lock, Undo2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
-import { useApprove } from "@/lib/api/job-queries";
+import {
+  useApprove,
+  usePipeline,
+  useSpinUpPreview,
+} from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
@@ -10,6 +14,7 @@ import {
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from "@/lib/api/types";
+import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
 
 /**
  * The async spec-approval surfaces (handoff: "Async Spec / Plan Approval Components") — mirrored for
@@ -284,9 +289,13 @@ export function PersistentApprovalBar({
 export function NavigatorShipButton({
   jobRef,
   value,
+  previewRequestedAt,
 }: {
   jobRef: JobRef;
   value: string;
+  /** The ship card's `previewRequestedAt` (stamped server-side on first request) — gates the
+   *  "Spin up preview" button, so it hides once a preview has been requested. */
+  previewRequestedAt?: string | null;
 }) {
   const { submit, pending, approved, error } = useApproveShip(jobRef, value);
   const retract = useRetractShip(jobRef, value);
@@ -312,12 +321,73 @@ export function NavigatorShipButton({
         style={{ borderRadius: "7px", padding: "6px 0" }}
         iconSize={11}
       />
+      <SpinUpPreviewButton
+        jobRef={jobRef}
+        previewRequestedAt={previewRequestedAt}
+        className="mt-1.5 w-full text-[10.5px]"
+        style={{ borderRadius: "7px", padding: "6px 0" }}
+        iconSize={11}
+      />
       {error ? (
         <p className="mt-1 text-[10px] text-red">
           Couldn’t ship — try again.
         </p>
       ) : null}
     </>
+  );
+}
+
+// ── Navigator header "Spin up preview" button ─────────────────────────────────────────────────────────
+/** The sidebar-header twin of the ship card's `ShipCardPreviewButton` (approval-card.tsx): requests a
+ *  demo-ready live preview of the just-built change via the SAME {@link useSpinUpPreview} mutation and
+ *  {@link shouldShowSpinUpPreview} gate. Shown only while the job is live at `awaiting_ship_review` with
+ *  no preview yet requested; it removes itself after the first click (server stamps `previewRequestedAt`).
+ *  Styled to match the sidebar's stacked buttons (full-width, compact) in a quiet blue "soft" look. */
+function SpinUpPreviewButton({
+  jobRef,
+  previewRequestedAt,
+  className = "",
+  style,
+  iconSize,
+}: {
+  jobRef: JobRef;
+  previewRequestedAt: string | null | undefined;
+  className?: string;
+  style?: React.CSSProperties;
+  iconSize: number;
+}) {
+  const pipeline = usePipeline(jobRef);
+  const preview = useSpinUpPreview(jobRef);
+  if (!shouldShowSpinUpPreview(pipeline.data?.status, previewRequestedAt)) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (!preview.isPending) preview.mutate();
+      }}
+      disabled={preview.isPending}
+      className={`inline-flex items-center justify-center gap-1.5 font-semibold transition hover:brightness-95 disabled:cursor-default disabled:opacity-70 ${className}`}
+      style={{
+        color: "var(--blue)",
+        background: "color-mix(in srgb, var(--blue) 12%, transparent)",
+        border: "1px solid color-mix(in srgb, var(--blue) 30%, transparent)",
+        ...style,
+      }}
+    >
+      {preview.isPending ? (
+        <>
+          <Spinner className="h-3 w-3" />
+          Requesting…
+        </>
+      ) : (
+        <>
+          <Globe size={iconSize} strokeWidth={2.4} />
+          Spin up preview
+        </>
+      )}
+    </button>
   );
 }
 

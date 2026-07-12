@@ -7,6 +7,7 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview } from '../conditions';
+import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class IdentityGroup {
@@ -17,6 +18,35 @@ export class IdentityGroup {
       'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
       'to shape ONE feature or bug fix, lock the decisions, get ONE approval — then build it autonomously.',
     ].join('\n');
+  }
+
+  /**
+   * The per-job CURRENT JOB orientation block — which repo / branch / working dir THIS turn runs against.
+   * Sits right after the persona line (order 1002; 1005 is conversation, 1010 the sandbox map). Renders
+   * ONLY when the call site supplies `ctx.job` (the brain turn), so the boot smoke-test probes and every
+   * subagent — which pass no `job` — keep the prompt byte-identical. Each line is guarded, so a field that
+   * isn't known yet (e.g. no feature branch before it's cut) just drops its line.
+   */
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1002,
+    condition: (c: PromptCtx) => isBuildBrain(c) && !!c.job,
+  })
+  currentJob(ctx: PromptCtx): string {
+    const job = ctx.job;
+    if (!job) return '';
+    const lines = ['CURRENT JOB'];
+    if (job.repoName) lines.push(`- Repo: ${job.repoName}`);
+    if (job.cwd) lines.push(`- Working directory: ${job.cwd}`);
+    if (job.branch && job.baseBranch) {
+      lines.push(`- Branch: ${job.branch}  ·  Base: ${job.baseBranch}`);
+    } else if (job.baseBranch) {
+      lines.push(`- Base branch: ${job.baseBranch}`);
+    } else if (job.branch) {
+      lines.push(`- Branch: ${job.branch}`);
+    }
+    // Nothing beyond the header ⇒ emit nothing (drop-empty join keeps the prompt clean).
+    return lines.length > 1 ? lines.join('\n') : '';
   }
 
   /** The PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */

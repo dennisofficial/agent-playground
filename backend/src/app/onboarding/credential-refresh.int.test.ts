@@ -111,17 +111,26 @@ let prevTokenUrl: string | undefined;
 
 /** Seed a `personal` credential expiring in `expiresInMs`, select it as the org's active credential. */
 async function seedCred(expiresInMs: number, label: string): Promise<string> {
-  const credId = await store.upsertPersonal(ORG, {
-    label,
-    accessToken: `seed-access-${label}`,
-    refreshToken: `seed-refresh-${label}`,
-    expiresAt: Date.now() + expiresInMs,
-  });
+  const credId = await seedCredUnselected(expiresInMs, label);
   await ds.query(
     `UPDATE organizations SET selected_claude_credential_id = $1 WHERE id = $2`,
     [credId, ORG],
   );
   return credId;
+}
+
+/** Seed a `personal` credential expiring in `expiresInMs` WITHOUT selecting it — proves the sweep covers
+ *  every connected account, not just each org's selected one. */
+async function seedCredUnselected(
+  expiresInMs: number,
+  label: string,
+): Promise<string> {
+  return store.upsertPersonal(ORG, {
+    label,
+    accessToken: `seed-access-${label}`,
+    refreshToken: `seed-refresh-${label}`,
+    expiresAt: Date.now() + expiresInMs,
+  });
 }
 
 async function getRow(credId: string): Promise<{
@@ -291,6 +300,41 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     const row = await getRow(credId);
     expect(row.status).toBe('active');
     expect(row.last_refreshed_at).not.toBeNull();
+  });
+
+  it('the keep-alive sweep refreshes a NON-selected personal credential nearing expiry', async () => {
+    const credId = await seedCredUnselected(10 * 60_000, 'keepalive-unselected'); // inside the 35-min sweep window
+    const before = await getRow(credId);
+    expect(before.last_refreshed_at).toBeNull();
+
+    await keepalive.tick();
+
+    expect(requestCount).toBe(1);
+    const row = await getRow(credId);
+    expect(row.status).toBe('active');
+    expect(row.last_refreshed_at).not.toBeNull();
+  });
+
+  it('credentialHealthSnapshot reports expired active + needs_reauth counts', async () => {
+    const expiredCredId = await seedCred(-60_000, 'already-expired'); // PAST expiry before any tick
+
+    const before = await store.credentialHealthSnapshot();
+    expect(before.expiredActivePersonal).toBeGreaterThanOrEqual(1);
+
+    handler = errorHandler(503); // refresh fails, so the expired cred stays expired
+
+    await keepalive.tick();
+
+    const after = await store.credentialHealthSnapshot();
+    expect(after.expiredActivePersonal).toBeGreaterThanOrEqual(1);
+    const expiredRow = await getRow(expiredCredId);
+    expect(expiredRow.status).toBe('active');
+
+    const reauthCredId = await seedCred(6 * 60 * 60_000, 'needs-reauth-setup');
+    await store.markNeedsReauth(ORG, reauthCredId, 'test setup');
+
+    const withReauth = await store.credentialHealthSnapshot();
+    expect(withReauth.needsReauth).toBeGreaterThanOrEqual(1);
   });
 
   it('the Settings usage path shares the SAME serialized core — concurrent with a direct ensureFresh yields ONE request', async () => {
