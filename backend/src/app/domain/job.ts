@@ -129,6 +129,11 @@ export interface Job {
    *  ship gate reads it to distinguish "just parked" (null → park at `awaiting_ship_review`) from
    *  "approved, proceed" (set → ship). Cleared when a new build is dispatched. See {@link JobStatus}. */
   shipReviewApprovedAt: Date | null;
+  /** Per-job auto-approve: gates auto-advance with no human click when true (see jobs.auto_approve). */
+  autoApprove: boolean;
+  /** Who enabled auto-approve (users.id), used as the approver on auto-resolve; null if never enabled
+   *  / enabling user deleted. */
+  autoApproveBy: string | null;
   /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
   createdBy: JobProvenance | null;
   createdAt: Date;

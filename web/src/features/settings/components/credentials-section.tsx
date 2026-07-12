@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   Check,
@@ -22,15 +24,21 @@ import {
   useCodexAccount,
   useCreateClaudeAuthorizeUrl,
   useDeleteClaudeCredential,
+  useDisconnectGithubApp,
+  useGithubAppInstallUrl,
+  useGithubAppStatus,
   useOrgCredentials,
   useSaveCredentials,
   useSelectClaudeCredential,
+  useSetGithubAuthMode,
+  useSetGithubIdentityMode,
   type ClaudeCredential,
   type ClaudeCredentialKind,
   type ClaudeCredentialStatus,
   type SaveCredentialsBody,
   type SaveCredentialsResult,
 } from "@/lib/api/orgs";
+import { qk } from "@/lib/api/query-keys";
 
 /**
  * Credentials — the org-wide encrypted secrets every thread uses. The list is presence-only (the API never
@@ -262,7 +270,9 @@ export function CredentialsSection({
         present={presence.hasGithub}
         pill={
           presence.hasGithub
-            ? { label: "saved", tone: "green" }
+            ? presence.githubAuthMode === "app"
+              ? { label: "PAT (inactive)", tone: "dim" }
+              : { label: "saved", tone: "green" }
             : { label: "not set", tone: "faint" }
         }
         modes={[
@@ -318,7 +328,288 @@ export function CredentialsSection({
         ]}
         onSave={onSave}
       />
+
+      <GithubAppConnect
+        orgId={orgId}
+        isOwner={isOwner}
+        hasPat={presence.hasGithub}
+      />
     </>
+  );
+}
+
+// ── GitHub App connect ───────────────────────────────────────────────────────────────────────────
+/** Friendly copy for the `?githubApp=error&reason=…` redirect the install callback lands on. */
+function githubAppErrorMessage(reason: string | null): string {
+  if (reason === "already_connected")
+    return "That installation is already connected to another organization.";
+  if (reason === "verification_failed")
+    return "Couldn’t verify the installation — try connecting again.";
+  return "The connect request expired or was invalid — try again.";
+}
+
+/**
+ * The GitHub App is a separate, optional credential from the PAT above: connecting it swaps the org's
+ * live GitHub auth to an installation token with its own rate-limit pool. Connecting is a redirect flow —
+ * `install-url` mints a one-time GitHub install URL, and GitHub's callback lands back here via
+ * `?githubApp=connected|error`, which this component picks up on mount.
+ */
+function GithubAppConnect({
+  orgId,
+  isOwner,
+  hasPat,
+}: {
+  orgId: string;
+  isOwner: boolean;
+  hasPat: boolean;
+}) {
+  const { data: status, isLoading } = useGithubAppStatus(orgId);
+  const installUrl = useGithubAppInstallUrl(orgId);
+  const setMode = useSetGithubAuthMode(orgId);
+  const setIdentity = useSetGithubIdentityMode(orgId);
+  const disconnect = useDisconnectGithubApp(orgId);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+
+  const qc = useQueryClient();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const result = searchParams.get("githubApp");
+    if (result === "connected") {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      setNote("GitHub App connected.");
+    } else if (result === "error") {
+      setError(githubAppErrorMessage(searchParams.get("reason")));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function connect() {
+    setError("");
+    setNote("");
+    // Open the window synchronously within the click handler so popup blockers
+    // don't block it after the mutation's network round-trip loses the user gesture.
+    // Note: passing `noopener`/`noreferrer` here makes window.open return null,
+    // which would defeat the synchronous pre-open. Open the blank window without
+    // those features and null out `opener` after navigating instead.
+    const installWindow = window.open("", "_blank");
+    try {
+      const result = await installUrl.mutateAsync();
+      if (installWindow) {
+        installWindow.opener = null;
+        installWindow.location.href = result.url;
+      } else {
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      installWindow?.close();
+      setError((e as Error)?.message || "Could not start the GitHub App install.");
+    }
+  }
+
+  async function switchMode(mode: "pat" | "app") {
+    if (!status || status.mode === mode) return;
+    setError("");
+    setNote("");
+    try {
+      await setMode.mutateAsync(mode);
+    } catch (e) {
+      setError((e as Error)?.message || "Could not switch auth mode.");
+    }
+  }
+
+  async function switchIdentity(identity: "pat" | "app") {
+    if (!status || (status.identityMode ?? "pat") === identity) return;
+    setError("");
+    setNote("");
+    try {
+      await setIdentity.mutateAsync(identity);
+    } catch (e) {
+      setError((e as Error)?.message || "Could not switch commit author.");
+    }
+  }
+
+  async function handleDisconnectClick() {
+    if (!confirmDisconnect) {
+      setConfirmDisconnect(true);
+      return;
+    }
+    setConfirmDisconnect(false);
+    setError("");
+    setNote("");
+    try {
+      await disconnect.mutateAsync();
+    } catch (e) {
+      setError((e as Error)?.message || "Could not disconnect the GitHub App.");
+    }
+  }
+
+  const pill =
+    !status || isLoading
+      ? { label: "…", tone: "faint" as const }
+      : !status.configured
+        ? { label: "App unavailable", tone: "faint" as const }
+        : status.connected
+          ? { label: "App: connected", tone: "green" as const }
+          : { label: "not connected", tone: "faint" as const };
+
+  return (
+    <div className="mb-3.5 rounded-lg border border-border bg-surface p-[18px]">
+      <div className="flex items-center gap-3">
+        <span
+          className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-lg border"
+          style={{
+            background: "var(--surface-3)",
+            borderColor: "var(--border-2)",
+            color: "var(--dim)",
+          }}
+        >
+          <Github size={16} />
+        </span>
+        <div className="flex-1">
+          <div className="text-[13.5px] font-semibold text-text">
+            GitHub App
+          </div>
+          <div className="mt-0.5 text-[11px] text-faint">
+            Its own rate-limit pool — no personal 5k/hr throttling
+          </div>
+        </div>
+        <StatusChip label={pill.label} tone={pill.tone} />
+      </div>
+
+      {!status || isLoading ? null : !status.configured ? (
+        <p className="mt-3.5 text-[11.5px] text-faint">
+          The Atlas GitHub App isn’t configured on this server.
+        </p>
+      ) : !status.connected ? (
+        <div className="mt-3.5">
+          <HelpBlock>
+            <p>
+              App auth routes Atlas’s GitHub traffic through a GitHub App
+              installation token, which has its own rate-limit pool separate
+              from any human’s personal 5,000/hr budget.
+            </p>
+            <p>Connecting stops operators from getting personal-account rate-limited.</p>
+          </HelpBlock>
+          {isOwner ? (
+            <button
+              type="button"
+              onClick={connect}
+              disabled={installUrl.isPending}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
+              style={{ borderColor: "var(--accent-line)" }}
+            >
+              {installUrl.isPending ? "Opening…" : "Connect GitHub App"}
+              <ExternalLink size={12} />
+            </button>
+          ) : (
+            <p className="mt-3 text-[11.5px] text-faint">
+              Ask an owner to connect the GitHub App.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="mt-3.5">
+          <p className="text-[11.5px] text-dim">
+            Connected to{" "}
+            <Code>
+              {status.account ?? `installation #${status.installationId}`}
+            </Code>
+          </p>
+
+          <div className="mt-3 flex items-center gap-3">
+            <div className="flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
+              {(
+                [
+                  { id: "pat" as const, label: "PAT", disabled: !hasPat },
+                  {
+                    id: "app" as const,
+                    label: "App",
+                    disabled: !status.connected,
+                  },
+                ]
+              ).map((opt) => {
+                const on = status.mode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => switchMode(opt.id)}
+                    disabled={!isOwner || opt.disabled || setMode.isPending}
+                    className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                    style={{
+                      background: on ? "var(--surface)" : "transparent",
+                      color: on ? "var(--accent)" : "var(--dim)",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {isOwner ? (
+              <button
+                type="button"
+                onClick={handleDisconnectClick}
+                disabled={disconnect.isPending}
+                className="flex h-[30px] shrink-0 items-center justify-center rounded-md border border-border-2 px-2.5 text-[11.5px] font-semibold text-faint transition hover:border-red hover:bg-red-soft hover:text-red disabled:opacity-60"
+              >
+                {confirmDisconnect ? (
+                  <span className="text-red">Confirm?</span>
+                ) : (
+                  "Disconnect"
+                )}
+              </button>
+            ) : null}
+          </div>
+
+          {hasPat && status.connected ? (
+            <div className="mt-4 border-t border-border-2 pt-3.5">
+              <div className="text-[12px] font-semibold text-text">
+                Author commits &amp; PRs as
+              </div>
+              <div className="mt-0.5 text-[11px] text-faint">
+                Background traffic always uses the App’s rate-limit pool.
+              </div>
+              <div className="mt-2.5 flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
+                {(
+                  [
+                    { id: "pat" as const, label: "You" },
+                    { id: "app" as const, label: "Atlas bot" },
+                  ]
+                ).map((opt) => {
+                  const on = (status.identityMode ?? "pat") === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => switchIdentity(opt.id)}
+                      disabled={!isOwner || setIdentity.isPending}
+                      className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                      style={{
+                        background: on ? "var(--surface)" : "transparent",
+                        color: on ? "var(--accent)" : "var(--dim)",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {error ? <p className="mt-3 text-[11.5px] text-red">{error}</p> : null}
+      {note ? (
+        <p className="mt-3 text-[11.5px] text-green">{note}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -343,6 +634,18 @@ function ClaudeCredentialsManager({
   const select = useSelectClaudeCredential(orgId);
   const del = useDeleteClaudeCredential(orgId);
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const login = useClaudePersonalLogin(orgId);
+  const addPersonalCardRef = useRef<HTMLDivElement>(null);
+
+  // Reconnect drives the same login as the add-card: start it (synchronously, to keep the popup gesture)
+  // and bring the card's paste step into view so the returning user lands on step 2.
+  function handleReconnect() {
+    login.openLogin();
+    addPersonalCardRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
 
   async function handleDelete(id: string) {
     setDeleteErrors((prev) => {
@@ -397,13 +700,14 @@ function ClaudeCredentialsManager({
               onDelete={() => handleDelete(cred.id)}
               deletePending={del.isPending}
               deleteError={deleteErrors[cred.id]}
+              onReconnect={handleReconnect}
             />
           ))}
         </div>
       )}
 
       <div className="mt-3 flex flex-col gap-3">
-        <AddClaudePersonalCard orgId={orgId} />
+        <AddClaudePersonalCard login={login} cardRef={addPersonalCardRef} />
         <AddClaudeSetupTokenCard orgId={orgId} />
       </div>
 
@@ -411,8 +715,10 @@ function ClaudeCredentialsManager({
         <strong className="font-semibold text-dim">Setup-tokens</strong> don’t
         expire and are never refreshed — rotate them manually when needed.{" "}
         <strong className="font-semibold text-dim">Personal logins</strong>{" "}
-        are refreshed automatically in the background as long as they stay
-        connected.
+        are refreshed automatically on the host, including a background
+        keep-alive, so they stay connected without an open tab. If one ever
+        can’t be refreshed it’ll show <strong className="font-semibold text-dim">Needs re-auth</strong>{" "}
+        with a Reconnect button.
       </p>
     </div>
   );
@@ -428,6 +734,7 @@ function ClaudeCredentialRow({
   onDelete,
   deletePending,
   deleteError,
+  onReconnect,
 }: {
   orgId: string;
   cred: ClaudeCredential;
@@ -437,6 +744,7 @@ function ClaudeCredentialRow({
   onDelete: () => void;
   deletePending: boolean;
   deleteError?: string;
+  onReconnect: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -514,6 +822,20 @@ function ClaudeCredentialRow({
         <div className="flex shrink-0 items-center pt-0.5">
           <CredentialUsageRing orgId={orgId} credentialId={cred.id} />
         </div>
+      ) : null}
+
+      {isOwner &&
+      cred.kind === "personal" &&
+      cred.status === "needs_reauth" ? (
+        <button
+          type="button"
+          onClick={onReconnect}
+          className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
+          style={{ borderColor: "var(--accent-line)" }}
+        >
+          Reconnect
+          <ExternalLink size={12} />
+        </button>
       ) : null}
 
       {isOwner ? (
@@ -636,8 +958,15 @@ function formatClaudeDuration(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-/** Step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted `code#state` for a credential. */
-function AddClaudePersonalCard({ orgId }: { orgId: string }) {
+type ClaudePersonalLogin = ReturnType<typeof useClaudePersonalLogin>;
+
+/**
+ * The two-step personal-login flow, lifted into a hook so both the add-card and a row's Reconnect button
+ * drive ONE shared login: step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted
+ * `code#state` for a credential (`upsertPersonal` re-keys by account email, so reconnecting revives the
+ * same row back to `active`).
+ */
+function useClaudePersonalLogin(orgId: string) {
   const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
   const addCredential = useAddClaudeCredential(orgId);
   const [pending, setPending] = useState<{ state: string } | null>(null);
@@ -686,8 +1015,40 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
     }
   }
 
+  return {
+    openLogin,
+    submitCode,
+    pending,
+    code,
+    setCode,
+    error,
+    isOpeningLogin: createAuthorizeUrl.isPending,
+    isAddingCredential: addCredential.isPending,
+  };
+}
+
+/** Renders the shared personal-login flow as a card; owns no login state (the hook does). */
+function AddClaudePersonalCard({
+  login,
+  cardRef,
+}: {
+  login: ClaudePersonalLogin;
+  cardRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const {
+    openLogin,
+    submitCode,
+    pending,
+    code,
+    setCode,
+    error,
+    isOpeningLogin,
+    isAddingCredential,
+  } = login;
+
   return (
     <div
+      ref={cardRef}
       className="rounded-lg border p-[18px]"
       style={{
         borderColor: "var(--accent-line)",
@@ -719,11 +1080,11 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
           <button
             type="button"
             onClick={openLogin}
-            disabled={createAuthorizeUrl.isPending || Boolean(pending)}
+            disabled={isOpeningLogin || Boolean(pending)}
             className="inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
             style={{ borderColor: "var(--accent-line)" }}
           >
-            {createAuthorizeUrl.isPending ? "Opening…" : "Open Claude login"}
+            {isOpeningLogin ? "Opening…" : "Open Claude login"}
             <ExternalLink size={12} />
           </button>
           <p className="mt-2 text-[11px] leading-relaxed text-faint">
@@ -754,11 +1115,11 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
             <button
               type="button"
               onClick={submitCode}
-              disabled={addCredential.isPending}
+              disabled={isAddingCredential}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
               style={{ background: "var(--accent)" }}
             >
-              {addCredential.isPending ? "Adding…" : "Add credential"}
+              {isAddingCredential ? "Adding…" : "Add credential"}
             </button>
           </div>
         </div>

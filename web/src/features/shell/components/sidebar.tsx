@@ -218,7 +218,7 @@ export function Sidebar({
     <aside
       data-testid="app-sidebar"
       className={cn(
-        "flex flex-col",
+        "flex h-full flex-col",
         inDrawer ? "w-full" : "w-[272px] shrink-0 border-r border-border",
       )}
       style={{ background: "var(--surface-2)" }}
@@ -626,9 +626,11 @@ function RepoGroup({
 /** The fixed swatch/label color per {@link JobSection} (matches the sidebar-redesign mockup palette). */
 const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
+  reviewing: "var(--blue)",
   blocked: "var(--amber)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
+  master_review: "var(--blue)",
   amending: "var(--amber)",
   ready_to_ship: "var(--green)",
   done: "var(--green)",

@@ -1,7 +1,21 @@
 import type { DataSource } from 'typeorm';
 
 const STATEMENT_TIMEOUT = '10s';
-const MAX_ROWS = 1000;
+const DEFAULT_ROWS = 1000;
+const HARD_ROW_CEILING = 50_000;
+/** Byte guard on the serialized (post row-cap) rows, independent of row count — a handful of huge rows
+ *  (e.g. wide text/jsonb columns) can blow up a response even under the row cap. */
+export const MAX_RESULT_BYTES = 25 * 1024 * 1024; // 25 MB
+
+function effectiveLimit(limit: number | undefined): number {
+  if (limit !== undefined && !Number.isFinite(limit)) {
+    throw new Error('limit must be a finite number');
+  }
+  return Math.min(
+    Math.max(Math.floor(limit ?? DEFAULT_ROWS), 1),
+    HARD_ROW_CEILING,
+  );
+}
 
 /**
  * App-layer guard: accept only a single read-only SELECT/WITH statement. Layered on top of the
@@ -26,9 +40,11 @@ export async function runReadOnlyQuery(
   ds: DataSource,
   sql: string,
   params: unknown[],
+  limit?: number,
 ): Promise<{ rows: unknown[]; rowCount: number; truncated: boolean }> {
   const vetted = assertReadOnlySelect(sql);
-  const wrapped = `SELECT * FROM (\n${vetted}\n) AS __atlas_q LIMIT ${MAX_ROWS + 1}`;
+  const effective = effectiveLimit(limit);
+  const wrapped = `SELECT * FROM (\n${vetted}\n) AS __atlas_q LIMIT ${effective + 1}`;
   const qr = ds.createQueryRunner();
   try {
     await qr.connect();
@@ -36,10 +52,31 @@ export async function runReadOnlyQuery(
     try {
       await qr.query(`SET LOCAL statement_timeout = '${STATEMENT_TIMEOUT}'`);
       const rows: unknown[] = await qr.query(wrapped, params);
-      const truncated = rows.length > MAX_ROWS;
+      let truncated = rows.length > effective;
+      let kept = truncated ? rows.slice(0, effective) : rows;
+      // Byte guard: even under the row cap, a handful of huge rows can produce an oversized payload.
+      // Serialize each row ONCE and keep the longest prefix whose combined size fits, instead of
+      // re-serializing the whole array per dropped tail row (that is O(n²) and can block the
+      // single-threaded reader for seconds on a large result). Byte accounting mirrors
+      // JSON.stringify(array): `[` + `]` brackets plus a `,` between rows.
+      if (kept.length > 0) {
+        let total = 2; // '[' + ']'
+        let fit = 0;
+        for (let i = 0; i < kept.length; i++) {
+          const rowBytes = Buffer.byteLength(JSON.stringify(kept[i]), 'utf8');
+          const comma = i > 0 ? 1 : 0;
+          if (total + comma + rowBytes > MAX_RESULT_BYTES) break;
+          total += comma + rowBytes;
+          fit += 1;
+        }
+        if (fit < kept.length) {
+          kept = kept.slice(0, fit);
+          truncated = true;
+        }
+      }
       return {
-        rows: truncated ? rows.slice(0, MAX_ROWS) : rows,
-        rowCount: Math.min(rows.length, MAX_ROWS),
+        rows: kept,
+        rowCount: kept.length,
         truncated,
       };
     } finally {
@@ -56,9 +93,7 @@ export async function runReadOnlyQuery(
   }
 }
 
-export async function introspectSchema(
-  ds: DataSource,
-): Promise<{
+export async function introspectSchema(ds: DataSource): Promise<{
   tables: Array<{
     table: string;
     columns: Array<{ name: string; type: string; nullable: boolean }>;

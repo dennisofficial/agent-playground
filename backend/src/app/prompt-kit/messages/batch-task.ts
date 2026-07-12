@@ -140,35 +140,3 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
   );
 }
 
-/** The task for a verification-gate turn (ADR 0004 rider 3) — resumes the SAME orchestrator session after
- *  it claimed `done`, to run a real diagnostics + typecheck pass before the driver trusts the claim.
- *  `priorErrors` carries the previous iteration's reported remainder, when this is a retry. */
-export function renderGateTask(
-  changedFiles: string[],
-  iteration: number,
-  priorErrors: string[],
-): AgentMessage {
-  const fileList = changedFiles.map((f) => `- ${f}`).join('\n');
-  const priorBlock = priorErrors.length
-    ? `\nYour last attempt still left these unresolved:\n${priorErrors.map((e) => `- ${e}`).join('\n')}\n`
-    : '';
-  return agentMessage(
-    [
-      `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-      `\nThis thread's changes touched these files:\n${fileList}`,
-      priorBlock,
-      `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,
-      `\n2. Run the repo's own typecheck command (authoritative, whole-program) — discover it the same way` +
-        ` you would for a normal build (package.json scripts / repo conventions).`,
-      `\n3. Fix every error you find, in THIS session, then re-run both checks to confirm they're clean.`,
-      `\n4. COMMIT: once both checks are clean, \`git add -A\`, commit any fixes with a clear message, and` +
-        ` \`git push\` — leave a CLEAN working tree (the host does NOT commit for you; it reads what you leave).`,
-      `\nWhen both are clean AND your tree is committed + pushed, call \`report_verification\` with` +
-        ` \`{ passed: true }\`. If you cannot get the checks clean, call \`report_verification\` with` +
-        ` \`{ passed: false, remaining: [...] }\`, listing the specific remaining errors (file:line — message)` +
-        ` — never end the turn without calling one or the other.`,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  );
-}

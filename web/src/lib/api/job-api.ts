@@ -41,6 +41,12 @@ export class ThreadApiError extends Error {
   }
 }
 
+/** A mutation's error, unwrapped to a message worth showing the operator — the backend's own 400 text
+ *  (e.g. "can't block a job that is already building or finished…") when we have it, else a flat fallback. */
+export function mutationErrorMessage(err: unknown, fallback: string): string {
+  return err instanceof ThreadApiError ? err.message : fallback;
+}
+
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   // A FormData body must NOT get a hardcoded content-type — the browser sets `multipart/form-data` with the
   // boundary itself. Only JSON string bodies carry the json content-type. (Used by the attachment uploads.)
@@ -437,6 +443,18 @@ export function renameJob(
   return webJson(threadPath(ref), {
     method: "PATCH",
     body: JSON.stringify({ title }),
+  });
+}
+
+/** Flip the job's per-job auto-approve flag (`PATCH …/jobs/:jobId/auto-approve`). Enabling also resolves
+ *  any gate the job is currently parked on; the flag is read back from the pipeline. */
+export function setAutoApprove(
+  ref: JobRef,
+  enabled: boolean,
+): Promise<{ ok: boolean; autoApprove: boolean }> {
+  return webJson(threadPath(ref, "/auto-approve"), {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
   });
 }
 

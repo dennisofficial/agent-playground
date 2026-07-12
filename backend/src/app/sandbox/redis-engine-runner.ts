@@ -14,9 +14,13 @@ import {
 import { dispatchToolRequest } from '../engine/tool-bridge-host';
 import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
 import type { HostFrame, ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '../engine/engine.types';
-import { gitAuthEnv } from '../git';
+import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import {
+  CredentialNeedsReauthError,
+  CredentialRefreshService,
+} from '../onboarding/credential-refresh.service';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
   CONTAINER_AGENT_HOME,
@@ -26,8 +30,10 @@ import {
   CONTAINER_SKILLS_MANAGED_GIT,
   CONTAINER_SKILLS_STORE,
   CONTAINER_WORKTREE,
+  GITHUB_TOKEN_FILE,
 } from './container-paths';
 import { SandboxActivityRegistry } from './sandbox-activity.registry';
+import { SANDBOX_PROVIDER, type SandboxProvider } from './sandbox-provider.port';
 import { BrainTurnAlreadyRunningError, TurnRegistry } from './turn-registry.service';
 import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';
 
@@ -78,6 +84,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
   /** Turn ids THIS process is currently attach-looping (see {@link isAttached}). */
   private readonly attached = new Set<string>();
 
+  /** Transient per-turn finalize outcome, read once by the error path (no `result` to carry it). */
+  private readonly lastClaim = new Map<string, boolean>();
+
   constructor(
     @Inject(CONTAINER_ENGINE) private readonly containers: ContainerEngine,
     @Inject(REDIS_STREAM_PORT) private readonly redis: RedisStreamPort,
@@ -91,6 +100,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // turn relies on the caller-supplied `args.auth` exactly as before. In the real (@Global onboarding) app
     // it is always present, so this seam authoritatively resolves per-org auth for EVERY engine turn.
     @Optional() private readonly creds?: CredentialResolver,
+    // Optional for the same reason (direct-instantiation unit tests). Absent → the app-mode token-file seed
+    // at spawn is simply skipped (the leader-gated refresh sweep still converges the file on its next tick).
+    @Optional() @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider?: SandboxProvider,
+    // Optional for the same reason. Absent → no host-side pre-turn refresh; a turn relies on the in-container
+    // SDK self-refresh exactly as before. Present in the real app (exported by the @Global onboarding module).
+    @Optional() private readonly credRefresh?: CredentialRefreshService,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -105,10 +120,37 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // (`sandboxKey.orgId`, always present) + engine; an explicit caller-supplied `args.auth` still wins. When
     // the org has no secret this stays undefined and the in-sandbox `EngineCore.resolveAuth` throws the clear
     // "no credential" error — same outcome as before, just no longer dependent on each caller remembering.
-    if (!args.auth && this.creds) {
-      const auth = await this.creds.engineAuth(args.sandboxKey.orgId, args.engine);
-      if (auth) args = { ...args, auth };
+    let auth = args.auth ?? (this.creds ? await this.creds.engineAuth(args.sandboxKey.orgId, args.engine) : undefined);
+    // Proactively refresh a personal Claude OAuth token on the HOST before the turn materializes it —
+    // serialized per-credential by `ensureFresh`'s row lock so concurrent turns share ONE refresh instead of
+    // racing the rotating refresh token. This runs on whichever credential is in effect regardless of whether
+    // the caller pre-supplied `args.auth` (every real driver/brain dispatcher does) or we resolved it above —
+    // otherwise the per-turn serialized refresh would never fire for real turns. A hard failure (dead refresh
+    // token) short-circuits the sandbox spin-up and surfaces through the existing EngineAuthError relay/catch
+    // path; a transient failure falls through to the stored secret (the in-container SDK self-refresh remains
+    // the mid-turn fallback).
+    if (
+      auth?.kind === 'personal' &&
+      auth.refreshBack?.engine === 'claude' &&
+      auth.refreshBack.credentialId &&
+      this.credRefresh
+    ) {
+      try {
+        const fresh = await this.credRefresh.ensureFresh(
+          args.sandboxKey.orgId,
+          auth.refreshBack.credentialId,
+        );
+        auth = { ...auth, secret: fresh };
+      } catch (err) {
+        if (err instanceof CredentialNeedsReauthError) {
+          throw new EngineAuthError('Claude login expired — reconnect it in Settings.');
+        }
+        this.logger.warn(
+          `pre-turn claude refresh failed (continuing with stored secret): ${err}`,
+        );
+      }
     }
+    if (auth && auth !== args.auth) args = { ...args, auth };
 
     const turnId = randomUUID();
     const keys = turnKeys(turnId);
@@ -122,6 +164,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    `delivered_at` off this registration — so the row MUST be durable: await + rethrow, aborting the
     //    turn on failure (the message stays pending; the delivery pump retries) rather than claiming a
     //    hand-off that can't be re-attached.
+    let registered = false;
     if (args.turnMeta) {
       try {
         await this.registry.register({
@@ -135,6 +178,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
           // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
           ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
         });
+        registered = true;
       } catch (err) {
         if (err instanceof BrainTurnAlreadyRunningError) {
           // The single-running-brain-turn guard rejected us: a brain turn is already live for this job. Do
@@ -155,9 +199,38 @@ export class RedisEngineRunner implements EngineRunnerPort {
     //    (registered row + a running engine; boot re-attach never re-kicks). Only when the row exists.
     const onKicked =
       args.turnMeta && args.onTurnRegistered ? () => args.onTurnRegistered!(turnId) : undefined;
-    const result = await this.runAttached(turnId, keys, args, target.containerId, target, onKicked);
-    await this.persistAuthRefresh(args, result);
-    return result;
+    // App-mode in-sandbox git reads its token from a host-refreshed file (mid-turn refresh). Seed it fresh
+    // at spawn — the exec env is frozen for the turn's lifetime, so the file (not the env) carries rolls.
+    if (
+      target.gitAuth?.mode === 'app' &&
+      target.gitAuth.token &&
+      args.turnMeta?.jobId &&
+      this.sandboxProvider?.writeGithubTokenFile
+    ) {
+      await this.sandboxProvider
+        .writeGithubTokenFile(args.turnMeta.jobId, target.gitAuth.token)
+        .catch((err) => this.logger.warn(`seed github-token file failed: ${err}`));
+    }
+
+    try {
+      const result = await this.runAttached(
+        turnId,
+        keys,
+        args,
+        target.containerId,
+        target,
+        onKicked,
+        registered,
+      );
+      await this.persistAuthRefresh(args, result);
+      return result;
+    } catch (err) {
+      // `run()` callers do not know the generated turn id when the turn throws, so any no-result claim
+      // stored under that id is unreachable. Reattach callers pass the turn id explicitly and still consume
+      // their error-path claim via consumeClaim(turnId).
+      this.lastClaim.delete(turnId);
+      throw err;
+    }
   }
 
   /**
@@ -190,12 +263,31 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
   ): Promise<EngineRunResult> {
     this.logger.log(`re-attaching to in-flight turn ${turnId} (container ${containerId})`);
-    return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined);
+    return this.runAttached(turnId, turnKeys(turnId), args, containerId, undefined, undefined, true);
   }
 
   /** True while this process has a live attach loop on `turnId` (guards the promotion re-attach sweep). */
   isAttached(turnId: string): boolean {
     return this.attached.has(turnId);
+  }
+
+  /** Read+delete this turn's finalize outcome — for the error path where no `result` carries `claimed`. */
+  consumeClaim(turnId: string): boolean | undefined {
+    const v = this.lastClaim.get(turnId);
+    this.lastClaim.delete(turnId);
+    return v;
+  }
+
+  /** Atomically claim the in-process attach slot for a turn (single synchronous check-and-add ⇒ no TOCTOU). */
+  tryClaimAttach(turnId: string): boolean {
+    if (this.attached.has(turnId)) return false;
+    this.attached.add(turnId);
+    return true;
+  }
+
+  /** Release an attach slot claimed by {@link tryClaimAttach} when the caller bails before attaching. */
+  releaseAttach(turnId: string): void {
+    this.attached.delete(turnId);
   }
 
   /**
@@ -230,10 +322,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
     containerId: string,
     kickTarget: NonNullable<RunEngineArgs['target']> | undefined,
-    onKicked?: () => void,
+    onKicked: (() => void) | undefined,
+    wasRegistered: boolean,
   ): Promise<EngineRunResult> {
     return this.activity.thread(containerId, async () => {
       const done = { value: false };
+      let result: EngineRunResult | undefined;
       // Distinguishes "the TURN concluded" (final/error frame, idle-timeout verdict) from "WE lost the
       // tail" (our Redis client died — typically this process's own shutdown during a watch respawn).
       // Only a concluded turn may finalize the registry row + reclaim the streams: they are exactly the
@@ -261,10 +355,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         const toolsLoop = args.toolBridge
           ? this.consumeTools(turnId, keys, args.toolBridge, done)
           : Promise.resolve();
-        const [result] = await Promise.all([
-          this.tailEvents(turnId, keys, containerId, args, done),
-          toolsLoop,
-        ]);
+        result = (
+          await Promise.all([this.tailEvents(turnId, keys, containerId, args, done), toolsLoop])
+        )[0];
+        result.turnId = turnId;
         return result;
       } catch (err) {
         detached = err instanceof EngineDetachedError;
@@ -277,9 +371,20 @@ export class RedisEngineRunner implements EngineRunnerPort {
             `turn ${turnId}: tail detached mid-turn — leaving registry row + streams for boot re-attach`,
           );
         } else {
-          await this.registry
+          // finalize deletes the row and reports whether THIS caller deleted it. An UNREGISTERED turn has no
+          // row to race on ⇒ it is always the sole finisher ⇒ claimed = true regardless of affected count.
+          const deletedByUs = await this.registry
             .finalize(turnId, 'done')
-            .catch((err) => this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`));
+            .catch((err) => {
+              this.logger.debug(`turn ${turnId}: finalize failed (ignored): ${err}`);
+              return true; // finalize error ⇒ default to claimed: dropping a real transcript is worse than a rare dup
+            });
+          const won = wasRegistered ? deletedByUs : true;
+          // Carry the outcome on `result` when there is one; only the error path (no `result`) needs the
+          // Map, and consumeClaim() drains that entry. Stashing a result-carried outcome would leak an
+          // entry per turn forever (the success paths gate on `result.claimed` and never consume it).
+          if (result) result.claimed = won;
+          else this.lastClaim.set(turnId, won);
           // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
           // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
           await this.redis
@@ -556,14 +661,33 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // remote from inside the sandbox. The GIT_CONFIG_* extraheader keeps the token out of argv/.git/config
     // (same mechanism as host git + SandboxRefsService); GITHUB_TOKEN/GH_TOKEN let it drive the API/`gh`.
     // GIT_TERMINAL_PROMPT=0 makes a missing/expired token fail fast instead of hanging on a prompt.
-    if (target?.gitAuth?.token) {
-      const { gitUrl, token } = target.gitAuth;
-      Object.assign(e, gitAuthEnv(gitUrl, token));
+    if (target?.gitAuth) {
+      const { gitUrl, token, apiToken, mode } = target.gitAuth;
+      if (mode === 'app') {
+        // App mode: token rides a host-refreshed FILE via a url-scoped credential helper, not a baked header.
+        Object.assign(e, gitCredHelperEnv(gitUrl, GITHUB_TOKEN_FILE));
+      } else {
+        Object.assign(e, gitAuthEnv(gitUrl, token));
+      }
       if (e.GIT_CONFIG_COUNT) {
-        // Auth was actually injected (https github url) — expose the raw token + fail-fast prompt guard.
+        // Auth config was actually injected (https github url) — fail fast instead of prompting/falling back
+        // to ambient helpers. Only expose GH_TOKEN/GITHUB_TOKEN when a live token exists.
         e.GIT_TERMINAL_PROMPT = '0';
-        e.GITHUB_TOKEN = token;
-        e.GH_TOKEN = token;
+        // NOTE: GITHUB_TOKEN/GH_TOKEN are baked from `apiToken ?? token` (identity mode may route the API
+        // token to the PAT/App-bot credential independently of the transport `token`) into this frozen exec
+        // env and are NOT refreshed mid-turn. Only `git` survives the ~hourly expiry, via the host-refreshed
+        // credential FILE above. When the resolved API token is a PAT (human-identity turns), it does not
+        // expire hourly, so the mid-turn `gh`-expiry caveat below doesn't apply. When it's an App installation
+        // token (bot-identity turns, or app auth-mode with no identity override), `gh` and any
+        // GITHUB_TOKEN-driven API call read this static value, guaranteed correct only for the token's
+        // initial lifetime (normal/short turns) — on a >1h turn app-mode in-sandbox `gh` can hit an expired
+        // token while `git` keeps working — accepted for now (routing `gh` through the refreshed file needs
+        // an in-sandbox wrapper; out of scope).
+        const ghToken = apiToken ?? token;
+        if (ghToken) {
+          e.GITHUB_TOKEN = ghToken;
+          e.GH_TOKEN = ghToken;
+        }
       }
       // Attribute the in-sandbox agent's commits to the PAT's own GitHub account (resolved host-side by
       // GitIdentityService) instead of git's ambient default.

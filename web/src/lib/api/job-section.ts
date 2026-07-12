@@ -2,9 +2,11 @@ import type { InboxThread } from "./inbox";
 
 export type JobSection =
   | "planning"
+  | "reviewing"
   | "blocked"
   | "awaiting"
   | "building"
+  | "master_review"
   | "amending"
   | "ready_to_ship"
   | "done"
@@ -12,10 +14,12 @@ export type JobSection =
   | "merged";
 
 export const SECTION_ORDER: JobSection[] = [
-  "planning",
   "blocked",
+  "planning",
+  "reviewing",
   "awaiting",
   "building",
+  "master_review",
   "amending",
   "ready_to_ship",
   "done",
@@ -25,9 +29,11 @@ export const SECTION_ORDER: JobSection[] = [
 
 export const SECTION_LABEL: Record<JobSection, string> = {
   planning: "Planning",
+  reviewing: "Reviewing",
   blocked: "Blocked",
   awaiting: "Awaiting Approval",
   building: "Building",
+  master_review: "Master Review",
   amending: "Amending",
   ready_to_ship: "Ready to Ship",
   done: "Done",
@@ -39,9 +45,12 @@ export const SECTION_LABEL: Record<JobSection, string> = {
 export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
     case "planning":
-    case "plan_review":
     case "triaging":
       return "planning";
+    // A hands-off, system-owned phase (Codex reviewing the plan + the review→revise loop): its own
+    // section so it reads as "step away", separate from Planning's you're-in-the-loop grilling.
+    case "plan_review":
+      return "reviewing";
     case "blocked":
       return "blocked";
     case "awaiting_approval":
@@ -51,6 +60,9 @@ export function sectionOf(t: InboxThread): JobSection | null {
     case "awaiting_ship_review":
       return "ready_to_ship";
     case "running":
+      // The ship-time Codex master review (after all builder threads) keeps the `running` status;
+      // surface it as its own section rather than an indistinct "Building" row.
+      if (t.activity === "master_review") return "master_review";
       // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
       // (showing the `running` working spinner) rather than teleporting it to "Building".
       return t.shipping ? "ready_to_ship" : "building";

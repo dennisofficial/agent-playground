@@ -14,8 +14,10 @@ import {
   ThreadEntity,
 } from '../app/persistence/entities';
 import type { ThreadTerminalRecord } from '../app/persistence/entities/thread.entity';
+import { QUERY_FORMATS, renderRows, type QueryFormat } from './format';
 import { resolveJailed } from './path-jail';
 import { introspectSchema, runReadOnlyQuery } from './query';
+import { redactSecrets } from './redact';
 import {
   findSandboxDir,
   grepFiles,
@@ -54,6 +56,25 @@ function requireNonEmptyString(value: unknown, name: string): string {
   return value;
 }
 
+function parseQueryFormat(value: unknown): QueryFormat {
+  if (value === undefined) return 'json';
+  if (
+    typeof value === 'string' &&
+    QUERY_FORMATS.includes(value as QueryFormat)
+  ) {
+    return value as QueryFormat;
+  }
+  throw new Error(`format must be one of: ${QUERY_FORMATS.join(', ')}`);
+}
+
+function parseQueryLimit(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error('limit must be a finite number');
+  }
+  return Math.floor(value);
+}
+
 async function loadJob(ctx: ToolCtx, jobId: unknown): Promise<JobEntity> {
   const id = requireNonEmptyString(jobId, 'jobId');
   const job = await ctx.ds.getRepository(JobEntity).findOne({ where: { id } });
@@ -87,16 +108,42 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
 
 async function atlasQuery(
   ctx: ToolCtx,
-  args: { sql: string; params?: unknown[] },
+  args: {
+    sql: string;
+    params?: unknown[];
+    format?: unknown;
+    limit?: unknown;
+  },
 ): Promise<unknown> {
   const sql = requireNonEmptyString(args.sql, 'sql');
   // Stamp the SQL BEFORE running so a guard rejection / timeout / permission error still lands the SQL in
   // main.ts's failed-query audit line.
   ctx.audit.sql = sql;
+  const format = parseQueryFormat(args.format);
+  const limit = parseQueryLimit(args.limit);
   const params = Array.isArray(args.params) ? args.params : [];
-  const { rows, rowCount, truncated } = await runReadOnlyQuery(ctx.ds, sql, params);
+  const { rows, rowCount, truncated } = await runReadOnlyQuery(
+    ctx.ds,
+    sql,
+    params,
+    limit,
+  );
   ctx.audit.rowCount = rowCount;
-  return { rowCount, truncated, rows };
+  if (format === 'json') return { format, rowCount, truncated, rows };
+  // Redact the row OBJECTS before flattening to text. redact.ts's key-name masking (SECRET_KEY_PATTERN)
+  // blanks opaque values in secret-named columns (e.g. `access_token`, `password`), but that key context
+  // is lost once rows are rendered to csv/tsv — the header and value land on separate lines, so the
+  // string-pattern scan main.ts runs on the flattened text can't recover it. Redacting here preserves the
+  // key-name masking for all rendered formats.
+  const redactedRows = redactSecrets(
+    rows as Record<string, unknown>[],
+  ) as Record<string, unknown>[];
+  return {
+    format,
+    rowCount,
+    truncated,
+    text: renderRows(redactedRows, format),
+  };
 }
 
 async function atlasSchema(ctx: ToolCtx): Promise<unknown> {
@@ -364,14 +411,26 @@ export const TOOL_DEFS: Tool[] = [
   {
     name: 'atlas_query',
     description:
-      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results are capped at 1000 rows, run under a 10s statement timeout, and passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n.',
+      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the response shape: json (default, rows array), jsonl, csv, or tsv (rendered text). Large results are auto-written to a file in /playground (you get back a path + preview) — use jsonl/csv for grep/jq/python/duckdb.',
     inputSchema: {
       type: 'object',
       properties: {
-        sql: { type: 'string', description: 'a single read-only SELECT or WITH query' },
+        sql: {
+          type: 'string',
+          description: 'a single read-only SELECT or WITH query',
+        },
         params: {
           type: 'array',
           description: 'optional positional bind params ($1..$n)',
+        },
+        format: {
+          type: 'string',
+          enum: ['json', 'jsonl', 'csv', 'tsv'],
+          description: 'output format; default json',
+        },
+        limit: {
+          type: 'number',
+          description: 'max rows (default 1000, ceiling 50000)',
         },
       },
       required: ['sql'],
@@ -458,7 +517,15 @@ export type ToolHandler = (
 
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   atlas_query: (ctx, args) =>
-    atlasQuery(ctx, args as unknown as { sql: string; params?: unknown[] }),
+    atlasQuery(
+      ctx,
+      args as unknown as {
+        sql: string;
+        params?: unknown[];
+        format?: unknown;
+        limit?: unknown;
+      },
+    ),
   atlas_schema: (ctx) => atlasSchema(ctx),
   atlas_job_overview: (ctx, args) =>
     jobOverview(ctx, args as { jobId: string }),

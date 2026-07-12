@@ -1,11 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
 import type { WireOrgUsage } from "./types";
+import { readUsageCache, removeUsageCache, usePersistUsage } from "./usage-cache";
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -14,6 +16,8 @@ import type { WireOrgUsage } from "./types";
  */
 
 const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
+
+const usageCacheKey = (key: readonly string[]) => key.join(":");
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
@@ -66,6 +70,10 @@ export interface CredentialPresence {
   engineAuthSet: boolean;
   /** An optional Codex coding-engine subscription is set. */
   hasCodex: boolean;
+  /** The org has connected the Atlas GitHub App (a non-null installation id). */
+  hasGithubApp: boolean;
+  /** Which GitHub credential resolves for this org: `pat` (default) or `app`. */
+  githubAuthMode: "pat" | "app";
   llmValidated: boolean;
 }
 
@@ -75,6 +83,115 @@ export function useOrgCredentials(orgId: string) {
     queryFn: () => webJson<CredentialPresence>(`/orgs/${orgId}/credentials`),
     enabled: Boolean(orgId),
     staleTime: 15_000,
+  });
+}
+
+// ── GitHub App (connect the platform Atlas App as an alternative to the per-org PAT) ────────────────
+// One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
+// plus a `githubAuthMode` (pat|app). The App's installation token has its OWN rate-limit pool, sidestepping
+// a human's personal 5,000/hr budget. `configured` reflects whether the platform App env is set server-side;
+// when false the connect affordance hides. Connecting is a redirect flow: `install-url` mints a nonce-backed
+// GitHub install URL, the owner installs, and GitHub redirects back to the settings page (`?githubApp=…`).
+// Every write is owner-only server-side; `status` is member-readable (no secrets).
+
+/** Connect state for the settings card (`GET …/github-app/status`) — never any secret value. */
+export interface GithubAppStatus {
+  /** The platform Atlas App env is configured server-side (app id + key). When false, hide Connect. */
+  configured: boolean;
+  /** This org has a connected installation. */
+  connected: boolean;
+  /** The org's active GitHub credential. */
+  mode: "pat" | "app";
+  /** The connected installation id (plaintext, non-secret); null when not connected. */
+  installationId: string | null;
+  /** The installation's GitHub account login (display) — null when not connected. */
+  account: string | null;
+  /**
+   * Which credential AUTHORS identity-bearing writes (commit author, PR create/comment/review):
+   * `pat` (the human PAT owner) or `app` (the Atlas bot). `null` = unset = default = `pat` (the PAT
+   * owner). Orthogonal to `mode` (which credential authenticates transport/rate-limit traffic).
+   */
+  identityMode: "pat" | "app" | null;
+}
+
+export function useGithubAppStatus(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgGithubAppStatus(orgId),
+    queryFn: () => webJson<GithubAppStatus>(`/orgs/${orgId}/github-app/status`),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * Owner-only: mint the org's single-use GitHub App install URL. Does not persist anything — the install
+ * lands on GitHub's redirect back to the settings page, which the backend callback verifies + stores.
+ */
+export function useGithubAppInstallUrl(orgId: string) {
+  return useMutation({
+    mutationFn: () =>
+      webJson<{ url: string }>(`/orgs/${orgId}/github-app/install-url`, {
+        method: "POST",
+      }),
+  });
+}
+
+/**
+ * Owner-only: switch the resolved GitHub credential between `pat` and `app`. `app` requires a connected
+ * installation server-side. Invalidates presence + status (the mode drives which credential authenticates)
+ * and the session (mode can flip the onboarding checklist).
+ */
+export function useSetGithubAuthMode(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: "pat" | "app") =>
+      webJson<{ ok: true; mode: "pat" | "app" }>(`/orgs/${orgId}/github-app/mode`, {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/**
+ * Owner-only: set which credential AUTHORS identity-bearing writes (commit author, PR create/comment/
+ * review) — `pat` (the human PAT owner) or `app` (the Atlas bot). Permissive: the value is inert unless
+ * the resolver's fallback chain lands on it, so any valid enum is accepted. Invalidates presence + status
+ * (the choice surfaces on both).
+ */
+export function useSetGithubIdentityMode(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (identity: "pat" | "app") =>
+      webJson<{ ok: true; identity: "pat" | "app" }>(`/orgs/${orgId}/github-app/identity`, {
+        method: "PUT",
+        body: JSON.stringify({ identity }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+    },
+  });
+}
+
+/**
+ * Owner-only: disconnect the App — clears the installation and falls back to `pat` mode. Invalidates
+ * presence + status + session (the org may fall back onto its PAT, or lose GitHub access if it had none).
+ */
+export function useDisconnectGithubApp(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      webJson<{ ok: true }>(`/orgs/${orgId}/github-app`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
   });
 }
 
@@ -157,7 +274,9 @@ export function useAddClaudeCredential(orgId: string) {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
+    onSuccess: (credential) => {
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credential.id)));
+      if (credential.isSelected) removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -176,6 +295,7 @@ export function useSelectClaudeCredential(orgId: string) {
         body: JSON.stringify({ credentialId }),
       }),
     onSuccess: () => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -193,7 +313,9 @@ export function useDeleteClaudeCredential(orgId: string) {
       webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/${credentialId}`, {
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onSuccess: (_result, credentialId) => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -237,16 +359,24 @@ export function useCodexAccount(orgId: string, enabled = true) {
  * means "unknown right now".
  */
 export function useOrgUsage(orgId: string) {
-  return useQuery({
+  const cacheKey = useMemo(() => usageCacheKey(qk.orgUsage(orgId)), [orgId]);
+  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
+  const query = useQuery({
     queryKey: qk.orgUsage(orgId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
     staleTime: 30_000,
+    // Seed the last-known value from localStorage so the ring paints instantly on mount; its known age still
+    // lets `staleTime` fire a refetch when it's stale.
+    initialData: seed?.data,
+    initialDataUpdatedAt: seed?.at,
     // Re-enable focus refetch (the app disables it globally) so the documented
     // backstop is real: with the poll dropped, this is how a client on an instance
     // that missed the single-process SSE push recovers a stale ring.
     refetchOnWindowFocus: true,
   });
+  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
+  return query;
 }
 
 /**
@@ -255,13 +385,22 @@ export function useOrgUsage(orgId: string) {
  * {@link useOrgUsage} — always 200, `ok:false` just means "unknown right now". Do NOT call for setup tokens.
  */
 export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
-  return useQuery({
+  const cacheKey = useMemo(
+    () => usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)),
+    [orgId, credentialId],
+  );
+  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
+  const query = useQuery({
     queryKey: qk.orgCredentialUsage(orgId, credentialId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/claude-credentials/${credentialId}/usage`),
     enabled: Boolean(orgId) && Boolean(credentialId) && enabled,
     staleTime: 180_000,
     refetchInterval: 180_000,
+    initialData: seed?.data,
+    initialDataUpdatedAt: seed?.at,
   });
+  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
+  return query;
 }
 
 /**

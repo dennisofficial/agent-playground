@@ -14,7 +14,7 @@ export interface PromptCtx {
   threadType?: string | null;
   /** Which WORKER turn this prompt is for. Selects whether batch-only host-tool instructions render.
    *  Absent ⇒ treated as 'batch' (backward-compatible with bare renderAgentPrompt calls). */
-  turnPhase?: 'batch' | 'commit' | 'gate';
+  turnPhase?: 'batch' | 'commit';
   /** User/org-specific settings woven into the prompt. */
   settings?: {
     /** Standing operator/org instructions appended to the assembled prompt when present. */
@@ -33,5 +33,7 @@ export interface PromptCtx {
      * Absent/empty on a repo with nothing provisioned yet → the group prints "nothing recorded yet".
      */
     workspaceProfile?: string | null;
+    /** Per-job AUTO-APPROVE is ON — the brain runs autonomously (plan & ship gates auto-advance, no human). */
+    autoApprove?: boolean;
   };
 }

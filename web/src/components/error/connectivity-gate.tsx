@@ -1,27 +1,28 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { OfflineIndicator } from "@/components/error/offline-indicator";
 import { ReconnectingBanner } from "@/components/error/reconnecting-banner";
-import { ServerUnreachable } from "@/components/error/server-unreachable";
 import { useConnectivity } from "@/lib/api/connectivity";
 
 /**
- * Surfaces global backend-connectivity loss while the operator is mid-session. Mounted inside
- * `PrivateGuard` + `ChannelProvider` (so the SSE subscription stays alive through an outage and its
- * `onopen` helps prove recovery). A sustained outage reuses the full <ServerUnreachable> screen; a
- * transient blip shows the lightweight <ReconnectingBanner> over the shell.
+ * Surfaces global backend-connectivity loss while the operator is mid-session. The shell + Composer
+ * stay mounted through the whole outage so the operator's in-progress message is never destroyed: a
+ * transient blip shows the accent <ReconnectingBanner>, and a sustained outage shows the persistent red
+ * <OfflineIndicator> pill — the connectivity store keeps probing and auto-recovers underneath. This gate
+ * never takes over the screen.
  *
- * The auth-driven <ServerUnreachable> (PrivateGuard, on `AuthState.backendUnreachable`) still covers
- * boot/auth-call failures. At most one screen ever mounts: the guard short-circuits *before* this gate,
- * so if auth is unreachable the gate never renders.
+ * The auth-driven <ServerUnreachable> (PrivateGuard, on `AuthState.backendUnreachable`) still covers the
+ * boot/first-render case where no session was ever established — that full-screen takeover is correct
+ * there and is unaffected by this gate.
  */
 export function ConnectivityGate({ children }: { children: ReactNode }) {
   const status = useConnectivity();
-  if (status === "offline") return <ServerUnreachable />;
   return (
     <>
       {children}
       {status === "reconnecting" ? <ReconnectingBanner /> : null}
+      {status === "offline" ? <OfflineIndicator /> : null}
     </>
   );
 }

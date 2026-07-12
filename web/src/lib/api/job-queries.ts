@@ -26,6 +26,7 @@ import {
   postReviewComments,
   removeJobDependency,
   renameJob,
+  setAutoApprove,
   retryJob,
   retryTurn,
   sayMessage,
@@ -41,7 +42,7 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { WebAttachmentsCard, WebReviewCommentsCard } from "./types";
+import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -400,6 +401,21 @@ export function useRemoveJobDependency(ref: JobRef) {
   });
 }
 
+/** Removes EVERY current blocker edge in one go (the kebab "Unblock" and the conversation-pane blocked
+ *  overlay share this) — the backend has no batch endpoint, so it fires one `DELETE …/dependencies/:id`
+ *  per blocker. Once the last edge is gone the backend flips the job off `blocked` and wakes its brain. */
+export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
 /** Answer a formal `ask_question` card. Refreshes the conversation (the card flips to answered + the
  *  brain's next turn lands). */
 export function useAnswerQuestion(ref: JobRef) {
@@ -503,6 +519,17 @@ export function useRenameJob(ref: JobRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
+  });
+}
+
+/** Flip the job's auto-approve flag. Invalidate the pipeline so the toggle reflects immediately (the flag
+ *  lives on the pipeline job); the realtime stream may also refresh it, but the explicit invalidate wins. */
+export function useSetAutoApprove(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => setAutoApprove(ref, enabled),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 

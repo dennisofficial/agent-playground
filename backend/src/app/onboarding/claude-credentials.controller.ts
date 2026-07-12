@@ -19,7 +19,7 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import {
   buildAuthorizeUrl,
-  DEFAULT_CLAUDE_OAUTH_CONFIG,
+  buildClaudeOAuthConfig,
   exchangeCode,
   generatePkce,
   type ClaudeOAuthConfig,
@@ -69,15 +69,7 @@ export class ClaudeCredentialsController {
   ) {}
 
   private config(): ClaudeOAuthConfig {
-    return {
-      ...DEFAULT_CLAUDE_OAUTH_CONFIG,
-      authorizeUrl:
-        this.env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ??
-        DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
-      clientId:
-        this.env.get('CLAUDE_OAUTH_CLIENT_ID') ??
-        DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
-    };
+    return buildClaudeOAuthConfig(this.env);
   }
 
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
@@ -103,18 +95,25 @@ export class ClaudeCredentialsController {
         : await this.createSetupToken(org, body);
 
     let rows = await this.store.list(org.id);
+    let usageInvalidated = false;
     if (rows.length === 1) {
       const changed = await this.store.setSelected(org.id, id);
-      if (changed) await this.usageService.invalidate(org.id);
+      if (changed) {
+        await this.usageService.invalidate(org.id);
+        usageInvalidated = true;
+      }
       rows = await this.store.list(org.id); // re-read so the returned summary's isSelected is accurate
     }
-    await this.onboarding.tryActivate(org.id);
 
     const created = rows.find((row) => row.id === id);
     if (!created)
       throw new Error(
         `claude credential ${id} vanished immediately after create`,
       );
+    if (created.isSelected && !usageInvalidated) {
+      await this.usageService.invalidate(org.id);
+    }
+    await this.onboarding.tryActivate(org.id);
     return created;
   }
 

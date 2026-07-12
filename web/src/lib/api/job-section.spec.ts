@@ -20,6 +20,7 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     shipping: false,
     createdBy: null,
     blockedBy: [],
+    blockedSeedMessage: null,
     org: { id: "org1", slug: "org1", name: "Org One" },
     repo: { id: "repo1", name: "repo-one" },
     ...overrides,
@@ -28,13 +29,15 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
 
 describe("sectionOf", () => {
   it("maps planning-family statuses to planning", () => {
-    for (const status of [
-      "planning",
-      "plan_review",
-      "triaging",
-    ] as JobStatus[]) {
+    for (const status of ["planning", "triaging"] as JobStatus[]) {
       expect(sectionOf(makeThread({ status }))).toBe("planning");
     }
+  });
+
+  it("maps plan_review to its own hands-off reviewing section", () => {
+    expect(
+      sectionOf(makeThread({ status: "plan_review" as JobStatus })),
+    ).toBe("reviewing");
   });
 
   it("maps awaiting_approval to awaiting and awaiting_ship_review to ready_to_ship", () => {
@@ -81,6 +84,26 @@ describe("sectionOf", () => {
     expect(sectionOf(makeThread({ status: "running", shipping: false }))).toBe(
       "building",
     );
+  });
+
+  it("a running job in master_review activity lands in master_review, not building", () => {
+    expect(
+      sectionOf(
+        makeThread({ status: "running", activity: "master_review" }),
+      ),
+    ).toBe("master_review");
+  });
+
+  it("master_review activity takes precedence over the shipping branch", () => {
+    expect(
+      sectionOf(
+        makeThread({
+          status: "running",
+          activity: "master_review",
+          shipping: true,
+        }),
+      ),
+    ).toBe("master_review");
   });
 
   it("done with no PR lands in done", () => {
@@ -131,8 +154,8 @@ describe("groupThreadsBySection", () => {
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups.map((g) => g.section)).toEqual([
-      "planning",
       "blocked",
+      "planning",
       "building",
       "merged",
     ]);
@@ -149,11 +172,23 @@ describe("groupThreadsBySection", () => {
   it("groups multiple threads sharing a section together", () => {
     const threads = [
       makeThread({ id: "p1", status: "planning" }),
-      makeThread({ id: "p2", status: "plan_review" }),
+      makeThread({ id: "p2", status: "triaging" }),
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups).toEqual([
       { section: "planning", threads: [threads[0], threads[1]] },
+    ]);
+  });
+
+  it("splits plan_review into its own reviewing section, ordered after planning", () => {
+    const threads = [
+      makeThread({ id: "r1", status: "plan_review" }),
+      makeThread({ id: "p1", status: "planning" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual(["planning", "reviewing"]);
+    expect(groups.find((g) => g.section === "reviewing")?.threads).toEqual([
+      threads[0],
     ]);
   });
 
@@ -164,6 +199,20 @@ describe("groupThreadsBySection", () => {
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups.map((g) => g.section)).toEqual(["awaiting", "ready_to_ship"]);
+  });
+
+  it("orders master_review directly after building", () => {
+    const threads = [
+      makeThread({ id: "d1", status: "done", pr: null }),
+      makeThread({ id: "mr1", status: "running", activity: "master_review" }),
+      makeThread({ id: "b1", status: "running" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual([
+      "building",
+      "master_review",
+      "done",
+    ]);
   });
 
   it("orders ready_to_ship between building and done", () => {

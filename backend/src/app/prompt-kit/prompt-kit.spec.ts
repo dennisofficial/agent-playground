@@ -417,8 +417,8 @@ describe('turn-aware WORKER prose — batch-only host-tool instructions gated by
     'Before you call `complete_thread`',
   ];
 
-  it('gate and commit turns carry NO instruction for batch-only host tools', () => {
-    for (const turnPhase of ['gate', 'commit'] as const) {
+  it('commit turns carry NO instruction for batch-only host tools', () => {
+    for (const turnPhase of ['commit'] as const) {
       const out = renderAgentPrompt(Agent.WORKER, { turnPhase });
       for (const marker of BATCH_ONLY_MARKERS) {
         expect(out, `${turnPhase} / ${marker}`).not.toContain(marker);

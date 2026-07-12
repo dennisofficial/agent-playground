@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import type { EngineAuth } from '../engine/engine.types';
+import { Injectable, Logger } from '@nestjs/common';
+import { GitHubAppTokenService } from '../git/github-app-token.service';
+import { GitIdentityService } from '../git/git-identity.service';
+import type { EngineAuth, SandboxGitIdentity } from '../engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { TenantCredentialStore } from './tenant-credential.store';
 
@@ -14,9 +16,13 @@ import { TenantCredentialStore } from './tenant-credential.store';
  */
 @Injectable()
 export class CredentialResolver {
+  private readonly logger = new Logger(CredentialResolver.name);
+
   constructor(
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
+    private readonly appTokens: GitHubAppTokenService,
+    private readonly identities: GitIdentityService,
   ) {}
 
   /** Anthropic key for LLM calls — the org's stored key, or undefined. */
@@ -31,10 +37,68 @@ export class CredentialResolver {
     return (await this.store.read(orgId))?.openaiApiKey;
   }
 
-  /** GitHub token for clone/push/PR — the org's stored PAT, or undefined. */
+  /** The org's GitHub auth mode ('pat' default). Drives whether in-sandbox git uses the file-backed credential helper (app) or a static extraheader (pat). */
+  async githubAuthMode(orgId?: string): Promise<'pat' | 'app'> {
+    if (!orgId) return 'pat';
+    return (await this.store.read(orgId))?.githubAuthMode ?? 'pat';
+  }
+
+  /** GitHub token for clone/push/PR: an installation token for app-mode orgs, else the org PAT, else undefined. NEVER throws — a mint blip yields undefined (same as an absent PAT). */
   async githubToken(orgId?: string): Promise<string | undefined> {
     if (!orgId) return undefined;
-    return (await this.store.read(orgId))?.githubPat;
+    const creds = await this.store.read(orgId);
+    if (!creds) return undefined;
+    if (creds.githubAuthMode === 'app') {
+      if (!creds.githubAppInstallationId) {
+        this.logger.warn(
+          `org ${orgId} is app-mode but has no installation id — falling back to PAT`,
+        );
+        return creds.githubPat;
+      }
+      try {
+        return await this.appTokens.getInstallationToken(
+          creds.githubAppInstallationId,
+        );
+      } catch (e) {
+        this.logger.error(
+          `installation-token mint failed for org ${orgId}: ${(e as Error).message}`,
+        );
+        return undefined;
+      }
+    }
+    return creds.githubPat;
+  }
+
+  /** Identity + matching API token for identity-bearing writes, resolved via the pref+fallback chain (d3). Best-effort/fail-open — never throws; {} means no usable credential (caller omits identity/apiToken). */
+  async githubWriteIdentity(
+    orgId?: string,
+  ): Promise<{ identity?: SandboxGitIdentity; apiToken?: string }> {
+    if (!orgId) return {};
+    const creds = await this.store.read(orgId);
+    if (!creds) return {};
+    const pref = creds.githubIdentityMode ?? 'pat'; // null → pat
+    const order = pref === 'pat' ? (['pat', 'app'] as const) : (['app', 'pat'] as const);
+    for (const cred of order) {
+      if (cred === 'pat' && creds.githubPat) {
+        const human = await this.identities.resolve(creds.githubPat); // memoized GET /user (also validity probe)
+        if (human) return { identity: human, apiToken: creds.githubPat };
+        // PAT present but invalid → try the next credential
+      }
+      if (cred === 'app' && creds.githubAppInstallationId) {
+        try {
+          const [identity, apiToken] = await Promise.all([
+            this.appTokens.appBotIdentity(),
+            this.appTokens.getInstallationToken(creds.githubAppInstallationId),
+          ]);
+          return { identity, apiToken };
+        } catch (e) {
+          this.logger.warn(
+            `app write-identity resolve failed for org ${orgId}: ${(e as Error).message}`,
+          );
+        }
+      }
+    }
+    return {}; // no usable credential — fail-open (q6)
   }
 
   /**

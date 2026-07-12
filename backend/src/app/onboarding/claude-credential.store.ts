@@ -1,7 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrganizationEntity,
@@ -20,6 +25,15 @@ export interface ClaudeCredentialSummary {
   accountEmail: string | null;
   isSelected: boolean;
 }
+
+type DecryptedClaudeCredential = {
+  id: string;
+  kind: 'setup_token' | 'personal';
+  status: 'active' | 'needs_reauth' | 'error';
+  secret: string;
+};
+
+type SelectedClaudeCredential = Omit<DecryptedClaudeCredential, 'status'>;
 
 const LEGACY_SETUP_TOKEN_LABEL = 'Imported setup-token';
 const PG_UNIQUE_VIOLATION = '23505';
@@ -86,11 +100,7 @@ export class ClaudeCredentialStore {
    */
   async getSelectedDecrypted(
     orgId: string,
-  ): Promise<{
-    id: string;
-    kind: 'setup_token' | 'personal';
-    secret: string;
-  } | null> {
+  ): Promise<SelectedClaudeCredential | null> {
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     const selectedId = org?.selected_claude_credential_id;
     if (!selectedId) return null;
@@ -121,14 +131,39 @@ export class ClaudeCredentialStore {
     };
   }
 
+  /**
+   * The org's SELECTED credential's id + last-refresh instant — NO decryption. The driver's auth-halt
+   * classifier reads this to tell a lost-rotation-race (the token was just refreshed elsewhere, so this
+   * turn merely lost the race) from a genuinely dead login. Null when nothing is selected or the pointer
+   * dangles.
+   */
+  async getSelectedRefreshMeta(
+    orgId: string,
+  ): Promise<{ id: string; lastRefreshedAt: Date | null } | null> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const selectedId = org?.selected_claude_credential_id;
+    if (!selectedId) return null;
+    const row = await this.repo.findOne({
+      where: { id: selectedId, org_id: orgId },
+      select: { id: true, last_refreshed_at: true },
+    });
+    if (!row) return null;
+    return { id: row.id, lastRefreshedAt: row.last_refreshed_at };
+  }
+
   /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
   async getDecryptedById(
     orgId: string,
     id: string,
-  ): Promise<{ id: string; kind: 'setup_token' | 'personal'; secret: string } | null> {
+  ): Promise<DecryptedClaudeCredential | null> {
     const row = await this.repo.findOne({ where: { id, org_id: orgId } });
     if (!row) return null;
-    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      secret: this.decryptToSecret(row),
+    };
   }
 
   /** Decrypt one row into the injectable secret shape (raw token, or a `claudeAiOauth` JSON blob). */
@@ -371,6 +406,93 @@ export class ClaudeCredentialStore {
         `advanced claude credential for org=${orgId} id=${credentialId}`,
       );
     }
+  }
+
+  /**
+   * Flag a `personal` credential as needing re-login. Its OWN independent write (not part of any caller
+   * transaction) — the refresh core calls this AFTER its lock transaction has rolled back, so a shared
+   * transaction would discard the flag along with the aborted refresh.
+   */
+  async markNeedsReauth(
+    orgId: string,
+    credentialId: string,
+    reason?: string,
+  ): Promise<void> {
+    await this.repo.update(
+      { id: credentialId, org_id: orgId, kind: 'personal' },
+      { status: 'needs_reauth' },
+    );
+    this.logger.warn(
+      `marked claude credential needs_reauth org=${orgId} id=${credentialId}` +
+        (reason ? ` reason=${reason}` : ''),
+    );
+  }
+
+  /**
+   * Read + row-lock a `personal` credential inside the caller's transaction — the pessimistic row lock is
+   * the cross-instance refresh mutex. Null when the row is missing or isn't `personal`.
+   */
+  async findPersonalUnderLock(
+    m: EntityManager,
+    orgId: string,
+    credentialId: string,
+  ): Promise<{ row: OrgClaudeCredentialEntity; secret: string } | null> {
+    const row = await m.findOne(OrgClaudeCredentialEntity, {
+      where: { id: credentialId, org_id: orgId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!row || row.kind !== 'personal') return null;
+    return { row, secret: this.decryptToSecret(row) };
+  }
+
+  /**
+   * Encrypt + persist a refreshed `claudeAiOauth` blob onto an already-locked row, committing with the
+   * caller's transaction. Throws on a malformed blob (the caller aborts the txn, persisting nothing).
+   */
+  async writeRefreshedWithinTxn(
+    m: EntityManager,
+    row: OrgClaudeCredentialEntity,
+    refreshedSecret: string,
+  ): Promise<void> {
+    const oauth = parseClaudeOauth(refreshedSecret);
+    if (!oauth) {
+      throw new Error('writeRefreshedWithinTxn: malformed refreshed blob');
+    }
+    const key = this.key();
+    row.access_token_enc = encryptSecret(oauth.accessToken, key);
+    row.refresh_token_enc = encryptSecret(oauth.refreshToken, key);
+    row.expires_at = new Date(oauth.expiresAt);
+    row.status = 'active';
+    row.last_refreshed_at = new Date();
+    if (oauth.scopes !== undefined) row.scopes = oauth.scopes.join(' ');
+    if (oauth.subscriptionType !== undefined)
+      row.subscription_type = oauth.subscriptionType;
+    await m.save(row);
+  }
+
+  /**
+   * Every org's SELECTED `personal` credential whose access token expires within `withinMs` — the
+   * proactive-sweep worklist. Only `active`, refreshable (`refresh_token_enc` present) rows qualify.
+   */
+  async listSelectedExpiring(
+    withinMs: number,
+  ): Promise<Array<{ orgId: string; credentialId: string }>> {
+    const rows = await this.repo
+      .createQueryBuilder('c')
+      .innerJoin(
+        OrganizationEntity,
+        'organization',
+        'organization.selected_claude_credential_id = c.id AND organization.id = c.org_id',
+      )
+      .select(['c.id AS id', 'c.org_id AS org_id'])
+      .where('c.kind = :kind', { kind: 'personal' })
+      .andWhere('c.status = :status', { status: 'active' })
+      .andWhere('c.refresh_token_enc IS NOT NULL')
+      .andWhere('c.expires_at < :cutoff', {
+        cutoff: new Date(Date.now() + withinMs),
+      })
+      .getRawMany<{ id: string; org_id: string }>();
+    return rows.map((r) => ({ orgId: r.org_id, credentialId: r.id }));
   }
 }
 

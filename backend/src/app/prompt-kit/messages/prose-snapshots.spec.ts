@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   COMMIT_AND_PUSH_INSTRUCTION,
   renderBatchTask,
-  renderGateTask,
   renderMasterReviewTask,
 } from './batch-task';
 import type { DriverThread } from '../../driver/driver-store.service';
@@ -84,9 +83,4 @@ describe('driver-run turn prose golden snapshots', () => {
     );
   });
 
-  it('renderGateTask', async () => {
-    await expect(
-      renderGateTask(['src/a.ts', 'src/b.ts'], 2, ['prior error text']),
-    ).toMatchFileSnapshot('./__snapshots__/render-gate-task.txt');
-  });
 });

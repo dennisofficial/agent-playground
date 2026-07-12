@@ -55,7 +55,7 @@ import {
   NavigatorApproveButton,
   NavigatorShipButton,
 } from "./spec-approval";
-import { pipelineMainTasks } from "@/lib/api/types";
+import { pipelineAutoApprove, pipelineMainTasks } from "@/lib/api/types";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
@@ -94,6 +94,45 @@ function prNavGlyph(
   return { Icon: GitPullRequest, color: "var(--green)", label: "open" };
 }
 
+/** Compact header switch for the per-job AUTO-APPROVE flag. ON = green/filled (the job is autonomous —
+ *  plan + ship gates auto-advance), OFF = quiet. Disabled on terminal jobs (nothing left to gate). */
+function AutoApproveToggle({
+  on,
+  disabled,
+  onToggle,
+}: {
+  on: boolean;
+  disabled?: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label="Auto-approve plan and ship gates"
+      title={
+        on
+          ? "Auto-approve is ON — plan & ship gates advance without you"
+          : "Auto-approve is OFF — you approve plan & ship gates"
+      }
+      disabled={disabled}
+      onClick={() => onToggle(!on)}
+      data-testid="auto-approve-toggle"
+      className={cn(
+        "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
+        disabled && "cursor-not-allowed opacity-40",
+        on
+          ? "border-green bg-green-soft text-green"
+          : "border-border-2 bg-surface text-faint hover:text-dim",
+      )}
+    >
+      <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
+      Auto
+    </button>
+  );
+}
+
 export interface JobMeta {
   title: string;
   kind: JobKind;
@@ -109,6 +148,9 @@ export interface JobMeta {
   /** This job's live blockers — powers the "Blocked by" header row + detail pane. `[]` unless the job is
    *  actually `blocked` (or was and hasn't refreshed yet). */
   blockedBy?: JobBlocker[];
+  /** The pending seed message a born-blocked job will start on when it unblocks — powers the blocked
+   *  overlay's pending-message preview. null unless the job is `blocked` with a seed. */
+  blockedSeedMessage?: string | null;
 }
 
 /**
@@ -136,6 +178,7 @@ export function Navigator({
   onSelectNode,
   onRename,
   onDelete,
+  onToggleAutoApprove,
   deleting,
   hasOpenPr,
   deleteReady,
@@ -164,6 +207,8 @@ export function Navigator({
   onSelectNode: (node: string) => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
+  /** Flip the per-job auto-approve flag — the header toggle. Absent ⇒ the toggle isn't rendered. */
+  onToggleAutoApprove?: (next: boolean) => void;
   deleting?: boolean;
   /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
    *  inline double-click confirm. */
@@ -183,6 +228,9 @@ export function Navigator({
   // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
   // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
   const isDirectBuild = job?.buildPath === "direct";
+  // AUTO-APPROVE flag — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
+  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the flag still rides along).
+  const autoApprove = pipelineAutoApprove(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -265,6 +313,15 @@ export function Navigator({
             {STATUS_META[st].label}
           </span>
           <div className="flex-1" />
+          {onToggleAutoApprove ? (
+            <AutoApproveToggle
+              on={autoApprove}
+              disabled={
+                st === "done" || st === "cancelled" || st === "deleting"
+              }
+              onToggle={onToggleAutoApprove}
+            />
+          ) : null}
           {onDelete || onRename ? (
             <JobMenu
               onStartRename={onRename ? () => setEditing(true) : undefined}

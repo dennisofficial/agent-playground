@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import {
   useSay,
@@ -8,7 +8,10 @@ import {
   useSendReviewComments,
   useStop,
 } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
+import { ThreadApiError, type JobRef } from "@/lib/api/job-api";
+import type { PendingAttachment } from "@/lib/api/job-queries";
+import { useConnectivity } from "@/lib/api/connectivity";
+import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -16,7 +19,8 @@ import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
 import { CommentTray } from "./comment-tray";
-import { useReviewComments } from "./review-comments";
+import { QueuedTray } from "./queued-tray";
+import { useReviewComments, type ReviewComment } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
@@ -56,6 +60,7 @@ export function Composer({
   onHeightChange,
   footer,
   readOnly = false,
+  blocked = false,
   variant = "composer",
 }: {
   jobRef: JobRef;
@@ -69,6 +74,10 @@ export function Composer({
   footer?: ComposerFooter | null;
   /** Read-only lane (not Main): disable the input + Send, keep the footer live. */
   readOnly?: boolean;
+  /** The job is `blocked` on another job: fully disable the composer (a send would just 400) and swap the
+   *  placeholder — the operator unblocks from the conversation-pane overlay above. Same inert treatment as
+   *  `readOnly`, different copy. */
+  blocked?: boolean;
   /**
    * `"composer"` (default) — the full interactive/read-only composer (input row + footer). `"subagent"` —
    * a FOOTER-ONLY bar for a subagent's read-only detail pane: no input, no Send/attach; the left shows a
@@ -78,12 +87,19 @@ export function Composer({
 }) {
   // Footer-only mode for a subagent's read-only detail pane (no input/attach/send).
   const isSubagent = variant === "subagent";
+  // A blocked job's composer is inert for the same reasons a read-only lane's is: no input, no Send, no
+  // attach/paste — the only difference is the placeholder copy (and that the operator unblocks above).
+  const inert = readOnly || blocked;
   const say = useSay(jobRef);
   const sayWithAttachments = useSayWithAttachments(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
-  const [text, setText] = useState("");
+  const connectivity = useConnectivity();
+  // Per-Job draft text — held in the external store (not local state) so it survives Job-switch and reload
+  // instead of bleeding between Jobs. Read-only/subagent lanes force value "" and never call setText.
+  const text = useComposerDraft(jobRef).text;
+  const setText = (t: string) => composerStore.setText(jobRef, t);
   // `attach` is absent in the subagent variant. Default `attachments` to `[]` so the pre-return computations
   // (showStop, button-disabled) stay safe; the fn refs are only invoked from input handlers that don't render.
   const {
@@ -104,7 +120,7 @@ export function Composer({
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    if (readOnly) return;
+    if (inert) return;
     if (addPastedImages?.(e)) e.preventDefault();
   }
 
@@ -115,7 +131,7 @@ export function Composer({
   const { data: threads } = useAllJobs();
   const realtimeIdle =
     threads?.find((t) => t.id === jobRef.jobId)?.needsYou ?? false;
-  const turnActive = !readOnly && liveActive && !realtimeIdle;
+  const turnActive = !inert && liveActive && !realtimeIdle;
   // Stop replaces Send only when a turn is running AND the composer is empty (no pending text/comments to
   // send). With text present, the button is Send — which now STEERS the running turn server-side. Never on
   // a read-only lane.
@@ -134,6 +150,12 @@ export function Composer({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  // The tree does not remount on Job switch, so flush the outgoing Job's debounced sessionStorage write
+  // immediately. The store's pagehide listener covers reloads that happen inside the debounce window.
+  useLayoutEffect(() => {
+    return () => composerStore.flushDraft(jobRef.jobId);
+  }, [jobRef.jobId]);
+
   // Measure the overlay so the transcript spacer threads it as the box grows/shrinks.
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -146,32 +168,100 @@ export function Composer({
   }, [onHeightChange]);
 
   function send() {
-    if (readOnly) return;
+    if (inert) return;
     const trimmed = text.trim();
-    if (comments.length > 0) {
-      sendReviewComments.mutate({
-        items: comments.map((c) => ({
-          file: c.file.label,
-          quote: c.quote,
-          note: c.note || undefined,
-        })),
-        message: trimmed || undefined,
+
+    // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
+    // composer so the operator can keep composing. The <OutboxFlusher> drains it FIFO on reconnect.
+    const offline = connectivity !== "online";
+    if (offline) {
+      if (comments.length === 0 && attachments.length === 0 && !trimmed) return;
+      // The flusher drains each queued item with mutually-exclusive precedence (comments → attachments →
+      // text): a single item carrying BOTH comments and attachments would only send its comments and
+      // silently drop the attachments. So when comments are present, enqueue any attachments as their OWN
+      // outbox message (text rides with the comments) so both are delivered on reconnect.
+      const now = Date.now();
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: now,
+        text: trimmed,
+        comments,
+        attachments: comments.length > 0 ? [] : attachments,
       });
+      if (comments.length > 0 && attachments.length > 0) {
+        composerStore.enqueue(jobRef, {
+          id: crypto.randomUUID(),
+          createdAt: now + 1, // orders after the comments item in the FIFO drain
+          text: "",
+          comments: [],
+          attachments,
+        });
+      }
+      // Drop the chips/tray WITHOUT revoking blob URLs — the queued chip still previews them (see
+      // use-attachments' clear()). Only the draft TEXT is cleared here, not the whole draft, so
+      // clearDraft's outbox-preserving re-persist isn't needed on this path.
       clearComments();
-      setText("");
+      clearAttachments?.();
+      composerStore.setText(jobRef, "");
+      return;
+    }
+
+    // Mid-flight fallback: an ONLINE send's mutation can still hit a network drop between the status
+    // check above and the POST landing. Most `ThreadApiError`s mean the server actually answered (a real
+    // 4xx/5xx), so leave them to the mutation's own error handling. The backend's leader-handoff 503 is
+    // explicitly transient ("retry momentarily"), so preserve it in the outbox instead of losing the cleared
+    // composer draft.
+    const reEnqueueOnNetworkError = (
+      e: Error,
+      fields: { text: string; comments: ReviewComment[]; attachments: PendingAttachment[] },
+    ) => {
+      if (e instanceof ThreadApiError && e.status !== 503) return;
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        ...fields,
+      });
+    };
+
+    if (comments.length > 0) {
+      sendReviewComments.mutate(
+        {
+          items: comments.map((c) => ({
+            file: c.file.label,
+            quote: c.quote,
+            note: c.note || undefined,
+          })),
+          message: trimmed || undefined,
+        },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments, attachments: [] }),
+        },
+      );
+      clearComments();
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (attachments.length > 0) {
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed on composer unmount (the hook's createdUrlsRef backstop).
-      sayWithAttachments.mutate({ text: trimmed, attachments });
+      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
+      sayWithAttachments.mutate(
+        { text: trimmed, attachments },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
+        },
+      );
       clearAttachments?.();
-      setText("");
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (!trimmed) return;
-    say.mutate(trimmed);
-    setText("");
+    say.mutate(trimmed, {
+      onError: (e) =>
+        reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
+    });
+    composerStore.clearDraft(jobRef.jobId);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -183,6 +273,10 @@ export function Composer({
 
   const modelLabel = formatModelLabel(footer?.model, footer?.engine);
   const effortLabel = formatEffort(footer?.effort);
+  // Sustained mid-session outage: glow the Composer red so the operator sees the box is still theirs
+  // (the message is preserved) while the connectivity store keeps reconnecting. Display-only — typing
+  // and Send stay enabled (offline SEND behavior is handled separately).
+  const showOffline = connectivity === "offline" && !readOnly && !isSubagent;
 
   return (
     <div
@@ -193,40 +287,48 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        {readOnly || isSubagent ? null : <CommentTray />}
+        {inert || isSubagent ? null : (
+          <>
+            <QueuedTray jobRef={jobRef} />
+            <CommentTray />
+          </>
+        )}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
-            boxShadow:
-              "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
+            boxShadow: showOffline
+              ? "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06), 0 0 0 1.5px var(--red-line), 0 0 18px color-mix(in srgb, var(--red) 22%, transparent)"
+              : "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
-          {!readOnly && !isSubagent ? (
+          {!inert && !isSubagent ? (
             <AttachmentTray
               attachments={attachments}
               onRemove={removeAttachment ?? (() => {})}
               className="mb-2"
             />
           ) : null}
-          {!readOnly && !isSubagent && attachError ? (
+          {!inert && !isSubagent && attachError ? (
             <div className="mb-2 text-[11px] text-red">{attachError}</div>
           ) : null}
           {isSubagent ? null : (
-          <div className={`flex items-start gap-2.5${readOnly ? " opacity-60" : ""}`}>
+          <div className={`flex items-start gap-2.5${inert ? " opacity-60" : ""}`}>
             <textarea
               ref={textareaRef}
-              value={readOnly ? "" : text}
+              value={inert ? "" : text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               rows={1}
-              disabled={readOnly}
+              disabled={inert}
               placeholder={
-                readOnly
-                  ? "Read-only — steer Atlas from the Conversation"
-                  : comments.length > 0
-                    ? "Add a message with your comments (optional)…"
-                    : placeholder
+                blocked
+                  ? "This job is blocked — unblock it above to continue"
+                  : readOnly
+                    ? "Read-only — steer Atlas from the Conversation"
+                    : comments.length > 0
+                      ? "Add a message with your comments (optional)…"
+                      : placeholder
               }
               className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
             />
@@ -246,7 +348,7 @@ export function Composer({
                 type="button"
                 onClick={send}
                 disabled={
-                  readOnly ||
+                  inert ||
                   (!text.trim() &&
                     comments.length === 0 &&
                     attachments.length === 0) ||
@@ -256,7 +358,13 @@ export function Composer({
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                 aria-label="Send"
-                title={readOnly ? "Read-only lane" : undefined}
+                title={
+                  blocked
+                    ? "This job is blocked"
+                    : readOnly
+                      ? "Read-only lane"
+                      : undefined
+                }
               >
                 <ArrowUp size={15} strokeWidth={2.4} />
               </button>
@@ -274,15 +382,15 @@ export function Composer({
               <>
                 {/* Plan pill: static design affordance (not wired). The ＋ beside it IS wired (attach/paste). */}
                 <span
-                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${readOnly ? " opacity-60" : ""}`}
+                  className={`flex items-center gap-1.5 rounded-lg border border-border-2 px-2.5 py-1 text-[12px] font-semibold text-text${inert ? " opacity-60" : ""}`}
                 >
                   Plan <ChevronDown size={11} strokeWidth={2.6} />
                 </span>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={readOnly}
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${readOnly ? " opacity-60" : ""}`}
+                  disabled={inert}
+                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-dim transition hover:bg-surface-2 hover:text-text${inert ? " opacity-60" : ""}`}
                   aria-label="Attach files"
                   title="Attach files or images"
                 >
@@ -298,6 +406,11 @@ export function Composer({
                 />
               </>
             )}
+            {showOffline ? (
+              <span className="font-mono text-[11px]" style={{ color: "var(--red)" }}>
+                reconnecting…
+              </span>
+            ) : null}
             <div className="flex-1" />
             {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
