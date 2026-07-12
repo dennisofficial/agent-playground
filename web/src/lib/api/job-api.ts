@@ -446,6 +446,18 @@ export function renameJob(
   });
 }
 
+/** Flip the job's per-job auto-approve flag (`PATCH …/jobs/:jobId/auto-approve`). Enabling also resolves
+ *  any gate the job is currently parked on; the flag is read back from the pipeline. */
+export function setAutoApprove(
+  ref: JobRef,
+  enabled: boolean,
+): Promise<{ ok: boolean; autoApprove: boolean }> {
+  return webJson(threadPath(ref, "/auto-approve"), {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 // ── Job relationships (created-by / created jobs / manual block & unblock) ─────────────────────────
 /** A child job spawned FROM this one (`GET …/jobs/:jobId/created`) — the "Created jobs" navigator row +
  *  detail pane. */

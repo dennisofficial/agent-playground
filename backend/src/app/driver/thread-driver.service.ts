@@ -201,6 +201,11 @@ function isTransientDriveError(err: unknown): boolean {
  */
 const REVIEW_LENS_CONCURRENCY = 8;
 
+/** The model the read-only review-lens FINDER turns run on — Sonnet, not the default Opus worker. The
+ *  finding task is well within Sonnet's capability and moving the N per-thread finder turns off Opus is the
+ *  dominant token win for the review fan-out. The post_review FIX turn keeps the default worker model. */
+const REVIEW_LENS_MODEL = 'claude-sonnet-5';
+
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
@@ -1036,21 +1041,38 @@ export class ThreadDriver implements JobDispatcher {
     // runJob, so `shipReviewApprovedAt` reflects the click that re-drove us: null → park + return (no ship);
     // set → fall through and ship. `resolveShipApprovalDurably` flips back to `running` + re-drives, so this
     // re-reaches finalizeBuild (the done threads fast-forward). Other kinds ship straight through as before.
+    //
+    // AUTO-APPROVE (per-job opt-in): parkForShipReview posts the card for audit, then stamps the approval
+    // marker INLINE and returns true — we fall through to finalizeBuild WITHIN this same drive rather than
+    // re-driving (a re-entrant drive() would be dropped by the single-flight `active` guard, stalling the
+    // ship until the next process boot). false → the job is parked awaiting the operator's click.
     if (shipGateApplies(job) && job.shipReviewApprovedAt == null) {
-      await this.parkForShipReview(job, route);
-      return;
+      const autoApproved = await this.parkForShipReview(job, route);
+      if (!autoApproved) return;
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
     // Build shipped — the system is done working this job; hand it back to idle.
     await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
+  private async resolveAutoApprover(job: Job): Promise<string> {
+    if (job.autoApproveBy) return job.autoApproveBy;
+    const owner = await this.store.ownerUserId(job.orgId);
+    if (!owner) throw new Error(`no auto-approve approver for job ${job.id} (no auto_approve_by and no org owner)`);
+    return owner;
+  }
+
   /**
    * Park the job at the ship-review gate: flip `running → awaiting_ship_review` + post the durable "Ship it"
    * card (one txn, single-park-guarded in the store), then a live notice + a passive brain milestone. A
    * concurrent drive that already parked it makes this a no-op (store returns false).
+   *
+   * AUTO-APPROVE (per-job opt-in): returns `true` when the gate was auto-resolved INLINE and the caller must
+   * fall through to `finalizeBuild` within the SAME drive; `false` when the job is left parked awaiting an
+   * operator "Ship it" click. We stamp the approval marker here rather than re-driving because this runs
+   * inside the still-active drive — a re-entrant `drive()` would be swallowed by the single-flight guard.
    */
-  private async parkForShipReview(job: Job, route: JobRoute): Promise<void> {
+  private async parkForShipReview(job: Job, route: JobRoute): Promise<boolean> {
     const title = job.title ?? 'this build';
     const summary =
       'All threads built and master review passed. Review the diff, then click **Ship it** to open the PR.';
@@ -1060,7 +1082,7 @@ export class ThreadDriver implements JobDispatcher {
       card as unknown as Record<string, unknown>,
       summary,
     );
-    if (!parked) return;
+    if (!parked) return false;
     this.logger.log(`job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`);
     await this.post(
       route,
@@ -1080,6 +1102,27 @@ export class ThreadDriver implements JobDispatcher {
         .setDoneWakeOwed(masterReviewId, 'final')
         .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
     }
+    // AUTO-APPROVE (per-job opt-in): the Ship card is posted above for audit; now immediately apply the SAME
+    // resolution the operator's "Ship it" click would. Re-read the flag FRESH here — the `job` argument was
+    // loaded at runJob start and a build can run for minutes; an operator may enable auto-approve mid-build
+    // (setAutoApprove on a `running` job only writes the row, since no gate is parked yet), so trusting the
+    // stale in-memory flag would wrongly wait for a manual click. `approveShip` flips awaiting_ship_review →
+    // running (the just-parked status makes its CAS succeed) + stamps the marker; we return true so runJob
+    // falls through to finalizeBuild in THIS drive (a re-entrant drive() would hit the single-flight guard).
+    const fresh = await this.store.loadJob(job.id).catch(() => job);
+    if (!fresh.autoApprove) return false;
+    const approver = await this.resolveAutoApprover(fresh);
+    const acted = await this.store.approveShip(job.id);
+    if (!acted) return false;
+    this.logger.log(`job=${job.id} auto-approving ship gate (auto_approve on) by ${approver} — shipping inline`);
+    await this.blockSink
+      .appendBlock(job.id, {
+        kind: 'chat',
+        text: ':rocket: Shipping — opening the pull request.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
+    return true;
   }
 
   /**
@@ -1665,7 +1708,9 @@ export class ThreadDriver implements JobDispatcher {
     await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
       const lensCtx = lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx;
-      const findings = await this.autofix.runReviewLens(lensCtx, lens);
+      // Read-only lens finders run on Sonnet, not the default Opus worker: the finding task is well within
+      // Sonnet's capability and this is the dominant token win (N finder turns per thread move off Opus).
+      const findings = await this.autofix.runReviewLens(lensCtx, lens, { model: REVIEW_LENS_MODEL });
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
       await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);

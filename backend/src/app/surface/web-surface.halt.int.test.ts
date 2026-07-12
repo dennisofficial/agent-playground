@@ -82,7 +82,9 @@ async function purge(): Promise<void> {
 
 beforeAll(async () => {
   const prevSurface = process.env.SURFACE;
+  const prevDisableResume = process.env.DISABLE_RESUME;
   process.env.SURFACE = 'agent';
+  process.env.DISABLE_RESUME = '1';
 
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(CLASSIFIER_LLM)
@@ -151,6 +153,8 @@ beforeAll(async () => {
 
   if (prevSurface === undefined) delete process.env.SURFACE;
   else process.env.SURFACE = prevSurface;
+  if (prevDisableResume === undefined) delete process.env.DISABLE_RESUME;
+  else process.env.DISABLE_RESUME = prevDisableResume;
 }, 60_000);
 
 afterAll(async () => {

@@ -19,23 +19,13 @@ import type {
 } from './autofix.types';
 
 /**
- * The five ALWAYS-ON lenses: four narrow diff-scoped lenses plus one always-on HOLISTIC lens. The four
- * narrow lenses are complementary + non-overlapping so the deduped union stays signal-rich; the holistic
- * lens counters their by-design tunnel vision by judging the change as a whole against its intent. Each
- * focus defers to the shared ship-blocker bar in the output contract — the focus says WHAT to look at,
- * the contract says how high the bar is. Callers override via `AutoFixOptions.lenses`.
+ * The two ALWAYS-ON lenses: one narrow diff-scoped CORRECTNESS lens plus one always-on HOLISTIC lens.
+ * Correctness stays tightly diff-scoped so its findings are signal-rich; the holistic lens counters that
+ * by-design tunnel vision by judging the change as a whole against its intent. Each focus defers to the
+ * shared ship-blocker bar in the output contract — the focus says WHAT to look at, the contract says how
+ * high the bar is. Callers override via `AutoFixOptions.lenses`.
  */
 const ALWAYS_ON: ReviewLens[] = [
-  {
-    id: 'best_practices',
-    label: 'Best practices & conventions',
-    focus:
-      'Genuine best-practice defects this change introduces: broken or missing error handling, ' +
-      'resource or security footguns, dead/unreachable code, and clear breaks from a language or ' +
-      'framework convention the surrounding files consistently follow. Do NOT flag naming, formatting, ' +
-      'or stylistic taste — defer to the ship-blocker bar. No broad refactors; only fixes scoped to the ' +
-      'change set.',
-  },
   {
     id: 'correctness',
     label: 'Correctness & smells',
@@ -49,26 +39,6 @@ const ALWAYS_ON: ReviewLens[] = [
       'to be complete but leaves the build or types broken.',
   },
   {
-    id: 'consistency',
-    label: 'Consistency with the codebase',
-    focus:
-      "Consistency with THIS repo's established patterns for logging, DI, types, imports, file " +
-      'placement, and tests. Read neighbouring files to judge the house style, then flag a deviation ' +
-      'only when the surrounding code is actually consistent and this change breaks it in a way that ' +
-      'would mislead a maintainer — not where it merely differs in taste. Defer to the ship-blocker bar.',
-  },
-  {
-    id: 'minimalism',
-    label: 'Minimal code / no over-engineering',
-    focus:
-      'Over-engineering THIS change introduces: a new abstraction, dependency, service, wrapper, or ' +
-      'config where reuse of something already in the repo, the stdlib, a native platform feature, or a ' +
-      'one-liner would do; needless indirection; speculative flexibility or options nobody asked for. ' +
-      'Flag the leaner alternative concretely. NEVER flag input validation, error handling, security, or ' +
-      'accessibility as "excess" — those are required. No broad refactors; only reductions scoped to the ' +
-      'change set.',
-  },
-  {
     id: 'holistic',
     label: 'Holistic: change vs intent',
     scope: 'holistic',
@@ -77,13 +47,13 @@ const ALWAYS_ON: ReviewLens[] = [
       'the pieces the intent implies actually present — no half-wired feature, missing call site, ' +
       'unhandled branch, or TODO left where behavior was promised? Do the changed files integrate ' +
       'correctly with each other AND with the existing code that calls them? Flag the cross-file, ' +
-      'integration, and completeness problems the narrow lenses miss. You MAY read beyond the diff to ' +
+      'integration, and completeness problems a narrow lens misses. You MAY read beyond the diff to ' +
       'judge integration, but only flag issues THIS change introduced or left incomplete — never ' +
       'pre-existing debt.',
   },
 ];
 
-/** Public alias — the five always-on lenses, for callers (e.g. `AutoFixOptions.lenses`'s default) that
+/** Public alias — the always-on lenses, for callers (e.g. `AutoFixOptions.lenses`'s default) that
  *  don't need the type-routed selection below. */
 export const DEFAULT_LENSES: ReviewLens[] = ALWAYS_ON;
 
@@ -131,9 +101,9 @@ export function lensById(id: string): ReviewLens | undefined {
  * selection the driver's auto-fix fan-out drives AND the navigator's rendered list both read, so they
  * never drift. Routes on TWO independent axes:
  *  - the thread's (closed-vocabulary) `type`:
- *    - `docs` drops `correctness` + `minimalism` (they assume executable code — pure noise on prose).
- *    - `data` adds `data_safety` on top of the five always-on lenses.
- *    - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the five always-on lenses.
+ *    - `docs` drops `correctness` (it assumes executable code — pure noise on prose), leaving `holistic`.
+ *    - `data` adds `data_safety` on top of the always-on lenses.
+ *    - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the always-on lenses.
  *  - `frameworkSkillNames`: when non-empty (≥1 opted-in `review`-surface skill matched this thread), the
  *    FRAMEWORK_LENS is appended LAST, regardless of `type`.
  * Returns an ordered, deterministic `ReviewLens[]`.
@@ -144,7 +114,7 @@ export function reviewAgentsForThread(
 ): ReviewLens[] {
   const base =
     type === 'docs'
-      ? ALWAYS_ON.filter((l) => l.id !== 'correctness' && l.id !== 'minimalism')
+      ? ALWAYS_ON.filter((l) => l.id !== 'correctness')
       : type === 'data'
         ? [...ALWAYS_ON, ...CONDITIONAL]
         : ALWAYS_ON;
