@@ -15,10 +15,9 @@ import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
 
 /**
  * The "Blocked by" detail pane — the live blockers holding this job in `blocked` (`PipelineJob.blockedBy`).
- * Unlike the tickets board's ADVISORY dependencies, a job block is real gating: the brain never runs while
- * a blocker is outstanding, and the wake path clears it automatically once every blocker reaches a terminal
- * state. Each row resolves the blocker before navigating — a hard-deleted blocker 404s, so we toast instead
- * of routing into a dead job.
+ * A job block is real gating: the brain never runs while a blocker is outstanding, and the wake path
+ * clears it automatically once every blocker reaches a terminal state. Each row resolves the blocker before
+ * navigating — a hard-deleted blocker 404s, so we toast instead of routing into a dead job.
  */
 /**
  * Navigate to a blocker job — shared by the "Blocked by" detail pane and the conversation-pane blocked
