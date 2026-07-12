@@ -210,3 +210,48 @@ describe('TurnRunnerService — git auth threading', () => {
     expect(received[0].target?.gitAuth).toBeUndefined();
   });
 });
+
+describe('TurnRunnerService — evidence dir threading', () => {
+  // Same row-sourced sandbox as the git-auth block: a `target` only appears when `sandbox.containerId`
+  // is set, so these need a container-backed sandbox to exercise the evidenceDir spread at all.
+  const rowSourced: FeatureSandbox = {
+    repoId: 'proj',
+    branch: 'atlas/feat',
+    worktreePath: '/wt/feat',
+    gitUrl: '',
+    containerId: 'ctr-1',
+    execUser: '1000:1000',
+  };
+
+  it('puts input.evidenceDir onto the docker target', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+      evidenceDir: '/context/evidence/010-backend',
+    });
+
+    expect(received[0].target?.evidenceDir).toBe('/context/evidence/010-backend');
+  });
+
+  it('omits evidenceDir on the target when the turn passes none', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({ ...baseInput, sandbox: rowSourced });
+
+    expect(received[0].target?.evidenceDir).toBeUndefined();
+  });
+});
