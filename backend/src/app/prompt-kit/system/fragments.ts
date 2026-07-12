@@ -229,7 +229,7 @@ export const DOC_VERSION_VERIFY_NOTE =
   'on memory or a pattern from an older generation of the tool: read package.json / the lockfile / the ' +
   "existing imports for the REAL installed version, then confirm THAT version's true API shape — the " +
   'export/component names, config flags, supported params, CLI syntax — against its own docs (WebSearch / ' +
-  'WebFetch, or a Context7 docs tool when one is available; the sandbox has live web). Never mix patterns ' +
+  'WebFetch; the sandbox has live web). Never mix patterns ' +
   'from different versions or generations of the same tool. If the official docs, the installed version, and ' +
   'your approach do not clearly line up, STOP and surface the mismatch — name the options and the safest ' +
   'path — rather than guessing. (VERIFY CURRENCY governs claiming something IS current; this governs writing ' +

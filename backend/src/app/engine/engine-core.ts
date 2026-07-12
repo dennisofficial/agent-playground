@@ -18,7 +18,6 @@ import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
-import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
@@ -270,10 +269,6 @@ export function claudeSessionExists(configDir: string, sessionId: string): boole
 // the sandbox (the per-sandbox bridge network has NAT egress). Enabled on every turn so the engine can
 // pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
-// Context7 (curated, version-pinned library docs) — see engine/context7-tools.ts. Gated on CONTEXT7_API_KEY:
-// empty (the default) unless the deployment injects the key into the sandbox env, so `docs` sees these tools
-// only when the remote server is actually registered (context7-bridge-options.ts), never a phantom name.
-const CONTEXT7_TOOLS = context7Enabled() ? qualifyContext7ToolNames() : [];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
 // The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
 // TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
@@ -304,10 +299,9 @@ const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 // a review turn shouldn't fan out.
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', 'Skill', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
-// boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
-// `docs` subagent never stalls on a permission prompt for them.
+// boundary is re-applied.
 const AUTO_APPROVE = [
-  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
+  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS,
 ];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
@@ -342,7 +336,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'current API for Y" from the LIBRARY\'S OWN docs on the web, not from this repo\'s source. Returns a ' +
       'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...CONTEXT7_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
