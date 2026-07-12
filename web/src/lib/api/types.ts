@@ -611,14 +611,16 @@ export interface ContextFile {
 }
 
 /**
- * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
- * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
+ * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams),
+ * `artifacts` (outputs — preview HTML, screenshots), and `evidence` (live-run proof — logs, screenshots,
+ * RESULTS.md). A bucket is `[]` before the agent writes anything.
  */
 export interface JobContext {
   specs: ContextFile[];
   /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
   generated: ContextFile[];
   artifacts: ContextFile[];
+  evidence: ContextFile[];
 }
 
 /** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */

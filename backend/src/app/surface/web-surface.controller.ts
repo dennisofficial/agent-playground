@@ -157,7 +157,7 @@ function operatorAuthor(user: UserEntity): {
   return { authorId: user.id, authorName: user.name?.trim() || user.email };
 }
 
-/** One file in a `/context` bucket (specs or artifacts). */
+/** One file in a `/context` bucket (specs, artifacts, or evidence). */
 export interface ContextFile {
   name: string;
   size: number;
@@ -254,8 +254,9 @@ const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
 
 /**
  * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the
- * exposed buckets (specs/ + generated/ + artifacts/). Rejects absolute paths and any `..` traversal that
- * escapes the root — the only files readable are the ones the listing endpoint already exposes.
+ * exposed buckets (specs/ + generated/ + artifacts/ + evidence/). Rejects absolute paths and any `..`
+ * traversal that escapes the root — the only files readable are the ones the listing endpoint already
+ * exposes.
  */
 function resolveContextFilePath(root: string, relPath: string): string {
   const cleaned = relPath.replace(/^[/\\]+/, '');
@@ -265,9 +266,14 @@ function resolveContextFilePath(root: string, relPath: string): string {
     throw new BadRequestException('path escapes the context directory');
   }
   const bucket = relative(root, abs).split(sep)[0];
-  if (bucket !== 'specs' && bucket !== 'generated' && bucket !== 'artifacts') {
+  if (
+    bucket !== 'specs' &&
+    bucket !== 'generated' &&
+    bucket !== 'artifacts' &&
+    bucket !== 'evidence'
+  ) {
     throw new BadRequestException(
-      'path must be inside specs/, generated/, or artifacts/',
+      'path must be inside specs/, generated/, artifacts/, or evidence/',
     );
   }
   return abs;
@@ -1882,7 +1888,8 @@ export class WebSurfaceController {
 
   /**
    * `GET …/threads/:jobId/context` — list the thread's `/context` files, grouped into `specs` (the
-   * plan: plan.md, decision-record.md, diagrams) and `artifacts` (outputs: preview HTML, screenshots).
+   * plan: plan.md, decision-record.md, diagrams), `artifacts` (human-facing deliverables: preview HTML,
+   * screenshots), and `evidence` (live-run proof: logs, screenshots, RESULTS.md).
    * V1 MVP: just names + size + mtime. The UI's Artifacts panel composes this with the diff/PR (which
    * are not files — they come from `pipeline`/the thread row).
    */
@@ -1895,6 +1902,7 @@ export class WebSurfaceController {
     specs: ContextFile[];
     generated: ContextFile[];
     artifacts: ContextFile[];
+    evidence: ContextFile[];
   }> {
     await this.requireThread(jobId, org.id);
     const root = this.threadLifecycle.contextDirHost(jobId, org.id);
@@ -1902,6 +1910,7 @@ export class WebSurfaceController {
       specs: listContextBucket(join(root, 'specs')),
       generated: listContextBucket(join(root, 'generated')),
       artifacts: listContextBucket(join(root, 'artifacts')),
+      evidence: listContextBucket(join(root, 'evidence')),
     };
   }
 
@@ -2062,7 +2071,7 @@ export class WebSurfaceController {
 
   /**
    * `GET …/jobs/:jobId/context/raw/<bucket-relative-path>` — STREAM one `/context` file (specs/ +
-   * generated/ + artifacts/) as raw bytes with the correct `Content-Type`, so a browser can render it
+   * generated/ + artifacts/ + evidence/) as raw bytes with the correct `Content-Type`, so a browser can render it
    * directly — e.g. an `<iframe>` HTML preview of an artifact. Deliberately PATH-based (the file path lives
    * in the URL path, not a `?path=` query) so an HTML document's own RELATIVE sub-resource URLs
    * (`style.css`, `chart.png`) resolve against the document URL and get fetched here too. Same bucket +

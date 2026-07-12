@@ -59,6 +59,7 @@ import { ConventionProfileResolver, type ResolvedConventions } from '../conventi
 import { SkillResolver } from '../skills';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
@@ -1432,6 +1433,20 @@ export class ThreadDriver implements JobDispatcher {
       renderCompletionMd(thread, outcome, term, new Date().toISOString(), anchor),
       'utf8',
     );
+  }
+
+  /** Resolve this thread leg's evidence subfolder — lazily host-creating it (mirrors writeCompletionMd's
+   *  contextDirHost accessor) — and return the CONTAINER path emitted as ATLAS_EVIDENCE_DIR so the turn's
+   *  writers (worker + validate/prototype subagents) land their live-run proof in evidence/<leg>/. */
+  private async evidenceDirForThread(job: Job, thread: DriverThread): Promise<string> {
+    const leg = threadDirName(thread);
+    const hostDir = join(
+      this.threadLifecycle.contextDirHost(job.id, job.orgId),
+      'evidence',
+      leg,
+    );
+    await mkdir(hostDir, { recursive: true });
+    return `${CONTAINER_CONTEXT}/evidence/${leg}`;
   }
 
   /**
@@ -2912,6 +2927,7 @@ export class ThreadDriver implements JobDispatcher {
     const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
+    const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -2927,6 +2943,7 @@ export class ThreadDriver implements JobDispatcher {
             settings: { repoConventions },
             turnPhase: 'commit',
           }),
+          evidenceDir,
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
@@ -3127,6 +3144,7 @@ export class ThreadDriver implements JobDispatcher {
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
     // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
     // step (a batch is one turn; minor observability coarsening for the step transcript).
+    const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -3138,6 +3156,7 @@ export class ThreadDriver implements JobDispatcher {
           engine,
           mode: 'execute',
           systemPrompt,
+          evidenceDir,
           // High reasoning effort for the whole-diff review pass (parity with plan-review), from the spec.
           // Undefined for Claude builder turns. The `toolBridge` below now reaches Codex too — `runCodex`
           // renders its tool names into a config.toml `[mcp_servers.atlasbridge]` block (the MCP bridge).

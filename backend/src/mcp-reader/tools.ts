@@ -332,7 +332,7 @@ function readFileCapped(path: string): string {
 
 // ── atlas_context_read ────────────────────────────────────────────────────────────────────────────────
 
-const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts'];
+const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts', 'evidence'];
 
 async function contextRead(
   ctx: ToolCtx,

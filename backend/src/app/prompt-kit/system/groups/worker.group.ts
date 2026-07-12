@@ -87,7 +87,7 @@ const ORCHESTRATOR_SUBAGENTS_NOTE =
   'helpers: `explore` (trace the code/own docs), `docs` (external library docs), `review` (a second ' +
   'pass on a diff), `debug` (root-cause a failure), `test` (run the repo verification → diagnosis, not raw ' +
   'logs), `validate` (LIVE end-to-end validation — boots the change, exercises it as a caller would, and ' +
-  'leaves the evidence bundle in `/context/artifacts/`).' +
+  'leaves the evidence bundle in `$ATLAS_EVIDENCE_DIR`).' +
   ' ' +
   SUBAGENT_NUDGE_NOTE;
 
@@ -189,7 +189,7 @@ export class WorkerGroup {
     return DOC_VERSION_VERIFY_NOTE;
   }
 
-  /** The evidence-artifact mandate: every build thread leaves durable PROOF in `/context/artifacts/`.
+  /** The evidence-artifact mandate: every build thread leaves durable PROOF under `$ATLAS_EVIDENCE_DIR`.
    *  Owned jointly with the `validate` subagent — the orchestrator DELEGATES the heavy live-validation +
    *  capture to `validate` (to keep its own context clean) and, if `validate` already wrote the bundle,
    *  does NOT recapture. */
@@ -200,9 +200,9 @@ export class WorkerGroup {
       ' PREFER TO DELEGATE this — spawn the `validate` subagent to run the live end-to-end validation and ' +
       'write the evidence bundle, so the heavy validation context (booted services, Playwright, log tails) ' +
       'stays off YOUR window. When it returns, it tells you exactly which files it wrote under ' +
-      '`/context/artifacts/`: reference those (do NOT recapture the same evidence). Capture directly ' +
+      '`$ATLAS_EVIDENCE_DIR`: reference those (do NOT recapture the same evidence). Capture directly ' +
       'yourself only for something too small to delegate. Before you call `complete_thread`, make sure the ' +
-      'evidence bundle (a `RESULTS.md` plus its logs/screenshots) exists in `/context/artifacts/` and cite ' +
+      'evidence bundle (a `RESULTS.md` plus its logs/screenshots) exists under `$ATLAS_EVIDENCE_DIR` and cite ' +
       'it in your `verification`.'
     );
   }
