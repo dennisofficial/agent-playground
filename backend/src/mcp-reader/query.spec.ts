@@ -108,4 +108,69 @@ describe('runReadOnlyQuery', () => {
     ]);
     expect(release).toHaveBeenCalledOnce();
   });
+
+  it('uses an explicit limit to compute the wrapped LIMIT', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) return [{ value: 1 }];
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    await runReadOnlyQuery(ds, 'SELECT 1 AS value', [], 5);
+    expect(query.mock.calls.map(([sql]) => sql)).toContain(
+      'SELECT * FROM (\nSELECT 1 AS value\n) AS __atlas_q LIMIT 6',
+    );
+  });
+
+  it('clamps a limit above the hard ceiling', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) return [{ value: 1 }];
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    await runReadOnlyQuery(ds, 'SELECT 1 AS value', [], 999999);
+    expect(query.mock.calls.map(([sql]) => sql)).toContain(
+      'SELECT * FROM (\nSELECT 1 AS value\n) AS __atlas_q LIMIT 50001',
+    );
+  });
+
+  it('truncates and reports rowCount/rows at the effective limit when the driver returns one extra row', async () => {
+    const effective = 5;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) {
+        return Array.from({ length: effective + 1 }, (_, i) => ({ value: i }));
+      }
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    const result = await runReadOnlyQuery(
+      ds,
+      'SELECT 1 AS value',
+      [],
+      effective,
+    );
+    expect(result.truncated).toBe(true);
+    expect(result.rowCount).toBe(effective);
+    expect(result.rows).toHaveLength(effective);
+  });
 });
