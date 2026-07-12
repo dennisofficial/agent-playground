@@ -14,6 +14,7 @@ import { SchedulerRegistry } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
+import { modeApprovesPlan } from '@workspace/shared';
 import { LeaderElectionService } from '../cluster';
 import type {
   ChatStimulus,
@@ -2385,7 +2386,7 @@ export class AgentSessionManager
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
         job: jobContext,
-        settings: { repoConventions, workspaceProfile, autoApprove: brainJob?.autoApprove ?? false },
+        settings: { repoConventions, workspaceProfile, autoApproveMode: brainJob?.autoApproveMode ?? 'off' },
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
@@ -5694,7 +5695,7 @@ export class AgentSessionManager
       (await Promise.resolve()
         .then(() => this.store.loadJob(job.id))
         .catch(() => null)) ?? job;
-    if (autoApprovalJob.autoApprove) {
+    if (modeApprovesPlan(autoApprovalJob.autoApproveMode)) {
       const approver = await this.resolveAutoApprover(autoApprovalJob);
       await this.saySystemNotice(stimulus, 'Auto-approve is on — approving this plan automatically.');
       this.approvals.resolve(autoApprovalJob.id, 'approve', approver, undefined, decisionRecordId);

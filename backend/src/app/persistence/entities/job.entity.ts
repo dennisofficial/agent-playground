@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { JobActivity, JobHalt } from '@workspace/shared';
+import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { JobProvenance } from '../../domain/job';
@@ -360,10 +360,10 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   build_path!: 'direct' | 'plan' | null;
 
-  /** Per-job AUTO-APPROVE: when true, plan-approval and ship-review gates on this job auto-advance with
-   *  no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
-  @Column({ type: 'boolean', default: false })
-  auto_approve!: boolean;
+  /** Per-job AUTO-APPROVE MODE: which of the plan-approval / ship-review gates on this job auto-advance
+   *  with no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
+  @Column({ type: 'text', default: 'off' })
+  auto_approve_mode!: AutoApproveMode;
 
   /** Who most recently ENABLED auto-approve (FK → users.id, SET NULL) — used as the approver id when a
    *  gate auto-resolves. Null when never enabled / the enabling user was deleted (gate falls back to the

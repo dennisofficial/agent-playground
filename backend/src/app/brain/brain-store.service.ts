@@ -1892,7 +1892,7 @@ function toThread(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
-    autoApprove: row.auto_approve ?? false,
+    autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,

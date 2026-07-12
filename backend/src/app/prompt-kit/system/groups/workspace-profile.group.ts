@@ -226,7 +226,7 @@ export class WorkspaceProfileGroup {
       'a credential slot by NAME with `secret: true` (e.g. an Authorization header or a token env var) — you NEVER',
       'put a secret value here. You do NOT register servers yourself: this posts an owner-approvable proposal card;',
       'the OWNER approves it, which registers the servers on this repo. Do NOT propose the built-in SYSTEM servers',
-      '(context7, atlas-lsp-ts) — they are already provided. After the owner approves, for',
+      '(atlas-lsp-ts) — it is already provided. After the owner approves, for',
       'each `secret: true` slot call request_secret({ description, mcp: { server, slot, key } }) — the operator',
       'enters the credential through the same secure field (it goes ENCRYPTED straight into the MCP server and',
       'activates it; you see only a masked confirmation). Keep this proportionate — a couple of well-chosen',

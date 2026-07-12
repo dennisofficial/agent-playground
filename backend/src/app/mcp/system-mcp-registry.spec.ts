@@ -1,28 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { CONTEXT7_SERVER_NAME } from '../engine/context7-tools';
 import { LSP_SERVER_NAME } from '../engine/lsp-tools';
 import { buildSystemMcpServers } from './system-mcp-registry';
 
-const byName = (signals: Parameters<typeof buildSystemMcpServers>[0]) =>
-  Object.fromEntries(buildSystemMcpServers(signals).map((s) => [s.name, s]));
+const byName = () => Object.fromEntries(buildSystemMcpServers().map((s) => [s.name, s]));
 
 describe('buildSystemMcpServers', () => {
   it('LSP is always active (no key needed)', () => {
-    const s = byName({ context7Configured: false });
+    const s = byName();
     expect(s[LSP_SERVER_NAME].active).toBe(true);
     expect(s[LSP_SERVER_NAME].inactiveReason).toBeUndefined();
   });
 
-  it('context7 tracks the deployment key', () => {
-    expect(byName({ context7Configured: true })[CONTEXT7_SERVER_NAME].active).toBe(true);
-    const off = byName({ context7Configured: false })[CONTEXT7_SERVER_NAME];
-    expect(off.active).toBe(false);
-    expect(off.inactiveReason).toMatch(/CONTEXT7_API_KEY/);
-  });
-
   it('exposes real server names + non-empty tool lists', () => {
-    const all = buildSystemMcpServers({ context7Configured: true });
-    expect(all.map((s) => s.name).sort()).toEqual([LSP_SERVER_NAME, CONTEXT7_SERVER_NAME].sort());
+    const all = buildSystemMcpServers();
+    expect(all.map((s) => s.name)).toEqual([LSP_SERVER_NAME]);
     for (const s of all) expect(s.tools.length).toBeGreaterThan(0);
   });
 });

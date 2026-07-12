@@ -39,6 +39,12 @@ import {
 } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
+import {
+  type AutoApproveMode,
+  isAutoApproveMode,
+  modeApprovesPlan,
+  modeApprovesShip,
+} from '@workspace/shared';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
@@ -345,7 +351,7 @@ interface RenameThreadDto {
   title: string;
 }
 interface SetAutoApproveDto {
-  enabled: boolean;
+  mode: AutoApproveMode;
 }
 interface ApproveDto {
   actionId: string;
@@ -2330,34 +2336,32 @@ export class WebSurfaceController {
     @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
     @Body() body: SetAutoApproveDto,
-  ): Promise<{ ok: boolean; autoApprove: boolean }> {
-    if (typeof body?.enabled !== 'boolean') {
-      throw new BadRequestException('enabled is required');
+  ): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
+    if (!isAutoApproveMode(body?.mode)) {
+      throw new BadRequestException('mode is required');
     }
     // Resolve scoped to the org first (defense in depth beyond the guard) — capture the pre-update status so we
     // know whether a gate is already parked.
     const job = await this.requireThread(jobId, org.id);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
-      body.enabled ? { auto_approve: true, auto_approve_by: user.id } : { auto_approve: false },
+      { auto_approve_mode: body.mode, ...(body.mode !== 'off' ? { auto_approve_by: user.id } : {}) },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web set auto-approve=${body.enabled} on thread ${jobId} (org ${org.id})`);
-    // d2 — enabling while a gate is ALREADY parked immediately approves it, through the exact seam a real
+    this.logger.log(`web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`);
+    // d2 — enabling a gate the job is ALREADY parked on immediately approves it, through the exact seam a real
     // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
-    // the durable-restart fallback). Disable only affects future gates and never un-approves anything.
-    if (body.enabled) {
-      if (job.status === 'awaiting_approval') {
-        const value = JSON.stringify({
-          jobId,
-          ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
-        });
-        this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
-      } else if (job.status === 'awaiting_ship_review') {
-        this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
-      }
+    // the durable-restart fallback). Disabling a gate only affects future gates and never un-approves anything.
+    if (job.status === 'awaiting_approval' && modeApprovesPlan(body.mode)) {
+      const value = JSON.stringify({
+        jobId,
+        ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
+      });
+      this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
+    } else if (job.status === 'awaiting_ship_review' && modeApprovesShip(body.mode)) {
+      this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
-    return { ok: true, autoApprove: body.enabled };
+    return { ok: true, autoApproveMode: body.mode };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

@@ -216,9 +216,9 @@ The brain reads a trusted framing
   boot sweep re-delivering any attached event still `null`.
 - **Security = the approval card.** **Every** plan goes through the same human approval gate —
   no autonomous self-approve/dispatch lane. Untrusted → the brain proposes → a human approves → the harness builds.
-  The one sanctioned exception is a per-job **auto-approve** opt-in (`jobs.auto_approve`): when ON, that job's
-  plan and ship-review gates — including gates an EVENT drives it back into — auto-advance the instant the card
-  posts, with no human click. It is acceptable only because it is an explicit, per-job operator opt-in on this
+  The one sanctioned exception is a per-job **auto-approve** opt-in (`jobs.auto_approve_mode` —
+  `off | plan | ship | both`): when the mode covers a gate, that job's plan and/or ship-review gate —
+  including gates an EVENT drives it back into — auto-advances the instant the card posts, with no human click. It is acceptable only because it is an explicit, per-job operator opt-in on this
   private/trusted deployment, never a default.
 
 ### GitHub → Atlas sync — two front doors + a layered model

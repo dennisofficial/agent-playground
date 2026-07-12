@@ -1303,7 +1303,7 @@ export class DriverStoreService {
         // its first brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('main'),
         createdBy: thread.created_by ?? null,
-        autoApprove: thread.auto_approve ?? false,
+        autoApproveMode: thread.auto_approve_mode ?? 'off',
         blockedBy,
         blockedSeedMessage,
       };
@@ -1434,9 +1434,9 @@ export class DriverStoreService {
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
       buildPath: thread.build_path ?? null,
-      // Per-job auto-approve flag — surfaced so the console can render + toggle it (also on the no_job
+      // Per-job auto-approve mode — surfaced so the console can render + toggle it (also on the no_job
       // shape above, so the toggle works pre-plan while the job is still `open`).
-      autoApprove: thread.auto_approve ?? false,
+      autoApproveMode: thread.auto_approve_mode ?? 'off',
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1568,7 +1568,7 @@ function toJob(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
-    autoApprove: row.auto_approve ?? false,
+    autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,

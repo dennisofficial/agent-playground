@@ -209,7 +209,7 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const card = {
       type: 'mcp_proposal_card',
       servers: [
-        { name: 'context7', transport: 'http', url: 'https://x' },
+        { name: 'atlas-lsp-ts', transport: 'http', url: 'https://x' },
         { name: 'deepwiki', transport: 'http', url: 'https://y' },
       ],
     };
