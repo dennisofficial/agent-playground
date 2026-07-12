@@ -1502,7 +1502,7 @@ export class AgentSessionManager
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
       )
       .catch(() => [] as ChatStimulus[]);
-    if (pendingChat.length > 0) return; // the chat sweep will re-drive this job
+    if (pendingChat.some(isWakeEligible)) return; // the chat sweep will re-drive this job (later-only never wakes on its own)
 
     this.workOwedNudgedAt.set(review.job_id, Date.now());
     this.logger.log(

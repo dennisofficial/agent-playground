@@ -60,6 +60,7 @@ export class JitHostExecutor {
   collectOperatorPrepends(ctx: { jobId?: string; prependText?: string }): TurnChunk[] {
     const chunks: TurnChunk[] = [];
     for (const rule of operatorMessageRules()) {
+      if (rule.delivery !== 'turn-prefix') continue; // only turn-prefix rules render as prepend chunks (mirrors fireLifecycle's delivery guard)
       const fireCtx: JitFireCtx = {
         ...(ctx.jobId !== undefined ? { jobId: ctx.jobId } : {}),
         ...(ctx.prependText !== undefined ? { prependText: ctx.prependText } : {}),
