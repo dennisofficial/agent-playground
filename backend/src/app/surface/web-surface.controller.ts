@@ -136,6 +136,7 @@ import {
   skillEditGone,
 } from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -573,6 +574,10 @@ export class WebSurfaceController {
     // The host-side JIT executor — fires the catalog's lifecycle rules (e.g. `spinUpPreview`'s preview-prep
     // seed). Also from the @Global BrainModule. @Optional (trailing), same reason as `exposure` above.
     @Optional() private readonly jit?: JitHostExecutor,
+    // DB-backed workspace config (setup script, preview recipe) — `spinUpPreview` reads the repo's stored
+    // preview recipe to splice into the seed. From the @Global OnboardingModule. @Optional (trailing),
+    // same reason as `exposure`/`jit` above.
+    @Optional() private readonly configStore?: WorkspaceConfigStore,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1302,6 +1307,7 @@ export class WebSurfaceController {
     if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
+    const previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
     const ts =
       this.jit?.fireLifecycle('preview-requested', {
         repoId: thread.repo_id,
@@ -1310,6 +1316,7 @@ export class WebSurfaceController {
         // Same concrete surface the hand-rolled call used — NOT the ambient `CHAT_SURFACE` (which the
         // 'agent' test surface can rebind to something else entirely).
         surface: this.surface,
+        previewInstructions,
       }) ?? '';
     return { ok: true, ts };
   }

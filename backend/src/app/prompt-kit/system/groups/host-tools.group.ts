@@ -51,6 +51,8 @@ export class HostToolsGroup {
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR`,
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — runs on EVERY cold sandbox bring-up for every future job on this repo (no PR); must be idempotent. It REPLACES the whole script — read_setup_script FIRST to see the current body`,
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script    — read the repo's CURRENT cold-boot setup script (raw body) so you can edit it safely before write_setup_script (which overwrites the whole thing)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_preview_instructions — save the repo's PREVIEW RECIPE ({ instructions }) — how to stand up this repo's demo-ready preview stack (envs, ports, compose/migrate/seed, deep-link); injected into the "Spin up preview" seed for every job on this repo (no PR). It REPLACES the whole recipe — read_preview_instructions FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_preview_instructions  — read the repo's CURRENT preview recipe (raw body) so you can edit it safely before write_preview_instructions (which overwrites the whole thing)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree`,
     ].join('\n');
   }
@@ -121,6 +123,12 @@ export class HostToolsGroup {
       '    It REPLACES the whole script — call read_setup_script FIRST to see the current body, then write the full new one.',
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script   — read the repo's CURRENT cold-boot SETUP SCRIPT (raw`,
       '    body) so you can edit an existing script safely instead of clobbering it when you write_setup_script.',
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_preview_instructions — save the repo's PREVIEW RECIPE ({ instructions })`,
+      "    — how to stand up this repo's demo-ready preview stack (envs, ports, compose/migrate/seed, deep-link);",
+      '    a DB write, live for every future job on this repo (no PR). It REPLACES the whole recipe — call',
+      '    read_preview_instructions FIRST to see the current body, then write the full new one.',
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_preview_instructions  — read the repo's CURRENT preview recipe (raw`,
+      '    body) so you can edit an existing recipe safely instead of clobbering it when you write_preview_instructions.',
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox       — recreate your container from scratch to PROVE the`,
       '    environment cold-boots from durable inputs (see RESET). It does not reset instantly — it recreates on',
       '    your NEXT turn, so call it then STOP; you will be prompted to verify once the fresh box is up. Pass',

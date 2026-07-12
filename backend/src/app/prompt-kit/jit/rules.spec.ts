@@ -82,7 +82,7 @@ describe('previewPrepRule', () => {
   it('is a lifecycle preview-requested rule delivered as a host seed notice', () => {
     expect(previewPrepRule.trigger).toEqual({ kind: 'lifecycle', event: 'preview-requested' });
     expect(previewPrepRule.delivery).toBe('host-seed-notice');
-    expect(previewPrepRule.render({})).toBe(PREVIEW_PREP_SEED_BODY);
+    expect(previewPrepRule.render({})).toContain(PREVIEW_PREP_SEED_BODY);
   });
 
   it('carries the shipped seed label + chunkKey', () => {

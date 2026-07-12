@@ -4095,6 +4095,8 @@ export class AgentSessionManager
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       read_setup_script: this.buildReadSetupScriptTool(stimulus),
+      write_preview_instructions: this.buildWritePreviewInstructionsTool(stimulus),
+      read_preview_instructions: this.buildReadPreviewInstructionsTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
       // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
@@ -4582,6 +4584,37 @@ export class AgentSessionManager
         return { ok: true, present: script !== null, script };
       } catch (err) {
         this.logger.warn(`read_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  private buildWritePreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const instructions = String(args['instructions'] ?? '').trim() ? String(args['instructions']) : null;
+      try {
+        await this.configStore.setPreviewInstructions(stimulus.orgId, stimulus.repoId, instructions);
+        await this.store.appendSystemEvent(
+          stimulus.jobId,
+          instructions
+            ? '🎬 Saved the repo preview recipe — it is injected into the "Spin up preview" seed for every job on this repo. `read_preview_instructions` to amend (write REPLACES the whole recipe).'
+            : '🎬 Cleared the repo preview recipe — the Spin-up-preview seed will prompt to save a fresh one.',
+        );
+        return { ok: true, saved: !!instructions };
+      } catch (err) {
+        this.logger.warn(`write_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  private buildReadPreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      try {
+        const instructions = await this.configStore.getPreviewInstructions(stimulus.orgId, stimulus.repoId);
+        return { ok: true, present: instructions !== null, instructions };
+      } catch (err) {
+        this.logger.warn(`read_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
         return { ok: false, reason: errText(err) };
       }
     };
