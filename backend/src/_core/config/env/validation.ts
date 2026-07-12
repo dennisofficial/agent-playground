@@ -103,6 +103,16 @@ export interface IEnvConfig {
   SANDBOX_MCP_NETWORK?: string;
   ATLAS_REPO_SLUG?: string;
 
+  // Dedicated prod-diagnostics DB roles (the `atlas-prod` MCP), NEVER the backend's own `app` connection.
+  // MCP_READER_* is the existing SELECT-only `mcp_reader` role (reads + the pre-approval EXPLAIN preview);
+  // MCP_WRITER_* is the DML-only `mcp_writer` role used ONLY to run an operator-approved recovery statement.
+  // Host/port/DB reuse the existing POSTGRES_* (same server + DB as the app). All optional, like
+  // ATLAS_REPO_SLUG — unset in dev fail-closes the whole feature (no dedicated pools, no write path).
+  MCP_READER_PG_USER?: string;
+  MCP_READER_PG_PASSWORD?: string;
+  MCP_WRITER_PG_USER?: string;
+  MCP_WRITER_PG_PASSWORD?: string;
+
   // Secrets. SECRETS_ENCRYPTION_KEY (32-byte hex/base64) encrypts every `org_credentials` row at rest —
   // REQUIRED now that all credentials live there. JWT_* sign the web-console session cookies — REQUIRED
   // (the global auth guard can't boot without them). The rest gate optional features when unset.
@@ -224,6 +234,10 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   SANDBOX_MCP_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),
+  MCP_READER_PG_USER: Joi.string().optional(),
+  MCP_READER_PG_PASSWORD: Joi.string().optional(),
+  MCP_WRITER_PG_USER: Joi.string().optional(),
+  MCP_WRITER_PG_PASSWORD: Joi.string().optional(),
 
   // Secrets
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),

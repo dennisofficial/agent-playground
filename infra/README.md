@@ -239,6 +239,31 @@ The script is re-runnable — running it again refreshes the grants and resets t
 as the DB-credential rotation step). The `mcp-reader` service (step 8) picks up the role via the
 `MCP_READER_PG_*` secrets.
 
+#### The DML-only MCP-writer role (gated prod-recovery writes)
+
+The `atlas-prod` MCP's human-gated write path executes an operator-**approved** recovery statement with a
+second dedicated role, `mcp_writer` — **DML-only** (INSERT/UPDATE/DELETE + SELECT, no CREATE/ALTER/DROP),
+so schema changes are physically impossible for it and it is REVOKEd all write on its own audit ledger
+(`prod_maintenance_write`). This is what makes the two-role split of decision d4 *structural* rather than
+app-code convention. Create it once with the idempotent `infra/mcp-writer-role.sql` — **after** the schema
+is migrated (step 7 plus the `AddProdMaintenanceWrite` migration), since the audit-ledger REVOKE needs the
+table to exist:
+
+```bash
+# Set MCP_WRITER_PG_PASSWORD in the writer's OWN scoped secret file, /srv/atlas/secrets/mcp-writer.env
+# (mode 600) — separate from mcp-reader.env and from atlas.env. MCP_WRITER_PG_USER stays `mcp_writer`.
+set -a; source /srv/atlas/.env; set +a   # POSTGRES_USER / POSTGRES_DB
+PW="$(grep -E '^MCP_WRITER_PG_PASSWORD=' /srv/atlas/secrets/mcp-writer.env | cut -d= -f2-)"
+docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -v mcp_writer_password="$PW" \
+    -f - < infra/mcp-writer-role.sql
+```
+
+Re-runnable (refreshes grants + rotates the password). The backend picks up both roles via the
+`MCP_READER_PG_*` / `MCP_WRITER_PG_*` secrets — the `atlas-prod` MCP connects them as dedicated pools,
+never the backend's full-privilege `app` connection.
+
 **Register the server for the Atlas repo (operator, one-time, in the web UI).** The reader has **no public
 port and no Caddy route** — it's reachable only from Atlas-repo sandboxes over the internal `atlas-mcp`
 network. In the web console's MCP settings, for the **Atlas repo only**, add a server:
