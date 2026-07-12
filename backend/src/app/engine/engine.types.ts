@@ -944,3 +944,14 @@ export function isAuthErrorMessage(message: string): boolean {
     message,
   );
 }
+
+/** Sentinel prefix a no-credential auth halt carries so the operator copy can be specific. */
+export const NO_ENGINE_CREDENTIAL_MARKER = 'NO_ENGINE_CREDENTIAL';
+
+/** Map a raw EngineAuthError message to clean, actionable operator copy — never leak SDK/CLI text. */
+export function cleanAuthHaltReason(rawMessage: string): string {
+  if (rawMessage.includes(NO_ENGINE_CREDENTIAL_MARKER)) {
+    return 'No Claude account is connected for this org — connect one in Settings, then resume.';
+  }
+  return 'Your Claude login needs to be reconnected — reconnect the account in Settings, then resume.';
+}

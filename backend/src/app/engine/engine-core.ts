@@ -31,6 +31,7 @@ import {
 import {
   EngineAuthError,
   isAuthErrorMessage,
+  NO_ENGINE_CREDENTIAL_MARKER,
   UNRESUMABLE_SESSION_MARKER,
   type CodexReasoningEffort,
   type EngineAuth,
@@ -562,9 +563,11 @@ export class EngineCore {
    */
   private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     if (explicit) return explicit;
-    throw new Error(
-      `No ${engine} subscription secret — the org has no ${engine} credential set (add one via ` +
-        'onboarding, or `pnpm db:seed` in dev). The engine runs subscription-only (no API-key fallback).',
+    // Classify as an auth halt (marker → clean, resumable credentials halt at the driver) rather than a
+    // plain Error that fails the job opaquely: a missing credential is fixable by connecting an account.
+    throw new EngineAuthError(
+      `${NO_ENGINE_CREDENTIAL_MARKER}: no ${engine} subscription secret — the org has no ${engine} ` +
+        'credential set (connect one in Settings).',
     );
   }
 

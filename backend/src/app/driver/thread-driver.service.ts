@@ -29,6 +29,7 @@ import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket
 import {
   EngineAuthError,
   EngineSessionLimitError,
+  cleanAuthHaltReason,
   isSessionLimitError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
@@ -730,7 +731,7 @@ export class ThreadDriver implements JobDispatcher {
         await this.store
           .setJobHalt(jobId, {
             kind: 'blocked_credentials',
-            reason: err.message,
+            reason: cleanAuthHaltReason(err.message),
             at: new Date().toISOString(),
           })
           .catch(() => undefined);
@@ -900,7 +901,7 @@ export class ThreadDriver implements JobDispatcher {
       err,
       markedReauth
         ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
-        : undefined,
+        : cleanAuthHaltReason(err.message),
     );
   }
 

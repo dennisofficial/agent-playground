@@ -2084,7 +2084,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
       async () => {
-        throw new EngineAuthError('401 invalid api key', 'sess-401');
+        // Raw SDK/CLI string — must never leak to the operator.
+        throw new EngineAuthError('Not logged in · Please run /login', 'sess-401');
       },
     );
 
@@ -2092,9 +2093,16 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
 
     expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT failed
-    expect(
-      h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p)),
-    ).toBe(true);
+    // The stored halt reason is clean, actionable copy — never the raw SDK/CLI string.
+    expect(state.job.halt?.reason).toBe(
+      'Your Claude login needs to be reconnected — reconnect the account in Settings, then resume.',
+    );
+    expect(state.job.halt?.reason).not.toMatch(/not logged in|\/login/i);
+    // The relayed pause notice carries the same clean copy and leaks no raw SDK text.
+    const pausePost = h.posts.find((p) => /paused/i.test(p));
+    expect(pausePost).toBeDefined();
+    expect(pausePost).toContain('Your Claude login needs to be reconnected');
+    expect(pausePost).not.toMatch(/not logged in|\/login/i);
     expect(h.opened).toHaveLength(0);
   });
 
