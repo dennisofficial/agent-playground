@@ -1,13 +1,17 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import {
   SANDBOX_PROVIDER,
   type SandboxProvider,
   type ServiceLivenessProbe,
 } from '../sandbox/sandbox-provider.port';
+import { JobEntity } from '../persistence/entities';
+import { DB_CONNECTION } from '../persistence/database.module';
 import { CaddyAdminClient } from './caddy-admin.client';
 import { hostFor, routeId, routePrefix, urlFor } from './exposure-naming';
-import { readServiceMarkers, serviceStatus } from './service-markers';
+import { derivePortState, readServiceMarkers, serviceStatus } from './service-markers';
 
 /**
  * Drives Caddy to publish a thread sandbox's live, opted-in dev-servers at deterministic preview URLs.
@@ -24,6 +28,7 @@ export class ExposureService {
     @Inject(SANDBOX_PROVIDER) private readonly provider: SandboxProvider,
     private readonly caddy: CaddyAdminClient,
     private readonly env: EnvService,
+    @InjectRepository(JobEntity, DB_CONNECTION) private readonly jobs: Repository<JobEntity>,
   ) {}
 
   private secret(): string {
@@ -62,12 +67,26 @@ export class ExposureService {
     if (!this.enabled) return;
     const dir = this.provider.supervisorDirHost(jobId);
     const markers = dir ? readServiceMarkers(dir) : [];
-    const exposable = markers.filter((m) => m.port != null && m.expose);
+    const allPgids = markers.map((m) => m.pgid).filter((p): p is number => p != null);
+    const probe = await this.provider
+      .probeLiveness(jobId, allPgids)
+      .catch(() => ({ status: 'unknown' }) as ServiceLivenessProbe);
 
-    const pgids = exposable.map((m) => m.pgid).filter((p): p is number => p != null);
-    const probe = await this.provider.probeLiveness(jobId, pgids).catch(
-      () => ({ status: 'unknown' }) as ServiceLivenessProbe,
-    );
+    // Persist the sidebar badge state — skip on an indeterminate probe so a transient exec hiccup never
+    // flaps the badge (mirrors the Caddy `unknown` guard below). Change-gated: no row UPDATE, no WAL delta
+    // when unchanged.
+    if (!(markers.length > 0 && probe.status === 'unknown')) {
+      const portState = derivePortState(markers, probe, (m) => this.urlFor(jobId, m.name) != null);
+      await this.jobs
+        .createQueryBuilder()
+        .update()
+        .set({ port_state: portState })
+        .where('id = :id AND port_state IS DISTINCT FROM :ps', { id: jobId, ps: portState })
+        .execute()
+        .catch((err) => this.logger.debug(`persist port_state(${jobId}) failed: ${err}`));
+    }
+
+    const exposable = markers.filter((m) => m.port != null && m.expose);
 
     // A transient probe failure resolves to `unknown`; it must NOT be read as "nothing running" — doing so
     // would delete routes + unbridge Caddy for dev-servers that are still up, flapping the preview URL
@@ -127,9 +146,21 @@ export class ExposureService {
   /** Reconcile every live managed thread sandbox — the periodic self-heal driven by the reap timer. */
   async reconcileAll(): Promise<void> {
     if (!this.enabled) return;
-    const jobIds = await this.provider.listLiveThreadJobIds().catch(() => [] as string[]);
-    for (const j of jobIds) {
-      await this.reconcile(j).catch(() => undefined);
+    let jobIds: string[];
+    try {
+      jobIds = await this.provider.listLiveThreadJobIds();
+    } catch {
+      return; // transient — skip this tick entirely rather than sweep against an empty set
     }
+    for (const j of jobIds) await this.reconcile(j).catch(() => undefined);
+    // Self-heal: any job still flagged with a port badge but no longer live has no service — clear it
+    // (change-gated by the IS NOT NULL filter, so only real clears fire a WAL delta). Idempotent.
+    const qb = this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ port_state: null })
+      .where('port_state IS NOT NULL');
+    if (jobIds.length > 0) qb.andWhere('id NOT IN (:...live)', { live: jobIds });
+    await qb.execute().catch((err) => this.logger.debug(`port_state teardown sweep failed: ${err}`));
   }
 }

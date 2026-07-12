@@ -645,6 +645,8 @@ export class WebSurfaceController {
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
         ciCounts: t.ci_counts,
+        // Tri-state sidebar port badge, precomputed by ExposureService.reconcile ('exposed'|'internal'|null).
+        portState: t.port_state,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
