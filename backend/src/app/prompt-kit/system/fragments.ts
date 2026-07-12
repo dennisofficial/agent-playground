@@ -298,7 +298,7 @@ export const CLARITY_OVER_COMMENTS_NOTE =
   'plainly-readable lines over one clever one-liner. Write a comment ONLY for a WHY the code genuinely ' +
   'cannot show — a hidden constraint, a non-obvious invariant, a workaround for a specific bug, something ' +
   'that would surprise the next reader. Never write a comment that just restates what the code does, and ' +
-  'never one that references the task, phase, ticket, or PR ("added for X", "handles the case from #123", ' +
+  'never one that references the task, phase, issue, or PR ("added for X", "handles the case from #123", ' +
   '"correct because…") — that belongs in the PR description and rots the moment it merges. TIEBREAKER: ' +
   'this is the default for new code you author; where the repo you are editing already follows a ' +
   'different, established comment style, match the repo.';
@@ -606,7 +606,7 @@ export const SPIKE_FIRST_NOTE =
 
 /**
  * BASELINE FIRST — for planning. Reproduce and observe the CURRENT behavior of the thing you're about to
- * change, so "before" is known and "after" is provable (the way an engineer reproduces a ticket first).
+ * change, so "before" is known and "after" is provable (the way an engineer reproduces an issue first).
  */
 export const BASELINE_FIRST_NOTE =
   'BASELINE THE CURRENT BEHAVIOR before you change it. WHEN the work modifies something that already ' +
