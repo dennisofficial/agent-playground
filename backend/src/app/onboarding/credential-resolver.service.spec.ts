@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialResolver } from './credential-resolver.service';
 import type { GitHubAppTokenService } from '../git/github-app-token.service';
+import type { GitIdentityService } from '../git/git-identity.service';
 import type {
   TenantCredentials,
   TenantCredentialStore,
@@ -45,6 +46,15 @@ function fakeAppTokens(
   } as unknown as GitHubAppTokenService;
 }
 
+/** A `GitIdentityService` stubbed to resolve a fixed human identity for any token — or undefined (invalid PAT) when overridden. */
+function fakeIdentities(
+  resolve?: (token: string) => Promise<{ name: string; email: string } | undefined>,
+): GitIdentityService {
+  return {
+    resolve: resolve ?? (() => Promise.resolve({ name: 'Dev', email: '42+dev@users.noreply.github.com' })),
+  } as unknown as GitIdentityService;
+}
+
 describe('CredentialResolver — per-org rows, no env fallback', () => {
   describe('anthropicKey / openaiKey / githubToken', () => {
     it('returns undefined when orgId is missing', async () => {
@@ -52,6 +62,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({}),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.anthropicKey(undefined)).toBeUndefined();
       expect(await r.openaiKey(undefined)).toBeUndefined();
@@ -63,6 +74,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({}),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.anthropicKey('T1')).toBeUndefined();
       expect(await r.githubToken('T1')).toBeUndefined();
@@ -73,6 +85,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: {} }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.anthropicKey('T1')).toBeUndefined();
     });
@@ -84,6 +97,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.anthropicKey('T1')).toBe('a');
       expect(await r.openaiKey('T1')).toBe('o');
@@ -97,6 +111,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({}),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth(undefined, 'claude')).toBeUndefined();
       expect(await r.engineAuth(undefined, 'codex')).toBeUndefined();
@@ -107,6 +122,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { claudeOauthToken: 'legacy' } }),
         fakeClaudeStore({ T1: null }),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'claude')).toBeUndefined();
     });
@@ -118,6 +134,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
           T1: { id: 'cred-1', kind: 'personal', secret: 'oauth-json' },
         }),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'claude')).toEqual({
         secret: 'oauth-json',
@@ -133,6 +150,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
           T1: { id: 'cred-2', kind: 'setup_token', secret: 'sk-token' },
         }),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'claude')).toEqual({
         secret: 'sk-token',
@@ -146,6 +164,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: {} }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'codex')).toBeUndefined();
     });
@@ -155,6 +174,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { codexAuthSecret: 'codex' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'codex')).toEqual({
         secret: 'codex',
@@ -169,6 +189,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
           T1: { id: 'cred-1', kind: 'personal', secret: 'oauth-json' },
         }),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.engineAuth('T1', 'codex')).toBeUndefined();
     });
@@ -186,6 +207,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.githubToken('T1')).toBe('ghs_minted');
     });
@@ -195,6 +217,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { githubAuthMode: 'app', githubPat: 'ghp_fallback' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.githubToken('T1')).toBe('ghp_fallback');
     });
@@ -204,6 +227,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { githubAuthMode: 'app' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.githubToken('T1')).toBeUndefined();
     });
@@ -219,6 +243,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
             throw new Error('mint blip');
           },
         }),
+        fakeIdentities(),
       );
       await expect(r.githubToken('T1')).resolves.toBeUndefined();
     });
@@ -228,6 +253,7 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { githubPat: 'ghp_default' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r.githubToken('T1')).toBe('ghp_default');
 
@@ -235,53 +261,191 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T2: { githubAuthMode: 'pat', githubPat: 'ghp_explicit' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
       expect(await r2.githubToken('T2')).toBe('ghp_explicit');
     });
   });
 
-  describe('githubCommitIdentity', () => {
-    it('returns undefined for pat-mode / no orgId / no row', async () => {
+  describe('githubWriteIdentity', () => {
+    it('no orgId → {}', async () => {
       const r = new CredentialResolver(
         fakeStore({ T1: { githubPat: 'ghp_x' } }),
         fakeClaudeStore({}),
         fakeAppTokens(),
+        fakeIdentities(),
       );
-      expect(await r.githubCommitIdentity(undefined)).toBeUndefined();
-      expect(await r.githubCommitIdentity('T1')).toBeUndefined();
-      expect(await r.githubCommitIdentity('unknown-org')).toBeUndefined();
+      expect(await r.githubWriteIdentity(undefined)).toEqual({});
     });
 
-    it('returns the App bot identity for app-mode orgs', async () => {
+    it('no row for the org → {}', async () => {
       const r = new CredentialResolver(
-        fakeStore({
-          T1: { githubAuthMode: 'app', githubAppInstallationId: '123' },
-        }),
+        fakeStore({}),
         fakeClaudeStore({}),
-        fakeAppTokens({
-          appBotIdentity: () =>
-            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
-        }),
+        fakeAppTokens(),
+        fakeIdentities(),
       );
-      expect(await r.githubCommitIdentity('T1')).toEqual({
-        name: 'atlas-bot[bot]',
-        email: 'bot@x',
+      expect(await r.githubWriteIdentity('unknown-org')).toEqual({});
+    });
+
+    it('neither a PAT nor an installation → {}', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: {} }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({});
+    });
+
+    it('only a PAT (pref unset → pat): resolves the human identity + the PAT as apiToken', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: { githubPat: 'ghp_x' } }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'Dev', email: '42+dev@users.noreply.github.com' },
+        apiToken: 'ghp_x',
       });
     });
 
-    it('is best-effort: a bot-identity resolve failure yields undefined, never throws', async () => {
+    it('only an installation (no PAT): falls back to the App bot + the installation token', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: { githubAppInstallationId: '123' } }),
+        fakeClaudeStore({}),
+        fakeAppTokens({
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          getInstallationToken: () => Promise.resolve('ghs_minted'),
+        }),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'atlas-bot[bot]', email: 'bot@x' },
+        apiToken: 'ghs_minted',
+      });
+    });
+
+    it('both credentials, pref unset (null → pat): resolves the human identity + PAT', async () => {
       const r = new CredentialResolver(
         fakeStore({
-          T1: { githubAuthMode: 'app', githubAppInstallationId: '123' },
+          T1: { githubPat: 'ghp_x', githubAppInstallationId: '123' },
         }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'Dev', email: '42+dev@users.noreply.github.com' },
+        apiToken: 'ghp_x',
+      });
+    });
+
+    it('both credentials, pref explicitly "pat": resolves the human identity + PAT', async () => {
+      const r = new CredentialResolver(
+        fakeStore({
+          T1: {
+            githubIdentityMode: 'pat',
+            githubPat: 'ghp_x',
+            githubAppInstallationId: '123',
+          },
+        }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'Dev', email: '42+dev@users.noreply.github.com' },
+        apiToken: 'ghp_x',
+      });
+    });
+
+    it('both credentials, pref "app": resolves the App bot + installation token, overriding the PAT', async () => {
+      const r = new CredentialResolver(
+        fakeStore({
+          T1: {
+            githubIdentityMode: 'app',
+            githubPat: 'ghp_x',
+            githubAppInstallationId: '123',
+          },
+        }),
+        fakeClaudeStore({}),
+        fakeAppTokens({
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          getInstallationToken: () => Promise.resolve('ghs_minted'),
+        }),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'atlas-bot[bot]', email: 'bot@x' },
+        apiToken: 'ghs_minted',
+      });
+    });
+
+    it('PAT present but invalid (identities.resolve → undefined): falls through to the App bot', async () => {
+      const r = new CredentialResolver(
+        fakeStore({
+          T1: { githubPat: 'ghp_stale', githubAppInstallationId: '123' },
+        }),
+        fakeClaudeStore({}),
+        fakeAppTokens({
+          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          getInstallationToken: () => Promise.resolve('ghs_minted'),
+        }),
+        fakeIdentities(() => Promise.resolve(undefined)),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'atlas-bot[bot]', email: 'bot@x' },
+        apiToken: 'ghs_minted',
+      });
+    });
+
+    it('PAT invalid and no installation → {} (never throws)', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: { githubPat: 'ghp_stale' } }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(() => Promise.resolve(undefined)),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({});
+    });
+
+    it('is best-effort: the App branch throwing (appBotIdentity or getInstallationToken) yields {}, never throws', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: { githubAppInstallationId: '123' } }),
         fakeClaudeStore({}),
         fakeAppTokens({
           appBotIdentity: () => {
             throw new Error('boom');
           },
         }),
+        fakeIdentities(),
       );
-      await expect(r.githubCommitIdentity('T1')).resolves.toBeUndefined();
+      await expect(r.githubWriteIdentity('T1')).resolves.toEqual({});
+    });
+
+    it('pref "app" with BOTH credentials: an App-branch throw falls through the tryOrder to the PAT', async () => {
+      const r = new CredentialResolver(
+        fakeStore({
+          T1: {
+            githubIdentityMode: 'app',
+            githubPat: 'ghp_x',
+            githubAppInstallationId: '123',
+          },
+        }),
+        fakeClaudeStore({}),
+        fakeAppTokens({
+          getInstallationToken: () => {
+            throw new Error('mint blip');
+          },
+        }),
+        fakeIdentities(),
+      );
+      expect(await r.githubWriteIdentity('T1')).toEqual({
+        identity: { name: 'Dev', email: '42+dev@users.noreply.github.com' },
+        apiToken: 'ghp_x',
+      });
     });
   });
 });

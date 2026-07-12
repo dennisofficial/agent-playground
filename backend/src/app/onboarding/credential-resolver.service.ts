@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GitHubAppTokenService } from '../git/github-app-token.service';
-import type { EngineAuth } from '../engine/engine.types';
+import { GitIdentityService } from '../git/git-identity.service';
+import type { EngineAuth, SandboxGitIdentity } from '../engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { TenantCredentialStore } from './tenant-credential.store';
 
@@ -21,6 +22,7 @@ export class CredentialResolver {
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
     private readonly appTokens: GitHubAppTokenService,
+    private readonly identities: GitIdentityService,
   ) {}
 
   /** Anthropic key for LLM calls — the org's stored key, or undefined. */
@@ -67,21 +69,36 @@ export class CredentialResolver {
     return creds.githubPat;
   }
 
-  /** Commit identity for app-mode orgs (the App's bot, since an installation token is not a user); undefined for pat-mode (callers fall back to GitIdentityService.resolve(token)). Best-effort — never throws. */
-  async githubCommitIdentity(
+  /** Identity + matching API token for identity-bearing writes, resolved via the pref+fallback chain (d3). Best-effort/fail-open — never throws; {} means no usable credential (caller omits identity/apiToken). */
+  async githubWriteIdentity(
     orgId?: string,
-  ): Promise<{ name: string; email: string } | undefined> {
-    if (!orgId) return undefined;
+  ): Promise<{ identity?: SandboxGitIdentity; apiToken?: string }> {
+    if (!orgId) return {};
     const creds = await this.store.read(orgId);
-    if (creds?.githubAuthMode !== 'app') return undefined;
-    try {
-      return await this.appTokens.appBotIdentity();
-    } catch (e) {
-      this.logger.warn(
-        `app bot identity resolve failed for org ${orgId}: ${(e as Error).message}`,
-      );
-      return undefined;
+    if (!creds) return {};
+    const pref = creds.githubIdentityMode ?? 'pat'; // null → pat
+    const order = pref === 'pat' ? (['pat', 'app'] as const) : (['app', 'pat'] as const);
+    for (const cred of order) {
+      if (cred === 'pat' && creds.githubPat) {
+        const human = await this.identities.resolve(creds.githubPat); // memoized GET /user (also validity probe)
+        if (human) return { identity: human, apiToken: creds.githubPat };
+        // PAT present but invalid → try the next credential
+      }
+      if (cred === 'app' && creds.githubAppInstallationId) {
+        try {
+          const [identity, apiToken] = await Promise.all([
+            this.appTokens.appBotIdentity(),
+            this.appTokens.getInstallationToken(creds.githubAppInstallationId),
+          ]);
+          return { identity, apiToken };
+        } catch (e) {
+          this.logger.warn(
+            `app write-identity resolve failed for org ${orgId}: ${(e as Error).message}`,
+          );
+        }
+      }
     }
+    return {}; // no usable credential — fail-open (q6)
   }
 
   /**

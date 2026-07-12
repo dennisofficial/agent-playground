@@ -114,7 +114,7 @@ import {
   MAX_MOUNT_PATH_LEN,
   type MountMode,
 } from '../sandbox/container-paths';
-import { GitIdentityService, LocalGitService } from '../git';
+import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
 import { JobDependencyService } from '../job-deps';
@@ -335,9 +335,6 @@ export class AgentSessionManager
     private readonly configStore: WorkspaceConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
     private readonly git: LocalGitService,
-    // Per-turn commit-identity fallback for PAT-mode orgs (`GET /user`) — app-mode orgs use the App bot
-    // identity from `creds.githubCommitIdentity` instead. See resolveBrainGitAuth.
-    private readonly identities: GitIdentityService,
     // The fragment-library assembler for the brain's system prompt (ATLAS_MAIN; onboarding is a jobKind).
     private readonly prompts: PromptService,
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
@@ -423,13 +420,12 @@ export class AgentSessionManager
       // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default
       // 'pat' (today's behavior) rather than throwing mid-turn.
       const mode = (await this.creds.githubAuthMode?.(target.orgId)) ?? 'pat';
-      const identity =
-        (await this.creds.githubCommitIdentity(target.orgId)) ??
-        (await this.identities.resolve(token));
+      const { identity, apiToken } = await this.creds.githubWriteIdentity(target.orgId);
       return {
         gitUrl: target.gitUrl,
         mode,
         ...(token ? { token } : {}),
+        ...(apiToken ? { apiToken } : {}),
         ...(identity ? { identity } : {}),
       };
     } catch (err) {
