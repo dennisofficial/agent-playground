@@ -42,7 +42,12 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from "./types";
+import type { AutoApproveMode } from "@workspace/shared";
+import type {
+  JobBlocker,
+  WebAttachmentsCard,
+  WebReviewCommentsCard,
+} from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -380,7 +385,8 @@ export function useRetryTurn(ref: JobRef) {
 export function useAddJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) =>
+      addJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -393,7 +399,8 @@ export function useAddJobDependency(ref: JobRef) {
 export function useRemoveJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) =>
+      removeJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -527,7 +534,7 @@ export function useRenameJob(ref: JobRef) {
 export function useSetAutoApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) => setAutoApprove(ref, enabled),
+    mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });

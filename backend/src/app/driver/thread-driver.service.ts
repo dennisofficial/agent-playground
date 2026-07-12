@@ -1,6 +1,7 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Sema } from 'async-sema';
+import { modeApprovesShip } from '@workspace/shared';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -1222,7 +1223,7 @@ export class ThreadDriver implements JobDispatcher {
     // running (the just-parked status makes its CAS succeed) + stamps the marker; we return true so runJob
     // falls through to finalizeBuild in THIS drive (a re-entrant drive() would hit the single-flight guard).
     const fresh = await this.store.loadJob(job.id).catch(() => job);
-    if (!fresh.autoApprove) return false;
+    if (!modeApprovesShip(fresh.autoApproveMode)) return false;
     const approver = await this.resolveAutoApprover(fresh);
     const acted = await this.store.approveShip(job.id);
     if (!acted) return false;

@@ -513,7 +513,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       mainTasks: [],
       mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
       createdBy: null,
-      autoApprove: false,
+      autoApproveMode: 'off',
       blockedBy: [],
       blockedSeedMessage: null,
     });

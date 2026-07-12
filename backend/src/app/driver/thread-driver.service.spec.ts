@@ -762,7 +762,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     prUrl: null,
     prNumber: null,
     shipReviewApprovedAt: null,
-    autoApprove: false,
+    autoApproveMode: 'off',
     autoApproveBy: null,
     createdBy: null,
     createdAt: new Date(),
@@ -4057,34 +4057,37 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     };
   }
 
-  it('auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive', async () => {
-    const job = makeJob({
-      shipReviewApprovedAt: null,
-      autoApprove: true,
-      autoApproveBy: 'user-42',
-    });
-    const state = baseState(job);
-    const h = assemble(state, { autoShipApprove: false });
-    const approverSpy = vi.spyOn(
-      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
-      'resolveAutoApprover',
-    );
+  it.each(['ship', 'both'] as const)(
+    'auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive (mode: %s)',
+    async (mode) => {
+      const job = makeJob({
+        shipReviewApprovedAt: null,
+        autoApproveMode: mode,
+        autoApproveBy: 'user-42',
+      });
+      const state = baseState(job);
+      const h = assemble(state, { autoShipApprove: false });
+      const approverSpy = vi.spyOn(
+        h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+        'resolveAutoApprover',
+      );
 
-    await h.driver.dispatch(state.job);
-    // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
-    await flushUntil(() => state.job.status === 'done');
+      await h.driver.dispatch(state.job);
+      // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
+      await flushUntil(() => state.job.status === 'done');
 
-    expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
-    expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
-    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
-    expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
-    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
-  });
+      expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
+      expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
+      expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+      expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
+      await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
+    },
+  );
 
   it('falls back to the org owner when autoApproveBy is null', async () => {
     const job = makeJob({
       shipReviewApprovedAt: null,
-      autoApprove: true,
+      autoApproveMode: 'ship',
       autoApproveBy: null,
     });
     const state = baseState(job);
@@ -4104,19 +4107,22 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     await expect(approverSpy.mock.results[0]!.value).resolves.toBe('owner-99');
   });
 
-  it('does NOT auto-resolve the ship gate when autoApprove is off', async () => {
-    const job = makeJob({ shipReviewApprovedAt: null, autoApprove: false, autoApproveBy: null });
-    const state = baseState(job);
-    const h = assemble(state, { autoShipApprove: false });
+  it.each(['plan', 'off'] as const)(
+    'does NOT auto-resolve the ship gate when autoApproveMode does not approve the ship gate (mode: %s)',
+    async (mode) => {
+      const job = makeJob({ shipReviewApprovedAt: null, autoApproveMode: mode, autoApproveBy: null });
+      const state = baseState(job);
+      const h = assemble(state, { autoShipApprove: false });
 
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
-    await flush();
+      await h.driver.dispatch(state.job);
+      await flushUntil(() => state.job.status === 'awaiting_ship_review');
+      await flush();
 
-    expect(h.store.approveShip).not.toHaveBeenCalled();
-    expect(h.shipSeeds).toHaveLength(0);
-    expect(state.job.status).toBe('awaiting_ship_review');
-  });
+      expect(h.store.approveShip).not.toHaveBeenCalled();
+      expect(h.shipSeeds).toHaveLength(0);
+      expect(state.job.status).toBe('awaiting_ship_review');
+    },
+  );
 });
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
