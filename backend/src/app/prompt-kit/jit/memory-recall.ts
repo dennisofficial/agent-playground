@@ -4,6 +4,8 @@
  * composes these into the reserved `system_reminder source="memory"` slot.
  */
 
+import { stripTags } from '../harness/tag-vocabulary';
+
 export type RecalledForPrefix = { fact: string; scope: string };
 
 // Trivial-message thresholds (d2): below either, we skip the embedding call so "ok"/"thanks" never fire.
@@ -17,7 +19,11 @@ const MIN_QUERY_WORDS = 3;
  */
 export function renderMemoryRecall(facts: RecalledForPrefix[]): string {
   if (facts.length === 0) return '';
-  const lines = facts.map((f) => `  • ${f.fact.replace(/\s+/g, ' ').trim()}`);
+  const lines = facts
+    .map((f) => stripTags(f.fact).replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((fact) => `  • ${fact}`);
+  if (lines.length === 0) return '';
   return (
     'Relevant memories recalled for this message (semantic match; may be partial — verify before ' +
     `relying on them):\n${lines.join('\n')}`

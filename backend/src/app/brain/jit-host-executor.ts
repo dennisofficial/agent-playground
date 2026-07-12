@@ -82,4 +82,9 @@ export class JitHostExecutor {
     }
     return chunks;
   }
+
+  /** True when the declarative catalog currently enables at least one operator turn-prefix rule. */
+  hasEnabledOperatorPrepends(): boolean {
+    return operatorMessageRules().some((rule) => rule.delivery === 'turn-prefix');
+  }
 }

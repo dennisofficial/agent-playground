@@ -209,6 +209,11 @@ import {
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 
+type InjectedMemoryDedupState = {
+  sessionId: string | null;
+  factIds: Set<string>;
+};
+
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
  *
@@ -308,9 +313,10 @@ export class AgentSessionManager
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
-  // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's live session,
-  // so a re-recalled fact is surfaced once. In-memory/per-process, like skillEditGrantsByJob.
-  private readonly injectedMemoryByJob = new Map<string, Set<string>>();
+  // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's current live
+  // SDK session, so a re-recalled fact is surfaced once but a fresh session can see it again. The first turn
+  // has no session id yet; the set is rebound when the engine emits the session event.
+  private readonly injectedMemoryByJob = new Map<string, InjectedMemoryDedupState>();
 
   /**
    * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
@@ -1388,7 +1394,14 @@ export class AgentSessionManager
       return;
     }
 
-    await this.stimulusStore.leaseChatStimuli(collected.ids);
+    const leased = await this.stimulusStore
+      .leaseChatStimuli(collected.ids)
+      .then(() => true)
+      .catch((err) => {
+        this.logger.warn(`pump: leaseChatStimuli failed for thread=${jobId}: ${err}`);
+        return false;
+      });
+    if (!leased) return;
     const ids = collected.ids;
     // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
     // message); the brain reads them together as this turn's task. Base fields come from the oldest.
@@ -2238,8 +2251,8 @@ export class AgentSessionManager
 
     // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
     // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
-    if (isOperatorAuthored(stimulus)) {
-      const prependText = (await this.buildMemoryRecallPrefix(stimulus)) ?? undefined;
+    if (isOperatorAuthored(stimulus) && this.jit?.hasEnabledOperatorPrepends()) {
+      const prependText = (await this.buildMemoryRecallPrefix(stimulus, sessionId)) ?? undefined;
       reminderChunks.push(
         ...(this.jit?.collectOperatorPrepends({
           jobId: stimulus.jobId,
@@ -2467,6 +2480,9 @@ export class AgentSessionManager
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
       onEvent: (e) => {
+        if (e.kind === 'session' && e.sessionId) {
+          this.bindInjectedMemorySession(stimulus.jobId, e.sessionId);
+        }
         // Surface THIS turn's fully-assembled prompt on the `main` lane, once, on the turn-START `session`
         // event (see `promptEmitted` above for why this is the right hook). Fire-and-forget; insert-once by
         // stimulus id, so a re-drive/reattach of the same message never duplicates it.
@@ -2683,6 +2699,7 @@ export class AgentSessionManager
 
     // Persist the session_id for resume.
     if (result.sessionId && sandboxRow) {
+      this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
       sandboxRow.session_id = result.sessionId;
       await this.sandboxRows.save(sandboxRow);
     }
@@ -6823,7 +6840,29 @@ export class AgentSessionManager
    * the runtime `MEMORY_AUTORECALL_DISABLED` env guard here + the declarative `memoryPrependRule.enabled`.
    * Per-session dedup suppresses a fact already injected earlier in the same live session.
    */
-  private async buildMemoryRecallPrefix(stimulus: ChatStimulus): Promise<string | null> {
+  private injectedMemoryFactIds(jobId: string, sessionId: string | null): Set<string> {
+    let state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId !== sessionId) {
+      state = { sessionId, factIds: new Set<string>() };
+      this.injectedMemoryByJob.set(jobId, state);
+    }
+    return state.factIds;
+  }
+
+  private bindInjectedMemorySession(jobId: string, sessionId: string): void {
+    const state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId === sessionId) return;
+    if (state.sessionId === null) {
+      state.sessionId = sessionId;
+      return;
+    }
+    this.injectedMemoryByJob.set(jobId, { sessionId, factIds: new Set<string>() });
+  }
+
+  private async buildMemoryRecallPrefix(
+    stimulus: ChatStimulus,
+    sessionId?: string,
+  ): Promise<string | null> {
     if (this.env?.get('MEMORY_AUTORECALL_DISABLED') === 'on') return null;
     if (!isSubstantiveQuery(stimulus.body)) return null;
     try {
@@ -6834,13 +6873,13 @@ export class AgentSessionManager
         floor: 0.45,
       });
       if (facts.length === 0) return null;
-      const seen = this.injectedMemoryByJob.get(stimulus.jobId) ?? new Set<string>();
+      const seen = this.injectedMemoryFactIds(stimulus.jobId, sessionId ?? null);
       const fresh = facts.filter((f) => !seen.has(f.id));
       if (fresh.length === 0) return null;
-      for (const f of fresh) seen.add(f.id);
-      this.injectedMemoryByJob.set(stimulus.jobId, seen);
       const body = renderMemoryRecall(fresh.map((f) => ({ fact: f.fact, scope: f.scope })));
-      return body || null;
+      if (!body) return null;
+      for (const f of fresh) seen.add(f.id);
+      return body;
     } catch (err) {
       this.logger.debug(`memory auto-recall prefix failed (continuing): ${err}`);
       return null;
@@ -6908,13 +6947,19 @@ export class AgentSessionManager
 
   /** Post a reply in-thread AND append it to the durable transcript. */
   private async say(stimulus: ChatStimulus, text: string): Promise<void> {
-    const route = await this.store.route({
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      jobId: stimulus.jobId,
-    });
-    const channel = route.channel ?? stimulus.replyRoute.jobRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    let channel = stimulus.replyRoute.jobRef;
+    let threadTs = stimulus.replyRoute.jobRef;
+    try {
+      const route = await this.store.route({
+        orgId: stimulus.orgId,
+        repoId: stimulus.repoId,
+        jobId: stimulus.jobId,
+      });
+      channel = route.channel ?? channel;
+      threadTs = route.threadTs ?? threadTs;
+    } catch (err) {
+      this.logger.warn(`failed to resolve brain reply route: ${err}`);
+    }
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -6923,7 +6968,9 @@ export class AgentSessionManager
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
-    await this.store.appendAtlasMessage(stimulus.jobId, text);
+    await this.store
+      .appendAtlasMessage(stimulus.jobId, text)
+      .catch((err) => this.logger.warn(`failed to persist brain reply: ${err}`));
   }
 
   /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable

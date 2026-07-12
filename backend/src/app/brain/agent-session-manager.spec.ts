@@ -245,6 +245,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockJit = {
     fireLifecycle: vi.fn(),
     collectOperatorPrepends: vi.fn().mockReturnValue([]),
+    hasEnabledOperatorPrepends: vi.fn().mockReturnValue(true),
   } as unknown as JitHostExecutor;
 
   const mockSurface = {
@@ -4541,7 +4542,10 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       undefined, // usageProjector
       env,
     );
-    return manager as unknown as { buildMemoryRecallPrefix(s: ChatStimulus): Promise<string | null> };
+    return manager as unknown as {
+      buildMemoryRecallPrefix(s: ChatStimulus, sessionId?: string): Promise<string | null>;
+      bindInjectedMemorySession(jobId: string, sessionId: string): void;
+    };
   }
 
   it('a recall hit renders the fact into the memory-block body', async () => {
@@ -4573,6 +4577,22 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
 
     expect(first).toContain('uses pnpm for package management');
     expect(second).toBeNull();
+  });
+
+  it('per-session dedup rebinds the first turn to its emitted session id and resets for a fresh session', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    manager.bindInjectedMemorySession(THREAD_ID, 'session-1');
+    const sameSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-1');
+    const freshSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-2');
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(sameSession).toBeNull();
+    expect(freshSession).toContain('uses pnpm for package management');
   });
 
   it('a trivial operator body skips recall entirely (no embedding call)', async () => {
