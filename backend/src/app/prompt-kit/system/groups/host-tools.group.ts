@@ -137,7 +137,7 @@ export class HostToolsGroup {
       '    the OWNER to approve (see MCP SERVERS). Posts a proposal card; you never register servers yourself.',
       '    Declare a static credential slot by name with `secret: true`; fill it after approval via request_secret',
       '    (mcp). For a server that needs INTERACTIVE login, set authKind:"oauth" instead (http/sse only, NO secret',
-      '    slot): the OWNER completes consent in the console (MCP settings → Connect) — you cannot, and must never',
+      '    slot): the OWNER completes consent with the proposal-card Connect button or in the console (MCP settings → Connect) — you cannot, and must never',
       "    inject an Authorization/Bearer header. NOTE: Claude's own design MCP (/design-login, claude.ai design",
       '    files) is NOT onboardable as an MCP here — to use a .dc.html, ask the operator to UPLOAD it.',
       `  - mcp__${BRIDGE_SERVER_NAME}__finish_onboarding   — finish: only after the stack boots green (see FINISH)`,
