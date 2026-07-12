@@ -630,6 +630,7 @@ const SECTION_COLOR: Record<JobSection, string> = {
   blocked: "var(--amber)",
   awaiting: "var(--slate)",
   building: "var(--accent)",
+  master_review: "var(--blue)",
   amending: "var(--amber)",
   ready_to_ship: "var(--green)",
   done: "var(--green)",

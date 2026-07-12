@@ -86,6 +86,26 @@ describe("sectionOf", () => {
     );
   });
 
+  it("a running job in master_review activity lands in master_review, not building", () => {
+    expect(
+      sectionOf(
+        makeThread({ status: "running", activity: "master_review" }),
+      ),
+    ).toBe("master_review");
+  });
+
+  it("master_review activity takes precedence over the shipping branch", () => {
+    expect(
+      sectionOf(
+        makeThread({
+          status: "running",
+          activity: "master_review",
+          shipping: true,
+        }),
+      ),
+    ).toBe("master_review");
+  });
+
   it("done with no PR lands in done", () => {
     expect(sectionOf(makeThread({ status: "done", pr: null }))).toBe("done");
   });
@@ -179,6 +199,20 @@ describe("groupThreadsBySection", () => {
     ];
     const groups = groupThreadsBySection(threads);
     expect(groups.map((g) => g.section)).toEqual(["awaiting", "ready_to_ship"]);
+  });
+
+  it("orders master_review directly after building", () => {
+    const threads = [
+      makeThread({ id: "d1", status: "done", pr: null }),
+      makeThread({ id: "mr1", status: "running", activity: "master_review" }),
+      makeThread({ id: "b1", status: "running" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual([
+      "building",
+      "master_review",
+      "done",
+    ]);
   });
 
   it("orders ready_to_ship between building and done", () => {
