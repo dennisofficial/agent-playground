@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   FileText,
+  FlaskConical,
   Folder,
   GitBranch,
   GitFork,
@@ -36,6 +37,7 @@ import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
+import { isOutputGroupHidden } from "./output-group";
 import {
   useJobCreatedJobs,
   useRetryJob,
@@ -868,6 +870,7 @@ function OutputsRegion({
   const specs = context?.specs ?? [];
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
+  const evidence = context?.evidence ?? [];
   const triaging = status === "triaging";
 
   return (
@@ -938,14 +941,28 @@ function OutputsRegion({
         onSelectNode={onSelectNode}
       />
 
-      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      {/* ARTIFACTS — human-facing deliverables (preview HTML, mockups, reports). Diff + PR live in the header. */}
       <OutputGroup
         label="ARTIFACTS"
         files={artifacts}
         prefix="artifact"
         loading={loading}
         emptyIcon={<ImageIcon size={13} />}
-        emptyText="No screenshots or files yet"
+        emptyText="No deliverables yet"
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
+
+      {/* EVIDENCE — live-run proof (logs, screenshots, RESULTS.md), organized per thread. Hidden until the
+          first evidence lands, so historical jobs (no evidence/) show no empty region. */}
+      <OutputGroup
+        label="EVIDENCE"
+        files={evidence}
+        prefix="evidence"
+        loading={loading}
+        hideWhenEmpty
+        emptyIcon={<FlaskConical size={13} />}
+        emptyText="No evidence captured yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -972,7 +989,7 @@ function OutputGroup({
 }: {
   label: string;
   files: ContextFile[];
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   loading?: boolean;
   /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
@@ -1003,7 +1020,15 @@ function OutputGroup({
     });
   // Drop the group whole (no divider, no ghost row) when asked to hide-when-empty and there's genuinely
   // nothing to show — placed AFTER the hooks above so their order stays unconditional.
-  if (hideWhenEmpty && files.length === 0 && !loading && !children) return null;
+  if (
+    isOutputGroupHidden({
+      hideWhenEmpty,
+      fileCount: files.length,
+      loading,
+      hasChildren: Boolean(children),
+    })
+  )
+    return null;
   return (
     <>
       <Divider
@@ -1521,7 +1546,7 @@ function renderFileTree({
   node: FileTreeNode;
   path: string;
   depth: number;
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;

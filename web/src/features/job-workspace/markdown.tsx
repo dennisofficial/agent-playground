@@ -883,7 +883,7 @@ function isRelativeHref(href: string | undefined): href is string {
  *  rejected by {@link isRelativeHref} (leading `/`) but must still reach the resolver so a conversation link
  *  to a spec/generated/artifact file opens it in the detail pane. */
 function isContextHref(href: string | undefined): href is string {
-  return !!href && /^\/context\/(specs|generated|artifacts)\//.test(href);
+  return !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href);
 }
 
 export const Markdown = memo(function Markdown({
@@ -951,7 +951,7 @@ export const Markdown = memo(function Markdown({
     return next;
   }, [resolveRelativeLink, resolveFileLink]);
   return (
-    <div className="text-[14px] leading-[1.62] text-text">
+    <div className="text-[14px] leading-[1.62] text-text [overflow-wrap:anywhere]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkShortcodeIcons]}
         components={components}

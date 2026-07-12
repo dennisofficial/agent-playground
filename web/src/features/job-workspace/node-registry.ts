@@ -54,7 +54,7 @@ const DETAIL_LITERALS = new Set([
 /** Prefixed detail-pane nodes (files, ports, services, section plans). Review lenses (`rev:`) and the
  *  post-review fix turn (`fix:`) are THREADS, not detail nodes — they open in the LEFT lane pane like the
  *  build/Codex-review threads (the RIGHT pane is reserved for tool-called sub-agents + outputs/docs). */
-const DETAIL_PREFIX = /^(spec|gen|artifact|port|secplan|service):/;
+const DETAIL_PREFIX = /^(spec|gen|artifact|evidence|port|secplan|service):/;
 
 /** Whether a node opens in the RIGHT (detail) pane rather than the LEFT (lane/conversation) one.
  *  (`subagent:` is neither — it stacks via `?sub=`, handled in `use-selected-node`.) */
@@ -92,7 +92,8 @@ export function resolveNode(
   if (
     node.startsWith("spec:") ||
     node.startsWith("gen:") ||
-    node.startsWith("artifact:")
+    node.startsWith("artifact:") ||
+    node.startsWith("evidence:")
   )
     return "found";
   // Subagent runs self-handle a missing run inside SubagentView. Always resolvable.
@@ -154,8 +155,9 @@ export function parseLegNode(
 // ── conversation /context link → node id ────────────────────────────────────────────────────────
 /**
  * Map a conversation markdown-link href that points at a `/context` file — absolute
- * `/context/<bucket>/<path>` OR bucket-relative `<bucket>/<path>` (bucket ∈ specs|generated|artifacts) — to
- * its navigator node id (`spec:`/`gen:`/`artifact:` + bucket-relative path), or null when it isn't a context
+ * `/context/<bucket>/<path>` OR bucket-relative `<bucket>/<path>` (bucket ∈ specs|generated|artifacts|
+ * evidence) — to its navigator node id (`spec:`/`gen:`/`artifact:`/`evidence:` + bucket-relative path), or
+ * null when it isn't a context
  * link (unknown bucket, missing path, or a `..` traversal). This is the conversation-side analogue of
  * {@link contextNodeForLink} (which resolves links relative to a "current file"); here the href already
  * carries its own bucket, so there is no `fromPath`.
@@ -173,7 +175,9 @@ export function contextConvoNodeForHref(href: string): string | null {
         ? "gen:"
         : bucket === "artifacts"
           ? "artifact:"
-          : null;
+          : bucket === "evidence"
+            ? "evidence:"
+            : null;
   if (!prefix || rest.length === 0 || rest.some((s) => s === "" || s === ".."))
     return null;
   return prefix + rest.join("/");

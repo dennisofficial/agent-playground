@@ -44,7 +44,7 @@ export const ALL: Agent[] = Object.values(Agent);
 /** The code-changing build agents (worker orchestrator + its fan-out writers). */
 export const BUILDERS: Agent[] = [Agent.WORKER, Agent.FAN_OUT];
 
-/** The build agents that own capturing evidence artifacts into `/context/artifacts/` (the orchestrator
+/** The build agents that own capturing live-run evidence into `$ATLAS_EVIDENCE_DIR` (the orchestrator
  *  + its dedicated live-validation subagent). Shared audience for `EVIDENCE_ARTIFACTS_NOTE`. */
 export const EVIDENCE_OWNERS: Agent[] = [Agent.WORKER, Agent.VALIDATE];
 
