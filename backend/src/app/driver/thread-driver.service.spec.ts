@@ -1320,11 +1320,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
   });
 
-  it('a claude builder turn — AND its follow-up COMMIT-NUDGE turn (kind:\'gate\') — both forward modelReasoningEffort: "high"', async () => {
+  it('a claude builder turn — AND its follow-up COMMIT-NUDGE turn (kind:\'step\') — both forward modelReasoningEffort: "high"', async () => {
     // The registry pins the `builder` thread-kind to 'high' reasoning effort; both the primary execute
-    // turn and the commit-nudge follow-up turn (which reuses the gate's reattach path, `kind:'gate'`) read
+    // turn and the commit-nudge follow-up turn (which reuses the batch reattach path, `kind:'step'`) read
     // it off the same spec, so both must forward the SAME value to the engine.
-    const runs: Array<{ engine: string; effort?: string; gateKind?: string }> = [];
+    const runs: Array<{ engine: string; effort?: string; turnKind?: string; isCommitNudge?: boolean }> = [];
     const { turn: baseTurn } = makeTurn({});
     const turn = {
       runTurn: vi.fn(
@@ -1335,12 +1335,13 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           stepId?: string | null;
           jobId: string;
           toolBridge?: ToolBridgeOptions;
-          turnMeta?: { kind?: string };
+          turnMeta?: { kind?: string; ctx?: { commitNudge?: unknown } };
         }) => {
           runs.push({
             engine: input.engine,
             effort: input.modelReasoningEffort,
-            gateKind: input.turnMeta?.kind,
+            turnKind: input.turnMeta?.kind,
+            isCommitNudge: input.turnMeta?.ctx?.commitNudge != null,
           });
           return (baseTurn.runTurn as unknown as (i: typeof input) => Promise<unknown>)(input);
         },
@@ -1358,7 +1359,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state, { turn });
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-    // The writer "forgot" to commit on its first pass (tree dirty) — the host nudges it once (a kind:'gate'
+    // The writer "forgot" to commit on its first pass (tree dirty) — the host nudges it once (a kind:'step'
     // resumed turn), and the nudge itself leaves the tree clean.
     let hasChangesCalls = 0;
     (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges = vi.fn(async () => {
@@ -1369,12 +1370,96 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    const builderRuns = runs.filter((r) => r.gateKind !== 'gate');
-    const gateRuns = runs.filter((r) => r.gateKind === 'gate');
+    const builderRuns = runs.filter((r) => !r.isCommitNudge);
+    const nudgeRuns = runs.filter((r) => r.isCommitNudge);
     expect(builderRuns.length).toBeGreaterThan(0);
-    expect(gateRuns.length).toBeGreaterThan(0);
+    expect(nudgeRuns.length).toBeGreaterThan(0);
     expect(builderRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
-    expect(gateRuns.every((r) => r.engine === 'claude' && r.effort === 'high')).toBe(true);
+    expect(nudgeRuns.every((r) => r.engine === 'claude' && r.effort === 'high' && r.turnKind === 'step')).toBe(true);
+  });
+
+  it('restart recovery reattaches an in-flight commit nudge instead of kicking a duplicate one', async () => {
+    let dirty = true;
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        toolBridge?: ToolBridgeOptions;
+      }) => {
+        await assertThreadDone(input);
+        return {
+          report: 'built',
+          session: {
+            id: 'sess-build',
+            jobId: input.jobId,
+            stepId: input.stepId ?? null,
+            engine: 'claude' as const,
+            mode: input.mode as 'plan' | 'execute' | 'review',
+            branch: 'b',
+            worktreePath: '/wt/b',
+          },
+        };
+      },
+    );
+    const reattach = vi.fn(async (input: Parameters<TurnRunnerService['reattach']>[0]) => {
+      dirty = false;
+      return {
+        report: 'commit nudge finished',
+        session: {
+          id: 'sess-build',
+          jobId: input.jobId,
+          stepId: input.stepId ?? null,
+          engine: 'claude' as const,
+          mode: 'execute' as const,
+          branch: 'b',
+          worktreePath: '/wt/b',
+        },
+      };
+    });
+    const turn = {
+      runTurn,
+      reattach,
+      canReattach: () => true,
+    } as unknown as TurnRunnerService;
+    const listRunning = vi.fn(async () =>
+      dirty
+        ? [
+            {
+              turn_id: 'commit-turn-live',
+              job_id: 'job-abcdef12',
+              org_id: 'T1',
+              channel: 'C1',
+              lane: 'thread:sec-be',
+              kind: 'step',
+              container_id: 'ctr-commit',
+              status: 'running',
+              ctx: { repoId: 'proj', threadId: 'sec-be', anchorStepId: 'sec-be-ph0', commitNudge: 1 },
+            },
+          ]
+        : [],
+    );
+
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { turn, turnRegistry: { listRunning } as never });
+    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges = vi.fn(async () => dirty);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(reattach).toHaveBeenCalledTimes(1);
+    expect(reattach.mock.calls[0][0]).toMatchObject({
+      turnId: 'commit-turn-live',
+      containerId: 'ctr-commit',
+    });
+    expect(runTurn).toHaveBeenCalledTimes(1);
   });
 
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {

@@ -263,7 +263,7 @@ export class ThreadDriver implements JobDispatcher {
     // @Global ExposureModule — inert unless PREVIEW_BASE_DOMAIN is set. @Optional so the driver still
     // constructs when previews are off; used to render each running service's public preview URL.
     @Optional() private readonly exposure?: ExposureService,
-    // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER / gate /
+    // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER /
     // commit) and forwarded on the run args so the in-container FAN_OUT writer subagents get it too.
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
@@ -436,12 +436,12 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * WATCHDOG RE-ATTACH (build kinds: step/gate/review/autofix). The leader watchdog calls this for one
+   * WATCHDOG RE-ATTACH (build kind: step). The leader watchdog calls this for one
    * orphaned-but-alive `active_turns` row whose engine is still streaming but whose host relay was severed by
    * a restart / leader flap. We don't re-tail the row directly — that would only re-persist the transcript and
-   * SKIP the driver's deterministic continuation (verification gate, commit/`commit_sha`, step `done`, branch
+   * SKIP the driver's deterministic continuation (completion checks, commit/`commit_sha`, step `done`, branch
    * backstop). Instead we WAKE THE FULL DRIVE: `drive()`→`runJob` fast-forwards completed work, re-reaches the
-   * interrupted batch, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
+   * interrupted batch/commit nudge, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
    * `resume()` does, just triggered continuously instead of once. Idempotent + safe:
    *   - only a `running`, un-halted job is drivable (`runJob`'s chokepoint) — otherwise 'deferred', so a
    *     halted/parked/terminal job keeps its existing recovery (`resumePaused`/`retry`) and the watchdog keeps
@@ -2471,12 +2471,11 @@ export class ThreadDriver implements JobDispatcher {
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
-    // during the verification gate or commit that follows — a much bigger window now that the gate can run
-    // for minutes, across multiple resumed turns. Re-kicking the orchestrator here would re-send its
-    // ORIGINAL batch task into an already-finished conversation (confusing it, and exposing the WRONG tool
-    // bridge — the batch bridge, not the gate's) instead of resuming the gate that's actually in progress.
-    // So: if a `done` terminal record already exists for the terminal batch, skip the kick/reattach dance
-    // entirely and fall straight through to the gate below with the EXISTING assertion.
+    // during the completion gate or commit that follows. Re-kicking the orchestrator here would re-send its
+    // ORIGINAL batch task into an already-finished conversation. So: if a `done` terminal record already
+    // exists for the terminal batch, skip the batch kick entirely and fall through to the completion gate /
+    // commit path with the EXISTING assertion. An in-flight commit nudge is reattached later by
+    // `ensureCommitted`.
     const priorTerm = isLastBatch ? await this.store.getTerminalRecord(thread.id) : null;
 
     let report: string;
@@ -2484,7 +2483,7 @@ export class ThreadDriver implements JobDispatcher {
 
     if (priorTerm?.status === 'done') {
       this.logger.log(
-        `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — terminal record already 'done' from a prior attempt; resuming the verification gate without re-kicking the orchestrator`,
+        `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — terminal record already 'done' from a prior attempt; resuming completion checks without re-kicking the orchestrator`,
       );
       report = priorTerm.summary;
     } else {
@@ -2512,7 +2511,7 @@ export class ThreadDriver implements JobDispatcher {
       // pipe transport falls through to a kick that resumes the persisted session — today's recovery).
       const reattachRow =
         this.turn.canReattach() && anchor.sessionId
-          ? await this.findReattachableTurn(job.id, lane, anchor.id)
+          ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge == null)
           : null;
       // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
       // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
@@ -2645,7 +2644,7 @@ export class ThreadDriver implements JobDispatcher {
       return { outcome, report };
     }
 
-    // The WRITER committed + pushed its own work (its batch prompt + the gate directive both require a
+    // The WRITER committed + pushed its own work (its batch prompt requires a
     // clean tree). The host no longer creates commits — it only READS what the writer produced. If the tree
     // is still dirty (the model forgot), nudge the SAME session to commit + push, bounded; if it stays dirty
     // we block rather than committing on the writer's behalf.
@@ -2687,10 +2686,10 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Ensure the WRITER left a clean tree (its own commit + push). Writers own their commits now (prompt + gate
-   * directive); this only handles the forgot-to-commit case. Re-checks the tree and, if dirty, resumes the
-   * SAME session (via `stepId`) with a commit + push directive — bounded, same resumed-turn pattern as the
-   * verification gate. Returns `ok:false` if the tree stays dirty (the driver then blocks the thread).
+   * Ensure the WRITER left a clean tree (its own commit + push). Writers own their commits now (prompt);
+   * this only handles the forgot-to-commit case. Re-checks the tree and, if dirty, resumes the SAME session
+   * (via `stepId`) with a commit + push directive. Returns `ok:false` if the tree stays dirty (the driver
+   * then blocks the thread).
    */
   private async ensureCommitted(
     job: Job,
@@ -2703,6 +2702,23 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<{ ok: true } | { ok: false; detail: string }> {
     for (let attempt = 0; attempt <= COMMIT_NUDGE_MAX; attempt++) {
       if (!(await this.git.hasChanges(sandbox.worktreePath))) return { ok: true };
+      const reattachRow = this.turn.canReattach()
+        ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge != null)
+        : null;
+      if (reattachRow?.container_id) {
+        const result = await this.reattachBatchTurn(
+          job,
+          thread,
+          lane,
+          {
+            phaseId: anchor.id,
+            commitNudge: (reattachRow.ctx as { commitNudge?: unknown } | null)?.commitNudge ?? 'reattach',
+          },
+          reattachRow,
+          anchor.id,
+        );
+        if (result) continue;
+      }
       if (attempt === COMMIT_NUDGE_MAX) break;
       const deadline = new PausableDeadline(this.phaseTimeoutMs, `commit nudge "${thread.brief}"`);
       try {
@@ -2773,7 +2789,7 @@ export class ThreadDriver implements JobDispatcher {
             orgId: job.orgId,
             channel,
             lane,
-            kind: 'gate', // reuse the gate's reattach path (short resumed turn keyed on the anchor)
+            kind: 'step', // reuse the batch reattach path (short resumed turn keyed on the anchor)
             ctx: { repoId: job.repoId, threadId: thread.id, anchorStepId: anchor.id, commitNudge: attempt },
           },
           onEvent: (e) => harness.onEvent(e),
@@ -2790,15 +2806,16 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Find the still-running registry row for THIS batch's engine turn (restart re-attach), or null. Matches on
-   * (job_id, lane, ctx.anchorStepId) among running `'step'`-kind turns — the lane is thread-scoped and a
-   * thread runs one batch at a time, so the match is unique; the anchor id disambiguates across a thread's
-   * batches.
+   * Find the still-running registry row for THIS batch or commit-nudge engine turn (restart re-attach), or
+   * null. Matches on (job_id, lane, ctx.anchorStepId) among running `'step'`-kind turns — the lane is
+   * thread-scoped and a thread runs one batch/commit nudge at a time, so the match is unique; the anchor id
+   * disambiguates across a thread's batches.
    */
   private async findReattachableTurn(
     jobId: string,
     lane: string,
     anchorStepId: string,
+    matchCtx: (ctx: Record<string, unknown>) => boolean = () => true,
   ): Promise<ActiveTurnEntity | null> {
     const rows = await this.turnRegistry.listRunning().catch((err) => {
       this.logger.warn(`reattach lookup failed (will kick a fresh turn): ${err}`);
@@ -2806,20 +2823,25 @@ export class ThreadDriver implements JobDispatcher {
     });
     return (
       rows.find(
-        (r) =>
-          r.kind === 'step' &&
-          r.job_id === jobId &&
-          r.lane === lane &&
-          (r.ctx as { anchorStepId?: string } | null)?.anchorStepId === anchorStepId,
+        (r) => {
+          const ctx = (r.ctx ?? {}) as Record<string, unknown>;
+          return (
+            r.kind === 'step' &&
+            r.job_id === jobId &&
+            r.lane === lane &&
+            ctx.anchorStepId === anchorStepId &&
+            matchCtx(ctx)
+          );
+        },
       ) ?? null
     );
   }
 
   /**
-   * RE-ATTACH a batch's in-flight engine turn after a restart: re-tail its live stream (no re-kick) on the
-   * thread lane and persist the result — parity with the brain's boot re-attach. Returns null when the turn
-   * can no longer be tailed (finished + streams reaped, or the container is gone) so the caller re-runs it.
-   * Uses the ORIGINAL turn's channel so replayed frames land on the same SSE key.
+   * RE-ATTACH a batch/commit-nudge in-flight engine turn after a restart: re-tail its live stream (no
+   * re-kick) on the thread lane and persist the result — parity with the brain's boot re-attach. Returns null
+   * when the turn can no longer be tailed (finished + streams reaped, or the container is gone) so the caller
+   * re-runs it. Uses the ORIGINAL turn's channel so replayed frames land on the same SSE key.
    */
   private async reattachBatchTurn(
     job: Job,
@@ -2831,7 +2853,7 @@ export class ThreadDriver implements JobDispatcher {
     toolBridge?: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
     this.logger.log(
-      `thread ${thread.ordinal} — re-attaching in-flight build turn ${row.turn_id} (container ${row.container_id})`,
+      `thread ${thread.ordinal} — re-attaching in-flight engine turn ${row.turn_id} (container ${row.container_id})`,
     );
     const harness = this.turnHarness.create({
       jobId: job.id,
