@@ -51,11 +51,11 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import {
-  NavigatorApproveButton,
-  NavigatorShipButton,
-} from "./spec-approval";
-import { pipelineAutoApprove, pipelineMainTasks } from "@/lib/api/types";
+import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
+import { pipelineAutoApproveMode, pipelineMainTasks } from "@/lib/api/types";
+import type { AutoApproveMode } from "@workspace/shared";
+import { autoPillView } from "./auto-approve-mode";
+import { AutoApprovePopover } from "./auto-approve-popover";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
@@ -94,42 +94,66 @@ function prNavGlyph(
   return { Icon: GitPullRequest, color: "var(--green)", label: "open" };
 }
 
-/** Compact header switch for the per-job AUTO-APPROVE flag. ON = green/filled (the job is autonomous —
- *  plan + ship gates auto-advance), OFF = quiet. Disabled on terminal jobs (nothing left to gate). */
+const AUTO_APPROVE_TITLES: Record<AutoApproveMode, string> = {
+  off: "Auto-approve off — you approve plan & ship gates",
+  both: "Auto-approve on — plan & ship gates advance without you",
+  plan: "Auto-approve: plan gate only",
+  ship: "Auto-approve: ship gate only",
+};
+
+/** Compact header pill for the per-job AUTO-APPROVE mode. Opens a popover with independent Plan/Ship
+ *  switches; the pill's color + label reflect the resulting mode (quiet grey off, amber naming the single
+ *  active gate, solid green "Auto" once both gates are armed). Disabled on terminal jobs. */
 function AutoApproveToggle({
-  on,
+  mode,
   disabled,
-  onToggle,
+  onChange,
 }: {
-  on: boolean;
+  mode: AutoApproveMode;
   disabled?: boolean;
-  onToggle: (next: boolean) => void;
+  onChange: (mode: AutoApproveMode) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const view = autoPillView(mode);
+
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label="Auto-approve plan and ship gates"
-      title={
-        on
-          ? "Auto-approve is ON — plan & ship gates advance without you"
-          : "Auto-approve is OFF — you approve plan & ship gates"
-      }
-      disabled={disabled}
-      onClick={() => onToggle(!on)}
-      data-testid="auto-approve-toggle"
-      className={cn(
-        "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
-        disabled && "cursor-not-allowed opacity-40",
-        on
-          ? "border-green bg-green-soft text-green"
-          : "border-border-2 bg-surface text-faint hover:text-dim",
-      )}
-    >
-      <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
-      Auto
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label={AUTO_APPROVE_TITLES[mode]}
+        title={AUTO_APPROVE_TITLES[mode]}
+        disabled={disabled}
+        onClick={() => {
+          setAnchorRect(btnRef.current?.getBoundingClientRect() ?? null);
+          setOpen((o) => !o);
+        }}
+        data-testid="auto-approve-toggle"
+        className={cn(
+          "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
+          disabled && "cursor-not-allowed opacity-40",
+          view.tone === "full" && "border-green bg-green-soft text-green",
+          view.tone === "partial" && "border-amber bg-amber-soft text-amber",
+          view.tone === "off" &&
+            "border-border-2 bg-surface text-faint hover:text-dim",
+        )}
+      >
+        <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
+        {view.label}
+      </button>
+      {open && anchorRect ? (
+        <AutoApprovePopover
+          anchorRect={anchorRect}
+          mode={mode}
+          onSelect={onChange}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -178,7 +202,7 @@ export function Navigator({
   onSelectNode,
   onRename,
   onDelete,
-  onToggleAutoApprove,
+  onSetAutoApprove,
   deleting,
   hasOpenPr,
   deleteReady,
@@ -207,8 +231,8 @@ export function Navigator({
   onSelectNode: (node: string) => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
-  /** Flip the per-job auto-approve flag — the header toggle. Absent ⇒ the toggle isn't rendered. */
-  onToggleAutoApprove?: (next: boolean) => void;
+  /** Set the per-job auto-approve mode — the header pill's popover. Absent ⇒ the pill isn't rendered. */
+  onSetAutoApprove?: (mode: AutoApproveMode) => void;
   deleting?: boolean;
   /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
    *  inline double-click confirm. */
@@ -228,9 +252,9 @@ export function Navigator({
   // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
   // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
   const isDirectBuild = job?.buildPath === "direct";
-  // AUTO-APPROVE flag — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
-  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the flag still rides along).
-  const autoApprove = pipelineAutoApprove(pipeline);
+  // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
+  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
+  const autoApproveMode = pipelineAutoApproveMode(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -313,13 +337,13 @@ export function Navigator({
             {STATUS_META[st].label}
           </span>
           <div className="flex-1" />
-          {onToggleAutoApprove ? (
+          {onSetAutoApprove ? (
             <AutoApproveToggle
-              on={autoApprove}
+              mode={autoApproveMode}
               disabled={
                 st === "done" || st === "cancelled" || st === "deleting"
               }
-              onToggle={onToggleAutoApprove}
+              onChange={onSetAutoApprove}
             />
           ) : null}
           {onDelete || onRename ? (

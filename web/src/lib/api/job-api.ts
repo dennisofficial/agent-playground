@@ -292,7 +292,9 @@ export function answerQuestion(
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
  *  procedure as a server-side seed turn (not the generic /say path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
-export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }> {
+export function spinUpPreview(
+  ref: JobRef,
+): Promise<{ ok: boolean; ts: string }> {
   return webJson(threadPath(ref, "/spin-up-preview"), { method: "POST" });
 }
 
@@ -447,16 +449,16 @@ export function renameJob(
   });
 }
 
-/** Flip the job's per-job auto-approve (`PATCH …/jobs/:jobId/auto-approve`). The header pill is a single
- *  on/off switch, so it maps to the `both` (full autonomy) / `off` ends of the per-job `mode` contract.
- *  Enabling also resolves any gate the job is currently parked on; the mode is read back from the pipeline. */
+/** Set the job's per-job auto-approve mode (`PATCH …/jobs/:jobId/auto-approve`) — the header popover's
+ *  Plan/Ship switches compose into one of the four `AutoApproveMode` values. Enabling a gate the job is
+ *  currently parked on also resolves it; the mode is read back from the pipeline. */
 export function setAutoApprove(
   ref: JobRef,
-  enabled: boolean,
+  mode: AutoApproveMode,
 ): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
   return webJson(threadPath(ref, "/auto-approve"), {
     method: "PATCH",
-    body: JSON.stringify({ mode: enabled ? "both" : "off" }),
+    body: JSON.stringify({ mode }),
   });
 }
 

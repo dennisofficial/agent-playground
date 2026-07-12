@@ -7,7 +7,6 @@
  * The live message + request shapes are owned by `job-api.ts` (the org → repo → thread client).
  */
 
-import { isAutoApproveOn } from "@workspace/shared";
 import type {
   AutoApproveMode,
   JobActivity as WireJobActivity,
@@ -286,7 +285,10 @@ export interface WebMcpProposalServer {
    */
   authKind?: "static" | "oauth";
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
-  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
+  oauth?: {
+    scope?: string;
+    tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
@@ -497,7 +499,12 @@ export interface PipelineThread {
 export type JobProvenance = { jobId: string; title: string | null };
 
 /** A live blocker of a `blocked` job — one row per job it depends on. */
-export type JobBlocker = { jobId: string; title: string | null; prState: string | null; status: string };
+export type JobBlocker = {
+  jobId: string;
+  title: string | null;
+  prState: string | null;
+  status: string;
+};
 
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
@@ -595,14 +602,14 @@ export function pipelineMainTasks(
   return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
 }
 
-/** Whether ANY gate auto-advances for this job, from either pipeline shape (`no_job` carries the mode too). */
-export function pipelineAutoApprove(
+/** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
+export function pipelineAutoApproveMode(
   pipeline: PipelineState | undefined,
-): boolean {
-  if (!pipeline) return false;
+): AutoApproveMode {
+  if (!pipeline) return "off";
   const mode =
     "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
-  return mode ? isAutoApproveOn(mode) : false;
+  return mode ?? "off";
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
