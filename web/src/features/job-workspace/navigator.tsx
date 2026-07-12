@@ -148,6 +148,7 @@ function AutoApproveToggle({
       {open && anchorRect ? (
         <AutoApprovePopover
           anchorRect={anchorRect}
+          triggerRef={btnRef}
           mode={mode}
           onSelect={onChange}
           onClose={() => setOpen(false)}

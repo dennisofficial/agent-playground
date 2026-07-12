@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import {
@@ -21,11 +21,15 @@ const WIDTH = 258;
  */
 export function AutoApprovePopover({
   anchorRect,
+  triggerRef,
   mode,
   onSelect,
   onClose,
 }: {
   anchorRect: DOMRect;
+  /** The pill that opened this popover — excluded from outside-dismiss so clicking it toggles closed
+   *  (rather than dismissing then reopening on the same click). */
+  triggerRef: RefObject<HTMLElement | null>;
   mode: AutoApproveMode;
   onSelect: (mode: AutoApproveMode) => void;
   onClose: () => void;
@@ -34,8 +38,10 @@ export function AutoApprovePopover({
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
-      if (popRef.current && !popRef.current.contains(e.target as Node))
-        onClose();
+      const t = e.target as Node;
+      if (popRef.current?.contains(t) || triggerRef.current?.contains(t))
+        return;
+      onClose();
     }
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -55,7 +61,7 @@ export function AutoApprovePopover({
       window.removeEventListener("scroll", onStale, true);
       window.removeEventListener("resize", onStale);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   if (typeof document === "undefined") return null;
 
