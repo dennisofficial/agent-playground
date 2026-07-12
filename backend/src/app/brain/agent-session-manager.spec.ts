@@ -4521,7 +4521,6 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
       {} as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       {} as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
