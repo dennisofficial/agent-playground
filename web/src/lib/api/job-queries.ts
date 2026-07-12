@@ -26,6 +26,7 @@ import {
   postReviewComments,
   removeJobDependency,
   renameJob,
+  setAutoApprove,
   retryJob,
   retryTurn,
   sayMessage,
@@ -518,6 +519,17 @@ export function useRenameJob(ref: JobRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
     },
+  });
+}
+
+/** Flip the job's auto-approve flag. Invalidate the pipeline so the toggle reflects immediately (the flag
+ *  lives on the pipeline job); the realtime stream may also refresh it, but the explicit invalidate wins. */
+export function useSetAutoApprove(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (enabled: boolean) => setAutoApprove(ref, enabled),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 

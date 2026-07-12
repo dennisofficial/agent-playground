@@ -516,6 +516,10 @@ export interface PipelineJob {
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
   buildPath?: "direct" | "plan" | null;
+  /** Per-job AUTO-APPROVE: when true, this job's plan-approval and ship-review gates auto-advance with no
+   *  operator click (the card is still posted for audit, then immediately resolved). Settable any time
+   *  from job creation onward — so the `no_job` (open) shape carries it too. */
+  autoApprove: boolean;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -569,7 +573,13 @@ export interface PipelineJob {
  */
 export type PipelineState =
   | PipelineJob
-  | { status: "no_job"; mainTasks?: TaskItem[]; mainDefaultFooter?: LaneDefaultFooter };
+  | {
+      status: "no_job";
+      mainTasks?: TaskItem[];
+      mainDefaultFooter?: LaneDefaultFooter;
+      /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
+      autoApprove?: boolean;
+    };
 
 /** The Main brain session's task list, from either pipeline shape (`no_job` carries it too). */
 export function pipelineMainTasks(
@@ -577,6 +587,14 @@ export function pipelineMainTasks(
 ): TaskItem[] {
   if (!pipeline) return [];
   return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
+}
+
+/** The per-job auto-approve flag, from either pipeline shape (`no_job` carries it too). */
+export function pipelineAutoApprove(
+  pipeline: PipelineState | undefined,
+): boolean {
+  if (!pipeline) return false;
+  return ("autoApprove" in pipeline ? pipeline.autoApprove : undefined) ?? false;
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
