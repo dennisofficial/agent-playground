@@ -120,36 +120,37 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // (`sandboxKey.orgId`, always present) + engine; an explicit caller-supplied `args.auth` still wins. When
     // the org has no secret this stays undefined and the in-sandbox `EngineCore.resolveAuth` throws the clear
     // "no credential" error — same outcome as before, just no longer dependent on each caller remembering.
-    if (!args.auth && this.creds) {
-      let auth = await this.creds.engineAuth(args.sandboxKey.orgId, args.engine);
-      // Proactively refresh a personal Claude OAuth token on the HOST before the turn materializes it —
-      // serialized per-credential by `ensureFresh`'s row lock so concurrent turns share ONE refresh instead of
-      // racing the rotating refresh token. A hard failure (dead refresh token) short-circuits the sandbox
-      // spin-up and surfaces through the existing EngineAuthError relay/catch path; a transient failure falls
-      // through to the stored secret (the in-container SDK self-refresh remains the mid-turn fallback).
-      if (
-        auth?.kind === 'personal' &&
-        auth.refreshBack?.engine === 'claude' &&
-        auth.refreshBack.credentialId &&
-        this.credRefresh
-      ) {
-        try {
-          const fresh = await this.credRefresh.ensureFresh(
-            args.sandboxKey.orgId,
-            auth.refreshBack.credentialId,
-          );
-          auth = { ...auth, secret: fresh };
-        } catch (err) {
-          if (err instanceof CredentialNeedsReauthError) {
-            throw new EngineAuthError('Claude login expired — reconnect it in Settings.');
-          }
-          this.logger.warn(
-            `pre-turn claude refresh failed (continuing with stored secret): ${err}`,
-          );
+    let auth = args.auth ?? (this.creds ? await this.creds.engineAuth(args.sandboxKey.orgId, args.engine) : undefined);
+    // Proactively refresh a personal Claude OAuth token on the HOST before the turn materializes it —
+    // serialized per-credential by `ensureFresh`'s row lock so concurrent turns share ONE refresh instead of
+    // racing the rotating refresh token. This runs on whichever credential is in effect regardless of whether
+    // the caller pre-supplied `args.auth` (every real driver/brain dispatcher does) or we resolved it above —
+    // otherwise the per-turn serialized refresh would never fire for real turns. A hard failure (dead refresh
+    // token) short-circuits the sandbox spin-up and surfaces through the existing EngineAuthError relay/catch
+    // path; a transient failure falls through to the stored secret (the in-container SDK self-refresh remains
+    // the mid-turn fallback).
+    if (
+      auth?.kind === 'personal' &&
+      auth.refreshBack?.engine === 'claude' &&
+      auth.refreshBack.credentialId &&
+      this.credRefresh
+    ) {
+      try {
+        const fresh = await this.credRefresh.ensureFresh(
+          args.sandboxKey.orgId,
+          auth.refreshBack.credentialId,
+        );
+        auth = { ...auth, secret: fresh };
+      } catch (err) {
+        if (err instanceof CredentialNeedsReauthError) {
+          throw new EngineAuthError('Claude login expired — reconnect it in Settings.');
         }
+        this.logger.warn(
+          `pre-turn claude refresh failed (continuing with stored secret): ${err}`,
+        );
       }
-      if (auth) args = { ...args, auth };
     }
+    if (auth && auth !== args.auth) args = { ...args, auth };
 
     const turnId = randomUUID();
     const keys = turnKeys(turnId);
