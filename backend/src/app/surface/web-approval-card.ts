@@ -62,9 +62,13 @@ export interface WebApprovalCard {
   sql?: string;
   /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
   estimatedRows?: number;
-  /** `db_write` card only — whether `estimatedRows` is a real planner estimate or unavailable (the
-   *  SELECT-only role can't EXPLAIN this statement — expected/benign for DML). */
-  estimateLabel?: 'estimate' | 'unavailable';
+  /** `db_write` card only — whether `estimatedRows` is a real planner estimate, unavailable (the
+   *  SELECT-only role can't EXPLAIN this statement — expected/benign for DML), or the EXPLAIN itself
+   *  surfaced a genuine statement error (`error`). */
+  estimateLabel?: 'estimate' | 'unavailable' | 'error';
+  /** `db_write` card only — a genuine EXPLAIN-time failure (syntax/bad column) so the operator sees the
+   *  statement will fail BEFORE approving. Absent for a benign permission-denied preview. */
+  error?: string;
 }
 
 /** A web-rendered verdict card — replaces the approval card after a verdict lands. */
@@ -212,21 +216,27 @@ export function webDbWriteApprovalCard(input: {
   writeId: string;
   sql: string;
   estimatedRows?: number;
-  estimateLabel?: 'estimate' | 'unavailable';
+  estimateLabel?: 'estimate' | 'unavailable' | 'error';
+  error?: string;
 }): WebApprovalCard {
   const value = JSON.stringify({ jobId: input.jobId, writeId: input.writeId });
-  const rowsLabel = input.estimatedRows ?? 'unavailable';
+  // A genuine EXPLAIN failure (syntax/bad column) is surfaced IN the rendered summary — not just a
+  // structured field — so the operator is warned the statement will fail before clicking Execute.
+  const estimateLine = input.error
+    ? `:warning: This statement failed its dry-run and will likely fail on execute:\n\n\`\`\`\n${input.error}\n\`\`\``
+    : `Estimated rows affected: ${input.estimatedRows ?? 'unavailable'}`;
   return {
     type: 'approval_card',
     jobId: input.jobId,
     kind: 'db_write',
     title: 'Approve prod DB write',
-    summary: `\n\n\`\`\`sql\n${input.sql}\n\`\`\`\n\nEstimated rows affected: ${rowsLabel}`,
+    summary: `\n\n\`\`\`sql\n${input.sql}\n\`\`\`\n\n${estimateLine}`,
     decisions: [],
     threads: [],
     sql: input.sql,
     ...(input.estimatedRows !== undefined ? { estimatedRows: input.estimatedRows } : {}),
     ...(input.estimateLabel ? { estimateLabel: input.estimateLabel } : {}),
+    ...(input.error ? { error: input.error } : {}),
     actions: [
       {
         actionId: DB_WRITE_APPROVE_ACTION_ID,

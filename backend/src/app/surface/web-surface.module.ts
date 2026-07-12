@@ -119,7 +119,10 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
         const writeId = parseWriteId(value);
         if (!writeId) return;
         const approve = actionId === DB_WRITE_APPROVE_ACTION_ID;
-        void resolveDbWrite(this.moduleRef, writeId, ruledBy, approve).catch(() => undefined);
+        // `meta.jobId` is the card's authorized job — the controller already validated it matches the route
+        // job and belongs to the caller's org. Pass it down so the ledger row is verified to belong to it
+        // (a foreign/stale `writeId` can't be executed/denied on the back of an unrelated job's approval).
+        void resolveDbWrite(this.moduleRef, writeId, meta.jobId, ruledBy, approve).catch(() => undefined);
         return;
       }
 
@@ -232,13 +235,14 @@ function parseWriteId(value: string): string | undefined {
 async function resolveDbWrite(
   moduleRef: ModuleRef,
   writeId: string,
+  expectedJobId: string,
   ruledBy: string,
   approve: boolean,
 ): Promise<void> {
   const { ProdDiagnosticsService } = await import('../prod-mcp/prod-diagnostics.service.js');
   const svc = moduleRef.get(ProdDiagnosticsService, { strict: false });
-  if (approve) await svc.executeApproved(writeId, ruledBy);
-  else await svc.denyWrite(writeId, ruledBy);
+  if (approve) await svc.executeApproved(writeId, ruledBy, expectedJobId);
+  else await svc.denyWrite(writeId, ruledBy, expectedJobId);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {

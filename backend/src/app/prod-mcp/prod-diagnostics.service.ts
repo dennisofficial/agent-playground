@@ -20,6 +20,7 @@ import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { webDbWriteApprovalCard } from '../surface/web-approval-card';
 import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from '../../mcp-reader/tools';
 import { redactSecrets } from '../../mcp-reader/redact';
+import { audit } from '../../mcp-reader/audit';
 import { assertSingleWriteStatement } from './write-guard';
 
 /** Postgres error code for `permission denied` — what a SELECT-only role gets back from `EXPLAIN` on a
@@ -69,13 +70,42 @@ export class ProdDiagnosticsService {
     return this.reader;
   }
 
-  /** Delegate to the relocated `mcp-reader` read-tool handlers, unchanged (redaction + path-jail intact). */
+  /** Delegate to the relocated `mcp-reader` read-tool handlers, unchanged (redaction + path-jail intact).
+   *  Emits one audit line per call (mirroring the standalone `mcp-reader/main.ts`) — the handler stamps
+   *  `ctx.audit` (orgId/sql/rowCount) as it runs, so a prod read leaves the same durable audit trail here
+   *  as it did through the original standalone reader, on both success and failure. */
   async runRead(name: string, args: unknown): Promise<unknown> {
     const ds = this.requireReader();
     const handler = TOOL_HANDLERS[name];
     if (!handler) throw new Error(`unknown read tool: ${name}`);
     const ctx: ToolCtx = { ds, roots: this.roots(), audit: {} };
-    return redactSecrets(await handler(ctx, args as Record<string, unknown>));
+    const jobId =
+      typeof (args as Record<string, unknown> | undefined)?.jobId === 'string'
+        ? ((args as Record<string, unknown>).jobId as string)
+        : undefined;
+    try {
+      const result = await handler(ctx, args as Record<string, unknown>);
+      audit({
+        tool: name,
+        jobId,
+        orgId: ctx.audit.orgId,
+        ok: true,
+        sql: ctx.audit.sql ? (redactSecrets(ctx.audit.sql) as string) : undefined,
+        rows: ctx.audit.rowCount,
+      });
+      return redactSecrets(result);
+    } catch (err) {
+      audit({
+        tool: name,
+        jobId,
+        orgId: ctx.audit.orgId,
+        ok: false,
+        error: redactSecrets(String((err as Error)?.message ?? err)) as string,
+        sql: ctx.audit.sql ? (redactSecrets(ctx.audit.sql) as string) : undefined,
+        rows: ctx.audit.rowCount,
+      });
+      throw err;
+    }
   }
 
   /**
@@ -130,7 +160,13 @@ export class ProdDiagnosticsService {
       }),
     );
     const writeId = saved.id;
-    const estimateLabel: 'estimate' | 'unavailable' = dryRun.plan ? 'estimate' : 'unavailable';
+    // A genuine EXPLAIN failure (syntax/bad column) MUST be surfaced to the operator before approval —
+    // otherwise a benign permission-denied preview and a statement that will actually fail look identical.
+    const estimateLabel: 'estimate' | 'unavailable' | 'error' = dryRun.error
+      ? 'error'
+      : dryRun.plan
+        ? 'estimate'
+        : 'unavailable';
 
     // 1. DURABLE — persist the card row so it survives a restart / is visible on refresh.
     await this.messages.save(
@@ -148,6 +184,7 @@ export class ProdDiagnosticsService {
           sql: stmt,
           estimatedRows: dryRun.estimatedRows,
           estimateLabel,
+          ...(dryRun.error ? { error: dryRun.error } : {}),
         }) as unknown as Record<string, unknown>,
       }),
     );
@@ -163,19 +200,35 @@ export class ProdDiagnosticsService {
 
   /**
    * EXECUTE an operator-approved write on the DML-only `mcp_writer` role — the ONLY path that runs the
-   * statement. Idempotent: a non-`pending` (or missing) row is a no-op, so a duplicate approval click
-   * can't double-execute.
+   * statement. The `expectedJobId` is the job the approving operator is authorized for (validated up the
+   * stack against the caller's org); the ledger row MUST belong to it, so an enumerated/stale `writeId`
+   * from a different job (or org) can't be executed here — the human approval stays tied to the card the
+   * operator is actually looking at. Concurrency-safe: the row is claimed atomically (a conditional
+   * `pending → approved` update) BEFORE `runOnWriter`, so two near-simultaneous approvals / a double-click
+   * can't both execute the statement.
    */
-  async executeApproved(writeId: string, approverUserId: string): Promise<void> {
+  async executeApproved(
+    writeId: string,
+    approverUserId: string,
+    expectedJobId: string,
+  ): Promise<void> {
     const row = await this.ledger.findOne({ where: { id: writeId } });
     if (!row || row.status !== 'pending') return;
+    // Ownership: the approval must be for THIS operator's job — never a writeId belonging to another job/org.
+    if (row.job_id !== expectedJobId) return;
+
+    // Atomic claim: only the invocation that flips the row out of `pending` proceeds. A concurrent
+    // double-approval loses this conditional update (`affected === 0`) and is a no-op — no double-execute.
+    const claim = await this.ledger.update(
+      { id: writeId, status: 'pending' },
+      { status: 'approved', approved_by: approverUserId, approved_at: new Date() },
+    );
+    if (!claim.affected) return;
 
     if (!this.writer) {
       await this.ledger.update(writeId, {
         status: 'failed',
         result: { error: 'prod writer DataSource not configured' },
-        approved_by: approverUserId,
-        approved_at: new Date(),
         executed_at: new Date(),
       });
       await this.notify(row, agentMessage('<prod DB write> FAILED: prod writer DataSource not configured.'));
@@ -196,8 +249,6 @@ export class ProdDiagnosticsService {
     await this.ledger.update(writeId, {
       status,
       result,
-      approved_by: approverUserId,
-      approved_at: new Date(),
       executed_at: new Date(),
     });
 
@@ -226,10 +277,13 @@ export class ProdDiagnosticsService {
     }
   }
 
-  /** DENY a pending write — marks it rejected, notifies the job. Idempotent, same as `executeApproved`. */
-  async denyWrite(writeId: string, approverUserId: string): Promise<void> {
+  /** DENY a pending write — marks it rejected, notifies the job. Idempotent, same as `executeApproved`;
+   *  `expectedJobId` gates the row to the approving operator's job so a foreign/stale `writeId` can't be
+   *  denied here either. */
+  async denyWrite(writeId: string, approverUserId: string, expectedJobId: string): Promise<void> {
     const row = await this.ledger.findOne({ where: { id: writeId } });
     if (!row || row.status !== 'pending') return;
+    if (row.job_id !== expectedJobId) return;
 
     await this.ledger.update(writeId, {
       status: 'rejected',

@@ -233,7 +233,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     const sql = `UPDATE threads SET halt_fix_attempts = 0 WHERE id = '${threadId}'`;
     const { writeId } = await svc.proposeWrite(stimulusFor(jobId), sql);
 
-    await svc.executeApproved(writeId, APPROVER_ID);
+    await svc.executeApproved(writeId, APPROVER_ID, jobId);
 
     const row = await ledger.findOne({ where: { id: writeId } });
     expect(row?.status).toBe('executed');
@@ -252,7 +252,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
     // Idempotent: a duplicate approval click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
-    await svc.executeApproved(writeId, APPROVER_ID);
+    await svc.executeApproved(writeId, APPROVER_ID, jobId);
     expect(surface.seedSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -261,7 +261,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     const sql = `UPDATE threads SET halt_fix_attempts = 0 WHERE id = '${threadId}'`;
     const { writeId } = await svc.proposeWrite(stimulusFor(jobId), sql);
 
-    await svc.denyWrite(writeId, APPROVER_ID);
+    await svc.denyWrite(writeId, APPROVER_ID, jobId);
 
     const row = await ledger.findOne({ where: { id: writeId } });
     expect(row?.status).toBe('rejected');
@@ -286,7 +286,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
       }),
     );
 
-    await svc.executeApproved(saved.id, APPROVER_ID);
+    await svc.executeApproved(saved.id, APPROVER_ID, jobId);
 
     const row = await ledger.findOne({ where: { id: saved.id } });
     expect(row?.status).toBe('failed');
@@ -313,7 +313,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
       }),
     );
 
-    await svc.executeApproved(saved.id, APPROVER_ID);
+    await svc.executeApproved(saved.id, APPROVER_ID, jobId);
 
     const row = await ledger.findOne({ where: { id: saved.id } });
     expect(row?.status).toBe('failed');
