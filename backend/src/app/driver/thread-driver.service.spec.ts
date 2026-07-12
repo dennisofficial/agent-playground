@@ -2154,7 +2154,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
       .map((c) => (c.config as { lensId?: string }).lensId);
   }
 
-  it('materializes the composed set (five always-on + data_safety) for a `data` thread', async () => {
+  it('materializes the composed set (always-on + data_safety) for a `data` thread', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2169,11 +2169,11 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     await flushUntil(() => state.job.status === 'done');
 
     expect(lensIdsMaterialized(state).sort()).toEqual(
-      ['best_practices', 'correctness', 'consistency', 'minimalism', 'holistic', 'data_safety'].sort(),
+      ['correctness', 'holistic', 'data_safety'].sort(),
     );
   });
 
-  it('drops correctness + minimalism for a `docs` thread', async () => {
+  it('drops correctness for a `docs` thread', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2189,14 +2189,13 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
 
     const lensIds = lensIdsMaterialized(state);
     expect(lensIds).not.toContain('correctness');
-    expect(lensIds).not.toContain('minimalism');
-    expect(lensIds.sort()).toEqual(['best_practices', 'consistency', 'holistic'].sort());
+    expect(lensIds.sort()).toEqual(['holistic'].sort());
   });
 
   it('with cap >= lens count, ALL lenses start concurrently — the fixed-batch-of-3 barrier is gone', async () => {
-    // 'general' composes the five always-on lenses; the REVIEW_LENS_CONCURRENCY constant (8) comfortably
-    // covers all five, so a real semaphore (vs. the old `concurrency = 3` batch loop) lets every lens
-    // acquire at once.
+    // 'general' composes the always-on lenses (correctness + holistic); the REVIEW_LENS_CONCURRENCY constant
+    // (8) comfortably covers them, so a real semaphore (vs. the old `concurrency = 3` batch loop) lets every
+    // lens acquire at once.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2219,7 +2218,13 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    expect(peak).toBe(5);
+    expect(peak).toBe(2);
+    // Every read-only finder turn runs on Sonnet, not the default Opus worker (the token-savings change).
+    expect(h.autofix.runReviewLens).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ model: 'claude-sonnet-5' }),
+    );
   });
 });
 

@@ -90,39 +90,23 @@ describe('reviewAgentsForThread — framework axis', () => {
   it('a non-empty frameworkSkillNames -> the framework lens is appended LAST', () => {
     const ids = reviewAgentsForThread('frontend', ['react-review-checklist']).map((l) => l.id);
     expect(ids[ids.length - 1]).toBe('framework');
-    expect(ids).toEqual([
-      'best_practices',
-      'correctness',
-      'consistency',
-      'minimalism',
-      'holistic',
-      'framework',
-    ]);
+    expect(ids).toEqual(['correctness', 'holistic', 'framework']);
   });
 
-  it('docs still drops correctness + minimalism, framework still appended last', () => {
+  it('docs still drops correctness, framework still appended last', () => {
     const ids = reviewAgentsForThread('docs', ['react-review-checklist']).map((l) => l.id);
-    expect(ids).toEqual(['best_practices', 'consistency', 'holistic', 'framework']);
+    expect(ids).toEqual(['holistic', 'framework']);
   });
 
-  it('data still adds data_safety on top of the always-on five, framework appended after it', () => {
+  it('data still adds data_safety on top of the always-on lenses, framework appended after it', () => {
     const ids = reviewAgentsForThread('data', ['react-review-checklist']).map((l) => l.id);
-    expect(ids).toEqual([
-      'best_practices',
-      'correctness',
-      'consistency',
-      'minimalism',
-      'holistic',
-      'data_safety',
-      'framework',
-    ]);
+    expect(ids).toEqual(['correctness', 'holistic', 'data_safety', 'framework']);
   });
 
   // Existing (non-framework) routing must still hold, unaffected by this new axis.
-  it('docs still omits correctness + minimalism with no framework names', () => {
+  it('docs still omits correctness with no framework names', () => {
     const ids = reviewAgentsForThread('docs').map((l) => l.id);
     expect(ids).not.toContain('correctness');
-    expect(ids).not.toContain('minimalism');
   });
 
   it('data still includes data_safety with no framework names', () => {
