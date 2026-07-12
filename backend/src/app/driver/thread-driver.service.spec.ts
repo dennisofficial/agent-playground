@@ -3,7 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { BrainGateway } from '../brain-gateway';
-import { EngineAuthError, EngineSessionLimitError } from '../engine';
+import {
+  EngineAuthError,
+  EngineSessionLimitError,
+  NO_ENGINE_CREDENTIAL_MARKER,
+} from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
   ThreadDriver,
@@ -25,6 +29,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
@@ -837,6 +842,7 @@ function assemble(
     /** Point the thread sandbox's worktree at a REAL dir so a test can assert NOTHING is written under
      *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
     worktreePath?: string;
+    claudeCreds?: Pick<ClaudeCredentialStore, 'getSelectedRefreshMeta' | 'markNeedsReauth'>;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1054,6 +1060,10 @@ function assemble(
     judge,
     staticJudge,
     taskSink,
+    undefined,
+    undefined,
+    undefined,
+    opts.claudeCreds as ClaudeCredentialStore | undefined,
   );
   // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the
   // instant the gate parks — so the build→ship pipeline tests keep reaching `done`. The re-drive fast-
@@ -4180,6 +4190,42 @@ describe('ThreadDriver — 401 auth recovery', () => {
     expect(
       h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a Codex no-credential halt does not touch Claude credential recovery state', async () => {
+    const state = freshState();
+    state.threads = [thread('sec-review', 10, 'Master review', 'pending', true)];
+    const getSelectedRefreshMeta = vi.fn(async () => ({
+      id: 'claude-cred',
+      lastRefreshedAt: new Date(),
+    }));
+    const markNeedsReauth = vi.fn(async () => undefined);
+    const turn = {
+      runTurn: vi.fn(async () => {
+        throw new EngineAuthError(
+          `${NO_ENGINE_CREDENTIAL_MARKER}: no codex subscription secret`,
+          undefined,
+          'codex',
+        );
+      }),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, {
+      turn,
+      claudeCreds: { getSelectedRefreshMeta, markNeedsReauth },
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+
+    expect(state.job.halt?.reason).toBe(
+      'No Codex account is connected for this org — connect one in Settings, then resume.',
+    );
+    expect(getSelectedRefreshMeta).not.toHaveBeenCalled();
+    expect(markNeedsReauth).not.toHaveBeenCalled();
+    expect(h.store.setSessionResume).not.toHaveBeenCalled();
+    const pausePost = h.posts.find((p) => /paused/i.test(p));
+    expect(pausePost).toContain('No Codex account is connected');
   });
 
   it('resumePaused is a no-op when the job is not paused', async () => {

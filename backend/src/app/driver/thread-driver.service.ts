@@ -851,8 +851,9 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     const orgId = job?.orgId;
+    const isClaudeAuthHalt = err.engine !== 'codex';
     const selected =
-      orgId && this.claudeCreds
+      isClaudeAuthHalt && orgId && this.claudeCreds
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
     const refreshedAgoMs =
