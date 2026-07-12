@@ -40,12 +40,7 @@ import {
 } from '../engine';
 import type { GitAuth } from '../engine/engine.types';
 import { defaultResumeAt } from '../engine/session-limit';
-import {
-  GithubPrService,
-  GitIdentityService,
-  LocalGitService,
-  type FeatureSandbox,
-} from '../git';
+import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
   type ChatSurface,
@@ -217,7 +212,6 @@ export class ThreadDriver implements JobDispatcher {
     private readonly store: DriverStoreService,
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     private readonly git: LocalGitService,
-    private readonly identities: GitIdentityService,
     private readonly pr: GithubPrService,
     private readonly turn: TurnRunnerService,
     private readonly visibility: PlanVisibilityService,
@@ -293,13 +287,12 @@ export class ThreadDriver implements JobDispatcher {
     // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default 'pat'
     // (today's behavior) rather than throwing mid-drive.
     const mode = (await this.creds.githubAuthMode?.(orgId)) ?? 'pat';
-    const identity =
-      (await this.creds.githubCommitIdentity(orgId)) ??
-      (await this.identities.resolve(token));
+    const { identity, apiToken } = await this.creds.githubWriteIdentity(orgId);
     return {
       gitUrl,
       mode,
       ...(token ? { token } : {}),
+      ...(apiToken ? { apiToken } : {}),
       ...(identity ? { identity } : {}),
     };
   }

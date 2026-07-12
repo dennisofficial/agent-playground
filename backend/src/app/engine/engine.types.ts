@@ -278,6 +278,8 @@ export interface SandboxGitIdentity {
 export interface GitAuth {
   gitUrl: string;
   token?: string;
+  /** Token for the sandbox `gh`/GITHUB_TOKEN path (PR create/comment/review), set to the credential that MATCHES the resolved commit identity when it differs from the git transport `token` (identity mode routes API writes through the PAT or App bot independently of transport). Absent → GITHUB_TOKEN falls back to `token`. */
+  apiToken?: string;
   identity?: SandboxGitIdentity;
   /**
    * The org's GitHub auth mode. `'app'` → the in-sandbox git reads its token from a host-refreshed file via

@@ -102,6 +102,12 @@ export interface GithubAppStatus {
   installationId: string | null;
   /** The installation's GitHub account login (display) — null when not connected. */
   account: string | null;
+  /**
+   * Which credential AUTHORS identity-bearing writes (commit author, PR create/comment/review):
+   * `pat` (the human PAT owner) or `app` (the Atlas bot). `null` = unset = default = `pat` (the PAT
+   * owner). Orthogonal to `mode` (which credential authenticates transport/rate-limit traffic).
+   */
+  identityMode: "pat" | "app" | null;
 }
 
 export function useGithubAppStatus(orgId: string) {
@@ -143,6 +149,27 @@ export function useSetGithubAuthMode(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/**
+ * Owner-only: set which credential AUTHORS identity-bearing writes (commit author, PR create/comment/
+ * review) — `pat` (the human PAT owner) or `app` (the Atlas bot). Permissive: the value is inert unless
+ * the resolver's fallback chain lands on it, so any valid enum is accepted. Invalidates presence + status
+ * (the choice surfaces on both).
+ */
+export function useSetGithubIdentityMode(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (identity: "pat" | "app") =>
+      webJson<{ ok: true; identity: "pat" | "app" }>(`/orgs/${orgId}/github-app/identity`, {
+        method: "PUT",
+        body: JSON.stringify({ identity }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
     },
   });
 }

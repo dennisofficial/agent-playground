@@ -20,13 +20,7 @@ import type { PlannedStep } from './render-plan';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
-import type {
-  GithubPrService,
-  GitIdentityService,
-  LocalGitService,
-  FeatureSandbox,
-  ProjectRepo,
-} from '../git';
+import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
 import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
@@ -954,7 +948,6 @@ function assemble(
     store,
     repos,
     git,
-    { resolve: async () => undefined } as unknown as GitIdentityService, // identities
     pr,
     turn,
     visibility.visibility,
@@ -982,7 +975,7 @@ function assemble(
       anthropicKey: opts.anthropicKey ?? (async () => undefined),
       openaiKey: async () => undefined,
       githubToken: async () => undefined,
-      githubCommitIdentity: async () => undefined,
+      githubWriteIdentity: async () => ({}),
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
     // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.

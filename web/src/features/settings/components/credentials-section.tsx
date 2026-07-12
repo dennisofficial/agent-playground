@@ -31,6 +31,7 @@ import {
   useSaveCredentials,
   useSelectClaudeCredential,
   useSetGithubAuthMode,
+  useSetGithubIdentityMode,
   type ClaudeCredential,
   type ClaudeCredentialKind,
   type ClaudeCredentialStatus,
@@ -365,6 +366,7 @@ function GithubAppConnect({
   const { data: status, isLoading } = useGithubAppStatus(orgId);
   const installUrl = useGithubAppInstallUrl(orgId);
   const setMode = useSetGithubAuthMode(orgId);
+  const setIdentity = useSetGithubIdentityMode(orgId);
   const disconnect = useDisconnectGithubApp(orgId);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -416,6 +418,17 @@ function GithubAppConnect({
       await setMode.mutateAsync(mode);
     } catch (e) {
       setError((e as Error)?.message || "Could not switch auth mode.");
+    }
+  }
+
+  async function switchIdentity(identity: "pat" | "app") {
+    if (!status || (status.identityMode ?? "pat") === identity) return;
+    setError("");
+    setNote("");
+    try {
+      await setIdentity.mutateAsync(identity);
+    } catch (e) {
+      setError((e as Error)?.message || "Could not switch commit author.");
     }
   }
 
@@ -553,6 +566,42 @@ function GithubAppConnect({
               </button>
             ) : null}
           </div>
+
+          {hasPat && status.connected ? (
+            <div className="mt-4 border-t border-border-2 pt-3.5">
+              <div className="text-[12px] font-semibold text-text">
+                Author commits &amp; PRs as
+              </div>
+              <div className="mt-0.5 text-[11px] text-faint">
+                Background traffic always uses the App’s rate-limit pool.
+              </div>
+              <div className="mt-2.5 flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
+                {(
+                  [
+                    { id: "pat" as const, label: "You" },
+                    { id: "app" as const, label: "Atlas bot" },
+                  ]
+                ).map((opt) => {
+                  const on = (status.identityMode ?? "pat") === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => switchIdentity(opt.id)}
+                      disabled={!isOwner || setIdentity.isPending}
+                      className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                      style={{
+                        background: on ? "var(--surface)" : "transparent",
+                        color: on ? "var(--accent)" : "var(--dim)",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
