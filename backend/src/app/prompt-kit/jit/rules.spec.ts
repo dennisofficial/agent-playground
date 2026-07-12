@@ -1,0 +1,105 @@
+/**
+ * prompt-kit / jit — parity tests for the JIT-context rule catalog (Pillar 4, d1/d4/d5). Each rule's trigger,
+ * throttle, and payload must reproduce the ENGINE'S pre-migration behavior byte-for-byte at defaults — these
+ * specs are the guardrail for that parity, alongside the driver/engine specs that consume the same catalog.
+ */
+import { describe, it, expect } from 'vitest';
+import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
+import { PREVIEW_PREP_SEED_BODY } from '../system/fragments';
+import {
+  JIT_RULES,
+  bgTaskCapRule,
+  findLifecycleRule,
+  legRotationRule,
+  previewPrepRule,
+  svcNudgeRule,
+} from './rules';
+import { validateJitRules } from './rule';
+import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
+import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
+
+describe('svcNudgeRule', () => {
+  it.each([
+    'pnpm dev',
+    'pnpm --filter backend dev',
+    'docker compose up',
+    'nohup ./run.sh',
+    'node server.js &',
+    'uvicorn app:app --reload',
+  ])('trigger.match fires on %j (parity with detectLongRunningCommand)', (cmd) => {
+    if (svcNudgeRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+    expect(svcNudgeRule.trigger.match(cmd)).not.toBeNull();
+  });
+
+  it.each(['pnpm test', 'pnpm build', 'git status', 'atlas-svc run --name web -- pnpm dev'])(
+    'trigger.match does NOT fire on %j',
+    (cmd) => {
+      if (svcNudgeRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+      expect(svcNudgeRule.trigger.match(cmd)).toBeNull();
+    },
+  );
+
+  it('render is byte-identical to renderSvcNudge', () => {
+    expect(svcNudgeRule.render({ command: 'vite' })).toBe(renderSvcNudge('vite'));
+  });
+
+  it('throttle mirrors svcNudgeShouldFire at the declared delta', () => {
+    expect(svcNudgeRule.throttle?.deltaTokens).toBe(40_000);
+    expect(svcNudgeShouldFire(null, 0, 40_000)).toBe(true);
+    expect(svcNudgeShouldFire(0, 39_999, 40_000)).toBe(false);
+    expect(svcNudgeShouldFire(0, 40_000, 40_000)).toBe(true);
+  });
+});
+
+describe('legRotationRule', () => {
+  it('declares the operator-chosen thresholds', () => {
+    if (legRotationRule.trigger.kind !== 'token-threshold') throw new Error('expected token-threshold trigger');
+    expect(legRotationRule.trigger.softTokens).toBe(150_000);
+    expect(legRotationRule.trigger.reminderDeltaTokens).toBe(25_000);
+  });
+
+  it('renders the SOFT nudge for phase "soft" and by default', () => {
+    expect(legRotationRule.render({ phase: 'soft' })).toBe(ROTATION_SOFT_NUDGE);
+    expect(legRotationRule.render({})).toBe(ROTATION_SOFT_NUDGE);
+  });
+
+  it('renders the REMINDER nudge for phase "reminder"', () => {
+    expect(legRotationRule.render({ phase: 'reminder' })).toBe(ROTATION_REMINDER_NUDGE);
+  });
+});
+
+describe('bgTaskCapRule', () => {
+  it('declares the default hold cap and byte-identical notice', () => {
+    if (bgTaskCapRule.trigger.kind !== 'hold-timer') throw new Error('expected hold-timer trigger');
+    expect(bgTaskCapRule.trigger.holdMs).toBe(600_000);
+    expect(bgTaskCapRule.render({})).toBe(BG_TASK_CAP_NOTICE);
+  });
+});
+
+describe('previewPrepRule', () => {
+  it('is a lifecycle preview-requested rule delivered as a host seed notice', () => {
+    expect(previewPrepRule.trigger).toEqual({ kind: 'lifecycle', event: 'preview-requested' });
+    expect(previewPrepRule.delivery).toBe('host-seed-notice');
+    expect(previewPrepRule.render({})).toBe(PREVIEW_PREP_SEED_BODY);
+  });
+
+  it('carries the shipped seed label + chunkKey', () => {
+    expect(previewPrepRule.seed?.label).toBe('Spin up preview requested');
+    expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:preview:J');
+  });
+});
+
+describe('JIT_RULES catalog', () => {
+  it('validates without throwing', () => {
+    expect(() => validateJitRules(JIT_RULES)).not.toThrow();
+  });
+
+  it('has unique ids', () => {
+    const ids = JIT_RULES.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('findLifecycleRule resolves preview-requested to previewPrepRule', () => {
+    expect(findLifecycleRule('preview-requested')).toBe(previewPrepRule);
+  });
+});

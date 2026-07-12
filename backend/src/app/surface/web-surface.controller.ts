@@ -60,6 +60,7 @@ import {
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
+import { JitHostExecutor } from '../brain/jit-host-executor';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { JobTitleService } from './job-title.service';
@@ -106,7 +107,6 @@ import {
 } from '../realtime';
 import { TicketEventBus } from '../tickets';
 import {
-  PREVIEW_PREP_SEED_BODY,
   renderReviewSeedXml,
   renderUploadedFilesXml,
   type AttachmentCardItem,
@@ -561,6 +561,9 @@ export class WebSurfaceController {
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
     @Optional() private readonly exposure?: ExposureService,
+    // The host-side JIT executor — fires the catalog's lifecycle rules (e.g. `spinUpPreview`'s preview-prep
+    // seed). Also from the @Global BrainModule. @Optional (trailing), same reason as `exposure` above.
+    @Optional() private readonly jit?: JitHostExecutor,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -1293,18 +1296,15 @@ export class WebSurfaceController {
     if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      PREVIEW_PREP_SEED_BODY,
-      {
+    const ts =
+      this.jit?.fireLifecycle('preview-requested', {
+        repoId: thread.repo_id,
+        jobId,
         orgId: org.id,
-        seedRow: {
-          label: 'Spin up preview requested',
-          chunkKey: chunkKey.preview(jobId),
-        },
-      },
-    );
+        // Same concrete surface the hand-rolled call used — NOT the ambient `CHAT_SURFACE` (which the
+        // 'agent' test surface can rebind to something else entirely).
+        surface: this.surface,
+      }) ?? '';
     return { ok: true, ts };
   }
 

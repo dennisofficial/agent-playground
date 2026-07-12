@@ -19,7 +19,14 @@ import { Agent } from '../prompt-kit/system/agent';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
-  BG_TASK_CAP_NOTICE,
+  bgTaskCapRule,
+  BG_TASK_HOLD_CAP_MS,
+  svcNudgeRule,
+  svcNudgeShouldFire,
+  detectLongRunningCommand,
+  SVC_NUDGE_TEXT,
+} from '../prompt-kit/jit';
+import {
   EngineAuthError,
   isAuthErrorMessage,
   UNRESUMABLE_SESSION_MARKER,
@@ -100,82 +107,11 @@ function steerUserMessage(content: string, priority?: 'now' | 'next' | 'later'):
 }
 
 /**
- * The atlas-svc nudge (see the PostToolUse hook in `run`): does this Bash command look like a long-running
- * SERVICE that should run under the `atlas-svc` supervisor (dev server / `docker compose up` / watcher /
- * bare-backgrounded), rather than a one-shot the model should just run directly? Returns a short label for
- * the matched smell, or null.
- *
- * Precision is load-bearing: a false positive tells Atlas to wrap a one-shot like `pnpm test` in atlas-svc,
- * which is WRONG advice. So we match a curated allowlist of long-running smells and bias toward
- * under-matching — the token-delta throttle on the hook makes a rare miss cheap. A command already using
- * atlas-svc is skipped outright (it's already doing the right thing).
+ * `detectLongRunningCommand`/`renderSvcNudge`/`svcNudgeShouldFire`/`SVC_NUDGE_TEXT` moved to the `svc-nudge`
+ * JIT rule (`prompt-kit/jit`, imported above) — the catalog owns the content now. Re-exported here so this
+ * module's own callers/specs keep working unchanged.
  */
-export function detectLongRunningCommand(command: string): string | null {
-  const cmd = command.trim();
-  if (!cmd) return null;
-  if (/\batlas-svc\b/.test(cmd)) return null;
-
-  const smells: Array<[RegExp, string]> = [
-    // Explicit backgrounding markers.
-    [/\bnohup\b/, 'nohup'],
-    [/(^|[^&])&\s*$/, 'trailing & (backgrounded)'],
-    // Docker long-running.
-    [/\bdocker(-compose|\s+compose)\s+up\b/, 'docker compose up'],
-    [/\bdocker\s+run\b(?=[^|&;]*\s(-d|--detach)\b)/, 'docker run -d'],
-    // Package-runner dev/serve/watch scripts (NOT test/build/lint/install — those are one-shots).
-    [/\b(pnpm|npm|yarn|bun|npx)\b[^|&;]*\b(dev|serve|watch)\b/, 'dev/serve/watch script'],
-    [/\b(pnpm|npm|yarn|bun)\s+start\b/, 'start script'],
-    // Bare dev servers / watchers.
-    [/\bnext\s+dev\b/, 'next dev'],
-    [/\bvite\b(?!\s+build)/, 'vite'],
-    [/\bnodemon\b/, 'nodemon'],
-    [/\bwebpack(-dev-server)?\s+serve\b/, 'webpack serve'],
-    [/\bng\s+serve\b/, 'ng serve'],
-    [/\brails\s+s(erver)?\b/, 'rails server'],
-    [/\bflask\s+run\b/, 'flask run'],
-    [/\b(uvicorn|gunicorn|daphne|hypercorn)\b/, 'python app server'],
-    [/\bpython[0-9.]*\s+-m\s+http\.server\b/, 'python http.server'],
-  ];
-  for (const [re, label] of smells) if (re.test(cmd)) return label;
-  return null;
-}
-
-export const SVC_NUDGE_TEXT =
-  'this looks like a long-running process. If it is a dev server / `docker compose up` / watcher, do NOT ' +
-  "run it bare — start it under the supervisor so it survives the turn and shows in the operator's SERVICES " +
-  'sidebar with live logs: `atlas-svc run --name <id> -- <cmd>` (then `atlas-svc logs -f <id>`, `atlas-svc ' +
-  'ps`, `atlas-svc stop <id>`). Anything started with a bare `&`/nohup/`-d` is invisible to the operator and ' +
-  'gets reaped between turns. (One-off commands like `pnpm test`/`build` are fine to run directly with Bash.)';
-
-/** The atlas-svc nudge appended to a matching Bash tool result via PostToolUse `additionalContext`. */
-function renderSvcNudge(command: string): string {
-  const shown = command.length > 120 ? `${command.slice(0, 117)}…` : command;
-  return `[atlas-svc reminder] You just ran \`${shown}\` — ${SVC_NUDGE_TEXT}`;
-}
-
-/**
- * Throttle predicate for the atlas-svc nudge: fire on the FIRST match (`last === null`), then only once the
- * context has grown by at least `delta` tokens since the last nudge. Keeps back-to-back matching commands
- * from spamming the reminder. Pure — the caller latches `last` on a true result.
- */
-export function svcNudgeShouldFire(last: number | null, now: number, delta: number): boolean {
-  return last === null || now - last >= delta;
-}
-
-/** Throttle window (context-token growth) between atlas-svc nudges; env-overridable. Default ~40k. */
-const DEFAULT_SVC_NUDGE_DELTA_TOKENS = 40_000;
-function resolveSvcNudgeDeltaTokens(): number {
-  const raw = process.env.SVC_NUDGE_DELTA_TOKENS;
-  if (raw) {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
-  return DEFAULT_SVC_NUDGE_DELTA_TOKENS;
-}
-function svcNudgeDisabled(): boolean {
-  const v = process.env.SVC_NUDGE_DISABLED;
-  return v === '1' || v === 'true';
-}
+export { detectLongRunningCommand, svcNudgeShouldFire, SVC_NUDGE_TEXT };
 
 /**
  * A hand-driven async-iterable the engine feeds the SDK in STREAMING-INPUT mode: `push` a message to
@@ -719,9 +655,10 @@ export class EngineCore {
     // input and force the SDK to KILL the still-running shell. Instead we hold the query() session open while
     // any task is in flight so the task's `task_notification` AND the model's auto-continuation land in THIS
     // turn. The hold is bounded by HOLD_CAP_MS (a stuck/endless task can't wedge the turn forever); after the
-    // cap we steer the agent with BG_TASK_CAP_NOTICE and give it CAP_ACK_GRACE_MS to acknowledge before an
-    // unconditional close. Read from process.env so the container path works and tests can shrink them.
-    const HOLD_CAP_MS = Number(process.env.BG_TASK_MAX_HOLD_MS) > 0 ? Number(process.env.BG_TASK_MAX_HOLD_MS) : 600_000;
+    // cap we steer the agent with the `bg-task-cap` rule's notice and give it CAP_ACK_GRACE_MS to acknowledge
+    // before an unconditional close. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can
+    // mutate the rule); CAP_ACK_GRACE_MS is still process.env-driven (unaffected by d4).
+    const HOLD_CAP_MS = bgTaskCapRule.trigger.kind === 'hold-timer' ? bgTaskCapRule.trigger.holdMs : BG_TASK_HOLD_CAP_MS;
     const CAP_ACK_GRACE_MS = Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) > 0 ? Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) : 15_000;
     const liveBgTasks = new Set<string>();
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
@@ -740,7 +677,7 @@ export class EngineCore {
       capping = true;
       onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
       cancelEnd();
-      input.push(steerUserMessage(BG_TASK_CAP_NOTICE, 'now'));
+      input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
       capKillTimer = setTimeout(() => {
         if (!turnEnded) input.end();
       }, CAP_ACK_GRACE_MS);
@@ -882,11 +819,11 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
-    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled by default for every Claude turn,
-    // env kill-switch + tunable throttle window. Reads the live `contextTokens` (declared after `options`;
-    // the hook only fires during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
-    const svcNudgeEnabled = !svcNudgeDisabled();
-    const svcNudgeDeltaTokens = resolveSvcNudgeDeltaTokens();
+    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled + throttle window sourced from the
+    // `svc-nudge` JIT rule. Reads the live `contextTokens` (declared after `options`; the hook only fires
+    // during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
+    const svcNudgeEnabled = svcNudgeRule.enabled;
+    const svcNudgeDeltaTokens = svcNudgeRule.throttle!.deltaTokens;
 
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
@@ -967,7 +904,7 @@ export class EngineCore {
                       const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
                       if (inp.tool_name !== 'Bash') return {};
                       const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
-                      if (!detectLongRunningCommand(cmd)) return {};
+                      if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd)) return {};
                       const now = contextTokens ?? 0;
                       // First matching command always fires; then at most once per delta of context growth.
                       if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
@@ -975,7 +912,7 @@ export class EngineCore {
                       return {
                         hookSpecificOutput: {
                           hookEventName: 'PostToolUse' as const,
-                          additionalContext: renderSvcNudge(cmd),
+                          additionalContext: svcNudgeRule.render({ command: cmd }),
                         },
                       };
                     },
@@ -1132,6 +1069,10 @@ export class EngineCore {
               // lands like a manual steer instead of racing the post-`result` close. Level-latch (parity with the
               // driver's LegRotationWatch): the FIRST crossing injects the SOFT nudge; each further +delta band
               // injects the REMINDER. Fires the highest band crossed, each band at most once. No hard stop.
+              // Enablement + thresholds + payload text come per-turn from `rotationNudge` (RunEngineArgs, seeded
+              // by the driver from `ROTATION_SOFT_NUDGE`/`ROTATION_REMINDER_NUDGE`). The `leg-rotation` JIT rule
+              // is the catalog SOURCE of those thresholds (see `resolveRotationThresholds`) and mirrors the same
+              // payload text — kept as the injectable per-turn field so a caller can distinguish the phases.
               if (rotationNudge && contextTokens >= rotationNudge.softTokens) {
                 const level = Math.floor(
                   (contextTokens - rotationNudge.softTokens) / rotationNudge.reminderDeltaTokens,

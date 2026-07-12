@@ -403,20 +403,11 @@ export const SANDBOX_RESET_NOTICE = [
 ].join(' ');
 
 /**
- * Injected IN-TURN as a steer message when a `run_in_background` Bash task keeps the turn held past
- * BG_TASK_MAX_HOLD_MS. The engine ends the SDK session right after (killing the still-running task), so this
- * reaches the agent in the exact context where it backgrounded the task — steering it to `atlas-svc` for any
- * genuinely long-running process. In the spirit of {@link SANDBOX_RESET_NOTICE}: a one-time signal, not part
- * of the byte-stable system prompt.
+ * Injected IN-TURN as a steer message when a `run_in_background` Bash task keeps the turn held past the
+ * `bg-task-cap` JIT rule's `holdMs`. Relocated to `prompt-kit/jit/bg-task-cap.ts` (the rule catalog owns the
+ * payload now); re-exported here so existing importers stay green.
  */
-export const BG_TASK_CAP_NOTICE = [
-  '[background task capped] A Bash task you started with run_in_background was still running when this turn',
-  'hit its maximum hold time, so it was ended and is NO LONGER RUNNING. run_in_background is only for SHORT,',
-  'finite work (a build, a migration, a test suite) that finishes on its own. Long-running processes — dev',
-  'servers, file/test watchers, headless browsers, docker compose services — belong under atlas-svc: start',
-  'them with `atlas-svc run …` (supervised, survives across turns) and check them with `atlas-svc ps`. Do',
-  'not rely on the capped task having completed; re-run its work under atlas-svc if you still need it.',
-].join(' ');
+export { BG_TASK_CAP_NOTICE } from '../prompt-kit/jit/bg-task-cap';
 
 /**
  * Codex reasoning effort — mirrors `@openai/codex-sdk`'s `ModelReasoningEffort` (v0.137.0). Kept as a

@@ -11,8 +11,9 @@
  *    Rotation happens ONLY when the builder self-authors a handoff (`record_leg_handoff`) — the watch never forces
  *    it. (Historically a HARD threshold force-ran a read-only fallback handoff; removed — operator decision.)
  *  • ABSOLUTE token thresholds, NOT a fraction of the window. Builders run the 1M-context beta, so these are
- *    ROTATE points with headroom to author the handoff — not a truncation wall. Both are env-overridable knobs
- *    because effective reasoning context degrades well below 150k (NoLiMa / RULER); Stage 0 logs real occupancy.
+ *    ROTATE points with headroom to author the handoff — not a truncation wall. Declared in the JIT rule catalog
+ *    (`prompt-kit/jit`, d4) because effective reasoning context degrades well below 150k (NoLiMa / RULER); Stage 0
+ *    logs real occupancy.
  *  • POSITIVE-SIGNAL ONLY. `contextTokens == null` events (Codex / master-review turns, whose SDK surfaces no
  *    per-call occupancy) are ignored and NEVER latch — so those turns can never trip a rotation. This polarity
  *    is INVERTED vs the brain's compaction gate (which compacts on unknown occupancy); getting it wrong would
@@ -24,6 +25,7 @@
  *
  * Pure and dependency-free so it unit-tests without Nest/DB.
  */
+import { ROTATION_REMINDER_DELTA_TOKENS, ROTATION_SOFT_TOKENS } from '../prompt-kit/jit';
 
 /** Which kind of context-pressure signal just fired. */
 export type LegRotationSignalPhase = 'soft' | 'reminder';
@@ -36,9 +38,12 @@ export interface LegRotationThresholds {
   reminderDeltaTokens: number;
 }
 
-/** Operator-chosen defaults (150k soft, +25k per reminder, on the 1M window). R&D — expect to tune downward. */
-export const DEFAULT_ROTATION_SOFT_TOKENS = 150_000;
-export const DEFAULT_ROTATION_REMINDER_DELTA_TOKENS = 25_000;
+/**
+ * Operator-chosen defaults (150k soft, +25k per reminder, on the 1M window). R&D — expect to tune downward.
+ * Sourced from the `leg-rotation` JIT rule (the catalog is now the one place these are declared).
+ */
+export const DEFAULT_ROTATION_SOFT_TOKENS = ROTATION_SOFT_TOKENS;
+export const DEFAULT_ROTATION_REMINDER_DELTA_TOKENS = ROTATION_REMINDER_DELTA_TOKENS;
 
 /** What a threshold crossing carries to the (later-stage) nudge injection + visible-row persist. */
 export interface LegRotationSignal {
@@ -78,19 +83,13 @@ export function freshLegRotationState(): LegRotationRunState {
 }
 
 /**
- * Resolve the rotation thresholds, honouring `ROTATION_SOFT_TOKENS` / `ROTATION_REMINDER_DELTA_TOKENS` env
- * overrides (à la `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`). Invalid / non-positive values fall back to the defaults so
- * a fat-fingered override can never disable the nudge.
+ * Resolve the rotation thresholds. No longer env-overridable (d4 removed `ROTATION_SOFT_TOKENS` /
+ * `ROTATION_REMINDER_DELTA_TOKENS`) — the declared JIT-rule values are the only source now.
  */
-export function resolveRotationThresholds(env: NodeJS.ProcessEnv = process.env): LegRotationThresholds {
-  const parse = (raw: string | undefined, fallback: number): number => {
-    if (raw == null || raw.trim() === '') return fallback;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
-  };
+export function resolveRotationThresholds(): LegRotationThresholds {
   return {
-    softTokens: parse(env.ROTATION_SOFT_TOKENS, DEFAULT_ROTATION_SOFT_TOKENS),
-    reminderDeltaTokens: parse(env.ROTATION_REMINDER_DELTA_TOKENS, DEFAULT_ROTATION_REMINDER_DELTA_TOKENS),
+    softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
+    reminderDeltaTokens: DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
   };
 }
 

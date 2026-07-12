@@ -1,0 +1,101 @@
+/**
+ * prompt-kit / jit — the JIT-context rule CATALOG (Pillar 4, decisions d1/d4/d5/d7).
+ *
+ * The single readable source of truth for every on-demand injection: each rule co-locates its trigger, its
+ * threshold/throttle, its delivery channel, its `enabled` flag, and its payload. Two thin executors consume this
+ * one catalog (engine-local for tool/token/timer triggers; host-side for lifecycle triggers) — the catalog owns
+ * WHAT to say; the executors own WHEN/HOW to deliver (content/wiring split).
+ *
+ * The former env knobs are gone (d4): their DEFAULTS are the declared field values below, so runtime behavior at
+ * default settings is byte-identical. `enabled` replaces the per-feature kill-switches.
+ */
+import { agentMessage } from '../message';
+import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
+import { PREVIEW_PREP_SEED_BODY } from '../system/fragments';
+import { chunkKey } from '../harness/chunk-keys';
+import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
+import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
+import { type JitRule, validateJitRules } from './rule';
+
+/** Was `DEFAULT_SVC_NUDGE_DELTA_TOKENS` (env `SVC_NUDGE_DELTA_TOKENS`). */
+export const SVC_NUDGE_DELTA_TOKENS = 40_000;
+/** Was `DEFAULT_ROTATION_SOFT_TOKENS` (env `ROTATION_SOFT_TOKENS`). */
+export const ROTATION_SOFT_TOKENS = 150_000;
+/** Was `DEFAULT_ROTATION_REMINDER_DELTA_TOKENS` (env `ROTATION_REMINDER_DELTA_TOKENS`). */
+export const ROTATION_REMINDER_DELTA_TOKENS = 25_000;
+/** Was the `HOLD_CAP_MS` default (env `BG_TASK_MAX_HOLD_MS`). */
+export const BG_TASK_HOLD_CAP_MS = 600_000;
+
+/**
+ * atlas-svc nudge — when Atlas runs a Bash command that smells long-running, append a reminder pointing it at
+ * the `atlas-svc` supervisor. Engine-local `PostToolUse` hook; throttled by context-token growth.
+ */
+export const svcNudgeRule: JitRule = {
+  id: 'svc-nudge',
+  enabled: true,
+  trigger: { kind: 'tool-match', tool: 'Bash', match: detectLongRunningCommand },
+  delivery: 'postToolUse-additionalContext',
+  throttle: { deltaTokens: SVC_NUDGE_DELTA_TOKENS },
+  render: (ctx) => agentMessage(renderSvcNudge(ctx.command ?? '')),
+};
+
+/**
+ * Leg-rotation nudge — as this turn's own main-agent occupancy fills, latch SOFT the first time it crosses
+ * `softTokens`, then a REMINDER on each further +`reminderDeltaTokens`. Engine-local mid-turn steer. The
+ * per-turn enablement + thresholds are still seeded via `RunEngineArgs.rotationNudge` (the driver sources them
+ * from these declared values); this rule is the catalog source of both the threshold config and the payload.
+ */
+export const legRotationRule: JitRule = {
+  id: 'leg-rotation',
+  enabled: true,
+  trigger: {
+    kind: 'token-threshold',
+    softTokens: ROTATION_SOFT_TOKENS,
+    reminderDeltaTokens: ROTATION_REMINDER_DELTA_TOKENS,
+  },
+  delivery: 'steer-now',
+  render: (ctx) => agentMessage(ctx.phase === 'reminder' ? ROTATION_REMINDER_NUDGE : ROTATION_SOFT_NUDGE),
+};
+
+/**
+ * Background-task cap — when a `run_in_background` Bash task keeps the turn held past `holdMs`, steer the agent
+ * with the cap notice before the engine ends the session. Engine-local hold-timer.
+ */
+export const bgTaskCapRule: JitRule = {
+  id: 'bg-task-cap',
+  enabled: true,
+  trigger: { kind: 'hold-timer', holdMs: BG_TASK_HOLD_CAP_MS },
+  delivery: 'steer-now',
+  render: () => agentMessage(BG_TASK_CAP_NOTICE),
+};
+
+/**
+ * Preview flagship (d7) — the exemplar lifecycle rule. When the operator taps "Spin up preview" at the ship
+ * gate, seed the full demo-ready preview procedure as a host system-notice turn. The payload + gating already
+ * shipped upstream (removed from the always-on prompt); this rule is the migration that routes it through the
+ * registry. Byte-identical to the hand-rolled `spinUpPreview` seed — same body, same label + chunkKey.
+ */
+export const previewPrepRule: JitRule = {
+  id: 'preview-prep',
+  enabled: true,
+  trigger: { kind: 'lifecycle', event: 'preview-requested' },
+  delivery: 'host-seed-notice',
+  render: () => agentMessage(PREVIEW_PREP_SEED_BODY),
+  seed: { label: 'Spin up preview requested', chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? '') },
+};
+
+/** The declarative catalog every executor reads. */
+export const JIT_RULES: JitRule[] = [svcNudgeRule, legRotationRule, bgTaskCapRule, previewPrepRule];
+
+// Boot-validate on import (validateFragments spirit): a malformed rule fails loud, never ships silently.
+validateJitRules(JIT_RULES);
+
+/**
+ * Find the single enabled rule whose lifecycle trigger matches `event`, or undefined. The host-side executor's
+ * lookup; kept here so the catalog stays the one place rules are enumerated.
+ */
+export function findLifecycleRule(event: 'preview-requested' | 'plan-approved'): JitRule | undefined {
+  return JIT_RULES.find(
+    (r) => r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
+  );
+}
