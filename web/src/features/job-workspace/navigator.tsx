@@ -15,6 +15,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
+  Hourglass,
   Image as ImageIcon,
   Lock,
   MoreHorizontal,
@@ -37,8 +38,10 @@ import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
 import {
+  useAcceptThread,
   useJobCreatedJobs,
   useRetryJob,
+  useRetryVerification,
   useServices,
 } from "@/lib/api/job-queries";
 import { threadHref } from "@/lib/routes";
@@ -1224,10 +1227,68 @@ function StateBanner({
   onConversation: () => void;
 }) {
   const retry = useRetryJob(jobRef);
+  const retryVerification = useRetryVerification(jobRef);
+  const acceptThread = useAcceptThread(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
+
+  // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
+  // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
+  // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
+  const stuck = job?.threads?.find(
+    (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
+  );
+  if (stuck) {
+    const pending = retryVerification.isPending || acceptThread.isPending;
+    const onRetryNow = () =>
+      retryVerification.mutate(stuck.id, { onSuccess: onConversation });
+    const onAccept = () =>
+      acceptThread.mutate(stuck.id, { onSuccess: onConversation });
+    // "Skip & accept" shows only when the LIVE judge was the outage and the static gate already passed (d4);
+    // "Retry now" is always safe (it just re-runs the judge), so it shows for any judge_unavailable hold.
+    const canAccept = stuck.acceptableOnJudgeOutage === true;
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
+        style={{
+          borderColor: "var(--border)",
+          borderLeftColor: "var(--accent-line)",
+          background: "var(--surface-2)",
+        }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <Hourglass size={11} className="text-dim" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
+            VERIFICATION UNAVAILABLE · §{stuck.ordinal}
+          </span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          The verification judge was unreachable. Retry it, or accept the work
+          as-is.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn
+            tone="accent"
+            icon={<RotateCw size={10} />}
+            label={retryVerification.isPending ? "Retrying…" : "Retry now"}
+            onClick={onRetryNow}
+            disabled={pending}
+          />
+          {canAccept && (
+            <BannerBtn
+              tone="neutral"
+              label={acceptThread.isPending ? "Accepting…" : "Skip & accept"}
+              onClick={onAccept}
+              disabled={pending}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (
     job?.halt &&
     (job.halt.kind === "failed" ||
