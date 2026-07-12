@@ -135,12 +135,14 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     el.addEventListener("touchstart", onTouchStartMove, { passive: true });
     el.addEventListener("touchmove", onTouchStartMove, { passive: true });
     el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
     el.addEventListener("scrollend", onScrollEnd);
     return () => {
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("touchstart", onTouchStartMove);
       el.removeEventListener("touchmove", onTouchStartMove);
       el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
       el.removeEventListener("scrollend", onScrollEnd);
       if (settleTimer.current) clearTimeout(settleTimer.current);
     };

@@ -33,7 +33,7 @@
     "db:recover-turn": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/recover-turn.ts",
     "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed",
     "seed:demo": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/seed-demo-jobs.ts",
-    "seed:scroll-fixture": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/load-scroll-fixture.ts"
+    "seed:scroll-fixture": "pnpm seed:demo && pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/load-scroll-fixture.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.204",
