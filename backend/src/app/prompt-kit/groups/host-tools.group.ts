@@ -1,6 +1,6 @@
 /**
- * prompt-kit / groups / host-tools — the host MCP tool surface: the fully-qualified tool list, the `args`
- * wrapper contract, and the create_job / tickets tools; plus the onboarding session's curated tool list.
+ * prompt-kit / groups / host-tools — the host MCP tool surface: the fully-qualified tool list, the flat
+ * top-level calling convention, and the create_job / tickets tools; plus the onboarding session's curated tool list.
  *
  * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
  * `TOOL_QUALIFICATION_NOTE` catalog block.
@@ -70,14 +70,15 @@ export class HostToolsGroup {
     return LSP_TOOLS_NOTE;
   }
 
-  /** The args-wrapper calling convention. */
+  /** The flat top-level calling convention. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1050, condition: notOnboarding })
   argsWrapper(): string {
     return [
-      'ARGUMENTS — every host tool takes a SINGLE object parameter named `args`; put ALL fields inside it.',
-      'The shorthand below (e.g. `create_decision({ decisionClass, ruling })`) ALWAYS means the wrapped form',
-      '`create_decision({ args: { decisionClass, ruling } })`. A call that puts the fields at the TOP LEVEL',
-      '(no `args` wrapper) arrives EMPTY at the host and fails — always nest them under `args`.',
+      'ARGUMENTS — call every host tool with its fields DIRECTLY at the top level, exactly as the tool',
+      'schema declares them. The shorthand below (e.g. `create_decision({ decisionClass, ruling })`) is',
+      'LITERAL — pass those fields as-is. Do NOT nest them under an `args` object: each tool is registered',
+      'with its own strict per-field shape, so an `args` wrapper is an unknown key that gets stripped, the',
+      'call then arrives EMPTY (the required fields read as undefined) and fails.',
     ].join('\n');
   }
 
@@ -127,8 +128,8 @@ export class HostToolsGroup {
   onboardingTools(): string {
     return [
       TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),
-      'Every host tool takes a SINGLE object',
-      'parameter named `args` — put ALL fields inside it (e.g. request_secret({ args: { name, path, description } })).',
+      'Call every host tool with its fields DIRECTLY at the top level — do NOT wrap them in an `args`',
+      'object (e.g. request_secret({ name, path, description }), NOT request_secret({ args: { … } })).',
       'Your host tools this session:',
       `  - mcp__${BRIDGE_SERVER_NAME}__ask_question        — ask/verify ONE thing with the operator (renders as a card)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_question   — retract a still-unanswered question BY questionId (reword/moot; never re-ask an open one)`,
@@ -170,7 +171,7 @@ export class HostToolsGroup {
   reviewTools(): string {
     return [
       TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),
-      'Every host tool takes a SINGLE object parameter named `args`.',
+      'Call every host tool with its fields DIRECTLY at the top level (no `args` wrapper).',
       'You have NO build/plan/ship tools this session (no propose_plan, start_direct_build, create_job, or',
       'tickets) — a review does not build. You do the work with your NATIVE tools: `gh` via Bash to fetch the',
       'PR, Read/Glob/Grep to study the code, and the `explore`/`review`/`debug`/`test` subagents (Task). Your',

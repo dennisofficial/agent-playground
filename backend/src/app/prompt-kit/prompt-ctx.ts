@@ -33,5 +33,7 @@ export interface PromptCtx {
      * Absent/empty on a repo with nothing provisioned yet → the group prints "nothing recorded yet".
      */
     workspaceProfile?: string | null;
+    /** Per-job AUTO-APPROVE is ON — the brain runs autonomously (plan & ship gates auto-advance, no human). */
+    autoApprove?: boolean;
   };
 }
