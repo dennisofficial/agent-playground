@@ -40,6 +40,18 @@ describe("sectionOf", () => {
     ).toBe("reviewing");
   });
 
+  it("maps a planning job with an in-flight plan review (activity) to reviewing", () => {
+    expect(
+      sectionOf(makeThread({ status: "planning", activity: "plan_review" })),
+    ).toBe("reviewing");
+  });
+
+  it("keeps a planning job with idle activity in planning", () => {
+    expect(
+      sectionOf(makeThread({ status: "planning", activity: "idle" })),
+    ).toBe("planning");
+  });
+
   it("maps awaiting_approval to awaiting and awaiting_ship_review to ready_to_ship", () => {
     expect(
       sectionOf(makeThread({ status: "awaiting_approval" as JobStatus })),
@@ -183,6 +195,18 @@ describe("groupThreadsBySection", () => {
   it("splits plan_review into its own reviewing section, ordered after planning", () => {
     const threads = [
       makeThread({ id: "r1", status: "plan_review" }),
+      makeThread({ id: "p1", status: "planning" }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups.map((g) => g.section)).toEqual(["planning", "reviewing"]);
+    expect(groups.find((g) => g.section === "reviewing")?.threads).toEqual([
+      threads[0],
+    ]);
+  });
+
+  it("splits an in-flight plan review (planning + activity) into reviewing, ordered after planning", () => {
+    const threads = [
+      makeThread({ id: "r1", status: "planning", activity: "plan_review" }),
       makeThread({ id: "p1", status: "planning" }),
     ];
     const groups = groupThreadsBySection(threads);
