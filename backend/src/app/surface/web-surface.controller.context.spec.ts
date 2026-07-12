@@ -80,6 +80,8 @@ describe('WebSurfaceController.contextFile', () => {
     writeFileSync(join(root, 'specs', 'plan.md'), '# Plan\n\nHello.');
     writeFileSync(join(root, 'artifacts', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     writeFileSync(join(root, 'secret.txt'), 'not in a bucket');
+    mkdirSync(join(root, 'evidence', '010-backend'), { recursive: true });
+    writeFileSync(join(root, 'evidence', '010-backend', 'run.log'), 'ok\n');
   });
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -115,6 +117,17 @@ describe('WebSurfaceController.contextFile', () => {
     await expect(controller.contextFile(ORG, 'thread-1', 'secret.txt')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  it('accepts an evidence/ path (fourth bucket)', async () => {
+    const { controller } = makeController('orgB');
+    const res = await controller.contextFile(ORG, 'thread-1', 'evidence/010-backend/run.log');
+    expect(res).toMatchObject({
+      name: 'run.log',
+      path: 'evidence/010-backend/run.log',
+      encoding: 'text',
+      content: 'ok\n',
+    });
   });
 
   it('404s a missing file (inside a valid bucket)', async () => {
@@ -264,5 +277,35 @@ describe('WebSurfaceController repo endpoints', () => {
         NotFoundException,
       );
     });
+  });
+});
+
+/**
+ * `GET …/context` lists all four buckets — specs, generated, artifacts, evidence — as flat, name-sorted
+ * `ContextFile[]`. Own fixture (module-level `root`, torn down in its own `afterAll`) since the earlier
+ * describes reset `root` for their own use.
+ */
+describe('WebSurfaceController.context', () => {
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'ctxlist-'));
+    mkdirSync(join(root, 'specs'), { recursive: true });
+    mkdirSync(join(root, 'generated'), { recursive: true });
+    mkdirSync(join(root, 'artifacts'), { recursive: true });
+    mkdirSync(join(root, 'evidence', '010-backend'), { recursive: true });
+    writeFileSync(join(root, 'specs', 'plan.md'), '# Plan');
+    writeFileSync(join(root, 'generated', 'decision-record.md'), '# Decisions');
+    writeFileSync(join(root, 'artifacts', 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(join(root, 'evidence', '010-backend', 'run.log'), 'ok\n');
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  it('returns all four buckets, including the evidence/<thread-leg>/ file', async () => {
+    const { controller } = makeController('orgB');
+    const res = await controller.context(ORG, 'thread-1');
+    expect(Object.keys(res).sort()).toEqual(['artifacts', 'evidence', 'generated', 'specs']);
+    expect(res.specs).toEqual([expect.objectContaining({ name: 'plan.md' })]);
+    expect(res.generated).toEqual([expect.objectContaining({ name: 'decision-record.md' })]);
+    expect(res.artifacts).toEqual([expect.objectContaining({ name: 'shot.png' })]);
+    expect(res.evidence).toEqual([expect.objectContaining({ name: '010-backend/run.log' })]);
   });
 });

@@ -38,6 +38,7 @@ import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
+import { isOutputGroupHidden } from "./output-group";
 import {
   useJobCreatedJobs,
   useRetryJob,
@@ -1003,7 +1004,15 @@ function OutputGroup({
     });
   // Drop the group whole (no divider, no ghost row) when asked to hide-when-empty and there's genuinely
   // nothing to show — placed AFTER the hooks above so their order stays unconditional.
-  if (hideWhenEmpty && files.length === 0 && !loading && !children) return null;
+  if (
+    isOutputGroupHidden({
+      hideWhenEmpty,
+      fileCount: files.length,
+      loading,
+      hasChildren: Boolean(children),
+    })
+  )
+    return null;
   return (
     <>
       <Divider

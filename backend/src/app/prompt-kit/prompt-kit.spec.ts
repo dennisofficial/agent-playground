@@ -303,6 +303,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       );
       expect(out, String(agent)).toContain('/context/artifacts');
       expect(out, String(agent)).toContain('RESULTS.md');
+      expect(out, String(agent)).toContain('$ATLAS_EVIDENCE_DIR');
+      expect(out, String(agent)).toContain('/context/evidence');
     }
     // NOT the writer (it implements a slice and reports up) nor the planning brain.
     for (const agent of [Agent.FAN_OUT, Agent.ATLAS_MAIN]) {
