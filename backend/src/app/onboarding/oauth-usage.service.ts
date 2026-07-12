@@ -182,10 +182,12 @@ export class OauthUsageService {
   }
 
   /**
-   * The merged snapshot `GET /web/orgs/:orgId/usage` serves: harvested windows take precedence (fresh,
-   * free); the HTTP fallback only fills windows the harvest hasn't populated, and is re-hit at most once
-   * per {@link LIVE_FLOOR_MS}. Always resolves to a well-formed `OrgUsage` — `ok:false` when nothing is
-   * known from either source.
+   * The merged snapshot `GET /web/orgs/:orgId/usage` serves: whichever source (harvest vs live) was
+   * captured MORE RECENTLY wins, per-window, and `fetchedAt` is stamped honestly to that source's own
+   * capture time — never response-assembly time. A harvest only ever carries the ONE window a
+   * `rate_limit_event` reported, so the fresher source only shadows the windows it actually has; the other
+   * source fills the rest. The HTTP fallback is throttled to at most once per {@link LIVE_FLOOR_MS}. Always
+   * resolves to a well-formed `OrgUsage` — `ok:false` when nothing is known from either source.
    */
   async get(orgId: string): Promise<OrgUsage> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
@@ -206,24 +208,40 @@ export class OauthUsageService {
     // behavior) meant a single fresh session harvest blanked every other row until it went stale.
     const live = await this.liveSnapshot(orgId);
 
-    // `fetchedAt` is the "last updated" the UI shows — the instant the SERVED data was actually captured,
-    // NOT response-assembly time. Harvested windows take precedence, so their capture time (`snapshot.fetchedAt`)
-    // is the meaningful stamp; fall back to the live-fetch time (now) when there's no harvest to show.
-    const fetchedAt =
-      !harvestIsEmpty && snapshot
-        ? new Date(snapshot.fetchedAt).toISOString()
+    // Serve the FRESHER source. A degraded live snapshot stamps `fetchedAt = now` (see `degradedUsage`), so
+    // it must never be mistaken for a "just captured" competitor — only a `live.ok` snapshot has a real
+    // capture time. Prefer harvest per-window only when it's present AND at least as fresh as a usable live
+    // read: during a turn `applyHarvest` stamps `snapshot.fetchedAt = now`, so harvest wins (real-time SSE
+    // preserved); on an idle open harvest is hours old while live was just fetched, so live wins → "just now".
+    const hasHarvest = !harvestIsEmpty;
+    const hasLive = live.ok;
+    const harvestAtMs = snapshot?.fetchedAt;
+    const liveAtMs = new Date(live.fetchedAt).getTime();
+    const harvestWins = hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
+    const liveWins = !harvestWins && hasLive;
+
+    // Whichever source won leads per-window; the other backfills the windows the winner doesn't carry.
+    const pick = (key: ClaudeUsageWindowKey): UsageWindow =>
+      harvestWins ? harvestWindows[key] ?? live[key] ?? null : live[key] ?? harvestWindows[key] ?? null;
+
+    // Stamp the served data's own capture time: the harvest snapshot's when harvest won, the live-fetch time
+    // when live won, else assembly time (both sources unknown → degraded).
+    const fetchedAt = harvestWins
+      ? new Date(harvestAtMs ?? now).toISOString()
+      : liveWins
+        ? live.fetchedAt
         : new Date().toISOString();
 
     const merged: OrgUsage = {
-      fiveHour: harvestWindows.fiveHour ?? live.fiveHour ?? null,
-      sevenDay: harvestWindows.sevenDay ?? live.sevenDay ?? null,
-      sevenDayOpus: harvestWindows.sevenDayOpus ?? live.sevenDayOpus ?? null,
-      sevenDaySonnet: harvestWindows.sevenDaySonnet ?? live.sevenDaySonnet ?? null,
+      fiveHour: pick('fiveHour'),
+      sevenDay: pick('sevenDay'),
+      sevenDayOpus: pick('sevenDayOpus'),
+      sevenDaySonnet: pick('sevenDaySonnet'),
       // Per-model weekly caps (e.g. Fable) are never harvested — they only come from the live snapshot.
       modelWindows: live.modelWindows ?? [],
       fetchedAt,
-      source: !harvestIsEmpty ? 'harvested' : live.ok ? 'usage_api' : 'stale',
-      ok: !harvestIsEmpty || live.ok,
+      source: harvestWins ? 'harvested' : liveWins ? 'usage_api' : 'stale',
+      ok: harvestWins || liveWins,
     };
     return this.withAccount(orgId, merged);
   }

@@ -401,6 +401,105 @@ describe('OauthUsageService.get harvested-window expiry', () => {
   });
 });
 
+describe('OauthUsageService.get freshness (harvest vs live)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A `makeService` variant whose `engineAuth` resolves a real `personal` credential (`cred1`), so
+   * `get()`'s live path actually hits the stubbed `fetch` instead of degrading — these tests need a real
+   * competing `live.fetchedAt` to exercise the freshness comparison.
+   */
+  function makeServiceWithLiveCredential(): {
+    svc: OauthUsageService;
+    store: FakeCredentialStore;
+  } {
+    const store = new FakeCredentialStore();
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const bus = new UsageEventBus();
+    const credRefresh = new FakeCredRefresh(claudeStore);
+    // `secret` itself is never read on this path — `fetchLive` resolves the real secret through
+    // `ensureFresh(orgId, refreshBack.credentialId)`, which the fake reads straight off `claudeStore`.
+    const engineAuth: Pick<CredentialResolver, 'engineAuth'> = {
+      engineAuth: () =>
+        Promise.resolve({
+          secret: '',
+          kind: 'personal',
+          refreshBack: {
+            orgId: 'org1',
+            engine: 'claude',
+            credentialId: 'cred1',
+          },
+        }),
+    };
+    const svc = new OauthUsageService(
+      engineAuth as unknown as CredentialResolver,
+      store as unknown as TenantCredentialStore,
+      claudeStore as unknown as ClaudeCredentialStore,
+      bus,
+      credRefresh as unknown as CredentialRefreshService,
+    );
+    return { svc, store };
+  }
+
+  it('idle open: live newer than harvest → serves live windows stamped ~now (usage_api)', async () => {
+    const { svc, store } = makeServiceWithLiveCredential();
+    const harvestResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 99, resetsAt: harvestResetsAt },
+      Date.now() - 60 * 60 * 1000,
+    );
+    const liveResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(7, liveResetsAt))),
+    );
+
+    const usage = await svc.get('org1');
+
+    expect(usage.fiveHour?.utilization).toBe(7);
+    expect(usage.source).toBe('usage_api');
+    expect(Date.now() - new Date(usage.fetchedAt).getTime()).toBeLessThan(5000);
+  });
+
+  it('mid-turn: just-harvested newer than live → serves harvest with harvest stamp (SSE real-time preserved)', async () => {
+    const { svc, store } = makeServiceWithLiveCredential();
+    const liveResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(7, liveResetsAt))),
+    );
+    const harvestResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    // Strictly >= the live fetch's own `fetchedAt` (also ~now) so the freshness comparison picks harvest.
+    const harvestNow = Date.now() + 1000;
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 88, resetsAt: harvestResetsAt },
+      harvestNow,
+    );
+
+    const usage = await svc.get('org1');
+
+    expect(usage.fiveHour?.utilization).toBe(88);
+    expect(usage.source).toBe('harvested');
+    expect(new Date(usage.fetchedAt).getTime()).toBe(harvestNow);
+  });
+});
+
 describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () => {
   it('extracts a weekly_scoped model entry (Fable) with its 0-100 percent and null reset', () => {
     const root = {
