@@ -30,6 +30,7 @@ import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
+import { TurnRegistry } from '../sandbox/turn-registry.service';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
 export interface RunTurnInput {
@@ -168,6 +169,9 @@ export class TurnRunnerService {
     private readonly steps: Repository<StepEntity>,
     // @Optional so unit tests can construct the runner without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usage?: TurnUsageProjector,
+    // @Optional so unit tests can construct the runner without the registry; DI (@Global sandbox module)
+    // supplies it live. Needed by the lane-generic host steer/stop resolvers below.
+    @Optional() private readonly turnRegistry?: TurnRegistry,
   ) {}
 
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
@@ -348,6 +352,45 @@ export class TurnRunnerService {
   async steer(turnId: string, id: string, text: string): Promise<void> {
     if (!this.engine.steer) return;
     await this.engine.steer(turnId, id, text);
+  }
+
+  /** Whether the bound engine runner can STOP a running turn (Redis transport only). */
+  canStop(): boolean {
+    return typeof this.engine.stop === 'function';
+  }
+
+  /** STOP a running turn — cooperative abort to `turn:{turnId}:abort`. No-op if the runner can't stop. */
+  async stop(turnId: string): Promise<void> {
+    if (!this.engine.stop) return;
+    await this.engine.stop(turnId);
+  }
+
+  /**
+   * Lane-generic host STEER: resolve the running steerable turn on `lane` (brain `main` OR a build thread
+   * `thread:<id>`) and inject `text` into the LIVE turn as `priority:'now'`. Returns true iff a live
+   * steerable turn was found and the steer was issued — the caller stamps delivery on the engine's
+   * correlated `input_ack`, never on this call. A null resolution (no live steerable turn — a Codex builder /
+   * master-review leg is running, or nothing is) returns false so the caller queues into the next-turn drain
+   * rather than an unread input stream. Mirrors the brain's `steerIntoLiveBrainTurn`, lane-generic.
+   */
+  async steerLane(jobId: string, lane: string, id: string, text: string): Promise<boolean> {
+    if (!this.turnRegistry || !this.engine.steer) return false;
+    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
+    if (!live?.turn_id) return false;
+    await this.engine.steer(live.turn_id, id, text);
+    return true;
+  }
+
+  /**
+   * Lane-generic host STOP: resolve the running steerable turn on `lane` and cooperatively abort it.
+   * Returns true iff a live steerable turn was found and stopped.
+   */
+  async stopLane(jobId: string, lane: string): Promise<boolean> {
+    if (!this.turnRegistry || !this.engine.stop) return false;
+    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
+    if (!live?.turn_id) return false;
+    await this.engine.stop(live.turn_id);
+    return true;
   }
 
   /**

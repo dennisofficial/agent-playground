@@ -55,6 +55,20 @@ describe('TurnRegistry', () => {
     });
   });
 
+  it('register persists steerable:true when the caller passes it', async () => {
+    const repo = makeRepo();
+    await new TurnRegistry(repo, makeRepo() as never).register({ ...REGISTER, steerable: true });
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved).toMatchObject({ steerable: true });
+  });
+
+  it('register defaults steerable to false when omitted', async () => {
+    const repo = makeRepo();
+    await new TurnRegistry(repo, makeRepo() as never).register(REGISTER);
+    const saved = repo.save.mock.calls[0][0];
+    expect(saved).toMatchObject({ steerable: false });
+  });
+
   it('register maps a unique-violation on a BRAIN turn to BrainTurnAlreadyRunningError (the single-turn guard)', async () => {
     const repo = makeRepo();
     repo.save.mockRejectedValueOnce(uniqueViolation());
@@ -109,6 +123,16 @@ describe('TurnRegistry', () => {
     const out = await new TurnRegistry(repo, makeRepo() as never).listRunning();
     expect(repo.find).toHaveBeenCalledWith({ where: { status: 'running' } });
     expect(out).toHaveLength(1);
+  });
+
+  it('runningSteerableTurn queries the running+steerable row for (job_id, lane)', async () => {
+    const row = { turn_id: 't1', job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true };
+    const repo = makeRepo([row]);
+    const out = await new TurnRegistry(repo, makeRepo() as never).runningSteerableTurn('th1', 'thread:sec-be');
+    expect(repo.findOne).toHaveBeenCalledWith({
+      where: { job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true },
+    });
+    expect(out).toEqual(row);
   });
 
   it('tool dedup: records a reply and reads it back by (turn_id, tool_call_id)', async () => {

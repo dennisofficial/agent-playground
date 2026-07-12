@@ -3084,6 +3084,11 @@ export class ThreadDriver implements JobDispatcher {
     // ignored by MASTER_REVIEW's fragments, so passing it uniformly is byte-identical for both.
     const spec = threadKindSpec(thread.kind);
     const engine: SessionEngine = spec.engine;
+    // Mid-turn steering is armed for EVERY Claude builder Leg — INCLUDING the capped final Leg (where
+    // `rotation` is null: a capped Leg is still a live steerable Claude session, it just won't rotate again).
+    // Decoupled from `rotation` so a host seed can steer any live builder Leg; `rotationNudge` stays gated on
+    // `rotation`. Codex builder / master-review turns stay non-steerable (no streaming-input steer).
+    const steerable = engine === 'claude' && thread.kind === 'builder';
     // The repo's house-style, folded into the builder's system prompt AND forwarded on the run args so the
     // FAN_OUT writer subagents this turn spawns in-container render the same envelope (Layer B).
     const repoConventions = await this.repoConventionsFor(job);
@@ -3154,13 +3159,15 @@ export class ThreadDriver implements JobDispatcher {
             repo.projectRepo.gitUrl,
           ),
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
-          // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
-          // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
-          // streaming-input steering there). `rotationNudge` gives the engine the threshold + seed prompts so
-          // it injects the nudge itself the instant its own occupancy crosses — race-free vs the input close.
+          // Mid-turn steering — armed for every Claude builder Leg (including the capped final Leg) so
+          // operator steers AND the engine-local Leg-rotation SOFT/REMINDER nudges land in the LIVE turn
+          // (`priority:'now'`). Never for Codex (no streaming-input steering there). `rotationNudge` gives
+          // the engine the threshold + seed prompts so it injects the nudge itself the instant its own
+          // occupancy crosses — race-free vs the input close; it stays gated on `rotation` (disarmed on the
+          // capped final Leg, which won't rotate again).
+          ...(steerable ? { steerable: true } : {}),
           ...(rotation
             ? {
-                steerable: true,
                 rotationNudge: {
                   softTokens: rotation.thresholds.softTokens,
                   reminderDeltaTokens: rotation.thresholds.reminderDeltaTokens,

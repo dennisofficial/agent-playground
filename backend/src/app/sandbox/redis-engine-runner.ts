@@ -175,6 +175,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
           lane: args.turnMeta.lane,
           kind: args.turnMeta.kind,
           containerId: target.containerId,
+          // Mirrors the same `steerable` flag serialized into the turn spec (gates the in-container input
+          // subscription), so `runningSteerableTurn` can find this row.
+          steerable: args.steerable ?? false,
           // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
           ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
         });
