@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
 import type { SeedRow } from '../domain/stimulus';
+import type { AgentMessage } from '../prompt-kit/message';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
@@ -180,7 +181,7 @@ export class WebSurface implements ChatSurface {
   seedSystemNotification(
     channel: string,
     jobId: string,
-    body: string,
+    body: AgentMessage,
     opts: {
       orgId?: string;
       deliveredQuestionId?: string;

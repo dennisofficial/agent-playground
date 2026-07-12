@@ -19,6 +19,7 @@ import { firstValueFrom } from 'rxjs';
 import { take, toArray, filter } from 'rxjs/operators';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WebSurface } from './web-surface';
+import { agentMessage } from '../prompt-kit/message';
 import {
   decisionApprovalBlocks,
   APPROVE_ACTION_ID,
@@ -83,7 +84,7 @@ describe('WebSurface — inbound + outbound', () => {
 
   it('seedSystemNotification emits a System-authored, <system_notice>-wrapped, non-persisted seed', async () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
-    const ts = surface.seedSystemNotification('C-web', 'thread-9', 'Build failed on step 3', {
+    const ts = surface.seedSystemNotification('C-web', 'thread-9', agentMessage('Build failed on step 3'), {
       orgId: 'T-acme',
     });
     const msg = await received;

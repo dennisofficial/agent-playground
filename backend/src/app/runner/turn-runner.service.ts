@@ -25,6 +25,7 @@ import type {
   TurnMeta,
 } from '../engine';
 import type { FeatureSandbox } from '../git';
+import { agentMessage, type AgentMessage } from '../prompt-kit/message';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
@@ -43,9 +44,9 @@ export interface RunTurnInput {
   engine: SessionEngine;
   mode: SessionMode;
   /** The turn instructions. */
-  task: string;
+  task: AgentMessage;
   /** The system prompt / persona for the turn. */
-  systemPrompt: string;
+  systemPrompt: AgentMessage;
   /** Override the engine model for this turn. */
   model?: string;
   /** Engine-agnostic reasoning effort, forwarded to `RunEngineArgs.modelReasoningEffort`. The
@@ -87,7 +88,12 @@ export interface RunTurnInput {
    * engine injects itself the instant its own occupancy crosses — race-free vs the post-`result` input close.
    * Forwarded verbatim into {@link RunEngineArgs.rotationNudge}. Omit for non-rotating turns.
    */
-  rotationNudge?: { softTokens: number; reminderDeltaTokens: number; softText: string; reminderText: string };
+  rotationNudge?: {
+    softTokens: number;
+    reminderDeltaTokens: number;
+    softText: AgentMessage;
+    reminderText: AgentMessage;
+  };
   /** Progress callback. */
   onEvent?: (e: EngineEvent) => void;
   signal?: AbortSignal;
@@ -187,7 +193,9 @@ export class TurnRunnerService {
     // so only the FIRST resumed turn in this drive carries the notice.
     const needsResetNotice = sandbox.warm === false && !!priorSessionId;
     if (sandbox.warm === false) sandbox.warm = true;
-    const task = needsResetNotice ? `${SANDBOX_RESET_NOTICE}\n\n${input.task}` : input.task;
+    const task = needsResetNotice
+      ? agentMessage(`${SANDBOX_RESET_NOTICE}\n\n${input.task}`)
+      : input.task;
 
     this.logger.log(
       `Turn: job=${jobId} step=${stepId ?? '-'} engine=${engine} mode=${mode} ` +

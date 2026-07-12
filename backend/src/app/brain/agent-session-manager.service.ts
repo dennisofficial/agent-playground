@@ -74,6 +74,8 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
+import type { AgentMessage } from '../prompt-kit/message';
+import { agentMessage, fromExternal } from '../prompt-kit/message';
 import {
   chunkKey,
   RESET_VERIFY_TEXT,
@@ -91,6 +93,13 @@ import {
   doneRecordBody,
   frameAnswer,
   composeTurn,
+  maskedSecretNotice,
+  maskedFileNotice,
+  wakeForProvisioningFailureBody,
+  wakeUnblockedJobBody,
+  wakeForAmendApprovedBody,
+  retryResumeNudge,
+  resetContinuationNotice,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
@@ -912,12 +921,7 @@ export class AgentSessionManager
       jobId,
       orgId,
       repoId,
-      body: [
-        'Your repo setup script failed on this sandbox’s cold bring-up (the specific error is in a system',
-        'notice on this turn). Investigate and fix the cause: it may be the environment (a missing dependency,',
-        'secret, or mount) or the script itself. If the script is wrong, re-author it with `write_setup_script`,',
-        'then call `reset_sandbox` to re-run it cold and confirm the environment comes up clean.',
-      ].join('\n'),
+      body: wakeForProvisioningFailureBody(),
       seedRow: {
         label: 'Repo setup script failed on cold bring-up — checking the environment.',
         chunkKey: `seed:setup-fail:${jobId}`,
@@ -944,14 +948,11 @@ export class AgentSessionManager
       await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
       return;
     }
-    const body = input.note
-      ? `${input.note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
-      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.';
     const stimulus = harnessDeliveryStimulus({
       jobId,
       orgId,
       repoId,
-      body,
+      body: wakeUnblockedJobBody(input.note),
       seedRow: { label: 'Unblocked — a blocking job resolved.', chunkKey: `seed:unblock:${jobId}` },
     });
     await this.handleChatTurn(stimulus);
@@ -972,12 +973,7 @@ export class AgentSessionManager
       jobId,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: [
-        'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
-        '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
-        'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
-        'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
-      ].join('\n'),
+      body: wakeForAmendApprovedBody(),
       seedRow: {
         label: 'Amend approved — resuming to make the changes.',
         chunkKey: `seed:amend-approved:${jobId}`,
@@ -1110,11 +1106,11 @@ export class AgentSessionManager
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
         kind: row.kind ?? 'system_notice',
-        text: row.label,
+        text: fromExternal(row.label),
         chunkKey: row.chunkKey,
         ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
         ...(row.severity ? { severity: row.severity } : {}),
-        ...(fullBody ? { fullBody } : {}),
+        ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
         ...(row.framing ? { framing: row.framing } : {}),
       })
       ?.catch((err: unknown) =>
@@ -1136,7 +1132,7 @@ export class AgentSessionManager
         .recordSystemChunk?.({
           jobId: stimulus.jobId,
           kind: chunk.kind as 'system_notice' | 'system_reminder',
-          text: chunk.body,
+          text: fromExternal(chunk.body),
           chunkKey: `brain:${stimulus.id}:${chunk.kind}:${i}`,
           ...(chunk.attrs?.reminderKind
             ? { reminderKind: chunk.attrs.reminderKind }
@@ -2200,14 +2196,14 @@ export class AgentSessionManager
     // chunks via composeTurn (byte-identical to the old inline `framedPrefix ? `${framedPrefix}\n${body}` :
     // body`). A non-operator seed body is RAW/already-framed XML (engineBody returns it verbatim) — it can't
     // be a `<user>` chunk, so that path keeps the inline prefix+body concat.
-    let task: string;
+    let task: AgentMessage;
     if (isOperatorAuthored(stimulus)) {
       const userChunks = stimulus.chunks?.length ? stimulus.chunks : [userChunkFor(stimulus)];
       task = composeTurn({ prefixChunks: [...noticeChunks, ...reminderChunks], userChunks });
     } else {
       const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
       const bodyText = this.engineBody(stimulus);
-      task = framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText;
+      task = agentMessage(framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText);
     }
 
     // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
@@ -2218,7 +2214,7 @@ export class AgentSessionManager
     // sessionId` above cannot also be true.)
     const hadCompactionSeed = !!sandboxRow?.pending_compaction_seed;
     if (hadCompactionSeed) {
-      task = `${sandboxRow!.pending_compaction_seed}\n\n---\n\n${task}`;
+      task = agentMessage(`${sandboxRow!.pending_compaction_seed}\n\n---\n\n${task}`);
     }
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
@@ -2565,7 +2561,7 @@ export class AgentSessionManager
           // Name the task in the nudge — a bare "Please continue." on a cold re-attach is exactly what left
           // the brain disoriented (posting a needless "what should I continue?" question). The title orients it.
           const title = await this.store.jobTitle(stimulus.jobId).catch(() => null);
-          const nudge = title ? `Please continue with the current task: "${title}".` : 'Please continue.';
+          const nudge = retryResumeNudge(title ?? undefined);
           this.surface.seedSystemNotification?.(stimulus.repoId, stimulus.jobId, nudge, {
             orgId: stimulus.orgId,
           });
@@ -6003,7 +5999,7 @@ export class AgentSessionManager
       jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: '',
+      body: agentMessage(''),
       // Empty body — a pure mechanism to drive `actOnApprovalVerdict`; the verdict itself is visible.
       seedRow: 'skip',
     });
@@ -6527,7 +6523,7 @@ export class AgentSessionManager
   }
 
   /** Steer an event into a live turn (lease first; the engine `input_ack` on the event-row id stamps delivered). */
-  private async steerEvent(turnId: string, eventRowId: string, body: string): Promise<void> {
+  private async steerEvent(turnId: string, eventRowId: string, body: AgentMessage): Promise<void> {
     await this.stimulusStore
       .leaseChatStimuli([eventRowId]) // kind-agnostic (updates by id) — reused for the event row
       .catch((err) => this.logger.debug(`pump: lease event failed (continuing): ${err}`));
@@ -6539,7 +6535,7 @@ export class AgentSessionManager
   }
 
   /** Run ONE fresh turn that consumes a single event, stamping delivery at the registration hand-off. */
-  private async deliverEventViaFreshTurn(stimulus: EventStimulus, body: string): Promise<void> {
+  private async deliverEventViaFreshTurn(stimulus: EventStimulus, body: AgentMessage): Promise<void> {
     // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
     // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
     const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
@@ -6960,48 +6956,6 @@ function userChunkFor(stimulus: ChatStimulus): TurnChunk {
   };
 }
 
-/**
- * The MASKED confirmation body delivered to the brain after the operator provides a secret — names only
- * the secret + destination, NEVER the value. Used by both the live `provide-secret` delivery and the boot
- * re-delivery sweep so the two read identically.
- */
-function maskedSecretNotice(
-  name: string,
-  opts: {
-    path?: string;
-    ephemeral?: boolean;
-    mcp?: { server: string; slot: 'header' | 'env'; key: string };
-  },
-): string {
-  if (opts.ephemeral) {
-    // Ephemeral value was already piped to the running process at provide-time; nothing to re-deliver. Re-run
-    // on boot only to prompt a cheap idempotent verification (the login may or may not have completed).
-    return (
-      `The operator provided the one-time value \`${name}\` (delivered to the running session, not stored). ` +
-      'Verify the interactive login completed (e.g. `gcloud auth list`) and re-run it only if it did not.'
-    );
-  }
-  if (opts.mcp) {
-    return (
-      `The operator provided the secret \`${opts.mcp.key}\` for MCP server \`${opts.mcp.server}\` ` +
-      `(${opts.mcp.slot}, stored encrypted). The server is registered, but its \`mcp__${opts.mcp.server}__*\` ` +
-      'tools are NOT loaded into THIS session yet. Once every secret slot for it is filled, call ' +
-      'reset_sandbox to load it into a fresh session, then invoke one of its tools to prove it works ' +
-      '(see MCP SERVERS).'
-    );
-  }
-  return `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${opts.path}\`). Continue onboarding.`;
-}
-
-/**
- * The masked confirmation for a `request_file` upload — the ONLY thing the brain ever sees about it (the
- * contents went straight to the encrypted store + grant). Shared by the `provide-file` endpoint + the boot
- * re-delivery sweep so the two read identically.
- */
-function maskedFileNotice(path: string): string {
-  return `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`;
-}
-
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
 const RESET_LOOP_CAP = 3;
 
@@ -7030,7 +6984,7 @@ function resetContinuationStimulus(input: {
     id: randomUUID(),
     orgId: input.orgId,
     repoId: input.repoId,
-    body: wrapSystemNotification('Your sandbox was reset — continuing on the fresh container.'),
+    body: wrapSystemNotification(resetContinuationNotice()),
     receivedAt: new Date(),
     kind: 'chat',
     trust: 'trusted',
@@ -7053,7 +7007,7 @@ function harnessDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
   repoId: string;
-  body: string;
+  body: AgentMessage;
   /** File-gate delivery: the `request_file` card id this seed confirms, so the tail stamps it delivered. */
   seedFileId?: string;
   /** How this seed renders as a visible transcript row (see {@link SeedRow}). */
@@ -7090,7 +7044,7 @@ function eventDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
   repoId: string;
-  body: string;
+  body: AgentMessage;
   seedRow?: SeedRow;
 }): ChatStimulus {
   return {
@@ -7118,7 +7072,7 @@ function haltDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
   repoId: string;
-  body: string;
+  body: AgentMessage;
   seedHaltWake: { threadId: string; gen: number };
   seedRow?: SeedRow;
 }): ChatStimulus {
@@ -7149,7 +7103,7 @@ function doneDeliveryStimulus(input: {
   jobId: string;
   orgId: string;
   repoId: string;
-  body: string;
+  body: AgentMessage;
   seedDoneWake: { threadId: string; reason: 'final' | 'notable'; gen: number };
   seedRow?: SeedRow;
 }): ChatStimulus {

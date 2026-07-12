@@ -7,6 +7,7 @@ import type {
   PostOptions,
 } from '../surface/chat-surface.port';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from '../surface/chat-surface.port';
+import type { AgentMessage } from '../prompt-kit/message';
 import { APPROVE_ACTION_ID, type ApprovalActionMeta } from '../surface/approval-blocks';
 
 /** A message Atlas POSTED, captured for inspection by a programmatic driver. */
@@ -121,7 +122,7 @@ export class AgentChatSurface implements ChatSurface {
   seedSystemNotification(
     channel: string,
     jobId: string,
-    body: string,
+    body: AgentMessage,
     opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
   ): string {
     const ts = this.mintTs();

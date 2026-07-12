@@ -9,6 +9,7 @@ import type { Agent } from './agent';
 import type { PromptCtx } from './prompt-ctx';
 import { getFragmentMetaMap, type LoadedFragment } from './fragment.decorator';
 import { FRAGMENT_GROUPS } from './groups';
+import { agentMessage, type AgentMessage } from '../message';
 
 /** Reflect every `@Fragment` method off the given group instances into a flat, render-bound list. */
 export function loadFragmentsFromInstances(instances: unknown[]): LoadedFragment[] {
@@ -108,8 +109,8 @@ export function primeFragments(): LoadedFragment[] {
  * it works identically in the host process, in scripts, and bundled into the in-container engine. This is THE
  * assembly entry point; `PromptService.generate` just delegates here after priming at boot.
  */
-export function renderAgentPrompt(agent: Agent, ctx: PromptCtx = {}): string {
-  return assembleFragments(primeFragments(), agent, ctx);
+export function renderAgentPrompt(agent: Agent, ctx: PromptCtx = {}): AgentMessage {
+  return agentMessage(assembleFragments(primeFragments(), agent, ctx));
 }
 
 /** Test-only: reset the memoized fragment cache (so a spec can re-prime after mutating the group set). */

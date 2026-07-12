@@ -17,6 +17,7 @@ import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import { planApprovedRule } from './plan-approved';
 import { type JitRule, validateJitRules } from './rule';
+import { assertEnforcementSeamConfigured } from '../message';
 
 /** Was `DEFAULT_SVC_NUDGE_DELTA_TOKENS` (env `SVC_NUDGE_DELTA_TOKENS`). */
 export const SVC_NUDGE_DELTA_TOKENS = 40_000;
@@ -114,6 +115,9 @@ export const JIT_RULES: JitRule[] = [
 
 // Boot-validate on import (validateFragments spirit): a malformed rule fails loud, never ships silently.
 validateJitRules(JIT_RULES);
+// Same boot-loud parity for the enforcement seam config the structural lint depends on (d10): a disarmed
+// guard would let CI go quietly green, so fail at import if the sealed inventory / seam globs are degenerate.
+assertEnforcementSeamConfigured();
 
 /**
  * Find the single enabled rule whose lifecycle trigger matches `event`, or undefined. The host-side executor's

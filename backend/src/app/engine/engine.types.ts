@@ -5,6 +5,7 @@
  * v1 concepts are dropped (engines run vanilla). Zero v1 imports.
  */
 import type { SessionEngine, SessionMode } from '../domain';
+import type { AgentMessage } from '../prompt-kit/message';
 import type { EngineHomeKey } from './engine-home';
 import type { SessionLimitHit } from './session-limit';
 
@@ -505,7 +506,7 @@ export interface RunEngineArgs {
   /** Which engine backs this run. */
   engine: SessionEngine;
   /** The turn's instructions/prompt. */
-  task: string;
+  task: AgentMessage;
   /** Working directory the engine is scoped to (the per-feature worktree). */
   cwd: string;
   /**
@@ -517,7 +518,7 @@ export interface RunEngineArgs {
    */
   writableRoots?: string[];
   /** The system prompt / persona for this turn (Codex seeds it as a first-turn preamble). */
-  systemPrompt: string;
+  systemPrompt: AgentMessage;
   /**
    * The structured key that namespaces the engine's isolated CLAUDE_CONFIG_DIR / CODEX_HOME — see
    * {@link EngineHomeKey} for the resulting nested `<org>/<repo>/<job>/<type>/[<subId>]` layout. Two
@@ -630,7 +631,12 @@ export interface RunEngineArgs {
    * There is NO hard threshold and NO forced rotation — the nudges only ask; rotation happens when the builder
    * calls `record_leg_handoff`. The driver observes the SAME occupancy to persist visible harness rows + peak.
    */
-  rotationNudge?: { softTokens: number; reminderDeltaTokens: number; softText: string; reminderText: string };
+  rotationNudge?: {
+    softTokens: number;
+    reminderDeltaTokens: number;
+    softText: AgentMessage;
+    reminderText: AgentMessage;
+  };
   /**
    * Fired ONCE, host-side, the instant this turn is DURABLY registered + kicked (its `active_turns` row is
    * committed and the engine is running detached) — i.e. the moment the turn becomes restart-survivable via

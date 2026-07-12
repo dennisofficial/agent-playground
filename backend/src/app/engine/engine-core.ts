@@ -16,6 +16,7 @@ const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
+import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
@@ -97,7 +98,7 @@ function computeCodexStructuredPatch(cwd: string, path: string, kind: FileChange
 }
 
 /** A user message the SDK's streaming input accepts (mid-turn steering uses `priority:'now'`). */
-function steerUserMessage(content: string, priority?: 'now' | 'next' | 'later'): SDKUserMessage {
+function steerUserMessage(content: AgentMessage, priority?: 'now' | 'next' | 'later'): SDKUserMessage {
   return {
     type: 'user',
     message: { role: 'user', content },
@@ -704,7 +705,7 @@ export class EngineCore {
     // input. Race-free by design — it fires mid-stream (input open), never over the host→Redis path that raced
     // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
     let firedNudgeLevel = -1;
-    let injectRotationNudge = (_text: string): void => {}; // real impl set below when streaming
+    let injectRotationNudge = (_text: AgentMessage): void => {}; // real impl set below when streaming
     // ENGINE-LOCAL atlas-svc nudge throttle (see the PostToolUse hook below): the context-token occupancy at
     // which we last nudged Atlas to wrap a long-running command in `atlas-svc`. null = never nudged (first
     // matching command always fires); then at most once per `svcNudgeDeltaTokens` of context growth. Per-turn
@@ -721,7 +722,7 @@ export class EngineCore {
       // leaves the message pending (delivered_at null) for the sweep — no acked-but-dropped message.
       const injectedSteerIds = new Set<string>();
       const bufferedIds = new Set<string>();
-      const injectSteer = (id: string | undefined, text: string): void => {
+      const injectSteer = (id: string | undefined, text: AgentMessage): void => {
         cancelEnd(); // a steer is in flight to the model — don't close input under it
         input.push(steerUserMessage(text, 'now'));
         if (typeof id === 'string') {
@@ -732,12 +733,12 @@ export class EngineCore {
       flushSteerBuffer = (): void => {
         while (steerBuffer.length) {
           const s = steerBuffer.shift()!;
-          injectSteer(s.id, s.text);
+          injectSteer(s.id, fromExternal(s.text));
         }
       };
       // The rotation nudge rides the SAME injection as an operator steer (priority:'now', cancels any pending
       // close) — but carries no stimulus id, so it emits no `input_ack` (nothing durable to converge on).
-      injectRotationNudge = (text: string): void => {
+      injectRotationNudge = (text: AgentMessage): void => {
         cancelEnd();
         input.push(steerUserMessage(text, 'now'));
       };
@@ -760,7 +761,7 @@ export class EngineCore {
               if (typeof id === 'string') bufferedIds.add(id);
               continue;
             }
-            injectSteer(id, text);
+            injectSteer(id, fromExternal(text));
           }
         } catch {
           /* steer source closed — the turn's own lifecycle ends it */

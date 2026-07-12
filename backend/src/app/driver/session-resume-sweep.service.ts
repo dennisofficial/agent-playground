@@ -5,6 +5,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { sessionLimitResetNudge } from '../prompt-kit/harness';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
 
@@ -63,9 +64,7 @@ export class SessionResumeSweep {
       return;
     }
     if (lane === 'main') {
-      const resumeNudge = job.title
-        ? `Your session limit has reset — please continue with the current task: "${job.title}".`
-        : 'Your session limit has reset — please continue.';
+      const resumeNudge = sessionLimitResetNudge(job.title ?? undefined);
       this.surface.seedSystemNotification?.(job.repo_id, job.id, resumeNudge, {
         orgId: job.org_id,
         seedRow: {

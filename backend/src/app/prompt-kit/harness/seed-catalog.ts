@@ -41,6 +41,15 @@ export const RESET_VERIFY_TEXT: AgentMessage = agentMessage(
   ].join('\n'),
 );
 
+/**
+ * The synthetic seed body that wakes the brain after a `reset_sandbox` teardown — just enough to guarantee a
+ * turn happens (so Atlas verifies on the fresh container). The actual verify instruction rides
+ * {@link RESET_VERIFY_TEXT}, consumed by whichever turn cold-attaches first.
+ */
+export function resetContinuationNotice(): AgentMessage {
+  return agentMessage('Your sandbox was reset — continuing on the fresh container.');
+}
+
 // ── Compaction ───────────────────────────────────────────────────────────────────────────────────────────
 
 /** System prompt for the summarization (compaction) turn — focuses the model on producing the handoff. */
@@ -117,6 +126,54 @@ export function renderWorkOwedNudge(): AgentMessage {
       '• Then act on the result: address the BLOCKING findings (apply, or hold firm with reasoning), and when',
       '  the plan is ready call `propose_plan` to send it to the operator for approval.',
       'Do not end this turn without moving the plan forward.',
+    ].join('\n'),
+  );
+}
+
+// ── Provisioning-failure wake ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * WAKE body for `AgentSessionManager.wakeForProvisioningFailure` — the repo's cold-boot setup script failed
+ * on a fresh sandbox bring-up. Stays generic; the specific error rides a separate system notice on the turn.
+ */
+export function wakeForProvisioningFailureBody(): AgentMessage {
+  return agentMessage(
+    [
+      'Your repo setup script failed on this sandbox’s cold bring-up (the specific error is in a system',
+      'notice on this turn). Investigate and fix the cause: it may be the environment (a missing dependency,',
+      'secret, or mount) or the script itself. If the script is wrong, re-author it with `write_setup_script`,',
+      'then call `reset_sandbox` to re-run it cold and confirm the environment comes up clean.',
+    ].join('\n'),
+  );
+}
+
+// ── Unblocked-job wake ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WAKE body for `AgentSessionManager.wakeUnblockedJob`'s synthetic-stimulus path (every blocker resolved,
+ * the job already had a session). `note` (d1) names any blocker that did NOT merge, when present.
+ */
+export function wakeUnblockedJobBody(note: string | null): AgentMessage {
+  return agentMessage(
+    note
+      ? `${note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
+      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.',
+  );
+}
+
+// ── Amend-approved wake ─────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WAKE body for `AgentSessionManager.wakeForAmendApproved` — the operator approved the "Amend build?"
+ * proposal; the brain's resumed session already recalls what it proposed, so this stays generic.
+ */
+export function wakeForAmendApprovedBody(): AgentMessage {
+  return agentMessage(
+    [
+      'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
+      '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+      'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
+      'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
     ].join('\n'),
   );
 }
@@ -397,11 +454,13 @@ export function answeredQuestionBody(question: string, answer: string): AgentMes
 }
 
 /** Frame a delivered answer as a SYSTEM SEED (matches the live `/answer-question` path), not a chat line. */
-export function frameAnswer(question: string, answer: string): string {
-  return renderChunk({
-    kind: 'system_notice',
-    body: answeredQuestionBody(question, answer),
-  });
+export function frameAnswer(question: string, answer: string): AgentMessage {
+  return agentMessage(
+    renderChunk({
+      kind: 'system_notice',
+      body: answeredQuestionBody(question, answer),
+    }),
+  );
 }
 
 // ── Controller seed bodies ───────────────────────────────────────────────────────────────────────────────
@@ -414,6 +473,16 @@ export function frameAnswer(question: string, answer: string): string {
 export function retryResumeNudge(title?: string): AgentMessage {
   return agentMessage(
     title ? `Please continue with the current task: "${title}".` : 'Please continue.',
+  );
+}
+
+/** The auto-resume nudge after a session-limit reset — names the task when known so the resumed Main
+ *  session doesn't disorient the brain into re-asking what to continue. */
+export function sessionLimitResetNudge(title?: string): AgentMessage {
+  return agentMessage(
+    title
+      ? `Your session limit has reset — please continue with the current task: "${title}".`
+      : 'Your session limit has reset — please continue.',
   );
 }
 
@@ -550,6 +619,56 @@ export function skillEditApproved(name: string, forkedTo?: string): AgentMessage
 
 /** `/provide-file` — masked confirmation of the onboarding file upload. */
 export function fileUploaded(path: string): AgentMessage {
+  return agentMessage(
+    `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`,
+  );
+}
+
+// ── Boot re-delivery notices ─────────────────────────────────────────────────────────────────────────────
+// Shared by the live `provide-secret`/`provide-file` delivery and the boot re-delivery sweep so both read
+// identically. NEVER carry the secret value — only the masked name/path.
+
+/**
+ * The MASKED confirmation body delivered to the brain after the operator provides a secret — names only
+ * the secret + destination, NEVER the value. Used by both the live `provide-secret` delivery and the boot
+ * re-delivery sweep so the two read identically.
+ */
+export function maskedSecretNotice(
+  name: string,
+  opts: {
+    path?: string;
+    ephemeral?: boolean;
+    mcp?: { server: string; slot: 'header' | 'env'; key: string };
+  },
+): AgentMessage {
+  if (opts.ephemeral) {
+    // Ephemeral value was already piped to the running process at provide-time; nothing to re-deliver. Re-run
+    // on boot only to prompt a cheap idempotent verification (the login may or may not have completed).
+    return agentMessage(
+      `The operator provided the one-time value \`${name}\` (delivered to the running session, not stored). ` +
+        'Verify the interactive login completed (e.g. `gcloud auth list`) and re-run it only if it did not.',
+    );
+  }
+  if (opts.mcp) {
+    return agentMessage(
+      `The operator provided the secret \`${opts.mcp.key}\` for MCP server \`${opts.mcp.server}\` ` +
+        `(${opts.mcp.slot}, stored encrypted). The server is registered, but its \`mcp__${opts.mcp.server}__*\` ` +
+        'tools are NOT loaded into THIS session yet. Once every secret slot for it is filled, call ' +
+        'reset_sandbox to load it into a fresh session, then invoke one of its tools to prove it works ' +
+        '(see MCP SERVERS).',
+    );
+  }
+  return agentMessage(
+    `The operator provided the secret \`${name}\` (stored encrypted, granted to \`${opts.path}\`). Continue onboarding.`,
+  );
+}
+
+/**
+ * The masked confirmation for a `request_file` upload — the ONLY thing the brain ever sees about it (the
+ * contents went straight to the encrypted store + grant). Shared by the `provide-file` endpoint + the boot
+ * re-delivery sweep so the two read identically.
+ */
+export function maskedFileNotice(path: string): AgentMessage {
   return agentMessage(
     `The operator uploaded the file for \`${path}\` (stored encrypted, granted). Continue onboarding.`,
   );

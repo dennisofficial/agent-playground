@@ -4,6 +4,7 @@ import { EngineAuthError, type EngineRunnerPort, type RunEngineArgs } from '../e
 import type { StepEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
+import { agentMessage } from '../prompt-kit/message';
 
 /**
  * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
@@ -40,8 +41,8 @@ const baseInput = {
   sandbox,
   engine: 'claude' as const,
   mode: 'execute' as const,
-  task: 'do it',
-  systemPrompt: 'persona',
+  task: agentMessage('do it'),
+  systemPrompt: agentMessage('persona'),
 };
 
 describe('TurnRunnerService — session-handle durability', () => {

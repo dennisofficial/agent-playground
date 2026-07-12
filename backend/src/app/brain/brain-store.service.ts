@@ -20,6 +20,7 @@ import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
 import { renderPlan } from '../prompt-kit/messages/render-plan';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import type { AgentMessage } from '../prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
@@ -271,7 +272,7 @@ export class BrainStoreService {
   async recordSystemChunk(input: {
     jobId: string;
     kind: 'system_notice' | 'system_reminder' | 'untrusted';
-    text: string;
+    text: AgentMessage;
     chunkKey: string;
     reminderKind?: string;
     /** `<untrusted>` provenance/severity — surfaced on the web's untrusted pill. */
@@ -282,7 +283,7 @@ export class BrainStoreService {
      * Stashed in `meta` and revealed on row-expand in the console (mirrors `meta.compactionSummary`), so the
      * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
      */
-    fullBody?: string;
+    fullBody?: AgentMessage;
     /** The TRUSTED harness framing that rode with this chunk (e.g. the wake preamble), carried
      *  separately from `text` so the web can render it as its own trusted block. */
     framing?: string;

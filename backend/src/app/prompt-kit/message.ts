@@ -35,6 +35,19 @@ export function agentMessage(body: string): AgentMessage {
 }
 
 /**
+ * The ONE named escape hatch for a genuinely dynamic string that did not originate as hub-authored template
+ * text but still has to cross a branded seam: an operator's own chat message re-emitted to the session, the
+ * agent's own text (a `record_leg_handoff` body) displayed back, or a body that was already hub-composed on
+ * the host and arrives as a plain string after crossing the host→container boundary (the brand is erased on
+ * the wire). It is deliberately a SEPARATE, greppable name from {@link agentMessage} so every such boundary is
+ * auditable — `grep fromExternal` enumerates every place non-hub-authored text enters the seam, rather than
+ * that cast hiding inline. Identity cast at runtime, exactly like {@link agentMessage}.
+ */
+export function fromExternal(body: string): AgentMessage {
+  return body as AgentMessage;
+}
+
+/**
  * The RAW session/steer constructors that could bypass the typed seam — the only calls Thread 5's structural
  * lint SEALS to the sanctioned globs below. These are NOT the delivery-wiring helpers (`seedSystemNotification`,
  * `recordSystemChunk`): those legitimately live in services and are already guarded by their `AgentMessage`
@@ -43,7 +56,8 @@ export function agentMessage(body: string): AgentMessage {
  */
 export const SEALED_DELIVERY_PRIMITIVES = [
   'steerUserMessage(', // raw streaming-input steer (SDKUserMessage constructor)
-  '.query(', // direct Claude/Codex SDK session start
+  'Sdk.query(', // direct Claude/Codex SDK session start (`claudeSdk.query(` / `codexSdk.query(`) — the `Sdk.`
+  //             qualifier keeps this from colliding with pervasive TypeORM `dataSource.query(`/`repo.query(`.
 ] as const;
 
 /**
@@ -57,3 +71,30 @@ export const SANCTIONED_SEAM_GLOBS = [
   'src/app/engine/engine-core.ts',
   'src/app/brain/jit-host-executor.ts',
 ] as const;
+
+/**
+ * Boot-loud parity for the enforcement config itself (mirrors `validateFragments`): a misconfigured seam —
+ * an empty sealed inventory, or seam globs that no longer point anywhere — would silently DISARM the
+ * structural lint, so assert both are non-degenerate at boot rather than let CI go quietly green on a
+ * broken guard. Pure + dependency-free; called from the JIT catalog boot-validation and re-asserted by the
+ * structural spec. Throws on misconfiguration.
+ */
+export function assertEnforcementSeamConfigured(): void {
+  if ((SEALED_DELIVERY_PRIMITIVES as readonly unknown[]).length === 0) {
+    throw new Error(
+      'enforcement seam misconfigured: SEALED_DELIVERY_PRIMITIVES is empty — the structural lint would seal nothing',
+    );
+  }
+  if ((SANCTIONED_SEAM_GLOBS as readonly unknown[]).length === 0) {
+    throw new Error(
+      'enforcement seam misconfigured: SANCTIONED_SEAM_GLOBS is empty — every sealed call would read as a violation',
+    );
+  }
+  for (const glob of SANCTIONED_SEAM_GLOBS) {
+    if (!glob.startsWith('src/app/')) {
+      throw new Error(
+        `enforcement seam misconfigured: sanctioned glob ${JSON.stringify(glob)} is not under src/app/ (the lint scans src/app/**)`,
+      );
+    }
+  }
+}

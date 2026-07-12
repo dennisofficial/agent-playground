@@ -10,6 +10,7 @@
  * git-state reconciler), so there is NO `report_pr_opened` tool to call — the brain just opens the PR.
  */
 import { GIT_SAFETY_NOTE } from '../system/fragments';
+import { agentMessage, type AgentMessage } from '../message';
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -28,14 +29,14 @@ export interface ShipOpenPrArgs {
  * Build the open-PR turn BODY (task-only) seeded into the brain: reconcile → push → author-body →
  * `gh pr create`. No `report_pr_opened` step — the host records the PR by branch discovery after the turn.
  */
-export function shipOpenPrBody(args: ShipOpenPrArgs): string {
+export function shipOpenPrBody(args: ShipOpenPrArgs): AgentMessage {
   const { branch, defaultBranch, title } = args;
   const quotedBranch = shellQuote(branch);
   const quotedBaseBranch = shellQuote(defaultBranch);
   const quotedBaseRef = shellQuote(`origin/${defaultBranch}`);
   const quotedBaseRange = shellQuote(`HEAD..origin/${defaultBranch}`);
   const quotedTitle = shellQuote(title);
-  return (
+  return agentMessage(
     `It is SHIP TIME: the build is complete on branch \`${branch}\`. Publish it as a pull request against ` +
     `\`${defaultBranch}\` using your own authenticated git + \`gh\`. Work through the steps and END WITH ONE ` +
     `LINE to the operator (the PR url) — this is a build step, not a play-by-play or a conversation.\n` +
@@ -77,6 +78,6 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): string {
     `branch — you do not need to report it any other way.\n` +
     `\n` +
     GIT_SAFETY_NOTE +
-    ` Make NO code changes beyond what a clean conflict resolution requires.`
+      ` Make NO code changes beyond what a clean conflict resolution requires.`,
   );
 }

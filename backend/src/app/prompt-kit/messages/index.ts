@@ -11,3 +11,4 @@ export * from './batch-task';
 export * from './autofix-lenses';
 export * from './plan-review';
 export * from './first-turn-seeds';
+export * from './commit-turn';

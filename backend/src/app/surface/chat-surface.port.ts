@@ -1,5 +1,6 @@
 import type { Observable } from 'rxjs';
 import type { SeedRow } from '../domain/stimulus';
+import type { AgentMessage } from '../prompt-kit/message';
 
 import { renderChunk } from '../stimulus/chunk-vocabulary';
 
@@ -98,7 +99,7 @@ export const SYSTEM_SEED_AUTHOR = { id: 'U-SYSTEM', name: 'System' } as const;
  * "this is system context, not a chat message". (Formerly `<system_notification>`; renamed to join the
  * closed tag vocabulary that the web renderer and the brain's system prompt both speak.)
  */
-export function wrapSystemNotification(body: string): string {
+export function wrapSystemNotification(body: AgentMessage): string {
   return renderChunk({ kind: 'system_notice', body });
 }
 
@@ -152,7 +153,7 @@ export interface ChatSurface {
   seedSystemNotification?(
     channel: string,
     jobId: string,
-    body: string,
+    body: AgentMessage,
     opts?: {
       orgId?: string;
       deliveredQuestionId?: string;

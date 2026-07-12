@@ -44,6 +44,7 @@ import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import type { AgentMessage } from '../prompt-kit/message';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -652,7 +653,7 @@ export class DriverStoreService {
     phaseId: string;
     legOrdinal: number;
     kind: 'system_notice' | 'system_reminder';
-    text: string;
+    text: AgentMessage;
     chunkKey: string;
     reminderKind?: string;
   }): Promise<void> {

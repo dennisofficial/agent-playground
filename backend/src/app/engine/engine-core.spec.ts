@@ -14,6 +14,7 @@ import {
 import { atlasEngineHomeDir, type EngineHomeKey } from './engine-home';
 import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
 import type { EngineEvent, ReasoningEffort } from './engine.types';
+import { agentMessage } from '../prompt-kit/message';
 
 const HOME_ROOT = join(tmpdir(), `atlas-engine-core-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -213,9 +214,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'oauth-tok' },
@@ -251,9 +252,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({
         engine: 'claude',
-        task: 'do it',
+        task: agentMessage('do it'),
         cwd: '/tmp/wt',
-        systemPrompt: 'persona',
+        systemPrompt: agentMessage('persona'),
         sandboxKey: TEST_KEY,
         mode: 'execute',
         auth: { secret: 'oauth-tok' },
@@ -274,7 +275,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const run = async (mode: 'execute' | 'plan' | 'review') => {
       const { sdk, captured } = fakeClaudeSdk();
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
-      await core.run({ engine: 'claude', task: 't', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
+      await core.run({ engine: 'claude', task: agentMessage('t'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
       return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
     };
 
@@ -323,9 +324,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/workspace',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -351,9 +352,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const skills = [{ name: 'house-migrations', description: 'd', dirPath: 'house-migrations' }];
     await core.run({
       engine: 'claude',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/workspace',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -384,9 +385,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, skillsRoot: '/skills' });
     await core.run({
       engine: 'claude',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/workspace',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -409,9 +410,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'plan it',
+      task: agentMessage('plan it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'plan',
       auth: { secret: 'tok' },
@@ -426,9 +427,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'review it',
+      task: agentMessage('review it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'review',
       auth: { secret: 'tok' },
@@ -445,9 +446,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
-      task: 'x',
+      task: agentMessage('x'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -489,7 +490,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const events: EngineEvent[] = [];
-    await core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
+    await core.run({ engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
 
     const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
     expect(toolResult.structuredPatch).toEqual(hunks);
@@ -515,7 +516,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await expect(
-      core.run({ engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } }),
+      core.run({ engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } }),
     ).rejects.toThrow(/Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s);
   });
 
@@ -525,9 +526,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
-      task: 'x',
+      task: agentMessage('x'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -576,9 +577,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
-      task: 'do the thing',
+      task: agentMessage('do the thing'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -632,9 +633,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'the task',
+      task: agentMessage('the task'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -691,9 +692,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'the task',
+      task: agentMessage('the task'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -715,9 +716,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'claude',
-      task: 'x',
+      task: agentMessage('x'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -741,9 +742,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({
         engine: 'claude',
-        task: 'x',
+        task: agentMessage('x'),
         cwd: '/tmp/wt',
-        systemPrompt: 'p',
+        systemPrompt: agentMessage('p'),
         sandboxKey: TEST_KEY,
         mode: 'execute',
         auth: { secret: 'oauth-from-host' },
@@ -763,9 +764,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     await expect(
       core.run({
         engine: 'claude',
-        task: 'x',
+        task: agentMessage('x'),
         cwd: '/tmp/wt',
-        systemPrompt: 'p',
+        systemPrompt: agentMessage('p'),
         sandboxKey: TEST_KEY,
         mode: 'execute',
         // no explicit auth → must throw (no env/config fallback exists)
@@ -779,7 +780,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
     const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
     await core.runWithExtras(
-      { engine: 'claude', task: 'x', cwd: '/tmp/wt', systemPrompt: 'p', sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } },
+      { engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } },
       { mcpServers },
       names,
     );
@@ -797,9 +798,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'x',
+      task: agentMessage('x'),
       cwd: '/tmp/wt',
-      systemPrompt: 'p',
+      systemPrompt: agentMessage('p'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
@@ -832,9 +833,9 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
     const res = await core.run({
       engine: 'codex',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: VALID_CODEX_AUTH },
@@ -855,9 +856,9 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'codex',
-      task: 'plan it',
+      task: agentMessage('plan it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: TEST_KEY,
       mode: 'plan',
       auth: { secret: VALID_CODEX_AUTH },
@@ -903,9 +904,9 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     try {
       await core.run({
         engine: 'codex',
-        task: 'edit it',
+        task: agentMessage('edit it'),
         cwd: wt,
-        systemPrompt: 'persona',
+        systemPrompt: agentMessage('persona'),
         sandboxKey: TEST_KEY,
         mode: 'execute',
         richStream: true,
@@ -937,9 +938,9 @@ describe('EngineCore — Codex auth-refresh readback', () => {
     });
     return core.run({
       engine: 'codex',
-      task: 'do it',
+      task: agentMessage('do it'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: opts.sandboxKey,
       mode: 'execute',
       auth: { secret: VALID_CODEX_AUTH },
@@ -991,9 +992,9 @@ describe('EngineCore — unresumable session detection', () => {
     await expect(
       core.run({
         engine: 'claude',
-        task: 'resume me',
+        task: agentMessage('resume me'),
         cwd: '/tmp/wt',
-        systemPrompt: 'persona',
+        systemPrompt: agentMessage('persona'),
         sandboxKey: { ...TEST_KEY, jobId: 'resume-missing' },
         mode: 'execute',
         auth: { secret: 'oauth-tok' },
@@ -1011,9 +1012,9 @@ describe('EngineCore — unresumable session detection', () => {
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
     await core.run({
       engine: 'claude',
-      task: 'resume me',
+      task: agentMessage('resume me'),
       cwd: '/tmp/wt',
-      systemPrompt: 'persona',
+      systemPrompt: agentMessage('persona'),
       sandboxKey: { ...TEST_KEY, jobId: 'resume-ok' },
       mode: 'execute',
       auth: { secret: 'oauth-tok' },

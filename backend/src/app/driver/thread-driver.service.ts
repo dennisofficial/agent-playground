@@ -84,8 +84,10 @@ import {
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
+  renderCommitTurnTask,
 } from '../prompt-kit';
 import { chunkKey } from '../prompt-kit/harness';
+import { agentMessage, fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -2617,11 +2619,7 @@ export class ThreadDriver implements JobDispatcher {
     const spec = threadKindSpec(thread.kind);
     const metaTag = { phaseId: anchor.id, commitNudge: attempt };
     const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
-    const task =
-      `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +
-      ` now: run \`git add -A\` (your \`.gitignore\` governs what's tracked — if build/cache junk appears,` +
-      ` add it to \`.gitignore\` instead of committing it), commit with a clear message, and \`git push\`` +
-      ` your branch. Leave the tree CLEAN, then stop. Do nothing else.`;
+    const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
@@ -2768,7 +2766,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
     thread: DriverThread,
     steps: Step[],
-    task: string,
+    task: AgentMessage,
     lane: string,
     channel: string,
     metaTag: Record<string, unknown>,
@@ -2976,7 +2974,7 @@ export class ThreadDriver implements JobDispatcher {
         phaseId: anchor.id,
         legOrdinal: res.fromLeg,
         kind: 'system_notice',
-        text: handoff,
+        text: fromExternal(handoff),
         chunkKey: chunkKey.rotHandoff(anchor.id, res.fromLeg),
         reminderKind: 'leg_handoff',
       })
@@ -3008,10 +3006,12 @@ export class ThreadDriver implements JobDispatcher {
    * it back and render the still-open items into the seed — the fresh Leg continues the checklist instead of
    * restarting it. The web checklist stays authoritative across Legs regardless (it reads the same column).
    */
-  private async buildLegSeed(threadId: string, handoff: string): Promise<string> {
+  private async buildLegSeed(threadId: string, handoff: string): Promise<AgentMessage> {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
     const tasksBlock = renderOpenLegTasks(tasks);
-    return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
+    return agentMessage(
+      [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n'),
+    );
   }
 
   /**
@@ -3020,8 +3020,10 @@ export class ThreadDriver implements JobDispatcher {
    * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
    * A non-rotated Leg (no seed) gets the bare batch task unchanged.
    */
-  private foldLegSeed(seed: string | null, baseTask: string): string {
-    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
+  private foldLegSeed(seed: string | null, baseTask: AgentMessage): AgentMessage {
+    return agentMessage(
+      seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask,
+    );
   }
 
   /**
@@ -3030,8 +3032,8 @@ export class ThreadDriver implements JobDispatcher {
    * in the RECENCY slot for a rotated Leg while still surfacing what's already online. An empty block leaves
    * the task unchanged.
    */
-  private foldTurn(seed: string | null, baseTask: string, servicesBlock: string): string {
-    const withServices = servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask;
+  private foldTurn(seed: string | null, baseTask: AgentMessage, servicesBlock: string): AgentMessage {
+    const withServices = agentMessage(servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask);
     return this.foldLegSeed(seed, withServices);
   }
 
@@ -3283,7 +3285,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
     thread: DriverThread,
     anchor: Step,
-    task: string,
+    task: AgentMessage,
     lane: string,
     channel: string,
     repo: ResolvedRepo,
@@ -3582,11 +3584,12 @@ const MAX_LEGS_PER_BATCH = 8;
 
 /** Strip the `<context_pressure …>` wrapper off a rotation nudge so the VISIBLE transcript row shows the
  *  clean ask (the XML framing is engine-only; the operator sees prose). Trims the outer tag lines only. */
-function stripContextPressureTag(nudge: string): string {
-  return nudge
+function stripContextPressureTag(nudge: AgentMessage): AgentMessage {
+  const stripped = nudge
     .replace(/^<context_pressure[^>]*>\s*/, '')
     .replace(/\s*<\/context_pressure>\s*$/, '')
     .trim();
+  return agentMessage(stripped);
 }
 
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
