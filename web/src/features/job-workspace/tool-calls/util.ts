@@ -23,9 +23,10 @@ export function mcpName(name: string): string {
 }
 
 /**
- * Unwrap a bridge tool's input. The in-sandbox MCP proxy registers every host tool with a single
- * `{ args }` parameter (see `engine-entrypoint.ts`), so bridge inputs arrive as `{ args: {...} }`.
- * Native tools (Edit/Bash/…) pass their fields at the top level — use {@link asRecord} for those.
+ * Normalize a bridge tool's input for display. Host tools are registered with their real, flat
+ * per-field shape (see `engine-entrypoint.ts` / `host-tool-schemas.ts`), so bridge inputs arrive with
+ * their fields at the top level — the same as native tools (Edit/Bash/…). The `args` unwrap is a
+ * defensive fallback for any legacy transcript that still carries an `{ args }` wrapper.
  */
 export function argsOf(input: unknown): Record<string, unknown> {
   const rec = asRecord(input);

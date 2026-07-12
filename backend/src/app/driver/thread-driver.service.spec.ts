@@ -747,6 +747,8 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     prUrl: null,
     prNumber: null,
     shipReviewApprovedAt: null,
+    autoApprove: false,
+    autoApproveBy: null,
     createdBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -3796,6 +3798,82 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     expect(h.shipSeeds).toHaveLength(0);
     expect(state.job.status).toBe('running');
     expect(state.job.prUrl).toBeNull();
+  });
+});
+
+// ── ship-review gate: per-job auto-approve immediately resolves the just-parked gate ────────────────
+
+describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () => {
+  function baseState(job: Job): StoreState {
+    return {
+      job,
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+
+  it('auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive', async () => {
+    const job = makeJob({
+      shipReviewApprovedAt: null,
+      autoApprove: true,
+      autoApproveBy: 'user-42',
+    });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+    const approverSpy = vi.spyOn(
+      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+      'resolveAutoApprover',
+    );
+
+    await h.driver.dispatch(state.job);
+    // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
+    expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
+    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
+  });
+
+  it('falls back to the org owner when autoApproveBy is null', async () => {
+    const job = makeJob({
+      shipReviewApprovedAt: null,
+      autoApprove: true,
+      autoApproveBy: null,
+    });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+    const ownerSpy = vi.fn(async (_orgId: string) => 'owner-99');
+    (h.store as unknown as { ownerUserId: ReturnType<typeof vi.fn> }).ownerUserId = ownerSpy;
+    const approverSpy = vi.spyOn(
+      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+      'resolveAutoApprover',
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(ownerSpy).toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(1);
+    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('owner-99');
+  });
+
+  it('does NOT auto-resolve the ship gate when autoApprove is off', async () => {
+    const job = makeJob({ shipReviewApprovedAt: null, autoApprove: false, autoApproveBy: null });
+    const state = baseState(job);
+    const h = assemble(state, { autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flush();
+
+    expect(h.store.approveShip).not.toHaveBeenCalled();
+    expect(h.shipSeeds).toHaveLength(0);
+    expect(state.job.status).toBe('awaiting_ship_review');
   });
 });
 
