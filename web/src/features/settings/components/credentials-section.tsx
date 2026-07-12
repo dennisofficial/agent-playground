@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import {
@@ -585,6 +585,18 @@ function ClaudeCredentialsManager({
   const select = useSelectClaudeCredential(orgId);
   const del = useDeleteClaudeCredential(orgId);
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
+  const login = useClaudePersonalLogin(orgId);
+  const addPersonalCardRef = useRef<HTMLDivElement>(null);
+
+  // Reconnect drives the same login as the add-card: start it (synchronously, to keep the popup gesture)
+  // and bring the card's paste step into view so the returning user lands on step 2.
+  function handleReconnect() {
+    login.openLogin();
+    addPersonalCardRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
 
   async function handleDelete(id: string) {
     setDeleteErrors((prev) => {
@@ -639,13 +651,14 @@ function ClaudeCredentialsManager({
               onDelete={() => handleDelete(cred.id)}
               deletePending={del.isPending}
               deleteError={deleteErrors[cred.id]}
+              onReconnect={handleReconnect}
             />
           ))}
         </div>
       )}
 
       <div className="mt-3 flex flex-col gap-3">
-        <AddClaudePersonalCard orgId={orgId} />
+        <AddClaudePersonalCard login={login} cardRef={addPersonalCardRef} />
         <AddClaudeSetupTokenCard orgId={orgId} />
       </div>
 
@@ -653,8 +666,10 @@ function ClaudeCredentialsManager({
         <strong className="font-semibold text-dim">Setup-tokens</strong> don’t
         expire and are never refreshed — rotate them manually when needed.{" "}
         <strong className="font-semibold text-dim">Personal logins</strong>{" "}
-        are refreshed automatically in the background as long as they stay
-        connected.
+        are refreshed automatically on the host, including a background
+        keep-alive, so they stay connected without an open tab. If one ever
+        can’t be refreshed it’ll show <strong className="font-semibold text-dim">Needs re-auth</strong>{" "}
+        with a Reconnect button.
       </p>
     </div>
   );
@@ -670,6 +685,7 @@ function ClaudeCredentialRow({
   onDelete,
   deletePending,
   deleteError,
+  onReconnect,
 }: {
   orgId: string;
   cred: ClaudeCredential;
@@ -679,6 +695,7 @@ function ClaudeCredentialRow({
   onDelete: () => void;
   deletePending: boolean;
   deleteError?: string;
+  onReconnect: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -756,6 +773,20 @@ function ClaudeCredentialRow({
         <div className="flex shrink-0 items-center pt-0.5">
           <CredentialUsageRing orgId={orgId} credentialId={cred.id} />
         </div>
+      ) : null}
+
+      {isOwner &&
+      cred.kind === "personal" &&
+      cred.status === "needs_reauth" ? (
+        <button
+          type="button"
+          onClick={onReconnect}
+          className="flex h-[30px] shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11.5px] font-semibold text-accent transition hover:bg-accent-soft"
+          style={{ borderColor: "var(--accent-line)" }}
+        >
+          Reconnect
+          <ExternalLink size={12} />
+        </button>
       ) : null}
 
       {isOwner ? (
@@ -878,8 +909,15 @@ function formatClaudeDuration(ms: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-/** Step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted `code#state` for a credential. */
-function AddClaudePersonalCard({ orgId }: { orgId: string }) {
+type ClaudePersonalLogin = ReturnType<typeof useClaudePersonalLogin>;
+
+/**
+ * The two-step personal-login flow, lifted into a hook so both the add-card and a row's Reconnect button
+ * drive ONE shared login: step 1 mints a Claude login URL and opens it; step 2 exchanges the pasted
+ * `code#state` for a credential (`upsertPersonal` re-keys by account email, so reconnecting revives the
+ * same row back to `active`).
+ */
+function useClaudePersonalLogin(orgId: string) {
   const createAuthorizeUrl = useCreateClaudeAuthorizeUrl(orgId);
   const addCredential = useAddClaudeCredential(orgId);
   const [pending, setPending] = useState<{ state: string } | null>(null);
@@ -928,8 +966,40 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
     }
   }
 
+  return {
+    openLogin,
+    submitCode,
+    pending,
+    code,
+    setCode,
+    error,
+    isOpeningLogin: createAuthorizeUrl.isPending,
+    isAddingCredential: addCredential.isPending,
+  };
+}
+
+/** Renders the shared personal-login flow as a card; owns no login state (the hook does). */
+function AddClaudePersonalCard({
+  login,
+  cardRef,
+}: {
+  login: ClaudePersonalLogin;
+  cardRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const {
+    openLogin,
+    submitCode,
+    pending,
+    code,
+    setCode,
+    error,
+    isOpeningLogin,
+    isAddingCredential,
+  } = login;
+
   return (
     <div
+      ref={cardRef}
       className="rounded-lg border p-[18px]"
       style={{
         borderColor: "var(--accent-line)",
@@ -961,11 +1031,11 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
           <button
             type="button"
             onClick={openLogin}
-            disabled={createAuthorizeUrl.isPending || Boolean(pending)}
+            disabled={isOpeningLogin || Boolean(pending)}
             className="inline-flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[12px] font-semibold text-accent transition hover:bg-accent-soft disabled:opacity-60"
             style={{ borderColor: "var(--accent-line)" }}
           >
-            {createAuthorizeUrl.isPending ? "Opening…" : "Open Claude login"}
+            {isOpeningLogin ? "Opening…" : "Open Claude login"}
             <ExternalLink size={12} />
           </button>
           <p className="mt-2 text-[11px] leading-relaxed text-faint">
@@ -996,11 +1066,11 @@ function AddClaudePersonalCard({ orgId }: { orgId: string }) {
             <button
               type="button"
               onClick={submitCode}
-              disabled={addCredential.isPending}
+              disabled={isAddingCredential}
               className="rounded-md px-4 py-2 text-[12px] font-semibold text-white transition hover:brightness-105 disabled:opacity-60"
               style={{ background: "var(--accent)" }}
             >
-              {addCredential.isPending ? "Adding…" : "Add credential"}
+              {isAddingCredential ? "Adding…" : "Add credential"}
             </button>
           </div>
         </div>
