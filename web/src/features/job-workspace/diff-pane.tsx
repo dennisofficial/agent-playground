@@ -161,21 +161,25 @@ function DiffFileSection({
     };
   }, [selection]);
 
-  const beginSelect = useCallback((idx: number, shift: boolean) => {
-    setSelection((prev) =>
-      shift && prev
-        ? { anchorIdx: prev.anchorIdx, headIdx: idx }
-        : { anchorIdx: idx, headIdx: idx },
-    );
-    if (shift) return;
-    // A plain press starts a drag: extend `head` as the pointer moves over rows, until mouseup.
-    draggingRef.current = true;
-    const onUp = () => {
-      draggingRef.current = false;
-      document.removeEventListener("mouseup", onUp);
-    };
-    document.addEventListener("mouseup", onUp);
-  }, []);
+  const beginSelect = useCallback(
+    (idx: number, shift: boolean) => {
+      setSelection((prev) => {
+        if (!shift || !prev) return { anchorIdx: idx, headIdx: idx };
+        if (flatRows[idx]?.hunkIdx !== flatRows[prev.anchorIdx]?.hunkIdx)
+          return prev;
+        return { anchorIdx: prev.anchorIdx, headIdx: idx };
+      });
+      if (shift) return;
+      // A plain press starts a drag: extend `head` as the pointer moves over rows, until mouseup.
+      draggingRef.current = true;
+      const onUp = () => {
+        draggingRef.current = false;
+        document.removeEventListener("mouseup", onUp);
+      };
+      document.addEventListener("mouseup", onUp);
+    },
+    [flatRows],
+  );
 
   const onRowEnter = useCallback(
     (idx: number) => {
@@ -496,7 +500,7 @@ function InlineComposer({
           }
         }}
         rows={2}
-        placeholder="Add a comment…  (⏎ to add, ⇧⏎ newline)"
+        placeholder="Add a comment…"
         className="mb-2.5 min-h-10 w-full resize-none border-none bg-transparent text-[12.5px] leading-relaxed text-text outline-none placeholder:text-faint"
       />
       <div className="flex items-center gap-2">

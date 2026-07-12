@@ -101,6 +101,21 @@ describe('parseGitDiff', () => {
     expect(file?.hunks).toEqual([]);
   });
 
+  it('uses the patch binary marker when numstat is unavailable', () => {
+    const raw = `diff --git a/src/image.png b/src/image.png
+index 777777..888888 100644
+Binary files a/src/image.png and b/src/image.png differ
+`;
+    const result = parseGitDiff(raw, [], { maxBytes: 2_000_000 });
+    expect(result.files[0]).toMatchObject({
+      path: 'src/image.png',
+      binary: true,
+      additions: 0,
+      deletions: 0,
+      hunks: [],
+    });
+  });
+
   it('truncates when the raw diff exceeds maxBytes, dropping hunks but keeping status/counts', () => {
     const result = parseGitDiff(RAW_DIFF, NUMSTAT, { maxBytes: 10 });
     expect(result.truncated).toBe(true);

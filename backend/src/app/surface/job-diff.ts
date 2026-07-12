@@ -65,7 +65,7 @@ export function parseGitDiff(raw: string, numstat: JobDiffNumstatEntry[], opts: 
     const path = (status === 'deleted' ? strippedOld : strippedNew) ?? '';
 
     const numstatEntry = numstatByPath.get(path);
-    const binary = numstatEntry?.binary ?? false;
+    const binary = numstatEntry?.binary ?? patch.isBinary ?? false;
     const { additions, deletions } = numstatEntry
       ? { additions: numstatEntry.additions, deletions: numstatEntry.deletions }
       : countSignLines(patch.hunks);
