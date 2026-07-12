@@ -1,6 +1,6 @@
 /**
  * App-layer guard for `propose_prod_write`: accept only a single INSERT/UPDATE/DELETE/WITH statement.
- * Sibling of `mcp-reader/query.ts`'s `assertReadOnlySelect` — same trim/strip/reject shape, mirrored for
+ * Sibling of `./query.ts`'s `assertReadOnlySelect` — same trim/strip/reject shape, mirrored for
  * writes. Layered on top of the structural DML-only `mcp_writer` DB role (d4): even if this guard were
  * bypassed, the role itself cannot run DDL/GRANT.
  *

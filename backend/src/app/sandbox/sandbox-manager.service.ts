@@ -283,7 +283,6 @@ export class SandboxManager implements SandboxProvider {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
           await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
-          await this.attachMcpNetwork(existing.id, sandbox.repoId); // idempotent — re-ensure the atlas-mcp route too
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
@@ -487,7 +486,6 @@ export class SandboxManager implements SandboxProvider {
     });
     await this.engine.start(id);
     await this.attachRedisBus(id);
-    await this.attachMcpNetwork(id, sandbox.repoId);
     await this.waitReady(id);
     // Freshly created → cold: run the repo's setup script (if any) before handing the sandbox back.
     return this.applySetupScript(this.augment(sandbox, id, false), id, input.setupScript);
@@ -504,20 +502,6 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
-  }
-
-  /**
-   * Attach the sandbox to the internal MCP-reader network (`SANDBOX_MCP_NETWORK`) — but ONLY for the Atlas
-   * repo itself (repo slug === `ATLAS_REPO_SLUG`). This is the network half of the read-only diagnostics
-   * MCP's repo-scope: only Atlas-repo sandboxes can even route to the reader (the credential half is the
-   * per-repo web MCP registry). The net is `internal: true`, so an attached sandbox reaches ONLY the reader
-   * off it, never the host or internet. Fail-closed: unset network or slug (dev) → no-op. Idempotent.
-   */
-  private async attachMcpNetwork(containerId: string, repoId: string): Promise<void> {
-    const mcpNet = this.env.get('SANDBOX_MCP_NETWORK');
-    if (!mcpNet || !this.isAtlasRepo(repoId)) return;
-    await this.engine.ensureNetwork(mcpNet);
-    await this.engine.connectNetwork(containerId, mcpNet);
   }
 
   /** Whether a sandbox's repo is the Atlas repo itself, per the configured `ATLAS_REPO_SLUG`. Not

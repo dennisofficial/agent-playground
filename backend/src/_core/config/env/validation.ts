@@ -95,12 +95,9 @@ export interface IEnvConfig {
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
-  // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
-  //   attached ONLY when its repo slug === ATLAS_REPO_SLUG (`atlas-mcp` in prod; unset in dev = no-op).
   // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
   SANDBOX_REDIS_URL?: string;
   SANDBOX_BUS_NETWORK?: string;
-  SANDBOX_MCP_NETWORK?: string;
   ATLAS_REPO_SLUG?: string;
 
   // Dedicated prod-diagnostics DB roles (the `atlas-prod` MCP), NEVER the backend's own `app` connection.
@@ -232,7 +229,6 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
-  SANDBOX_MCP_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),
   MCP_READER_PG_USER: Joi.string().optional(),
   MCP_READER_PG_PASSWORD: Joi.string().optional(),

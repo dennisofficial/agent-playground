@@ -208,7 +208,7 @@ fi
 check_address_pool
 log "Pulling images for tag $TAG ..."
 ATLAS_IMAGE_TAG="$TAG" DC pull \
-    "backend-${STANDBY}" web mcp-reader
+    "backend-${STANDBY}" web
 
 # ── 2. Run migrator (one-shot, on the atlas network) ────────────────────────────
 # Ensure Postgres + Redis (and thus the `atlas` network) exist before the migrator joins it — on a
@@ -254,13 +254,6 @@ if [[ "$CADDYFILE_CHANGED" == "1" ]]; then
     docker exec atlas-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
         || log "WARN: caddy reload failed — check 'docker exec atlas-caddy caddy validate --config /etc/caddy/Caddyfile'"
 fi
-
-# ── 2.6. Ensure the read-only diagnostics MCP reader is up ──────────────────────
-# A single stateless, read-only instance — NOT part of the blue/green backend dance and NOT
-# health-gated (no leader election, no public route). Recreated on tag change; postgres (its
-# depends_on) was already ensured up in step 2. Internal-only — no port is published.
-log "Ensuring mcp-reader is up (tag: ${TAG}) ..."
-DC up -d mcp-reader
 
 # ── 3. Start standby ────────────────────────────────────────────────────────────
 log "Starting backend-${STANDBY} (tag: ${TAG}) ..."

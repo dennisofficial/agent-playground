@@ -18,9 +18,9 @@ import {
 import { agentMessage, type AgentMessage } from '../prompt-kit/message';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { webDbWriteApprovalCard } from '../surface/web-approval-card';
-import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from '../../mcp-reader/tools';
-import { redactSecrets } from '../../mcp-reader/redact';
-import { audit } from '../../mcp-reader/audit';
+import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
+import { redactSecrets } from './redact';
+import { audit } from './audit';
 import { assertSingleWriteStatement } from './write-guard';
 
 /** Postgres error code for `permission denied` — what a SELECT-only role gets back from `EXPLAIN` on a
@@ -35,7 +35,7 @@ function pgErrorCode(err: unknown): string | undefined {
 
 /**
  * The `atlas-prod` host-bridge MCP's backend: the 7 relocated read tools (thin wrappers over
- * `mcp-reader/tools.ts`'s `TOOL_HANDLERS`, unchanged) plus the gated `propose_prod_write` /
+ * `./tools`'s `TOOL_HANDLERS`, unchanged) plus the gated `propose_prod_write` /
  * `executeApproved` / `denyWrite` write pipeline. Reads run on the SELECT-only `mcp_reader` pool
  * (also used for the pre-approval EXPLAIN preview); approved writes run on the DML-only `mcp_writer`
  * pool — which this service NEVER touches before an operator approval lands (d2/d4/d6).
@@ -70,8 +70,8 @@ export class ProdDiagnosticsService {
     return this.reader;
   }
 
-  /** Delegate to the relocated `mcp-reader` read-tool handlers, unchanged (redaction + path-jail intact).
-   *  Emits one audit line per call (mirroring the standalone `mcp-reader/main.ts`) — the handler stamps
+  /** Delegate to the co-located read-tool handlers in `./tools`, unchanged (redaction + path-jail intact).
+   *  Emits one audit line per call (mirroring the former standalone reader) — the handler stamps
    *  `ctx.audit` (orgId/sql/rowCount) as it runs, so a prod read leaves the same durable audit trail here
    *  as it did through the original standalone reader, on both success and failure. */
   async runRead(name: string, args: unknown): Promise<unknown> {
