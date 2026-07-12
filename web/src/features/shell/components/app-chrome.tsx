@@ -9,6 +9,7 @@ import { useAllJobsRealtime } from "@/lib/api/all-jobs-realtime";
 import { useBreakpoint } from "@/lib/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
 import { LeftNavProvider } from "@/features/shell/left-nav";
+import { OutboxFlusher } from "@/features/job-workspace/outbox-flusher";
 
 /**
  * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
@@ -79,6 +80,7 @@ export function AppChrome({
           {dialog}
         </div>
       </LeftNavProvider>
+      <OutboxFlusher />
     </div>
   );
 }

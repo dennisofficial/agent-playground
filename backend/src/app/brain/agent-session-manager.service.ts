@@ -2296,7 +2296,7 @@ export class AgentSessionManager
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
-        settings: { repoConventions, workspaceProfile },
+        settings: { repoConventions, workspaceProfile, autoApprove: brainJob?.autoApprove ?? false },
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
@@ -5749,6 +5749,15 @@ export class AgentSessionManager
     return {};
   }
 
+  /** The user id to attribute an auto-approval to: the enabling user (jobs.auto_approve_by), falling back
+   *  to the org owner if that user was deleted (auto_approve_by null). */
+  private async resolveAutoApprover(job: Job): Promise<string> {
+    if (job.autoApproveBy) return job.autoApproveBy;
+    const owner = await this.store.ownerUserId(job.orgId);
+    if (!owner) throw new Error(`no auto-approve approver for job ${job.id} (no auto_approve_by and no org owner)`);
+    return owner;
+  }
+
   /**
    * Post the approval card and act on the verdict — mirrors the old `ConversationalBrainService`
    * flow but without blocking the session turn on it.
@@ -5781,6 +5790,20 @@ export class AgentSessionManager
       stimulus.jobId,
       card.title,
     );
+
+    // AUTO-APPROVE (per-job opt-in): the card is posted above for audit/transcript; now immediately drive the
+    // SAME resolution an operator's click would — the awaited handle.verdict below fires and actOnApprovalVerdict
+    // runs identically (dispatch for a plan, direct build for a direct card). Re-read the flag at gate time:
+    // a brain turn can spend minutes shaping a plan, and the operator may flip auto-approve while it runs.
+    const autoApprovalJob =
+      (await Promise.resolve()
+        .then(() => this.store.loadJob(job.id))
+        .catch(() => null)) ?? job;
+    if (autoApprovalJob.autoApprove) {
+      const approver = await this.resolveAutoApprover(autoApprovalJob);
+      await this.saySystemNotice(stimulus, 'Auto-approve is on — approving this plan automatically.');
+      this.approvals.resolve(autoApprovalJob.id, 'approve', approver, undefined, decisionRecordId);
+    }
 
     let resolution;
     try {

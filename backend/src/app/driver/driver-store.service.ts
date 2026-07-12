@@ -220,6 +220,16 @@ export class DriverStoreService {
     );
   }
 
+  /** The org OWNER's user id (organization_members.role='owner') — the approver-attribution fallback when
+   *  a job's auto_approve_by is null (the enabling user was deleted). Null if the org somehow has no owner. */
+  async ownerUserId(orgId: string): Promise<string | null> {
+    const rows = await this.dataSource.query<{ user_id: string }[]>(
+      `SELECT user_id FROM organization_members WHERE org_id = $1 AND role = 'owner' ORDER BY created_at ASC LIMIT 1`,
+      [orgId],
+    );
+    return rows[0]?.user_id ?? null;
+  }
+
   /** Every thread `running` AND not halted — the boot-reconciliation worklist. The `halt IS NULL` filter is
    *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can). */
   async runningJobs(): Promise<Job[]> {
@@ -1289,6 +1299,9 @@ export class DriverStoreService {
     });
     if (!thread) return { status: 'no_job' };
     const blockedBy = thread.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
+    // The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message,
+    // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
+    const blockedSeedMessage = thread.status === 'blocked' ? (thread.blocked_seed_message ?? null) : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its
     // brain can already be keeping a task list, and the navigator's Main row shows it. Ride the no_job
     // payload so the web isn't blind to it before a plan exists.
@@ -1300,7 +1313,9 @@ export class DriverStoreService {
         // its first brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('main'),
         createdBy: thread.created_by ?? null,
+        autoApprove: thread.auto_approve ?? false,
         blockedBy,
+        blockedSeedMessage,
       };
     }
     const allThreads = await this.threads.find({
@@ -1424,10 +1439,14 @@ export class DriverStoreService {
       halt: thread.halt ?? null,
       createdBy: thread.created_by ?? null,
       blockedBy,
+      blockedSeedMessage,
       // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
       buildPath: thread.build_path ?? null,
+      // Per-job auto-approve flag — surfaced so the console can render + toggle it (also on the no_job
+      // shape above, so the toggle works pre-plan while the job is still `open`).
+      autoApprove: thread.auto_approve ?? false,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1558,6 +1577,8 @@ function toJob(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
+    autoApprove: row.auto_approve ?? false,
+    autoApproveBy: row.auto_approve_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

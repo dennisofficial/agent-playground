@@ -68,6 +68,7 @@ export function Conversation({
   live,
   blocked = false,
   blockedBy = [],
+  blockedSeedMessage = null,
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
@@ -82,6 +83,8 @@ export function Conversation({
   blocked?: boolean;
   /** The blockers holding this job (drives the overlay's list + "Unblock now"). */
   blockedBy?: JobBlocker[];
+  /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
+  blockedSeedMessage?: string | null;
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
@@ -95,7 +98,11 @@ export function Conversation({
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <ConversationTopBar onOpenNav={onOpenNav} onOpenDetail={onOpenDetail} />
       {blocked && blockedBy.length > 0 ? (
-        <BlockedOverlay jobRef={jobRef} blockedBy={blockedBy} />
+        <BlockedOverlay
+          jobRef={jobRef}
+          blockedBy={blockedBy}
+          blockedSeedMessage={blockedSeedMessage}
+        />
       ) : null}
       <TranscriptView
         jobRef={jobRef}
@@ -175,7 +182,7 @@ export function TranscriptView({
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
   // lanes and lanes without a composer ignore drags entirely.
-  const attach = useAttachments();
+  const attach = useAttachments(jobRef);
   const acceptsDrop = composer && !readOnly;
   const { isDragging, dropHandlers } = useFileDrop(attach.add, acceptsDrop);
 

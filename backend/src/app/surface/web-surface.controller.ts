@@ -329,6 +329,9 @@ interface ReviewCommentsDto {
 interface RenameThreadDto {
   title: string;
 }
+interface SetAutoApproveDto {
+  enabled: boolean;
+}
 interface ApproveDto {
   actionId: string;
   value: string;
@@ -623,6 +626,7 @@ export class WebSurfaceController {
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
+        blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -705,6 +709,7 @@ export class WebSurfaceController {
       halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
+      blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -2367,6 +2372,45 @@ export class WebSurfaceController {
     if (!result.affected) throw new NotFoundException('thread not found');
     this.logger.log(`web renamed thread ${jobId} (org ${org.id})`);
     return { ok: true, title };
+  }
+
+  /** `PATCH …/jobs/:jobId/auto-approve` — flip the per-job auto-approve toggle. On enable, immediately
+   *  resolves a gate the job is already parked on via the exact human-click seam (receiveApprovalClick). */
+  @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId/auto-approve')
+  @UseGuards(OrgMembershipGuard)
+  async setAutoApprove(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Body() body: SetAutoApproveDto,
+  ): Promise<{ ok: boolean; autoApprove: boolean }> {
+    if (typeof body?.enabled !== 'boolean') {
+      throw new BadRequestException('enabled is required');
+    }
+    // Resolve scoped to the org first (defense in depth beyond the guard) — capture the pre-update status so we
+    // know whether a gate is already parked.
+    const job = await this.requireThread(jobId, org.id);
+    const result = await this.jobs.update(
+      { id: jobId, org_id: org.id },
+      body.enabled ? { auto_approve: true, auto_approve_by: user.id } : { auto_approve: false },
+    );
+    if (!result.affected) throw new NotFoundException('thread not found');
+    this.logger.log(`web set auto-approve=${body.enabled} on thread ${jobId} (org ${org.id})`);
+    // d2 — enabling while a gate is ALREADY parked immediately approves it, through the exact seam a real
+    // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
+    // the durable-restart fallback). Disable only affects future gates and never un-approves anything.
+    if (body.enabled) {
+      if (job.status === 'awaiting_approval') {
+        const value = JSON.stringify({
+          jobId,
+          ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
+        });
+        this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
+      } else if (job.status === 'awaiting_ship_review') {
+        this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
+      }
+    }
+    return { ok: true, autoApprove: body.enabled };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

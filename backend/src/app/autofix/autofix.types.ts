@@ -15,7 +15,7 @@ export type FindingSeverity = 'low' | 'medium' | 'high';
 
 /** A single review finding from one lens pass. The `lens` + `file` tags drive dedupe. */
 export interface ReviewFinding {
-  /** Which lens surfaced it (best_practices | correctness | consistency | …). */
+  /** Which lens surfaced it (correctness | holistic | data_safety | framework | …). */
   lens: string;
   severity: FindingSeverity;
   /** The file the finding is about, repo-relative when the lens names one (else null = cross-cutting). */

@@ -5,6 +5,7 @@ import { useUnblockJob } from "@/lib/api/job-queries";
 import { mutationErrorMessage, type JobRef } from "@/lib/api/job-api";
 import type { JobBlocker } from "@/lib/api/types";
 import { BlockerRow, useOpenBlocker } from "./blocked-by-pane";
+import { StreamTextBubble } from "./bubbles";
 import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
 
 /**
@@ -18,15 +19,20 @@ import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
 export function BlockedOverlay({
   jobRef,
   blockedBy,
+  blockedSeedMessage = null,
 }: {
   jobRef: JobRef;
   blockedBy: JobBlocker[];
+  /** The pending message this job will start on when it unblocks — previewed here so the operator can see
+   *  what's incoming before it runs. Only born-blocked follow-up jobs carry one; null otherwise. */
+  blockedSeedMessage?: string | null;
 }) {
   const { openBlocker, toast } = useOpenBlocker(jobRef);
   const unblock = useUnblockJob(jobRef, blockedBy);
   const { toast: unblockToast, show: showUnblockError } = useEphemeralToast();
 
   const n = blockedBy.length;
+  const seed = blockedSeedMessage?.trim();
 
   return (
     <div
@@ -60,6 +66,16 @@ export function BlockedOverlay({
               />
             ))}
           </div>
+          {seed ? (
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-faint">
+                When this unblocks, Atlas will start on
+              </p>
+              <div className="mt-1.5 rounded-lg border border-border bg-surface px-3 py-2.5">
+                <StreamTextBubble text={seed} />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <button
               type="button"
