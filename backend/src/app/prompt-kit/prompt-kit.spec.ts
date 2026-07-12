@@ -336,8 +336,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     const out = renderAgentPrompt(Agent.VALIDATE);
     expect(out.length).toBeGreaterThan(0);
     expect(out).toContain('LIVE VALIDATION');
-    expect(out).toContain('EXACT artifact paths'); // the report-back contract
-    expect(out).toContain('/context/artifacts');
+    expect(out).toContain('EXACT evidence paths'); // the report-back contract
+    expect(out).toContain('$ATLAS_EVIDENCE_DIR');
   });
 
   it('RUNNABLE_WORKSPACE_NOTE reaches the build-touching lanes (brain, worker, master review) once, not the advisories', () => {

@@ -149,7 +149,7 @@ export class SubagentsGroup {
         'them, do not fix the code, and do not change git state — if validation FAILS, report the failure (that ' +
         'is a valid, useful result) rather than patching it. WHEN YOU FINISH, return a TIGHT report the ' +
         'orchestrator can act on: (1) the VERDICT and the OBSERVED behavior (what you ran, what happened), and ' +
-        '(2) the EXACT artifact paths you wrote under `$ATLAS_EVIDENCE_DIR` — so the orchestrator references ' +
+        '(2) the EXACT evidence paths you wrote under `$ATLAS_EVIDENCE_DIR` — so the orchestrator references ' +
         'your bundle instead of recapturing it. Be concise; conclusions and evidence paths, not a transcript.',
     ].join(' ');
   }

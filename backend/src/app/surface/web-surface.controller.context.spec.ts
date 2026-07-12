@@ -8,9 +8,10 @@ import { WebSurfaceController } from './web-surface.controller';
 
 /**
  * `GET …/context/file` reads ONE file from the thread's `/context` dir. The security-critical part is the
- * path guard: a caller-supplied `?path=` must resolve INSIDE the thread's own specs/ + artifacts/ buckets,
- * so `..` traversal and out-of-bucket reads are rejected — and the read stays org-scoped (a leaked thread
- * id from another org 404s before any disk access). Uses a real temp `/context` dir so the fs reads run.
+ * path guard: a caller-supplied `?path=` must resolve INSIDE the thread's own specs/generated/artifacts/
+ * evidence buckets, so `..` traversal and out-of-bucket reads are rejected — and the read stays org-scoped
+ * (a leaked thread id from another org 404s before any disk access). Uses a real temp `/context` dir so the
+ * fs reads run.
  */
 const ORG: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
@@ -112,7 +113,7 @@ describe('WebSurfaceController.contextFile', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('rejects a path outside the specs/ + artifacts/ buckets', async () => {
+  it('rejects a path outside the exposed context buckets', async () => {
     const { controller } = makeController('orgB');
     await expect(controller.contextFile(ORG, 'thread-1', 'secret.txt')).rejects.toBeInstanceOf(
       BadRequestException,

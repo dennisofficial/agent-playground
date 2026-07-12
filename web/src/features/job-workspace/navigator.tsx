@@ -925,14 +925,14 @@ function OutputsRegion({
         onSelectNode={onSelectNode}
       />
 
-      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      {/* ARTIFACTS — human-facing deliverables (preview HTML, mockups, reports). Diff + PR live in the header. */}
       <OutputGroup
         label="ARTIFACTS"
         files={artifacts}
         prefix="artifact"
         loading={loading}
         emptyIcon={<ImageIcon size={13} />}
-        emptyText="No screenshots or files yet"
+        emptyText="No deliverables yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />

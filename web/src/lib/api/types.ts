@@ -612,8 +612,8 @@ export interface ContextFile {
 
 /**
  * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams),
- * `artifacts` (outputs — preview HTML, screenshots), and `evidence` (live-run proof — logs, screenshots,
- * RESULTS.md). A bucket is `[]` before the agent writes anything.
+ * `artifacts` (human-facing deliverables — preview HTML, mockups, reports), and `evidence` (live-run proof —
+ * logs, screenshots, RESULTS.md). A bucket is `[]` before the agent writes anything.
  */
 export interface JobContext {
   specs: ContextFile[];

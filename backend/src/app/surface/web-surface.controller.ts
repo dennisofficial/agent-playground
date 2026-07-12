@@ -157,7 +157,7 @@ function operatorAuthor(user: UserEntity): {
   return { authorId: user.id, authorName: user.name?.trim() || user.email };
 }
 
-/** One file in a `/context` bucket (specs, artifacts, or evidence). */
+/** One file in a `/context` bucket (specs, generated, artifacts, or evidence). */
 export interface ContextFile {
   name: string;
   size: number;
@@ -1889,7 +1889,7 @@ export class WebSurfaceController {
   /**
    * `GET …/threads/:jobId/context` — list the thread's `/context` files, grouped into `specs` (the
    * plan: plan.md, decision-record.md, diagrams), `artifacts` (human-facing deliverables: preview HTML,
-   * screenshots), and `evidence` (live-run proof: logs, screenshots, RESULTS.md).
+   * mockups, reports), and `evidence` (live-run proof: logs, screenshots, RESULTS.md).
    * V1 MVP: just names + size + mtime. The UI's Artifacts panel composes this with the diff/PR (which
    * are not files — they come from `pipeline`/the thread row).
    */
@@ -1917,7 +1917,8 @@ export class WebSurfaceController {
   /**
    * `GET …/threads/:jobId/context/file?path=specs/plan.md` — read ONE `/context` file for the viewer.
    * Text files (.md, .json, …) come back utf-8; images come back base64. Capped at 2 MB; the path is
-   * guarded to the thread's own specs/ + artifacts/ buckets (no traversal, no cross-thread reads).
+   * guarded to the thread's own specs/ + generated/ + artifacts/ + evidence/ buckets (no traversal, no
+   * cross-thread reads).
    */
   @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/file')
   @UseGuards(OrgMembershipGuard)

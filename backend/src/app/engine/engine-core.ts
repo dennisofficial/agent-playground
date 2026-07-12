@@ -414,9 +414,9 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
 
 // VALIDATE subagent — build-time LIVE end-to-end validation + evidence capture. Added ONLY on EXECUTE
 // turns (like the writers), so only the builder can spawn it. It gets `Bash` (to boot services via
-// atlas-svc, curl endpoints, drive Playwright, run e2e) and `Write` (to author the `/context/artifacts/`
+// atlas-svc, curl endpoints, drive Playwright, run e2e) and `Write` (to author the `$ATLAS_EVIDENCE_DIR`
 // evidence bundle + RESULTS.md — the `/context` mount is a writable root, see redis-engine-runner). It has
-// NO `Task` (no recursive fan-out). Its "write only under /context/artifacts, don't edit code" contract is
+// NO `Task` (no recursive fan-out). Its "write only under $ATLAS_EVIDENCE_DIR, don't edit code" contract is
 // prompt discipline (the `canUseTool` write boundary is per-turn, not per-subagent) — same model as `test`
 // being "read-only by prompt". Distinct from `test`: `test` runs typecheck/build/unit → a diagnosis;
 // `validate` boots the thing, exercises it live, and leaves durable proof the operator can see.
@@ -425,9 +425,9 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
     description:
       'LIVE validation + evidence capture (Sonnet). Delegate END-TO-END validation here to keep your ' +
       'context clean: it BOOTS the change and exercises it as a real caller would (atlas-svc services, ' +
-      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF in `/context/artifacts/` ' +
-      '(logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ARTIFACTS panel. Returns a ' +
-      'verdict + the observed behavior + the exact artifact paths it wrote — reference those instead of ' +
+      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF under ' +
+      '`$ATLAS_EVIDENCE_DIR` (logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ' +
+      'EVIDENCE panel. Returns a verdict + the observed behavior + the exact evidence paths it wrote — reference those instead of ' +
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',

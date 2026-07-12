@@ -483,7 +483,7 @@ export const TOOL_DEFS: Tool[] = [
   {
     name: 'atlas_context_read',
     description:
-      "A job's durable /context dir (specs/generated/artifacts) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
+      "A job's durable /context dir (specs/generated/artifacts/evidence) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
     inputSchema: {
       type: 'object',
       properties: { jobId: { type: 'string' }, path: { type: 'string' } },
