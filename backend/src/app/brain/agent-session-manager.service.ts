@@ -4046,6 +4046,24 @@ export class AgentSessionManager
         };
       },
 
+      // List this repo's sibling jobs so the brain can discover real same-repo ids to wire peer
+      // dependencies (create_job dependsOn / link_job_dependency). Repo-scoped from the CLOSURE, never
+      // from tool args — the same tenant-safety invariant as create_job/list_tickets.
+      list_jobs: async (args) => {
+        try {
+          const jobs = await this.jobDeps.listJobs({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            status: optStr(args['status']),
+            query: optStr(args['query']),
+            limit: typeof args['limit'] === 'number' ? args['limit'] : undefined,
+          });
+          return { ok: true, jobs };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
       // ── Tickets (the repo's board/backlog) ─────────────────────────────────────────────────────────
       // org/repo/thread context comes from the stimulus CLOSURE, never tool args (no cross-tenant escape).
 
@@ -4343,8 +4361,10 @@ export class AgentSessionManager
     };
 
     // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
-    // never plan/build/ship) — no propose_plan/start_direct_build/create_job/tickets/decisions. Matches the
-    // `reviewTools` prompt fragment; the omission is enforced (un-callable, not just discouraged).
+    // never plan/build/ship) — no propose_plan/start_direct_build/tickets/decisions. They DO get the job
+    // tools (list_jobs/create_job/link_job_dependency): a review may legitimately spin up or relate sibling
+    // jobs even though it does not build its own PR. Matches the `reviewTools` prompt fragment; the omission
+    // of the build/plan/ship tools is enforced (un-callable, not just discouraged).
     if (review) {
       return {
         ask_question: tools.ask_question,
@@ -4352,6 +4372,9 @@ export class AgentSessionManager
         set_job_kind: tools.set_job_kind,
         recall: tools.recall,
         remember: tools.remember,
+        list_jobs: tools.list_jobs,
+        create_job: tools.create_job,
+        link_job_dependency: tools.link_job_dependency,
         ...intake,
       };
     }
@@ -4365,6 +4388,9 @@ export class AgentSessionManager
       withdraw_question: tools.withdraw_question,
       recall: tools.recall,
       remember: tools.remember,
+      list_jobs: tools.list_jobs,
+      create_job: tools.create_job,
+      link_job_dependency: tools.link_job_dependency,
       ...intake,
       list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),

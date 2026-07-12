@@ -293,4 +293,100 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(wakes).toHaveLength(1);
     expect(wakes[0].note).toBeNull(); // the sweep is a backstop; the event path composes any note
   });
+
+  // ── listJobs — repo-scoped discovery + the terminal-blocker default filter ─────────────────────
+  describe('listJobs', () => {
+    const idsOf = (rows: { id: string }[]) => new Set(rows.map((r) => r.id));
+
+    it('is repo-scoped: never returns a job from another repo', async () => {
+      const here = await makeJob({ status: 'running', title: 'here' });
+      const foreign = await makeJob({ repo_id: otherRepoId, status: 'running', title: 'foreign' });
+
+      const rows = await service.listJobs({ orgId: ORG_ID, repoId });
+      expect(idsOf(rows).has(here.id)).toBe(true);
+      expect(idsOf(rows).has(foreign.id)).toBe(false);
+    });
+
+    it('DEFAULT filter mirrors the terminal-blocker rule (NULL-safe)', async () => {
+      const doneOpenPr = await makeJob({ status: 'done', pr_state: 'open', title: 'done-open-pr' });
+      const amending = await makeJob({ status: 'amending', title: 'amending' });
+      const noPr = await makeJob({ status: 'planning', pr_state: null, title: 'no-pr-yet' });
+      const doneMerged = await makeJob({ status: 'done', pr_state: 'merged', title: 'done-merged' });
+      const closed = await makeJob({ status: 'done', pr_state: 'closed', title: 'closed' });
+      const cancelled = await makeJob({ status: 'cancelled', title: 'cancelled' });
+      const deleting = await makeJob({ status: 'deleting', title: 'deleting' });
+
+      const rows = await service.listJobs({ orgId: ORG_ID, repoId });
+      const ids = idsOf(rows);
+      // Live blockers are INCLUDED (done-with-open-PR, amending, and a job with no PR yet).
+      expect(ids.has(doneOpenPr.id)).toBe(true);
+      expect(ids.has(amending.id)).toBe(true);
+      expect(ids.has(noPr.id)).toBe(true);
+      // Dead-as-a-blocker jobs are EXCLUDED.
+      expect(ids.has(doneMerged.id)).toBe(false);
+      expect(ids.has(closed.id)).toBe(false);
+      expect(ids.has(cancelled.id)).toBe(false);
+      expect(ids.has(deleting.id)).toBe(false);
+    });
+
+    it('an exact status filter bypasses the terminal exclusion; "all" returns everything', async () => {
+      const doneOpen = await makeJob({ status: 'done', pr_state: 'open', title: 'done-open' });
+      const doneMerged = await makeJob({ status: 'done', pr_state: 'merged', title: 'done-merged' });
+      const cancelled = await makeJob({ status: 'cancelled', title: 'cancelled' });
+
+      const done = await service.listJobs({ orgId: ORG_ID, repoId, status: 'done' });
+      expect(idsOf(done)).toEqual(new Set([doneOpen.id, doneMerged.id])); // incl. the merged one
+
+      const all = await service.listJobs({ orgId: ORG_ID, repoId, status: 'all' });
+      const allIds = idsOf(all);
+      expect(allIds.has(cancelled.id)).toBe(true);
+      expect(allIds.has(doneMerged.id)).toBe(true);
+    });
+
+    it('query filters by case-insensitive title substring', async () => {
+      const auth = await makeJob({ status: 'running', title: 'Fix AUTH flow' });
+      await makeJob({ status: 'running', title: 'Refactor billing' });
+
+      const rows = await service.listJobs({ orgId: ORG_ID, repoId, query: 'auth' });
+      expect(idsOf(rows)).toEqual(new Set([auth.id]));
+    });
+
+    it('caps the result and returns newest-first', async () => {
+      const created: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const j = await makeJob({ status: 'running', title: `job ${i}` });
+        created.push(j.id);
+      }
+      const limited = await service.listJobs({ orgId: ORG_ID, repoId, limit: 2 });
+      expect(limited).toHaveLength(2);
+      // newest-first: the last two created, most-recent first.
+      expect(limited.map((r) => r.id)).toEqual([created[4], created[3]]);
+
+      // hard cap: an over-limit request is clamped to 100 (well above our 5 rows, so all 5 return).
+      const capped = await service.listJobs({ orgId: ORG_ID, repoId, limit: 9999 });
+      expect(capped.length).toBe(5);
+    });
+
+    it('returns the documented projection fields', async () => {
+      const job = await makeJob({
+        status: 'done',
+        pr_state: 'open',
+        pr_number: 42,
+        build_path: 'plan',
+        title: 'projection',
+      });
+      const [row] = await service.listJobs({ orgId: ORG_ID, repoId, query: 'projection' });
+      expect(row).toMatchObject({
+        id: job.id,
+        title: 'projection',
+        status: 'done',
+        prState: 'open',
+        kind: 'feature',
+        buildPath: 'plan',
+        prNumber: 42,
+      });
+      expect(row.createdAt).toBeInstanceOf(Date);
+      expect(typeof row.activity).toBe('string');
+    });
+  });
 });

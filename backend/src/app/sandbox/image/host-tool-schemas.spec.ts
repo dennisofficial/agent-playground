@@ -150,6 +150,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     confirm: true,
     dependsOn: ['T-1'],
   },
+  list_jobs: { status: 'all', query: 'auth', limit: 10 },
   list_tickets: { status: 'open' },
   update_ticket: {
     ticketId: 't1',

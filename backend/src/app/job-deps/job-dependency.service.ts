@@ -40,6 +40,19 @@ export type DependentJobRow = {
   blocked_seed_message: string | null;
 };
 
+/** A repo's job as surfaced by {@link JobDependencyService.listJobs} for peer-dependency discovery. */
+export type JobListRow = {
+  id: string;
+  title: string | null;
+  status: string;
+  prState: string | null;
+  activity: string;
+  kind: string | null;
+  buildPath: 'direct' | 'plan' | null;
+  prNumber: number | null;
+  createdAt: Date;
+};
+
 /**
  * JOB DEPENDENCY SERVICE — the single source of truth for job-to-job "blocked by" edges and the wake
  * funnel that fires when a blocker resolves. Three surfaces feed edges here (manual link, `create_job`
@@ -82,6 +95,57 @@ export class JobDependencyService {
 
   private isTerminalState(prState: string | null, status: string): boolean {
     return prState === 'merged' || prState === 'closed' || status === 'cancelled';
+  }
+
+  /**
+   * List this repo's jobs (newest-first) so the brain can discover sibling job ids to wire peer
+   * dependencies. Repo-scoped from the args (the caller passes org/repo from the stimulus closure, never
+   * from tool args). Read-only.
+   *
+   * DEFAULT (no `status`): returns only jobs that are still a LIVE dependency target — it excludes those
+   * that are dead as a blocker, mirroring {@link isTerminalState} above (PR merged/closed OR status
+   * cancelled) plus `deleting` (being torn down). This deliberately INCLUDES a `status='done'` job whose
+   * PR is still open (the canonical "depend on this until its PR merges" blocker — `done` is stamped when
+   * the PR OPENS) and `amending`. The predicate is NULL-safe (`IS DISTINCT FROM`) so a job with no PR yet
+   * (`pr_state` NULL) is kept. Pass `status` for an EXACT-status filter (bypasses the terminal exclusion),
+   * or `'all'` for no filter at all.
+   */
+  async listJobs(args: {
+    orgId: string;
+    repoId: string;
+    status?: string;
+    query?: string;
+    limit?: number;
+  }): Promise<JobListRow[]> {
+    const limit = Math.min(Math.max(1, Math.trunc(args.limit ?? 30)), 100);
+    const qb = this.jobs
+      .createQueryBuilder('j')
+      .where('j.org_id = :orgId AND j.repo_id = :repoId', { orgId: args.orgId, repoId: args.repoId });
+
+    const status = args.status?.trim().toLowerCase();
+    if (status && status !== 'all') {
+      qb.andWhere('j.status = :status', { status }); // exact-status filter (bypasses terminal exclusion)
+    } else if (!status) {
+      qb.andWhere(`j.pr_state IS DISTINCT FROM 'merged'`)
+        .andWhere(`j.pr_state IS DISTINCT FROM 'closed'`)
+        .andWhere(`j.status NOT IN ('cancelled', 'deleting')`);
+    } // status === 'all' → no status/terminal filter
+
+    const q = args.query?.trim();
+    if (q) qb.andWhere('j.title ILIKE :q', { q: `%${q}%` });
+
+    const rows = await qb.orderBy('j.created_at', 'DESC').take(limit).getMany();
+    return rows.map((j) => ({
+      id: j.id,
+      title: j.title,
+      status: j.status,
+      prState: j.pr_state,
+      activity: j.activity,
+      kind: j.kind,
+      buildPath: j.build_path,
+      prNumber: j.pr_number,
+      createdAt: j.created_at,
+    }));
   }
 
   /**

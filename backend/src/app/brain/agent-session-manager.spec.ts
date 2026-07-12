@@ -1283,6 +1283,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }
   });
 
+  // The job-orchestration tools (list_jobs + create_job + link_job_dependency) are available in EVERY
+  // session kind, not just normal build brains — a review/onboarding session may legitimately spin up or
+  // relate sibling jobs. list_jobs is also present in the base (normal) set.
+  it('list_jobs / create_job / link_job_dependency are registered in every session kind', () => {
+    for (const kind of [null, 'review', 'onboarding'] as const) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of ['list_jobs', 'create_job', 'link_job_dependency']) {
+        expect(typeof tools[name], `"${name}" must be registered for kind=${kind}`).toBe('function');
+      }
+    }
+  });
+
   it('finish_onboarding: no repo diff → marks onboarded, does NOT ship a PR', async () => {
     (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({ worktreePath: '/wt' });
     (mockGit.hasChanges as ReturnType<typeof vi.fn>).mockResolvedValue(false);
