@@ -19,7 +19,7 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import {
   buildAuthorizeUrl,
-  DEFAULT_CLAUDE_OAUTH_CONFIG,
+  buildClaudeOAuthConfig,
   exchangeCode,
   generatePkce,
   type ClaudeOAuthConfig,
@@ -69,15 +69,7 @@ export class ClaudeCredentialsController {
   ) {}
 
   private config(): ClaudeOAuthConfig {
-    return {
-      ...DEFAULT_CLAUDE_OAUTH_CONFIG,
-      authorizeUrl:
-        this.env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ??
-        DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
-      clientId:
-        this.env.get('CLAUDE_OAUTH_CLIENT_ID') ??
-        DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
-    };
+    return buildClaudeOAuthConfig(this.env);
   }
 
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */

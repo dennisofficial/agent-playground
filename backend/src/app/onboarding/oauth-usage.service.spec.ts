@@ -3,6 +3,7 @@ import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } fro
 import type { EnvService } from '@core/config/env/env.service';
 import { OauthUsageService, parseModelWindows, toPercentUtilization } from './oauth-usage.service';
 import type { ClaudeCredentialStore, ClaudeCredentialSummary } from './claude-credential.store';
+import type { CredentialRefreshService } from './credential-refresh.service';
 import type { CredentialResolver } from './credential-resolver.service';
 import type { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus, type UsageChange } from './usage-event-bus';
@@ -49,6 +50,22 @@ class FakeClaudeStore {
   advanceClaudeCredential(orgId: string, credentialId: string, secret: string): Promise<void> {
     this.advanceCalls.push({ orgId, credentialId, secret });
     return Promise.resolve();
+  }
+}
+
+/**
+ * Minimal stand-in for `CredentialRefreshService`: the usage paths now resolve a credential's token through
+ * `ensureFresh` (the ONE serialized refresh core) instead of an inline refresh. This fake returns the stored
+ * blob straight from the `FakeClaudeStore`, mirroring the healthy/no-op case (`ensureFresh` returns the
+ * stored secret when the token isn't near expiry).
+ */
+class FakeCredRefresh {
+  constructor(private readonly claudeStore: FakeClaudeStore) {}
+
+  async ensureFresh(orgId: string, credentialId: string): Promise<string> {
+    const row = await this.claudeStore.getDecryptedById(orgId, credentialId);
+    if (!row) throw new Error(`credential ${credentialId} not found for org ${orgId}`);
+    return row.secret;
   }
 }
 
@@ -134,12 +151,14 @@ function makeService(
   const bus = new UsageEventBus();
   const published: UsageChange[] = [];
   bus.stream$.subscribe((e) => published.push(e));
+  const credRefresh = new FakeCredRefresh(claudeStore);
   const svc = new OauthUsageService(
     NO_ENGINE_AUTH as unknown as CredentialResolver,
     store as unknown as TenantCredentialStore,
     claudeStore as unknown as ClaudeCredentialStore,
     bus,
     { get: () => undefined } as unknown as EnvService,
+    credRefresh as unknown as CredentialRefreshService,
   );
   return { svc, bus, published, claudeStore };
 }

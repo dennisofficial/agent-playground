@@ -17,6 +17,10 @@ import type { HostFrame, ToolBridgeOptions, ToolRequestFrame, TurnSpec } from '.
 import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import {
+  CredentialNeedsReauthError,
+  CredentialRefreshService,
+} from '../onboarding/credential-refresh.service';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import {
   CONTAINER_AGENT_HOME,
@@ -99,6 +103,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Optional for the same reason (direct-instantiation unit tests). Absent → the app-mode token-file seed
     // at spawn is simply skipped (the leader-gated refresh sweep still converges the file on its next tick).
     @Optional() @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider?: SandboxProvider,
+    // Optional for the same reason. Absent → no host-side pre-turn refresh; a turn relies on the in-container
+    // SDK self-refresh exactly as before. Present in the real app (exported by the @Global onboarding module).
+    @Optional() private readonly credRefresh?: CredentialRefreshService,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -114,7 +121,33 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // the org has no secret this stays undefined and the in-sandbox `EngineCore.resolveAuth` throws the clear
     // "no credential" error — same outcome as before, just no longer dependent on each caller remembering.
     if (!args.auth && this.creds) {
-      const auth = await this.creds.engineAuth(args.sandboxKey.orgId, args.engine);
+      let auth = await this.creds.engineAuth(args.sandboxKey.orgId, args.engine);
+      // Proactively refresh a personal Claude OAuth token on the HOST before the turn materializes it —
+      // serialized per-credential by `ensureFresh`'s row lock so concurrent turns share ONE refresh instead of
+      // racing the rotating refresh token. A hard failure (dead refresh token) short-circuits the sandbox
+      // spin-up and surfaces through the existing EngineAuthError relay/catch path; a transient failure falls
+      // through to the stored secret (the in-container SDK self-refresh remains the mid-turn fallback).
+      if (
+        auth?.kind === 'personal' &&
+        auth.refreshBack?.engine === 'claude' &&
+        auth.refreshBack.credentialId &&
+        this.credRefresh
+      ) {
+        try {
+          const fresh = await this.credRefresh.ensureFresh(
+            args.sandboxKey.orgId,
+            auth.refreshBack.credentialId,
+          );
+          auth = { ...auth, secret: fresh };
+        } catch (err) {
+          if (err instanceof CredentialNeedsReauthError) {
+            throw new EngineAuthError('Claude login expired — reconnect it in Settings.');
+          }
+          this.logger.warn(
+            `pre-turn claude refresh failed (continuing with stored secret): ${err}`,
+          );
+        }
+      }
       if (auth) args = { ...args, auth };
     }
 

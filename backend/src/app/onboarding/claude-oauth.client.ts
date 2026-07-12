@@ -38,6 +38,49 @@ export const DEFAULT_CLAUDE_OAUTH_CONFIG: ClaudeOAuthConfig = {
   scopes: SCOPES,
 };
 
+/** The env keys this module reads to point at a non-default OAuth deployment (or a test token server). */
+export type ClaudeOAuthEnvReader = {
+  get(
+    key:
+      | 'CLAUDE_OAUTH_AUTHORIZE_URL'
+      | 'CLAUDE_OAUTH_CLIENT_ID'
+      | 'CLAUDE_OAUTH_TOKEN_URL',
+  ): string | undefined;
+};
+
+/**
+ * Resolve the OAuth config from env, overlaying the constant defaults with any deployment overrides
+ * (`CLAUDE_OAUTH_{AUTHORIZE_URL,TOKEN_URL,CLIENT_ID}`). The single builder every host-side caller (the
+ * controller's authorize/exchange, the usage refresh, the credential-refresh core) resolves through, so a
+ * test can retarget `tokenUrl` at a local stub server via one env key.
+ */
+export function buildClaudeOAuthConfig(env: ClaudeOAuthEnvReader): ClaudeOAuthConfig {
+  return {
+    ...DEFAULT_CLAUDE_OAUTH_CONFIG,
+    authorizeUrl:
+      env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
+    tokenUrl: env.get('CLAUDE_OAUTH_TOKEN_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.tokenUrl,
+    clientId: env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
+  };
+}
+
+/**
+ * A non-2xx from the token endpoint, carrying the HTTP `status` so callers can distinguish a HARD auth
+ * failure (400/401/403 — the refresh token is dead, needs re-login) from a TRANSIENT one (timeout/5xx —
+ * retry later). The response body is never included (it may echo secrets).
+ */
+export class ClaudeOAuthHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`claude oauth token request failed: HTTP ${status}`);
+    this.name = 'ClaudeOAuthHttpError';
+  }
+}
+
+/** A hard, non-recoverable token failure (the refresh grant was rejected) vs. a transient one worth retrying. */
+export function isHardAuthFailure(status: number): boolean {
+  return status === 400 || status === 401 || status === 403;
+}
+
 /** The resolved token set a successful exchange/refresh yields. `expiresAt` is an absolute epoch MS. */
 export type TokenSet = {
   accessToken: string;
@@ -144,7 +187,7 @@ async function postForTokenSet(
   }
   if (!res.ok) {
     // Never include the response body (may echo secrets) in the thrown error.
-    throw new Error(`claude oauth token request failed: HTTP ${res.status}`);
+    throw new ClaudeOAuthHttpError(res.status);
   }
   const parsed: unknown = await res.json();
   return parseTokenSet(parsed);

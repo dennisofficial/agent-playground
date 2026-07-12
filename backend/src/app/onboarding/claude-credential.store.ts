@@ -1,7 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, QueryFailedError, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  QueryFailedError,
+  Repository,
+} from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrganizationEntity,
@@ -371,6 +376,93 @@ export class ClaudeCredentialStore {
         `advanced claude credential for org=${orgId} id=${credentialId}`,
       );
     }
+  }
+
+  /**
+   * Flag a `personal` credential as needing re-login. Its OWN independent write (not part of any caller
+   * transaction) — the refresh core calls this AFTER its lock transaction has rolled back, so a shared
+   * transaction would discard the flag along with the aborted refresh.
+   */
+  async markNeedsReauth(
+    orgId: string,
+    credentialId: string,
+    reason?: string,
+  ): Promise<void> {
+    await this.repo.update(
+      { id: credentialId, org_id: orgId, kind: 'personal' },
+      { status: 'needs_reauth' },
+    );
+    this.logger.warn(
+      `marked claude credential needs_reauth org=${orgId} id=${credentialId}` +
+        (reason ? ` reason=${reason}` : ''),
+    );
+  }
+
+  /**
+   * Read + row-lock a `personal` credential inside the caller's transaction — the pessimistic row lock is
+   * the cross-instance refresh mutex. Null when the row is missing or isn't `personal`.
+   */
+  async findPersonalUnderLock(
+    m: EntityManager,
+    orgId: string,
+    credentialId: string,
+  ): Promise<{ row: OrgClaudeCredentialEntity; secret: string } | null> {
+    const row = await m.findOne(OrgClaudeCredentialEntity, {
+      where: { id: credentialId, org_id: orgId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!row || row.kind !== 'personal') return null;
+    return { row, secret: this.decryptToSecret(row) };
+  }
+
+  /**
+   * Encrypt + persist a refreshed `claudeAiOauth` blob onto an already-locked row, committing with the
+   * caller's transaction. Throws on a malformed blob (the caller aborts the txn, persisting nothing).
+   */
+  async writeRefreshedWithinTxn(
+    m: EntityManager,
+    row: OrgClaudeCredentialEntity,
+    refreshedSecret: string,
+  ): Promise<void> {
+    const oauth = parseClaudeOauth(refreshedSecret);
+    if (!oauth) {
+      throw new Error('writeRefreshedWithinTxn: malformed refreshed blob');
+    }
+    const key = this.key();
+    row.access_token_enc = encryptSecret(oauth.accessToken, key);
+    row.refresh_token_enc = encryptSecret(oauth.refreshToken, key);
+    row.expires_at = new Date(oauth.expiresAt);
+    row.status = 'active';
+    row.last_refreshed_at = new Date();
+    if (oauth.scopes !== undefined) row.scopes = oauth.scopes.join(' ');
+    if (oauth.subscriptionType !== undefined)
+      row.subscription_type = oauth.subscriptionType;
+    await m.save(row);
+  }
+
+  /**
+   * Every org's SELECTED `personal` credential whose access token expires within `withinMs` — the
+   * proactive-sweep worklist. Only `active`, refreshable (`refresh_token_enc` present) rows qualify.
+   */
+  async listSelectedExpiring(
+    withinMs: number,
+  ): Promise<Array<{ orgId: string; credentialId: string }>> {
+    const rows = await this.repo
+      .createQueryBuilder('c')
+      .innerJoin(
+        OrganizationEntity,
+        'organization',
+        'organization.selected_claude_credential_id = c.id AND organization.id = c.org_id',
+      )
+      .select(['c.id AS id', 'c.org_id AS org_id'])
+      .where('c.kind = :kind', { kind: 'personal' })
+      .andWhere('c.status = :status', { status: 'active' })
+      .andWhere('c.refresh_token_enc IS NOT NULL')
+      .andWhere('c.expires_at < :cutoff', {
+        cutoff: new Date(Date.now() + withinMs),
+      })
+      .getRawMany<{ id: string; org_id: string }>();
+    return rows.map((r) => ({ orgId: r.org_id, credentialId: r.id }));
   }
 }
 

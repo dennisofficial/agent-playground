@@ -60,6 +60,7 @@ export interface IEnvConfig {
   // claude.ai/platform.claude.com endpoints — only set to point at a different OAuth deployment.
   CLAUDE_OAUTH_AUTHORIZE_URL?: string;
   CLAUDE_OAUTH_CLIENT_ID?: string;
+  CLAUDE_OAUTH_TOKEN_URL?: string;
 
   // Single-platform Atlas GitHub App identity (process-wide env, NOT per-org — unlike the per-org PAT in
   // org_credentials). All optional: unset → App auth feature OFF, every org stays on PAT. GITHUB_APP_ID is
@@ -195,6 +196,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   // Claude subscription OAuth
   CLAUDE_OAUTH_AUTHORIZE_URL: Joi.string().uri().optional(),
   CLAUDE_OAUTH_CLIENT_ID: Joi.string().optional(),
+  CLAUDE_OAUTH_TOKEN_URL: Joi.string().uri().optional(),
 
   // Atlas GitHub App identity
   GITHUB_APP_ID: Joi.string().optional(),
