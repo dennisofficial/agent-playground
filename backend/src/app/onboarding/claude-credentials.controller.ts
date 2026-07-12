@@ -95,18 +95,25 @@ export class ClaudeCredentialsController {
         : await this.createSetupToken(org, body);
 
     let rows = await this.store.list(org.id);
+    let usageInvalidated = false;
     if (rows.length === 1) {
       const changed = await this.store.setSelected(org.id, id);
-      if (changed) await this.usageService.invalidate(org.id);
+      if (changed) {
+        await this.usageService.invalidate(org.id);
+        usageInvalidated = true;
+      }
       rows = await this.store.list(org.id); // re-read so the returned summary's isSelected is accurate
     }
-    await this.onboarding.tryActivate(org.id);
 
     const created = rows.find((row) => row.id === id);
     if (!created)
       throw new Error(
         `claude credential ${id} vanished immediately after create`,
       );
+    if (created.isSelected && !usageInvalidated) {
+      await this.usageService.invalidate(org.id);
+    }
+    await this.onboarding.tryActivate(org.id);
     return created;
   }
 

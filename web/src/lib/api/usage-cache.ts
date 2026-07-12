@@ -35,6 +35,16 @@ export function writeUsageCache<T>(key: string, data: T, at: number): void {
   }
 }
 
+/** Remove one cached usage snapshot, e.g. when a credential switch makes the org-level snapshot misleading. */
+export function removeUsageCache(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(PREFIX + key);
+  } catch {
+    /* best-effort */
+  }
+}
+
 /**
  * Mirror a query's latest value into the cache as it changes. Keyed on `dataUpdatedAt` (TanStack only
  * bumps it when the value actually changes), so this fires once per real update, never on an

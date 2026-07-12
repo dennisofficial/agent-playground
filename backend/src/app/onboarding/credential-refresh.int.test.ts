@@ -251,6 +251,16 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
     expect(row.status).toBe('needs_reauth');
   });
 
+  it('an already needs_reauth credential is never reused or refreshed', async () => {
+    const credId = await seedCred(6 * 60 * 60_000, 'already-needs-reauth');
+    await store.markNeedsReauth(ORG, credId, 'test setup');
+
+    await expect(credRefresh.ensureFresh(ORG, credId)).rejects.toBeInstanceOf(
+      CredentialNeedsReauthError,
+    );
+    expect(requestCount).toBe(0);
+  });
+
   // The refresh transaction rolls back on ANY token-endpoint failure, so a transient 5xx propagates as a
   // plain rejection (not `CredentialNeedsReauthError` — that's reserved for a HARD 400/401/403) and leaves
   // the row untouched. Falling back to the stored secret on a transient failure is a CALLER decision (see

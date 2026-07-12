@@ -7,7 +7,7 @@ import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
 import type { WireOrgUsage } from "./types";
-import { readUsageCache, usePersistUsage } from "./usage-cache";
+import { readUsageCache, removeUsageCache, usePersistUsage } from "./usage-cache";
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -16,6 +16,8 @@ import { readUsageCache, usePersistUsage } from "./usage-cache";
  */
 
 const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
+
+const usageCacheKey = (key: readonly string[]) => key.join(":");
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
@@ -245,7 +247,9 @@ export function useAddClaudeCredential(orgId: string) {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
+    onSuccess: (credential) => {
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credential.id)));
+      if (credential.isSelected) removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -264,6 +268,7 @@ export function useSelectClaudeCredential(orgId: string) {
         body: JSON.stringify({ credentialId }),
       }),
     onSuccess: () => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -281,7 +286,9 @@ export function useDeleteClaudeCredential(orgId: string) {
       webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/${credentialId}`, {
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onSuccess: (_result, credentialId) => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -325,7 +332,7 @@ export function useCodexAccount(orgId: string, enabled = true) {
  * means "unknown right now".
  */
 export function useOrgUsage(orgId: string) {
-  const cacheKey = useMemo(() => qk.orgUsage(orgId).join(":"), [orgId]);
+  const cacheKey = useMemo(() => usageCacheKey(qk.orgUsage(orgId)), [orgId]);
   const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
   const query = useQuery({
     queryKey: qk.orgUsage(orgId),
@@ -352,7 +359,7 @@ export function useOrgUsage(orgId: string) {
  */
 export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
   const cacheKey = useMemo(
-    () => qk.orgCredentialUsage(orgId, credentialId).join(":"),
+    () => usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)),
     [orgId, credentialId],
   );
   const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);

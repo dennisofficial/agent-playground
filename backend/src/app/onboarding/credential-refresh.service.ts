@@ -53,6 +53,9 @@ export class CredentialRefreshService {
       throw new Error(`credential ${credentialId} not found for org ${orgId}`);
     }
     if (row.kind !== 'personal') return row.secret;
+    if (row.status === 'needs_reauth') {
+      throw new CredentialNeedsReauthError(credentialId);
+    }
     const oauth = parseOauthBlob(row.secret);
     if (!oauth?.refreshToken) return row.secret;
     if (oauth.expiresAt == null || oauth.expiresAt > Date.now() + skewMs) {
@@ -78,6 +81,9 @@ export class CredentialRefreshService {
         );
         if (!held) {
           throw new Error(`credential ${credentialId} not found under lock`);
+        }
+        if (held.row.status === 'needs_reauth') {
+          throw new CredentialNeedsReauthError(credentialId);
         }
         const cur = parseOauthBlob(held.secret);
         if (cur?.expiresAt != null && cur.expiresAt > Date.now() + skewMs) {

@@ -26,6 +26,15 @@ export interface ClaudeCredentialSummary {
   isSelected: boolean;
 }
 
+type DecryptedClaudeCredential = {
+  id: string;
+  kind: 'setup_token' | 'personal';
+  status: 'active' | 'needs_reauth' | 'error';
+  secret: string;
+};
+
+type SelectedClaudeCredential = Omit<DecryptedClaudeCredential, 'status'>;
+
 const LEGACY_SETUP_TOKEN_LABEL = 'Imported setup-token';
 const PG_UNIQUE_VIOLATION = '23505';
 
@@ -91,11 +100,7 @@ export class ClaudeCredentialStore {
    */
   async getSelectedDecrypted(
     orgId: string,
-  ): Promise<{
-    id: string;
-    kind: 'setup_token' | 'personal';
-    secret: string;
-  } | null> {
+  ): Promise<SelectedClaudeCredential | null> {
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     const selectedId = org?.selected_claude_credential_id;
     if (!selectedId) return null;
@@ -150,10 +155,15 @@ export class ClaudeCredentialStore {
   async getDecryptedById(
     orgId: string,
     id: string,
-  ): Promise<{ id: string; kind: 'setup_token' | 'personal'; secret: string } | null> {
+  ): Promise<DecryptedClaudeCredential | null> {
     const row = await this.repo.findOne({ where: { id, org_id: orgId } });
     if (!row) return null;
-    return { id: row.id, kind: row.kind, secret: this.decryptToSecret(row) };
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      secret: this.decryptToSecret(row),
+    };
   }
 
   /** Decrypt one row into the injectable secret shape (raw token, or a `claudeAiOauth` JSON blob). */
