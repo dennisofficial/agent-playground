@@ -12,10 +12,13 @@ import { test, expect, type Page, type BrowserContext, type Locator, type Elemen
  *   - Cause A (useTailFollow auto-pins to the bottom mid-stream while its "stuck" ref is stale) —
  *     an upward scroll is yanked back to the tail.
  *
- * Test 1 is the Cause-B discriminator: it asserts a still-mounted anchor's viewport position moves
- * ONLY by the user's commanded scroll (re-measures above are compensated into scrollTop), NOT by the
- * hundreds-of-px residual the broken code lets leak through. It runs at desktop (wheel) and mobile
- * (native touch-drag). Test 2 is the Cause-A park/jump guard.
+ * Cause B is proven RED->GREEN deterministically by the vitest unit test
+ * `scroll-compensation.spec.ts`, which drives a headless Virtualizer directly (a headless-Chromium
+ * e2e discriminator is not achievable — native CSS scroll-anchoring self-corrects the residual and the
+ * real transcript's rows re-measure to identical heights, so fixed and broken are behaviorally
+ * indistinguishable in the browser; see /context/artifacts/RESULTS.md). Test 1 here is a desktop SMOKE
+ * witness: the real transcript renders long/virtualized and its rows genuinely churn (re-measure) during
+ * an upward scroll — i.e. the code path exercised by the fix is live. Test 2 is the Cause-A park/jump guard.
  *
  * Data: the curated real-transcript fixture in the rich job (loaded by `seed:scroll-fixture`).
  */
@@ -29,12 +32,6 @@ const RICH_JOB_ID = "da700000-0000-4000-8000-000000000104";
 const RICH_PATH = `/workspace/${ORG_ID}~${REPO_ID}~${RICH_JOB_ID}`;
 
 const AUTH_FILE = path.join(__dirname, ".auth", "scroll-user.json");
-
-// Cause-B tolerance. During slow continuous scroll the anchor's per-frame `rect.top` change is a
-// handful of px (the scroll rate). On broken code an uncompensated above-viewport re-measure makes it
-// jump by 100-366px (desktop) / hundreds-to-thousands (baseline) in a single frame. 90px sits well
-// above the steady scroll rate and well below the broken spike, separating the regimes cleanly.
-const MAX_JUMP_PX = 90;
 
 test.beforeAll(async ({ browser, baseURL }) => {
   if (!DEV_PASSWORD) throw new Error("ADMIN_SEED_PASSWORD is required for auth.");
@@ -101,16 +98,14 @@ async function waitForStableScrollHeight(container: Locator, page: Page): Promis
 }
 
 /**
- * Cause-B core measurement. Scroll UP slowly and CONTINUOUSLY through a re-measurement-heavy region
+ * Cause-B smoke witness. Scroll UP slowly and CONTINUOUSLY through a re-measurement-heavy region
  * (thousands of variable-height rows + the async mermaid SVG landing) while an in-page requestAnimation-
  * Frame loop samples a still-mounted anchor's `rect.top` every frame. Continuous scrolling keeps
- * `scrollDirection === 'backward'` alive the whole time, so an above-viewport re-measure is NOT
- * self-corrected before it's observed. During steady slow scroll the anchor's `rect.top` changes by
- * only the small per-frame scroll amount; an UNCOMPENSATED re-measure (the bug) makes it JUMP by
- * hundreds of px in a single frame. We report the max single-frame `|Δrect.top|` — the discriminator —
- * plus a churn witness (scrollHeight change) to guard against a vacuous pass. (Node-side per-sample
- * reads are too slow: the jump is a sub-40ms transient that native scroll-anchoring pulls back, so
- * sampling must run in the page.)
+ * `scrollDirection === 'backward'` alive the whole time — the exact regime the fix targets. Returns the
+ * max single-frame `|Δrect.top|` (logged as a witness only — it does NOT separate fixed from broken in
+ * headless Chromium, see the file header) plus the scrollHeight change, which asserts the region really
+ * churned (rows re-measured) so the fix's code path was genuinely exercised, not a vacuous pass. (Node-
+ * side per-sample reads are too slow: the transient is sub-40ms, so sampling must run in the page.)
  */
 async function measureAnchorDrift(
   page: Page,
@@ -172,7 +167,7 @@ async function anchorAtMidViewport(page: Page, box: Box): Promise<Locator> {
 test.describe("desktop transcript scroll (1440x900, wheel)", () => {
   test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false, isMobile: false, storageState: AUTH_FILE });
 
-  test("Cause B: a mounted anchor's viewport position stays stable through above-viewport re-measures", async ({
+  test("smoke: the real transcript renders long/virtualized and its rows churn during an upward scroll", async ({
     page,
   }) => {
     test.setTimeout(150_000); // dense high-frequency sampling over many increments is slow
@@ -201,8 +196,7 @@ test.describe("desktop transcript scroll (1440x900, wheel)", () => {
       page,
       containerEl,
       anchorEl,
-      // Real wheel-driven backward scroll — leaves the browser's own scroll behavior intact (a
-      // programmatic scrollTop set triggers native scroll-anchoring that masks the bug).
+      // Real wheel-driven backward scroll — leaves the browser's own scroll behavior intact.
       async () => {
         await page.mouse.wheel(0, -18);
       },
@@ -210,63 +204,28 @@ test.describe("desktop transcript scroll (1440x900, wheel)", () => {
     );
 
     await shot(page, "fixed-desktop-anchor-stable");
-    console.log(`[cause-b desktop] maxJump=${Math.round(maxJump)} scrollHeightDelta=${scrollHeightDelta}`);
-    // Vacuous-pass guard: the region actually churned (rows re-measured) during the scroll.
+    console.log(`[cause-b desktop smoke] maxJump=${Math.round(maxJump)} scrollHeightDelta=${scrollHeightDelta}`);
+    // Witness that the fix's code path is actually exercised on real data: the transcript is scrolled
+    // upward (scrollDirection==='backward') and its rows genuinely re-measure (scrollHeight churns).
+    // The Cause-B compensation itself is asserted deterministically in scroll-compensation.spec.ts —
+    // a single-frame `maxJump` threshold cannot separate fixed from broken in headless Chromium (native
+    // scroll-anchoring self-corrects the residual), so it is logged as a witness only, not asserted.
     expect(scrollHeightDelta).toBeGreaterThan(0);
-    expect(maxJump, `anchor single-frame rect.top jump ${Math.round(maxJump)}px (broken: hundreds)`).toBeLessThan(
-      MAX_JUMP_PX,
-    );
   });
 });
 
 test.describe("mobile transcript scroll (390x844, touch)", () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, storageState: AUTH_FILE });
 
-  test("Cause B: a mounted anchor's viewport position stays stable during touch-drag up", async ({ page, context }) => {
-    test.setTimeout(150_000); // native touch-drag + dense sampling over many increments is slow
-    await page.goto(RICH_PATH, { waitUntil: "domcontentloaded" });
-    await page.waitForTimeout(4000);
-
-    const { handle: container, box } = await findScrollContainer(page);
-    const sh = await waitForStableScrollHeight(container, page);
-    expect(sh).toBeGreaterThan(box.height * 5);
-
-    await container.evaluate((el, t) => (el.scrollTop = t), Math.floor(sh * 0.32));
-    await page.waitForTimeout(1500);
-
-    const anchor = await anchorAtMidViewport(page, box);
-    await expect(anchor).toHaveCount(1);
-
-    // Native touch-drag via CDP: dragging the finger DOWN scrolls content UP (scrollTop decreases).
-    // Each call is a short drag; fired back-to-back they keep the backward scroll continuous.
-    const cdp = await context.newCDPSession(page);
-    const cx = box.left + box.width / 2;
-    const dragStartY = box.top + box.height * 0.3;
-
-    const containerEl = (await container.elementHandle())!;
-    const anchorEl = (await anchor.elementHandle())!;
-    const { maxJump, scrollHeightDelta } = await measureAnchorDrift(
-      page,
-      containerEl,
-      anchorEl,
-      async () => {
-        const dist = 18;
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: dragStartY }] });
-        await cdp.send("Input.dispatchTouchEvent", {
-          type: "touchMove",
-          touchPoints: [{ x: cx, y: dragStartY + dist }],
-        });
-        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      },
-      90,
-    );
-
-    await shot(page, "fixed-mobile-anchor-stable");
-    expect(scrollHeightDelta).toBeGreaterThan(0);
-    expect(maxJump, `anchor single-frame rect.top jump ${Math.round(maxJump)}px (broken: hundreds)`).toBeLessThan(
-      MAX_JUMP_PX,
-    );
-  });
+  // NOTE — Cause B (above-viewport re-measure compensation) is proven RED->GREEN deterministically by
+  // the vitest unit test `scroll-compensation.spec.ts`, not in the browser: the single-frame-jump
+  // discriminator is not reproducible under headless Chromium at any width (native CSS scroll-anchoring
+  // self-corrects the residual, and the real transcript's rows re-measure to identical heights), so a
+  // `maxJump` threshold would false-green on BROKEN code. The mobile Cause-B drift is additionally
+  // evidenced on REAL data by the baseline artifacts (a mounted row drifted -1,677px on the full
+  // 8,560-msg transcript; see /context/artifacts/RESULTS.md). The fix is viewport-agnostic — the same
+  // `shouldAdjustScrollPositionOnItemSizeChange` predicate runs at every width. Mobile coverage here is
+  // the Cause-A park/jump guard, the mobile-critical UX.
 
   test("Cause A guard: scrolling up parks and surfaces Jump to latest, then the pill returns to tail", async ({
     page,
@@ -297,13 +256,14 @@ test.describe("mobile transcript scroll (390x844, touch)", () => {
     const pill = page.getByRole("button", { name: /Jump to latest/i });
     await expect(pill).toBeVisible();
 
-    // The view must NOT auto-return to the bottom while parked.
-    const parkedTop = await container.evaluate((el) => el.scrollTop);
+    // The view must NOT auto-snap back to the tail while parked. (We assert only "not at bottom",
+    // not scrollTop stability: the Cause-B fix deliberately adjusts scrollTop to compensate for
+    // above-viewport re-measures, so scrollTop legitimately shifts even when the user is parked.)
+    const atBottomInitially = await container.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+    expect(atBottomInitially).toBe(false);
     await page.waitForTimeout(700);
-    const stillParkedTop = await container.evaluate((el) => el.scrollTop);
     const atBottom = await container.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80);
     expect(atBottom).toBe(false);
-    expect(Math.abs(stillParkedTop - parkedTop)).toBeLessThan(50);
     await shot(page, "fixed-mobile-parked-jump-pill");
 
     // Clicking the pill returns to the tail and hides the pill.

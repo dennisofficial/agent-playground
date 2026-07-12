@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { compensateAboveViewportResize } from "./scroll-compensation";
 import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
@@ -365,6 +366,11 @@ export function TranscriptView({
     getItemKey: (index) => items[index].key,
   });
 
+  // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
+  // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
+  // directly here rather than inside the options object above.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
+
   pinRef.current = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -410,7 +416,7 @@ export function TranscriptView({
         onScroll={onScroll}
         onPointerOver={onPointerOver}
         onPointerLeave={onPointerLeave}
-        className="h-full overflow-y-auto px-7 pt-5"
+        className="h-full overflow-y-auto overscroll-contain px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
