@@ -198,6 +198,11 @@ function isTransientDriveError(err: unknown): boolean {
  */
 const REVIEW_LENS_CONCURRENCY = 8;
 
+/** The model the read-only review-lens FINDER turns run on — Sonnet, not the default Opus worker. The
+ *  finding task is well within Sonnet's capability and moving the N per-thread finder turns off Opus is the
+ *  dominant token win for the review fan-out. The post_review FIX turn keeps the default worker model. */
+const REVIEW_LENS_MODEL = 'claude-sonnet-5';
+
 /** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
 const TRANSIENT_ERROR_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
@@ -1661,7 +1666,9 @@ export class ThreadDriver implements JobDispatcher {
     await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
       const lensCtx = lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx;
-      const findings = await this.autofix.runReviewLens(lensCtx, lens);
+      // Read-only lens finders run on Sonnet, not the default Opus worker: the finding task is well within
+      // Sonnet's capability and this is the dominant token win (N finder turns per thread move off Opus).
+      const findings = await this.autofix.runReviewLens(lensCtx, lens, { model: REVIEW_LENS_MODEL });
       await this.store.setThreadReviewFindings(child.id, findings);
       await this.store.setThreadStatus(child.id, 'done');
       await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
