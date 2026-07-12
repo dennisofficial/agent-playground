@@ -33,7 +33,7 @@ import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } fr
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CONTAINER_MCP_HUB_CONFIG, CONTAINER_MCP_HUB_DIR, MCP_HUB_PORT } from '../container-paths';
@@ -44,6 +44,7 @@ import {
   parseHubConfig,
   serverKey,
 } from './mcp-hub-config';
+import { maybeDumpLargeResult, type DumpDeps } from './mcp-hub-dump';
 
 const HUB_CLIENT_INFO = { name: 'atlas-mcp-hub', version: '1.0.0' };
 const RECONNECT_MIN_MS = 1_000;
@@ -227,10 +228,52 @@ export class Hub {
   private readonly sessions = new Map<string, StreamableHTTPServerTransport>();
   private spawn: McpHubSpawnIdentity = { cwd: '/workspace', home: '/home/atlas', baseEnv: {} };
   private readonly setprivPath = findSetpriv();
+  private http: HttpServer | undefined;
+
+  constructor(private readonly dumpDeps?: Partial<DumpDeps>) {}
+
+  /** TEST-ONLY seam: register a pre-connected upstream directly, bypassing `reconcile()`'s real
+   *  stdio/http spawn — lets integration tests drive the real `handle`/CallTool seam (and the dump
+   *  middleware) against an in-process stub server instead of a live child process or network endpoint. */
+  registerTestUpstream(conn: {
+    spec: Pick<ResolvedMcpServer, 'name'>;
+    tools: Tool[];
+    callTool: (name: string, args: Record<string, unknown> | undefined) => Promise<CallToolResult>;
+  }): void {
+    this.servers.set(conn.spec.name, conn as UpstreamConnection);
+  }
 
   listen(port: number): Promise<void> {
     const http = createServer((req, res) => void this.handle(req, res));
-    return new Promise((resolve) => http.listen(port, '127.0.0.1', () => resolve()));
+    this.http = http;
+    return new Promise((resolve, reject) => {
+      http.once('error', reject);
+      http.listen(port, '127.0.0.1', () => {
+        http.off('error', reject);
+        resolve();
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    const closeHttp =
+      this.http === undefined
+        ? Promise.resolve()
+        : new Promise<void>((resolve, reject) => {
+            this.http?.close((err) => (err ? reject(err) : resolve()));
+          });
+    this.http = undefined;
+    for (const transport of this.sessions.values()) {
+      await transport.close();
+    }
+    this.sessions.clear();
+    await Promise.all(
+      [...this.servers.values()].map((conn) => {
+        const close = (conn as { close?: () => Promise<void> }).close;
+        return close ? close.call(conn) : Promise.resolve();
+      }),
+    );
+    await closeHttp;
   }
 
   /** Route one HTTP request to its server's Streamable-HTTP transport (create the session on `initialize`,
@@ -278,7 +321,18 @@ export class Hub {
       };
       const server = new Server({ name: `atlas-mcp-hub/${conn.spec.name}`, version: '1.0.0' }, { capabilities: { tools: {} } });
       server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: conn.tools }));
-      server.setRequestHandler(CallToolRequestSchema, (r) => conn.callTool(r.params.name, r.params.arguments));
+      server.setRequestHandler(CallToolRequestSchema, async (r) => {
+        const result = await conn.callTool(r.params.name, r.params.arguments);
+        return maybeDumpLargeResult(
+          {
+            serverName: conn.spec.name,
+            toolName: r.params.name,
+            args: r.params.arguments,
+            result,
+          },
+          this.dumpDeps,
+        );
+      });
       await server.connect(transport);
       await transport.handleRequest(req, res, body);
     } catch (err) {

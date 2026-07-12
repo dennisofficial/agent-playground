@@ -79,8 +79,13 @@ collector owns retention.
 
 ## The 7 tools
 
-1. `atlas_query(sql, params?)` — run ONE read-only SELECT/WITH against prod; single-statement guard, 10s
-   timeout, 1000-row cap, results redacted. Use `atlas_schema` first.
+1. `atlas_query(sql, params?, format?, limit?)` — run ONE read-only SELECT/WITH against prod;
+   single-statement guard, 10s timeout, results redacted. `limit` caps rows returned (default 1000,
+   clamped to a 50000-row ceiling); a ~25MB byte guard on the serialized rows can further trim the tail
+   even under that row cap — either cap trips the `truncated` flag in the response. `format` selects the
+   response shape: `json` (default — a `rows` array) or `jsonl`/`csv`/`tsv` (a rendered `text` string,
+   handy for piping into grep/jq/python/duckdb). Large results are auto-written to a file under
+   `/playground` and the response instead gives back a path + preview. Use `atlas_schema` first.
 2. `atlas_schema()` — every public table + its columns (name, type, nullable) from information_schema.
 3. `atlas_job_overview(jobId)` — job status fields + thread list with a derived one-line failure summary.
 4. `atlas_session_raw(jobId, {sessionId?, raw?, role?, thinking?, text?, tools?, errors?, tail?, since?, grep?})`

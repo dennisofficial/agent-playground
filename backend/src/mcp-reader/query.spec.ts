@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DataSource } from 'typeorm';
-import { assertReadOnlySelect, runReadOnlyQuery } from './query';
+import {
+  assertReadOnlySelect,
+  MAX_RESULT_BYTES,
+  runReadOnlyQuery,
+} from './query';
 
 describe('assertReadOnlySelect', () => {
   it('accepts a plain SELECT', () => {
@@ -107,5 +111,101 @@ describe('runReadOnlyQuery', () => {
       'DISCARD ALL',
     ]);
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('uses an explicit limit to compute the wrapped LIMIT', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) return [{ value: 1 }];
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    await runReadOnlyQuery(ds, 'SELECT 1 AS value', [], 5);
+    expect(query.mock.calls.map(([sql]) => sql)).toContain(
+      'SELECT * FROM (\nSELECT 1 AS value\n) AS __atlas_q LIMIT 6',
+    );
+  });
+
+  it('clamps a limit above the hard ceiling', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) return [{ value: 1 }];
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    await runReadOnlyQuery(ds, 'SELECT 1 AS value', [], 999999);
+    expect(query.mock.calls.map(([sql]) => sql)).toContain(
+      'SELECT * FROM (\nSELECT 1 AS value\n) AS __atlas_q LIMIT 50001',
+    );
+  });
+
+  it('rejects a non-finite limit before building SQL', async () => {
+    const ds = {
+      createQueryRunner: vi.fn(),
+    } as unknown as DataSource;
+
+    await expect(
+      runReadOnlyQuery(ds, 'SELECT 1 AS value', [], Number.NaN),
+    ).rejects.toThrow('limit must be a finite number');
+  });
+
+  it('truncates and reports rowCount/rows at the effective limit when the driver returns one extra row', async () => {
+    const effective = 5;
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) {
+        return Array.from({ length: effective + 1 }, (_, i) => ({ value: i }));
+      }
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    const result = await runReadOnlyQuery(
+      ds,
+      'SELECT 1 AS value',
+      [],
+      effective,
+    );
+    expect(result.truncated).toBe(true);
+    expect(result.rowCount).toBe(effective);
+    expect(result.rows).toHaveLength(effective);
+  });
+
+  it('does not return a single row that exceeds the byte cap by itself', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith('SELECT * FROM')) {
+        return [{ note: 'x'.repeat(MAX_RESULT_BYTES) }];
+      }
+      return [];
+    });
+    const ds = {
+      createQueryRunner: () => ({
+        connect: vi.fn(),
+        query,
+        release: vi.fn(),
+      }),
+    } as unknown as DataSource;
+
+    const result = await runReadOnlyQuery(ds, 'SELECT note FROM logs', [], 10);
+    expect(result.truncated).toBe(true);
+    expect(result.rowCount).toBe(0);
+    expect(result.rows).toEqual([]);
   });
 });
