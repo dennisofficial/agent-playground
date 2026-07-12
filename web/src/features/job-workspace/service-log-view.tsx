@@ -153,6 +153,9 @@ export function LogFileView({ content }: { content: string }) {
     estimateSize: () => LINE_HEIGHT_PX,
     overscan: 20,
   });
+  // Same Cause B fix as the other virtualizers in this file: compensate above-viewport
+  // re-measures during an upward scroll so content doesn't slide down (see note above).
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   const virtualItems = virtualizer.getVirtualItems();
 
