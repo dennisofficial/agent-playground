@@ -126,6 +126,26 @@ export class ClaudeCredentialStore {
     };
   }
 
+  /**
+   * The org's SELECTED credential's id + last-refresh instant — NO decryption. The driver's auth-halt
+   * classifier reads this to tell a lost-rotation-race (the token was just refreshed elsewhere, so this
+   * turn merely lost the race) from a genuinely dead login. Null when nothing is selected or the pointer
+   * dangles.
+   */
+  async getSelectedRefreshMeta(
+    orgId: string,
+  ): Promise<{ id: string; lastRefreshedAt: Date | null } | null> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    const selectedId = org?.selected_claude_credential_id;
+    if (!selectedId) return null;
+    const row = await this.repo.findOne({
+      where: { id: selectedId, org_id: orgId },
+      select: { id: true, last_refreshed_at: true },
+    });
+    if (!row) return null;
+    return { id: row.id, lastRefreshedAt: row.last_refreshed_at };
+  }
+
   /** Decrypt ONE credential row by id (org-scoped) into the injectable secret shape — the by-id sibling of `getSelectedDecrypted`. Null when the row is absent or belongs to another org. */
   async getDecryptedById(
     orgId: string,
