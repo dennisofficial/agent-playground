@@ -114,7 +114,7 @@ import {
   MAX_MOUNT_PATH_LEN,
   type MountMode,
 } from '../sandbox/container-paths';
-import { LocalGitService } from '../git';
+import { GitIdentityService, LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { TicketService } from '../tickets';
 import { JobDependencyService } from '../job-deps';
@@ -255,16 +255,20 @@ export class AgentSessionManager
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
-  /** Per-job resolved git auth (repo url + org PAT) for in-sandbox push/fetch — cached; see resolveBrainGitAuth. */
-  private readonly gitAuthByJob = new Map<string, GitAuth>();
+  /** Per-job STABLE git target (repo url + org id) — the token/identity are re-resolved PER TURN (an app
+   *  installation token expires hourly), so only the stable bits are cached here. See resolveBrainGitAuth. */
+  private readonly gitTargetByJob = new Map<
+    string,
+    { gitUrl: string; orgId: string }
+  >();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
    * on this manager, per `ARCHITECTURE.md`'s halt-and-resume model: the grant is recorded HOST-side when the
    * owner approves, then forwarded on every subsequent brain turn's `RunEngineArgs.grantedSkills` so the
    * in-container `canUseTool` (which has no DB/host-state access of its own) can honor it (see `engine-core.ts`
-   * `makeCanUseTool`'s skill guard). Lives for the process's lifetime / this job's — like `gitAuthByJob`, never
-   * explicitly cleared (a backend restart resets it; re-approval is cheap and the alternative, a durable grant
-   * that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
+   * `makeCanUseTool`'s skill guard). Lives for the process's lifetime / this job's — like `gitTargetByJob`,
+   * never explicitly cleared (a backend restart resets it; re-approval is cheap and the alternative, a durable
+   * grant that survives a job's ENTIRE life, is more surface than a "for this session" grant should have).
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
@@ -331,6 +335,9 @@ export class AgentSessionManager
     private readonly configStore: WorkspaceConfigStore,
     // Used by `finish_onboarding` to decide whether there's an actual repo diff worth shipping a PR for.
     private readonly git: LocalGitService,
+    // Per-turn commit-identity fallback for PAT-mode orgs (`GET /user`) — app-mode orgs use the App bot
+    // identity from `creds.githubCommitIdentity` instead. See resolveBrainGitAuth.
+    private readonly identities: GitIdentityService,
     // The fragment-library assembler for the brain's system prompt (ATLAS_MAIN; onboarding is a jobKind).
     private readonly prompts: PromptService,
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
@@ -390,28 +397,41 @@ export class AgentSessionManager
   ) {}
 
   /**
-   * Resolve (and cache per job) the repo url + org GitHub PAT so the brain's turns can fetch/push/merge
-   * against the remote from inside the sandbox. Sourced from the RESOLVED repo — never `sandbox`, whose
-   * row-sourced form carries an empty `gitUrl`/no token. Cached because `resolve()` re-checks the clone
-   * and the repo url is stable + the org PAT rarely rotates mid-session. Best-effort: on failure returns
-   * undefined (and does NOT cache), so remote git ops fail closed via `GIT_TERMINAL_PROMPT=0` and a later
-   * turn retries. Only caches when a real token is present (a tokenless resolve isn't worth pinning).
+   * Resolve the git auth the brain's turns use to fetch/push/merge against the remote from inside the
+   * sandbox. The repo url + org id are STABLE for a job, so they're resolved once (via the RESOLVED repo —
+   * never `sandbox`, whose row-sourced form carries an empty `gitUrl`/no token) and cached in
+   * `gitTargetByJob`. The TOKEN (and, for app-mode orgs, the App bot commit identity) is re-resolved on
+   * EVERY call instead: an installation token expires hourly, so pinning it per job would push with a dead
+   * token on a long-running session. Re-resolution is cheap — the credential resolver memoizes the minted
+   * token (a Map hit unless near expiry). Best-effort: on failure returns undefined (and does NOT cache the
+   * target), so remote git ops fail closed via `GIT_TERMINAL_PROMPT=0` and a later turn retries.
    */
   private async resolveBrainGitAuth(
     jobId: string,
   ): Promise<GitAuth | undefined> {
-    const cached = this.gitAuthByJob.get(jobId);
-    if (cached) return cached;
     try {
-      const job = await this.store.loadJob(jobId);
-      const repo = await this.repos.resolve(job);
-      const auth = {
-        gitUrl: repo.projectRepo.gitUrl,
-        token: repo.token,
-        ...(repo.identity ? { identity: repo.identity } : {}),
+      let target = this.gitTargetByJob.get(jobId);
+      if (!target) {
+        const job = await this.store.loadJob(jobId);
+        const repo = await this.repos.resolve(job);
+        const gitUrl = repo.projectRepo.gitUrl;
+        if (!gitUrl) return undefined;
+        target = { gitUrl, orgId: job.orgId };
+        this.gitTargetByJob.set(jobId, target);
+      }
+      const token = await this.creds.githubToken(target.orgId);
+      // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default
+      // 'pat' (today's behavior) rather than throwing mid-turn.
+      const mode = (await this.creds.githubAuthMode?.(target.orgId)) ?? 'pat';
+      const identity =
+        (await this.creds.githubCommitIdentity(target.orgId)) ??
+        (await this.identities.resolve(token));
+      return {
+        gitUrl: target.gitUrl,
+        mode,
+        ...(token ? { token } : {}),
+        ...(identity ? { identity } : {}),
       };
-      if (auth.gitUrl && auth.token) this.gitAuthByJob.set(jobId, auth);
-      return auth;
     } catch (err) {
       this.logger.warn(
         `brain git auth resolve failed for job ${jobId} (remote git disabled this turn): ${err}`,
@@ -1620,164 +1640,185 @@ export class AgentSessionManager
     return 'attached';
   }
 
+  /** A finalize loser: another attacher already claimed this turn ⇒ this caller must persist NOTHING. */
+  private lost(result?: { claimed?: boolean }): boolean {
+    return result?.claimed === false;
+  }
+
   /** Re-attach one in-flight brain turn: rebuild stimulus → tools → harness, resume the engine, persist. */
   private async reattachOne(row: ActiveTurnEntity): Promise<void> {
     // A mid-day promotion (leader flap between watch respawns) re-fires this sweep while THIS process
     // may already be tailing the turn it kicked — a second attach loop would double every live frame
-    // and double-persist the transcript at finish. Skip anything we're already attached to.
-    if (this.engineRunner.isAttached?.(row.turn_id)) {
-      this.logger.log(
-        `re-attach turn ${row.turn_id}: already attached in this process — skipping`,
-      );
+    // and double-persist the transcript at finish. Atomically claim the in-process slot (check-and-add in
+    // one synchronous step ⇒ no TOCTOU between two concurrent sweep entries); the outer `finally` releases
+    // it on every bail before `reattach()` runs (runAttached's own finally releases once attached).
+    const claimedAttach = this.engineRunner.tryClaimAttach?.(row.turn_id) ?? true;
+    if (!claimedAttach) {
+      this.logger.log(`re-attach turn ${row.turn_id}: already attached in this process — skipping`);
       return;
     }
-    const ctx = (row.ctx ?? {}) as {
-      repoId?: string;
-      author?: { id: string; displayName: string };
-      body?: string;
-      seed?: boolean;
-      seedQuestionId?: string;
-      seedHaltWake?: { threadId: string; gen: number };
-      seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
-    };
-    if (
-      !row.container_id ||
-      !ctx.repoId ||
-      !ctx.author ||
-      ctx.body === undefined
-    ) {
-      // NOT a death sentence: the engine may be alive and running (its Redis stream heartbeats prove or
-      // disprove it) — this process just can't rebuild the tool closure. Leave the row for the watchdog,
-      // whose stream-liveness probe finalizes only genuinely dead turns.
-      this.logger.warn(
-        `re-attach turn ${row.turn_id}: insufficient registry ctx — skipping (watchdog owns cleanup)`,
-      );
-      return;
-    }
-    // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/jobId/author/body).
-    const stimulus: ChatStimulus = {
-      id: row.turn_id,
-      kind: 'chat',
-      trust: 'trusted',
-      orgId: row.org_id,
-      repoId: ctx.repoId,
-      jobId: row.job_id,
-      body: ctx.body,
-      author: ctx.author,
-      replyRoute: { surfaceId: 'web', jobRef: row.job_id },
-      receivedAt: new Date(),
-      ...(ctx.seed ? { seed: true } : {}),
-      ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
-      // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
-      // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
-      ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
-      // Same reasoning for the completion wake (decision d1) — else a reattached done-wake turn never
-      // stamps `done_waked_at` and the sweeps re-wake it forever.
-      ...(ctx.seedDoneWake ? { seedDoneWake: ctx.seedDoneWake } : {}),
-    };
-    // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
-    // container declares the curated onboarding toolset, so a re-attach that registers the normal map
-    // would reject those calls as "Unknown tool" (finish_onboarding at the end of a long run).
-    const reattachKind =
-      (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
-    const tools = this.buildTools(stimulus, reattachKind);
-    // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
-    // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
-    // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
-    // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
-    // 'main' — matches create() below (no lane arg).
-    this.turnHarness.resetLane(row.channel, row.job_id);
-    const streamer = this.turnHarness.create({
-      jobId: row.job_id,
-      orgId: row.org_id,
-      channel: row.channel,
-      // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
-      // the reattach's persisted summary is UNTAGGED, escapes `supersedeDoneWakeMessages`, and a later sweep
-      // leaves it as a duplicate alongside the sweep's own re-run.
-      ...(ctx.seedDoneWake
-        ? {
-            metaTag: {
-              doneWakeGen: ctx.seedDoneWake.gen,
-              doneWakeThreadId: ctx.seedDoneWake.threadId,
-            },
-          }
-        : {}),
-    });
-    const sandboxRow = await this.sandboxRows.findOne({
-      where: { job_id: row.job_id, org_id: row.org_id },
-    });
-    await this.store.setActivity(row.job_id, 'turn').catch(() => undefined);
     try {
-      const result = await this.engineRunner.reattach!(
-        row.turn_id,
-        row.container_id,
-        {
-          // Same durable-delivery ack handling as a fresh run: an `input_ack` replayed on re-attach still
-          // stamps its stimulus `delivered_at`, so a steer acked while the host was down can't redeliver.
-          onEvent: (e) => {
-            this.stampInputAck(e);
-            streamer.onEvent(e);
-          },
-          toolBridge: { jobId: row.job_id, tools },
-        },
-      );
-      if (result.sessionId && sandboxRow) {
-        sandboxRow.session_id = result.sessionId;
-        await this.sandboxRows.save(sandboxRow).catch(() => undefined);
-      }
-      await streamer.finish(
-        result.result,
-        result.usage
-          ? {
-              usage: result.usage,
-              contextTokens: result.usage.contextTokens ?? null,
-              contextLimit: resolveContextLimit(
-                result.usage.contextModel ?? result.usage.model,
-              ),
-            }
-          : undefined,
-      );
-      // SUCCESS TAIL — reattach runs OUTSIDE `runChatTurnInner`, so stamp the wake dedup markers here too
-      // (the same shared helper), else a reattached halt/done wake never stamps and the sweeps re-wake it
-      // forever. (This also makes the `seedHaltWake`/`seedDoneWake` preserve-comments above actually true.)
-      await this.stampWakeSuccessTails(stimulus);
-      void this.usageProjector?.record(
-        {
-          jobId: row.job_id,
-          orgId: row.org_id,
-          lane: row.lane,
-          kind: row.kind,
-          engine: 'claude',
-          turnId: row.turn_id,
-        },
-        result.usage,
-      );
-      this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
-    } catch (err) {
-      if (isEngineDetachedError(err)) {
-        // We lost the tail again (another respawn mid-re-attach), the turn didn't fail — persist NOTHING
-        // (the next boot's re-attach replays the whole stream; a partial flush here would double it).
+      const ctx = (row.ctx ?? {}) as {
+        repoId?: string;
+        author?: { id: string; displayName: string };
+        body?: string;
+        seed?: boolean;
+        seedQuestionId?: string;
+        seedHaltWake?: { threadId: string; gen: number };
+        seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
+      };
+      if (
+        !row.container_id ||
+        !ctx.repoId ||
+        !ctx.author ||
+        ctx.body === undefined
+      ) {
+        // NOT a death sentence: the engine may be alive and running (its Redis stream heartbeats prove or
+        // disprove it) — this process just can't rebuild the tool closure. Leave the row for the watchdog,
+        // whose stream-liveness probe finalizes only genuinely dead turns.
         this.logger.warn(
-          `re-attached turn ${row.turn_id} detached again — leaving it for the next boot re-attach`,
+          `re-attach turn ${row.turn_id}: insufficient registry ctx — skipping (watchdog owns cleanup)`,
         );
         return;
       }
-      this.logger.warn(
-        `re-attached turn ${row.turn_id} ended in error: ${err}`,
-      );
-      // A benign stream abort on a WAKE turn (halt or completion) will be re-delivered in full by the owed-
-      // wake sweep (owed stays true — the success stamp above never ran), so DISCARD the truncated partial
-      // rather than persisting a durable half-message. Matches the fresh-run error tail. Any other error (or a
-      // non-wake turn) keeps its partial as context.
-      if (this.isBenignStreamAbort(err) && (ctx.seedHaltWake || ctx.seedDoneWake)) {
-        await streamer.discard();
-      } else {
-        await streamer.finish();
+      // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/jobId/author/body).
+      const stimulus: ChatStimulus = {
+        id: row.turn_id,
+        kind: 'chat',
+        trust: 'trusted',
+        orgId: row.org_id,
+        repoId: ctx.repoId,
+        jobId: row.job_id,
+        body: ctx.body,
+        author: ctx.author,
+        replyRoute: { surfaceId: 'web', jobRef: row.job_id },
+        receivedAt: new Date(),
+        ...(ctx.seed ? { seed: true } : {}),
+        ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
+        // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
+        // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
+        ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
+        // Same reasoning for the completion wake (decision d1) — else a reattached done-wake turn never
+        // stamps `done_waked_at` and the sweeps re-wake it forever.
+        ...(ctx.seedDoneWake ? { seedDoneWake: ctx.seedDoneWake } : {}),
+      };
+      // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
+      // container declares the curated onboarding toolset, so a re-attach that registers the normal map
+      // would reject those calls as "Unknown tool" (finish_onboarding at the end of a long run).
+      const reattachKind =
+        (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
+      const tools = this.buildTools(stimulus, reattachKind);
+      // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
+      // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
+      // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
+      // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
+      // 'main' — matches create() below (no lane arg).
+      this.turnHarness.resetLane(row.channel, row.job_id);
+      const streamer = this.turnHarness.create({
+        jobId: row.job_id,
+        orgId: row.org_id,
+        channel: row.channel,
+        turnId: row.turn_id,
+        // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
+        // the reattach's persisted summary is UNTAGGED, escapes `supersedeDoneWakeMessages`, and a later sweep
+        // leaves it as a duplicate alongside the sweep's own re-run.
+        ...(ctx.seedDoneWake
+          ? {
+              metaTag: {
+                doneWakeGen: ctx.seedDoneWake.gen,
+                doneWakeThreadId: ctx.seedDoneWake.threadId,
+              },
+            }
+          : {}),
+      });
+      const sandboxRow = await this.sandboxRows.findOne({
+        where: { job_id: row.job_id, org_id: row.org_id },
+      });
+      await this.store.setActivity(row.job_id, 'turn').catch(() => undefined);
+      try {
+        const result = await this.engineRunner.reattach!(
+          row.turn_id,
+          row.container_id,
+          {
+            // Same durable-delivery ack handling as a fresh run: an `input_ack` replayed on re-attach still
+            // stamps its stimulus `delivered_at`, so a steer acked while the host was down can't redeliver.
+            onEvent: (e) => {
+              this.stampInputAck(e);
+              streamer.onEvent(e);
+            },
+            toolBridge: { jobId: row.job_id, tools },
+          },
+        );
+        if (result.sessionId && sandboxRow) {
+          sandboxRow.session_id = result.sessionId;
+          await this.sandboxRows.save(sandboxRow).catch(() => undefined);
+        }
+        if (this.lost(result)) {
+          // Another attacher already claimed (deleted) this turn's row ⇒ it owns the persist. Write nothing
+          // (the inner `finally` still runs endTurnActivity; the outer `finally` releases the attach slot).
+          await streamer.discard();
+          return;
+        }
+        await streamer.finish(
+          result.result,
+          result.usage
+            ? {
+                usage: result.usage,
+                contextTokens: result.usage.contextTokens ?? null,
+                contextLimit: resolveContextLimit(
+                  result.usage.contextModel ?? result.usage.model,
+                ),
+              }
+            : undefined,
+        );
+        // SUCCESS TAIL — reattach runs OUTSIDE `runChatTurnInner`, so stamp the wake dedup markers here too
+        // (the same shared helper), else a reattached halt/done wake never stamps and the sweeps re-wake it
+        // forever. (This also makes the `seedHaltWake`/`seedDoneWake` preserve-comments above actually true.)
+        await this.stampWakeSuccessTails(stimulus);
+        void this.usageProjector?.record(
+          {
+            jobId: row.job_id,
+            orgId: row.org_id,
+            lane: row.lane,
+            kind: row.kind,
+            engine: 'claude',
+            turnId: row.turn_id,
+          },
+          result.usage,
+        );
+        this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
+      } catch (err) {
+        if (isEngineDetachedError(err)) {
+          // We lost the tail again (another respawn mid-re-attach), the turn didn't fail — persist NOTHING
+          // (the next boot's re-attach replays the whole stream; a partial flush here would double it).
+          this.logger.warn(
+            `re-attached turn ${row.turn_id} detached again — leaving it for the next boot re-attach`,
+          );
+          return;
+        }
+        this.logger.warn(
+          `re-attached turn ${row.turn_id} ended in error: ${err}`,
+        );
+        // A benign stream abort on a WAKE turn (halt or completion) will be re-delivered in full by the owed-
+        // wake sweep (owed stays true — the success stamp above never ran), so DISCARD the truncated partial
+        // rather than persisting a durable half-message. Matches the fresh-run error tail. Any other error (or a
+        // non-wake turn) keeps its partial as context.
+        if (this.isBenignStreamAbort(err) && (ctx.seedHaltWake || ctx.seedDoneWake)) {
+          await streamer.discard();
+        } else if (this.engineRunner.consumeClaim?.(row.turn_id) === false) {
+          // Errored AFTER another attacher already claimed the row — discard the partial rather than
+          // double-finishing (row.turn_id IS the engine turnId on the reattach path, so the claim is exact).
+          await streamer.discard();
+        } else {
+          await streamer.finish();
+        }
+      } finally {
+        await this.store
+          .endTurnActivity(row.job_id)
+          .catch(() => undefined);
       }
     } finally {
-      await this.store
-        .endTurnActivity(row.job_id)
-        .catch(() => undefined);
+      if (this.engineRunner.tryClaimAttach) this.engineRunner.releaseAttach?.(row.turn_id);
     }
   }
 
@@ -2409,6 +2450,7 @@ export class AgentSessionManager
     let result;
     try {
       result = await runner.run(runArgs);
+      if (result.turnId) streamer.bindTurnId(result.turnId);
     } catch (err) {
       if (err instanceof BrainTurnAlreadyRunningError) {
         // Lost the check→register race: a concurrent/reattached brain turn is already live for this job, so
@@ -2445,6 +2487,12 @@ export class AgentSessionManager
       const benignAbort = this.isBenignStreamAbort(err);
       const isWakeTurn = !!(stimulus.seedHaltWake || stimulus.seedDoneWake);
       if (benignAbort && isWakeTurn) {
+        await streamer.discard();
+      } else if (this.engineRunner.consumeClaim?.(stimulus.id) === false) {
+        // Best-effort claim check: on the fresh-run path the engine turnId is generated INSIDE runner.run
+        // (randomUUID) and never surfaced here, so `stimulus.id` won't match it — consumeClaim returns
+        // undefined and we fall through to finish() (the safe back-compat default). The confirmed dup is the
+        // SUCCESS path, which IS gated above via `result.claimed`.
         await streamer.discard();
       } else {
         await streamer.finish();
@@ -2535,6 +2583,7 @@ export class AgentSessionManager
     // run the triage success tails), post ONE stable notice, and stop. The leader sweep auto-resumes at the
     // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
     if (result.sessionLimit) {
+      if (this.lost(result)) { await streamer.discard(); return; }
       const rlType = result.sessionLimit.rateLimitType;
       const resumeAt =
         result.sessionLimit.resetAt ?? (await this.usage.getResetAt(stimulus.orgId, rlType));
@@ -2586,6 +2635,7 @@ export class AgentSessionManager
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
     // no text block) + a `turn_meta` block (per-turn token usage + context-window occupancy, when the SDK
     // reported usage), then signal turn end so the client reconciles its live buffer against /messages.
+    if (this.lost(result)) { await streamer.discard(); return; }
     await streamer.finish(
       result.result,
       result.usage

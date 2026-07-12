@@ -509,6 +509,9 @@ export interface PipelineJob {
   createdBy?: JobProvenance | null;
   /** The jobs this one is blocked on (live blockers), for the "Blocked by" navigator row. `[]` unless status==='blocked'. */
   blockedBy?: JobBlocker[];
+  /** The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message).
+   *  null unless status==='blocked' and a seed exists. Powers the blocked overlay's pending-message preview. */
+  blockedSeedMessage?: string | null;
   /**
    * Which build path was committed at approval: `'direct'` (fast, brain-implemented) | `'plan'` (driver
    * multi-thread) | `null` (never approved — still an open/awaiting-approval proposal that could become
@@ -579,6 +582,7 @@ export type PipelineState =
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
       autoApprove?: boolean;
+      blockedSeedMessage?: string | null;
     };
 
 /** The Main brain session's task list, from either pipeline shape (`no_job` carries it too). */

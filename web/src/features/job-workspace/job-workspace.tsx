@@ -254,6 +254,9 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       ? (job.createdBy ?? null)
       : (inboxThread?.createdBy ?? null),
     blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
+    blockedSeedMessage: job
+      ? (job.blockedSeedMessage ?? null)
+      : (inboxThread?.blockedSeedMessage ?? null),
   };
 
   const onConversation = openConversation;
@@ -325,6 +328,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         live={status === "running" || status === "plan_review"}
         blocked={status === "blocked"}
         blockedBy={meta.blockedBy}
+        blockedSeedMessage={meta.blockedSeedMessage}
         mainDefaultFooter={pipeline?.mainDefaultFooter}
         onOpenPlan={onOpenPlan}
         onSelectNode={(node) => selectNode(node, { push: true })}
@@ -399,7 +403,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
-      <ReviewCommentsProvider>
+      <ReviewCommentsProvider jobRef={ref}>
         <div className="flex h-full min-h-0">
           {navAsDrawer ? null : navigatorPane(false)}
           {!belowXl ? (

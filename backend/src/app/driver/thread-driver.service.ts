@@ -38,8 +38,14 @@ import {
   type ToolBridgeOptions,
   type ToolImpl,
 } from '../engine';
+import type { GitAuth } from '../engine/engine.types';
 import { defaultResumeAt } from '../engine/session-limit';
-import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
+import {
+  GithubPrService,
+  GitIdentityService,
+  LocalGitService,
+  type FeatureSandbox,
+} from '../git';
 import {
   CHAT_SURFACE,
   type ChatSurface,
@@ -206,6 +212,7 @@ export class ThreadDriver implements JobDispatcher {
     private readonly store: DriverStoreService,
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     private readonly git: LocalGitService,
+    private readonly identities: GitIdentityService,
     private readonly pr: GithubPrService,
     private readonly turn: TurnRunnerService,
     private readonly visibility: PlanVisibilityService,
@@ -265,6 +272,31 @@ export class ThreadDriver implements JobDispatcher {
   private async repoConventionsFor(job: Job): Promise<ResolvedConventions | null> {
     if (!this.conventions) return null;
     return this.conventions.resolveForRepo(job.orgId, job.repoId).catch(() => null);
+  }
+
+  /**
+   * Re-resolve the authenticated-git for a SINGLE turn: the token (and, for app-mode orgs, the App bot
+   * commit identity) are fetched fresh every turn through the resolver — an installation token expires
+   * hourly and a >1h job would otherwise push with a dead token. The resolver memoizes (a Map hit unless
+   * near expiry), so this is cheap. `gitUrl` is stable and comes from the run-scoped resolved repo.
+   */
+  private async resolveTurnGitAuth(
+    orgId: string,
+    gitUrl: string,
+  ): Promise<GitAuth> {
+    const token = await this.creds.githubToken(orgId);
+    // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default 'pat'
+    // (today's behavior) rather than throwing mid-drive.
+    const mode = (await this.creds.githubAuthMode?.(orgId)) ?? 'pat';
+    const identity =
+      (await this.creds.githubCommitIdentity(orgId)) ??
+      (await this.identities.resolve(token));
+    return {
+      gitUrl,
+      mode,
+      ...(token ? { token } : {}),
+      ...(identity ? { identity } : {}),
+    };
   }
 
   /**
@@ -1528,7 +1560,10 @@ export class ThreadDriver implements JobDispatcher {
       scope: 'thread',
       // The fix turn commits + pushes its own work now — give it the authenticated remote (same as the
       // builder/gate/master-review turns carry).
-      gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
+      gitAuth: await this.resolveTurnGitAuth(
+        job.orgId,
+        repo.projectRepo.gitUrl,
+      ),
       ...(sandbox.containerId
         ? {
             containerId: sandbox.containerId,
@@ -2679,7 +2714,10 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
+          gitAuth: await this.resolveTurnGitAuth(
+            job.orgId,
+            repo.projectRepo.gitUrl,
+          ),
           richStream: true,
           turnMeta: {
             jobId: job.id,
@@ -2888,7 +2926,10 @@ export class ThreadDriver implements JobDispatcher {
           ...(repoConventions ? { repoConventions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
+          gitAuth: await this.resolveTurnGitAuth(
+            job.orgId,
+            repo.projectRepo.gitUrl,
+          ),
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
           // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
           // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
@@ -3356,7 +3397,10 @@ export class ThreadDriver implements JobDispatcher {
           ...(threadKindSpec('builder').reasoningEffort
             ? { modelReasoningEffort: threadKindSpec('builder').reasoningEffort }
             : {}),
-          gitAuth: { gitUrl: repo.projectRepo.gitUrl, token: repo.token, ...(repo.identity ? { identity: repo.identity } : {}) },
+          gitAuth: await this.resolveTurnGitAuth(
+            job.orgId,
+            repo.projectRepo.gitUrl,
+          ),
           richStream: true,
           toolBridge,
           turnMeta: {

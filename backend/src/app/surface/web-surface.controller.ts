@@ -626,6 +626,7 @@ export class WebSurfaceController {
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
+        blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -708,6 +709,7 @@ export class WebSurfaceController {
       halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
+      blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,

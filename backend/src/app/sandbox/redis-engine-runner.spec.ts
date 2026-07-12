@@ -12,6 +12,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine, ContainerInfo } from './container-engine.port';
+import type { SandboxProvider } from './sandbox-provider.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
 const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
@@ -20,7 +21,7 @@ function fakeRegistry() {
   return {
     register: vi.fn(async () => undefined),
     heartbeat: vi.fn(async () => undefined),
-    finalize: vi.fn(async () => undefined),
+    finalize: vi.fn(async () => true),
     getToolReply: vi.fn(async () => null),
     recordToolReply: vi.fn(async () => undefined),
   } as unknown as TurnRegistry & { register: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
@@ -88,7 +89,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       { kind: 'text', text: 'hello' },
       { kind: 'text', text: 'world' },
     ]);
-    expect(out).toEqual({ result: 'DONE', sessionId: 'sess-1' });
+    expect(out).toMatchObject({ result: 'DONE', sessionId: 'sess-1', claimed: true });
+    expect(out.turnId).toEqual(expect.any(String));
     expect(reg.register).toHaveBeenCalledOnce(); // turnMeta present → registered
     expect(reg.finalize).toHaveBeenCalledWith(expect.any(String), 'done');
   });
@@ -222,6 +224,27 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     await expect(runner.run(baseArgs(() => {}))).rejects.toThrow(/boom in sandbox/);
   });
 
+  it('does not retain an unreachable claim entry when a fresh run throws', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'error', message: 'boom in sandbox' }];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(fakeContainers(redis, frames), redis, fakeEnv, fakeActivity, reg);
+    let turnId = '';
+    (reg.register as ReturnType<typeof vi.fn>).mockImplementation(async (input: { turnId: string }) => {
+      turnId = input.turnId;
+    });
+
+    await expect(
+      runner.run({
+        ...baseArgs(() => {}),
+        turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'brain' },
+      }),
+    ).rejects.toThrow(/boom in sandbox/);
+
+    expect(turnId).toEqual(expect.any(String));
+    expect(runner.consumeClaim(turnId)).toBeUndefined();
+  });
+
   it('maps an auth error frame to EngineAuthError', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'error', message: '401 invalid', auth: true, sessionId: 's9' }];
@@ -340,7 +363,8 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
     expect(toolCalls).toEqual([{ name: 'submit_plan', args: { foo: 'bar' } }]);
     expect(sawProgress).toBe(true);
-    expect(out).toEqual({ result: 'DONE' });
+    expect(out).toMatchObject({ result: 'DONE', claimed: true });
+    expect(out.turnId).toEqual(expect.any(String));
     expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });
 
@@ -372,6 +396,70 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(env.env.GIT_AUTHOR_EMAIL).toBeUndefined();
     expect(env.env.GIT_COMMITTER_NAME).toBeUndefined();
     expect(env.env.GIT_COMMITTER_EMAIL).toBeUndefined();
+  });
+
+  it('injects the app-mode file-backed git helper and seeds the token file', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const writeGithubTokenFile = vi.fn(async () => undefined);
+    const runner = new RedisEngineRunner(
+      containers,
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+      undefined,
+      undefined,
+      { writeGithubTokenFile } as unknown as SandboxProvider,
+    );
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      turnMeta: { jobId: 'job-1', orgId: 'org-1', channel: 'repo-1', lane: 'main', kind: 'step' },
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: { gitUrl: 'https://github.com/o/r.git', token: 'ghs_123', mode: 'app' },
+      },
+    });
+
+    expect(writeGithubTokenFile).toHaveBeenCalledWith('job-1', 'ghs_123');
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_COUNT).toBe('2');
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+    expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
+    expect(env.env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
+    expect(env.env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
+    expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.env.GITHUB_TOKEN).toBe('ghs_123');
+    expect(env.env.GH_TOKEN).toBe('ghs_123');
+  });
+
+  it('blanks credential helpers when a GitHub target has no token', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: { gitUrl: 'https://github.com/o/r.git' },
+      },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_COUNT).toBe('1');
+    expect(env.env.GIT_CONFIG_KEY_0).toBe('credential.helper');
+    expect(env.env.GIT_CONFIG_VALUE_0).toBe('');
+    expect(env.env.GIT_TERMINAL_PROMPT).toBe('0');
+    expect(env.env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.env.GH_TOKEN).toBeUndefined();
   });
 
   it('injects author/committer env vars when target.gitAuth carries an identity', async () => {
@@ -475,7 +563,7 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
         await redis.xadd(turnKeys(turnId!).events, { t: 'final', r: { result: 'DONE' } });
         redis.releaseBlockingReads();
 
-        await expect(runPromise).resolves.toEqual({ result: 'DONE' });
+        await expect(runPromise).resolves.toMatchObject({ result: 'DONE', claimed: true, turnId });
       } finally {
         vi.useRealTimers();
       }

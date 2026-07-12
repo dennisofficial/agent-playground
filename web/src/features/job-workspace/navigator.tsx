@@ -148,6 +148,9 @@ export interface JobMeta {
   /** This job's live blockers — powers the "Blocked by" header row + detail pane. `[]` unless the job is
    *  actually `blocked` (or was and hasn't refreshed yet). */
   blockedBy?: JobBlocker[];
+  /** The pending seed message a born-blocked job will start on when it unblocks — powers the blocked
+   *  overlay's pending-message preview. null unless the job is `blocked` with a seed. */
+  blockedSeedMessage?: string | null;
 }
 
 /**
