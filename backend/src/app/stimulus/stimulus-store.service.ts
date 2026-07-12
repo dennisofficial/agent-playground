@@ -271,6 +271,8 @@ export class StimulusStoreService {
     body: string;
     /** Optional render-only card payload (e.g. a review-comments batch) carried on the persisted row. */
     card?: Record<string, unknown>;
+    /** Delivery priority (d18: `now` | `queue` | `later`); absent = `now`. Piggybacked into `reply_route` jsonb. */
+    priority?: 'now' | 'queue' | 'later';
   }): Promise<ChatStimulus> {
     // ATOMIC: the operator-visible `messages` bubble and the `stimuli` row that DRIVES the brain turn
     // must commit together. Two separate saves let a crash between them (e.g. a mid-turn process
@@ -299,7 +301,9 @@ export class StimulusStoreService {
           job_id: input.jobId,
           author_id: input.author.id,
           author_name: input.author.displayName,
-          reply_route: input.replyRoute,
+          reply_route: input.priority
+            ? { ...input.replyRoute, priority: input.priority }
+            : input.replyRoute,
           source: null,
           dedupe_key: null,
           severity: null,
@@ -318,6 +322,7 @@ export class StimulusStoreService {
       author: input.author,
       replyRoute: input.replyRoute,
       receivedAt: row.created_at,
+      ...(input.priority ? { priority: input.priority } : {}),
     };
   }
 
@@ -364,6 +369,9 @@ export class StimulusStoreService {
       .where('s.kind = :k', { k: 'chat' })
       .andWhere('s.delivered_at IS NULL')
       .andWhere('s.job_id IS NOT NULL')
+      // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
+      // along a turn that runs for some other reason (d18).
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
       .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
     return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id }));
   }
@@ -440,6 +448,7 @@ export class StimulusStoreService {
       },
       replyRoute: row.reply_route ?? { surfaceId: '', jobRef: row.job_id as string },
       receivedAt: row.created_at,
+      ...(row.reply_route?.priority ? { priority: row.reply_route.priority } : {}),
     };
   }
 

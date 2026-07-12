@@ -72,9 +72,13 @@ export class StimulusEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   author_name!: string | null;
 
-  /** Where Atlas replies to a chat stimulus (surface id + thread coordinate, JSON); null for events. */
+  /**
+   * Where Atlas replies to a chat stimulus (surface id + thread coordinate, JSON); null for events. Also
+   * carries the optional delivery `priority` (d18: `now` | `queue` | `later`) — piggybacked in this jsonb
+   * (via `->> 'priority'`) rather than a new column, since it's opportunistic metadata, not a FK/index target.
+   */
   @Column({ type: 'jsonb', nullable: true })
-  reply_route!: { surfaceId: string; jobRef: string } | null;
+  reply_route!: { surfaceId: string; jobRef: string; priority?: 'now' | 'queue' | 'later' } | null;
 
   // ─── event-only ─────────────────────────────────────────────────────────
   /** The gateway that produced an event, e.g. 'github' | 'webhook'; null for chat. */

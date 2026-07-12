@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { findLifecycleRule, type JitFireCtx } from '../prompt-kit/jit';
+import { findLifecycleRule, operatorMessageRules, type JitFireCtx } from '../prompt-kit/jit';
+import type { TurnChunk } from '../prompt-kit/harness';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 
 /** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant). */
@@ -47,5 +48,26 @@ export class JitHostExecutor {
         seedRow: { label: rule.seed.label ?? rule.id, chunkKey: rule.seed.chunkKey(fireCtx) },
       }) ?? ''
     );
+  }
+
+  /**
+   * The `operator-message` turn-prefix rail (d18), rendered as `TurnChunk`s ready to prepend to a composed
+   * operator turn. Every enabled rule's default render is empty (the reserved `memory` slot the follow-up
+   * recall job fills) — an empty render yields NO chunk, so an operator turn with no rail content stays
+   * byte-identical to the pre-JIT framing. `ctx.prependText` is threaded straight through once the recall
+   * job populates it.
+   */
+  collectOperatorPrepends(ctx: { jobId?: string; prependText?: string }): TurnChunk[] {
+    const chunks: TurnChunk[] = [];
+    for (const rule of operatorMessageRules()) {
+      const fireCtx: JitFireCtx = {
+        ...(ctx.jobId !== undefined ? { jobId: ctx.jobId } : {}),
+        ...(ctx.prependText !== undefined ? { prependText: ctx.prependText } : {}),
+      };
+      const body = rule.render(fireCtx);
+      if (!body) continue; // empty render (default no-op memory rail) → no prefix chunk → byte-identical
+      chunks.push({ kind: 'system_reminder', body, attrs: { reminderKind: rule.reminderKind ?? 'memory' } });
+    }
+    return chunks;
   }
 }

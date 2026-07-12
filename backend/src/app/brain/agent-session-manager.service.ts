@@ -90,6 +90,7 @@ import {
   renderDoneDelivery,
   doneRecordBody,
   frameAnswer,
+  composeTurn,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
@@ -194,6 +195,7 @@ import {
   deserializeFindings,
 } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
+import { JitHostExecutor } from './jit-host-executor';
 
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
@@ -409,6 +411,10 @@ export class AgentSessionManager
     // kinds on bootstrap so the leader watchdog can re-attach an orphaned-but-alive brain/compaction turn
     // continuously, not only at the once-per-boot sweep. @Optional matching this constructor's convention.
     @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
+    // Host-side JIT executor (Pillar 4) supplying the turn-prefix memory rail (d18). @Optional so unit
+    // tests construct the manager without it (undefined → no rail, default render is empty anyway); the
+    // @Global BrainModule supplies it live.
+    @Optional() private readonly jit?: JitHostExecutor,
   ) {}
 
   /**
@@ -1286,7 +1292,10 @@ export class AgentSessionManager
           this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
           return [] as ChatStimulus[];
         });
-      if (pending.length) await this.steerPending(live.turn_id, pending);
+      // Only `now`-priority messages steer a live turn; `queue`/`later` stay pending — they drain at
+      // turn-end (the turn-end re-pump) or ride along the next turn that runs for any other reason (d18).
+      const nowOnly = pending.filter(isNowPriority);
+      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
       return;
     }
 
@@ -1305,39 +1314,66 @@ export class AgentSessionManager
     return next;
   }
 
-  /** Run ONE fresh turn that consumes the thread's pending operator messages (coalesced, oldest first). */
-  private async deliverPendingViaFreshTurn(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void> {
+  /**
+   * Owned coalescing selection for a fresh operator turn (d18). Fetch the thread's eligible pending chat, then
+   * build the chronological `<user>` chunks (one per message), the id set to stamp delivered, and the wake flag
+   * (true when at least one pending message is wake-eligible — a thread whose only pending rows are `later`
+   * composes them as ride-along but must NOT start a turn on its own). Returns null when nothing is pending.
+   */
+  private async collectPendingForTurn(jobId: string): Promise<{
+    pending: ChatStimulus[];
+    userChunks: TurnChunk[];
+    ids: string[];
+    wake: boolean;
+  } | null> {
     const pending = await this.stimulusStore
       .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
       .catch((err) => {
         this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
         return [] as ChatStimulus[];
       });
-    if (pending.length === 0) return;
+    if (pending.length === 0) return null;
+    return {
+      pending,
+      userChunks: pending.map((p) => userChunkFor(p)),
+      ids: pending.map((p) => p.id),
+      wake: pending.some(isWakeEligible),
+    };
+  }
 
-    // A turn may have appeared since pumpThread's check (a boot re-attach resumed one). Steer it instead of
-    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+  /** Run ONE fresh turn that consumes the thread's pending operator messages (coalesced, oldest first). */
+  private async deliverPendingViaFreshTurn(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    const collected = await this.collectPendingForTurn(jobId);
+    if (!collected) return;
+    // Only WAKE for a wake-eligible (now/queue) message. A thread whose only pending rows are `later`
+    // composes them as ride-along into some OTHER turn — it must never start a turn on its own.
+    if (!collected.wake) return;
+
+    // A turn may have appeared since pumpThread's check (a boot re-attach resumed one). Steer the `now`
+    // messages into it instead of starting a SECOND turn on the same session; queue/later stay pending for
+    // the turn-end drain.
     const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
-      await this.steerPending(live.turn_id, pending);
+      const nowOnly = collected.pending.filter(isNowPriority);
+      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
       return;
     }
 
-    await this.stimulusStore.leaseChatStimuli(pending.map((p) => p.id));
-    const ids = pending.map((p) => p.id);
+    await this.stimulusStore.leaseChatStimuli(collected.ids);
+    const ids = collected.ids;
     // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
     // message); the brain reads them together as this turn's task. Base fields come from the oldest.
     const combined: ChatStimulus = {
-      ...pending[0],
-      body: pending.map((p) => p.body).join('\n\n'),
+      ...collected.pending[0],
+      body: collected.pending.map((p) => p.body).join('\n\n'),
       // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
       // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
       // is the clean fallback (used for logging + when `chunks` is absent on a replay).
-      chunks: pending.map((p) => userChunkFor(p)),
+      chunks: collected.userChunks,
     };
     await this.runChatTurn(combined, {
       // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
@@ -1828,6 +1864,12 @@ export class AgentSessionManager
       await this.store
         .endTurnActivity(stimulus.jobId)
         .catch(() => undefined);
+      // Turn-end re-pump (d18): drain any `queue` message that arrived mid-turn (it was intentionally NOT
+      // steered) into a fresh turn now rather than waiting the 30s sweep. Best-effort + idempotent —
+      // delivered rows are stamped, and a `later`-only thread won't wake (collectPendingForTurn's wake guard).
+      void this.pumpThread(stimulus.jobId, stimulus.orgId, stimulus.repoId).catch((err) =>
+        this.logger.debug(`turn-end re-pump failed (sweep will retry): ${err}`),
+      );
     }
   }
 
@@ -2148,11 +2190,25 @@ export class AgentSessionManager
       });
     }
 
-    // Render the envelope: notice/reminder chunks first (renderTurn keeps `<user>` last), then the body.
-    // A seed body is already framed XML — append it after the prefixes rather than re-wrapping it.
-    const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
-    const bodyText = this.engineBody(stimulus);
-    let task = framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText;
+    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder` (the reserved
+    // `memory` slot the follow-up recall job fills). Default render is empty → no chunk → byte-identical.
+    if (isOperatorAuthored(stimulus)) {
+      reminderChunks.push(...(this.jit?.collectOperatorPrepends({ jobId: stimulus.jobId }) ?? []));
+    }
+
+    // Compose the turn through the hub (d18): the operator path frames prefix chunks + chronological `<user>`
+    // chunks via composeTurn (byte-identical to the old inline `framedPrefix ? `${framedPrefix}\n${body}` :
+    // body`). A non-operator seed body is RAW/already-framed XML (engineBody returns it verbatim) — it can't
+    // be a `<user>` chunk, so that path keeps the inline prefix+body concat.
+    let task: string;
+    if (isOperatorAuthored(stimulus)) {
+      const userChunks = stimulus.chunks?.length ? stimulus.chunks : [userChunkFor(stimulus)];
+      task = composeTurn({ prefixChunks: [...noticeChunks, ...reminderChunks], userChunks });
+    } else {
+      const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
+      const bodyText = this.engineBody(stimulus);
+      task = framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText;
+    }
 
     // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
     // Open THIS turn with it as recovered memory so the fresh session (session_id is null → engine starts
@@ -6836,6 +6892,16 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
     stimulus.author.id !== ATLAS_AUTHOR_ID &&
     stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
   );
+}
+
+/** Wake-eligible (d18): `now`/`queue` (absent = `now`) may WAKE a fresh turn; `later` only rides along. */
+function isWakeEligible(s: ChatStimulus): boolean {
+  return (s.priority ?? 'now') !== 'later';
+}
+
+/** Steer-eligible (d18): only `now` (absent = `now`) steers mid-turn; `queue`/`later` never interrupt a live turn. */
+function isNowPriority(s: ChatStimulus): boolean {
+  return (s.priority ?? 'now') === 'now';
 }
 
 /** Build the `<user name at>` chunk for a human message — attribution reconstructed from the stimulus

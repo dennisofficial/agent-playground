@@ -68,4 +68,20 @@ describe('JitHostExecutor', () => {
     expect(injected.calls).toHaveLength(0);
     expect(override.calls).toHaveLength(1);
   });
+
+  describe('collectOperatorPrepends (d18 turn-prefix rail)', () => {
+    it('returns [] with no prependText — the default memory rail renders empty (byte-identical)', () => {
+      const executor = new JitHostExecutor(new FakeSurface());
+
+      expect(executor.collectOperatorPrepends({ jobId: 'j' })).toEqual([]);
+    });
+
+    it('returns one memory system_reminder chunk once prependText is supplied', () => {
+      const executor = new JitHostExecutor(new FakeSurface());
+
+      expect(executor.collectOperatorPrepends({ jobId: 'j', prependText: 'recalled memory' })).toEqual([
+        { kind: 'system_reminder', body: 'recalled memory', attrs: { reminderKind: 'memory' } },
+      ]);
+    });
+  });
 });
