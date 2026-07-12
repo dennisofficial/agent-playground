@@ -424,6 +424,38 @@ export class StimulusStoreService {
     return row ? this.rowToChatStimulus(row) : null;
   }
 
+  /**
+   * True when the thread already has a LIVE (undelivered) chat stimulus row whose `reply_route` points at the
+   * given seed card target. The boot backfill (AgentSessionManager) uses this to skip re-creating a durable row
+   * the pump already owns — so boot recovery and the steady-state sweep never double-deliver one answered/
+   * provided card. NOT-EXISTS style: a delivered row means the pump is done, so it does NOT block a backfill.
+   */
+  async hasChatStimulusForSeedTarget(
+    jobId: string,
+    target: { seedQuestionId?: string; seedSecretId?: string; seedFileId?: string },
+  ): Promise<boolean> {
+    const qb = this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL');
+    let hasTarget = false;
+    if (target.seedQuestionId) {
+      qb.andWhere("s.reply_route ->> 'seedQuestionId' = :q", { q: target.seedQuestionId });
+      hasTarget = true;
+    }
+    if (target.seedSecretId) {
+      qb.andWhere("s.reply_route ->> 'seedSecretId' = :sec", { sec: target.seedSecretId });
+      hasTarget = true;
+    }
+    if (target.seedFileId) {
+      qb.andWhere("s.reply_route ->> 'seedFileId' = :f", { f: target.seedFileId });
+      hasTarget = true;
+    }
+    if (!hasTarget) return false;
+    return (await qb.getCount()) > 0;
+  }
+
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
   async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli
