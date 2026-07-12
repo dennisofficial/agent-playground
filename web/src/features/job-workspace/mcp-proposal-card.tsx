@@ -22,6 +22,65 @@ function endpoint(s: WebMcpProposalServer): string {
 }
 
 /**
+ * One registered OAuth server row with its own inline Connect/Reconnect button. Each row owns its own
+ * `useMcpOAuthConnect` instance so `busy`/`result` stay scoped to this server — connecting one server
+ * never spins or mislabels another's button when a card proposes several OAuth servers.
+ */
+function OAuthServerRow({
+  orgId,
+  name,
+  scope,
+  connected,
+  needsReauth,
+  isOwner,
+}: {
+  orgId: string;
+  name: string;
+  scope: string;
+  connected: boolean;
+  needsReauth: boolean;
+  isOwner: boolean;
+}) {
+  const oauth = useMcpOAuthConnect(orgId);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Plug size={13} className="shrink-0 text-accent" />
+        <span className="font-mono text-[12px] font-medium text-text">{name}</span>
+        {connected ? (
+          <span className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "var(--green)" }}>
+            <CheckCircle2 size={12} style={{ color: "var(--green)" }} />
+            Connected
+          </span>
+        ) : needsReauth ? (
+          <span className="text-[11.5px] font-medium text-amber">Needs re-auth</span>
+        ) : (
+          <span className="text-[11.5px] text-dim">Not connected</span>
+        )}
+        <div className="flex-1" />
+        {isOwner ? (
+          <Button
+            size="sm"
+            variant="soft"
+            icon={connected || needsReauth ? <RefreshCw size={12} /> : <Plug size={12} />}
+            loading={oauth.busy}
+            loadingText="Connecting…"
+            onClick={() => oauth.connect({ scope, name })}
+          >
+            {connected || needsReauth ? "Reconnect" : "Connect"}
+          </Button>
+        ) : null}
+      </div>
+      {oauth.result ? (
+        <span className={`text-[11px] ${oauth.result.ok ? "text-green" : "text-red"}`}>
+          {oauth.result.text}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * A stack-matched MCP-server recommendation the onboarding brain posed via `propose_mcp_servers`. The brain
  * never registers servers itself — the OWNER approves this card, which commits each server on the repo
  * (owner-only on the server). Secret slots are filled afterwards via the normal secure secret card; an
@@ -68,45 +127,18 @@ export function McpProposalCard({
           <div className="flex flex-col gap-2 border-t border-border bg-surface-2 px-4 py-2.5">
             {oauthServers.map((s) => {
               const status = statusOf(s.name);
-              const connected = status?.oauthConnected ?? false;
-              const needsReauth = status?.needsReauth ?? false;
               return (
-                <div key={s.name} className="flex items-center gap-2">
-                  <Plug size={13} className="shrink-0 text-accent" />
-                  <span className="font-mono text-[12px] font-medium text-text">{s.name}</span>
-                  {connected ? (
-                    <span className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "var(--green)" }}>
-                      <CheckCircle2 size={12} style={{ color: "var(--green)" }} />
-                      Connected
-                    </span>
-                  ) : needsReauth ? (
-                    <span className="text-[11.5px] font-medium text-amber">Needs re-auth</span>
-                  ) : (
-                    <span className="text-[11.5px] text-dim">Not connected</span>
-                  )}
-                  <div className="flex-1" />
-                  {isOwner ? (
-                    <Button
-                      size="sm"
-                      variant="soft"
-                      icon={connected || needsReauth ? <RefreshCw size={12} /> : <Plug size={12} />}
-                      loading={oauth.busy}
-                      loadingText="Connecting…"
-                      onClick={() => oauth.connect({ scope: scopeOf, name: s.name })}
-                    >
-                      {connected || needsReauth ? "Reconnect" : "Connect"}
-                    </Button>
-                  ) : null}
-                </div>
+                <OAuthServerRow
+                  key={s.name}
+                  orgId={jobRef.orgId}
+                  name={s.name}
+                  scope={scopeOf}
+                  connected={status?.oauthConnected ?? false}
+                  needsReauth={status?.needsReauth ?? false}
+                  isOwner={isOwner}
+                />
               );
             })}
-            {oauth.result ? (
-              <span
-                className={`text-[11px] ${oauth.result.ok ? "text-green" : "text-red"}`}
-              >
-                {oauth.result.text}
-              </span>
-            ) : null}
           </div>
         ) : null}
       </div>
