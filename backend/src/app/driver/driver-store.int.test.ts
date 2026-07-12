@@ -515,6 +515,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       createdBy: null,
       autoApprove: false,
       blockedBy: [],
+      blockedSeedMessage: null,
     });
   });
 
