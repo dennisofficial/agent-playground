@@ -107,6 +107,17 @@ export const CONTINUATION_PREAMBLE: AgentMessage = agentMessage(
   ].join('\n'),
 );
 
+/**
+ * Fold a stashed compaction seed ({@link CONTINUATION_PREAMBLE} + the lean summary) into the next turn's task,
+ * so the fresh session (its `session_id` was nulled by the reseed) opens with the summary as recovered memory in
+ * the primacy slot. The hub owns the mint; the seed is read back from the durable sandbox row — brand-erased on
+ * that round-trip — so the caller re-crosses the seam with `fromExternal`. Byte-identical to the former inline
+ * `${seed}\n\n---\n\n${task}`.
+ */
+export function foldCompactionSeed(seed: AgentMessage, task: AgentMessage): AgentMessage {
+  return agentMessage(`${seed}\n\n---\n\n${task}`);
+}
+
 // ── Work-owed review nudge ──────────────────────────────────────────────────────────────────────────────
 
 /**

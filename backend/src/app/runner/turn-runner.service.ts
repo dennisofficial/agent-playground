@@ -25,7 +25,8 @@ import type {
   TurnMeta,
 } from '../engine';
 import type { FeatureSandbox } from '../git';
-import { agentMessage, type AgentMessage } from '../prompt-kit/message';
+import { type AgentMessage } from '../prompt-kit/message';
+import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { StepEntity } from '../persistence/entities';
@@ -194,7 +195,7 @@ export class TurnRunnerService {
     const needsResetNotice = sandbox.warm === false && !!priorSessionId;
     if (sandbox.warm === false) sandbox.warm = true;
     const task = needsResetNotice
-      ? agentMessage(`${SANDBOX_RESET_NOTICE}\n\n${input.task}`)
+      ? prependNotice(SANDBOX_RESET_NOTICE, input.task)
       : input.task;
 
     this.logger.log(

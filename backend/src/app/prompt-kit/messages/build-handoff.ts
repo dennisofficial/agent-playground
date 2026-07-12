@@ -21,7 +21,7 @@
  */
 
 import { renderHarnessTag } from '../harness/tag-vocabulary';
-import { agentMessage } from '../message';
+import { agentMessage, fromExternal, type AgentMessage } from '../message';
 
 /**
  * The structured handoff schema — the contract for a SOLID handoff. A fresh session must be able to CONTINUE
@@ -135,6 +135,60 @@ export const RECORD_LEG_HANDOFF_DESCRIPTION =
   'their verbatim errors; committed-vs-WIP on-disk state + commit SHA; decisions this session; verification ' +
   '(commands + exit codes + output tails); the single next safe action; open questions with options; and pointers ' +
   '(`/context/specs`). After calling this, STOP and yield — your WIP is on disk.';
+
+/**
+ * Compose the FRESH Leg's continuation seed — the hub-side factory for the driver's former inline join, so the
+ * assembly (and its `agentMessage` mint) lives in the hub, not free-handed at the call site. Frames the builder's
+ * OWN `record_leg_handoff` body — non-hub-authored text, so it crosses the seam via {@link fromExternal} — with
+ * the hub-authored {@link ROTATION_PREAMBLE} (primacy slot) and, when present, the carried open-task checklist.
+ * `carriedTasks` is the (possibly empty) `renderOpenLegTasks` block; an empty block is omitted. Byte-identical
+ * to the prior `[ROTATION_PREAMBLE, handoff, ...tasks].join('\n\n')`.
+ */
+export function composeLegSeed(handoff: string, carriedTasks: AgentMessage): AgentMessage {
+  return agentMessage(
+    [ROTATION_PREAMBLE, fromExternal(handoff), ...(carriedTasks ? [carriedTasks] : [])].join('\n\n'),
+  );
+}
+
+/**
+ * Fold a rotation seed into the fresh Leg's turn task: seed (primacy slot) → base task → {@link ROTATION_RESUME_TAIL}
+ * (recency slot, where LLM recall is highest). A non-rotated Leg (no seed) gets the bare base task unchanged.
+ */
+export function foldLegSeed(seed: AgentMessage | null, baseTask: AgentMessage): AgentMessage {
+  return agentMessage(
+    seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask,
+  );
+}
+
+/**
+ * Fold a turn-kick's task: append the freshly-probed running-services block (hub prose from
+ * `renderRunningServicesNote`) to the base task, THEN apply the {@link foldLegSeed} rotation fold. Appending
+ * to `baseTask` (rather than after the seed fold) keeps {@link ROTATION_RESUME_TAIL} in the recency slot for a
+ * rotated Leg. An empty services block leaves the base task unchanged. `seed` is the hub-composed seed read
+ * back from the durable step row — brand-erased on that round-trip, so it re-crosses the seam via
+ * {@link fromExternal}.
+ */
+export function foldLegTurn(
+  seed: string | null,
+  baseTask: AgentMessage,
+  servicesBlock: string,
+): AgentMessage {
+  const withServices = agentMessage(servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask);
+  return foldLegSeed(seed != null ? fromExternal(seed) : null, withServices);
+}
+
+/**
+ * Strip the `<context_pressure …>` wrapper off a rotation nudge so the VISIBLE transcript row shows the clean
+ * ask (the XML framing is engine-only; the operator sees prose). Trims the outer tag lines only. Lives in the
+ * hub alongside the nudges it strips, so the mint stays inside prompt-kit.
+ */
+export function stripContextPressureTag(nudge: AgentMessage): AgentMessage {
+  const stripped = nudge
+    .replace(/^<context_pressure[^>]*>\s*/, '')
+    .replace(/\s*<\/context_pressure>\s*$/, '')
+    .trim();
+  return agentMessage(stripped);
+}
 
 /** The `record_leg_handoff` tool's success reply — an explicit STOP so the model yields instead of continuing. */
 export const RECORD_LEG_HANDOFF_STOP =

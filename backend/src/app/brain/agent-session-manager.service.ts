@@ -82,6 +82,7 @@ import {
   COMPACTION_SYSTEM,
   COMPACTION_INSTRUCTION,
   CONTINUATION_PREAMBLE,
+  foldCompactionSeed,
   renderWorkOwedNudge,
   renderRequestChangesDelivery,
   renderEventDelivery,
@@ -93,6 +94,7 @@ import {
   doneRecordBody,
   frameAnswer,
   composeTurn,
+  composeSeedTurn,
   maskedSecretNotice,
   maskedFileNotice,
   wakeForProvisioningFailureBody,
@@ -2201,9 +2203,13 @@ export class AgentSessionManager
       const userChunks = stimulus.chunks?.length ? stimulus.chunks : [userChunkFor(stimulus)];
       task = composeTurn({ prefixChunks: [...noticeChunks, ...reminderChunks], userChunks });
     } else {
-      const framedPrefix = renderTurn([...noticeChunks, ...reminderChunks]);
-      const bodyText = this.engineBody(stimulus);
-      task = agentMessage(framedPrefix ? `${framedPrefix}\n${bodyText}` : bodyText);
+      // Non-operator seed body is RAW/already-framed passthrough (`engineBody` returns it verbatim) — it can't
+      // be a `<user>` chunk, so frame it through the hub's seed-turn factory; `fromExternal` marks the non-hub
+      // body at the seam rather than minting it locally.
+      task = composeSeedTurn(
+        [...noticeChunks, ...reminderChunks],
+        fromExternal(this.engineBody(stimulus)),
+      );
     }
 
     // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
@@ -2212,9 +2218,12 @@ export class AgentSessionManager
     // — NOT here — so a crash before the new session exists re-folds it next turn rather than dropping it.
     // (Reset and compaction are mutually exclusive: compaction nulls the session id, so `wasReset &&
     // sessionId` above cannot also be true.)
-    const hadCompactionSeed = !!sandboxRow?.pending_compaction_seed;
-    if (hadCompactionSeed) {
-      task = agentMessage(`${sandboxRow!.pending_compaction_seed}\n\n---\n\n${task}`);
+    const compactionSeed = sandboxRow?.pending_compaction_seed ?? null;
+    const hadCompactionSeed = !!compactionSeed;
+    if (compactionSeed) {
+      // The seed was hub-composed (CONTINUATION_PREAMBLE + summary) then stashed on the sandbox row, so it
+      // re-crosses the seam as brand-erased external text; the fold + mint stay inside the hub factory.
+      task = foldCompactionSeed(fromExternal(compactionSeed), task);
     }
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free

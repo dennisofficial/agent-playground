@@ -79,15 +79,16 @@ import {
   renderOpenLegTasks,
   renderOpenTasksWarning,
   renderRunningServicesNote,
-  ROTATION_PREAMBLE,
-  ROTATION_RESUME_TAIL,
+  composeLegSeed,
+  foldLegTurn,
+  stripContextPressureTag,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
   renderCommitTurnTask,
 } from '../prompt-kit';
 import { chunkKey } from '../prompt-kit/harness';
-import { agentMessage, fromExternal, type AgentMessage } from '../prompt-kit/message';
+import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -2323,7 +2324,7 @@ export class ThreadDriver implements JobDispatcher {
     // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
     const servicesBlock =
       thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
-    const task = this.foldTurn(legSeed, baseTask, servicesBlock);
+    const task = foldLegTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2438,7 +2439,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+          legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2452,7 +2453,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+        legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
       }
       report = result!.report;
 
@@ -3008,33 +3009,9 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async buildLegSeed(threadId: string, handoff: string): Promise<AgentMessage> {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
-    const tasksBlock = renderOpenLegTasks(tasks);
-    return agentMessage(
-      [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n'),
-    );
-  }
-
-  /**
-   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
-   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
-   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
-   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
-   */
-  private foldLegSeed(seed: string | null, baseTask: AgentMessage): AgentMessage {
-    return agentMessage(
-      seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask,
-    );
-  }
-
-  /**
-   * Fold a turn-kick's task: append the freshly-probed running-services block to the batch task, THEN apply
-   * the leg-seed fold. Appending to `baseTask` (rather than after the seed fold) keeps `ROTATION_RESUME_TAIL`
-   * in the RECENCY slot for a rotated Leg while still surfacing what's already online. An empty block leaves
-   * the task unchanged.
-   */
-  private foldTurn(seed: string | null, baseTask: AgentMessage, servicesBlock: string): AgentMessage {
-    const withServices = agentMessage(servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask);
-    return this.foldLegSeed(seed, withServices);
+    // Compose through the hub factory (byte-identical to the former inline join) — the mint and the
+    // `fromExternal` seam for the self-authored handoff both live inside prompt-kit, not at this call site.
+    return composeLegSeed(handoff, renderOpenLegTasks(tasks));
   }
 
   /**
@@ -3581,16 +3558,6 @@ const COMMIT_NUDGE_MAX = 2;
 /** Backstop on Leg rotations within a single batch: a runaway thread that re-crosses the HARD threshold every
  *  Leg can't spin forever. On the cap we kick one final Leg with rotation DISARMED and run it to completion. */
 const MAX_LEGS_PER_BATCH = 8;
-
-/** Strip the `<context_pressure …>` wrapper off a rotation nudge so the VISIBLE transcript row shows the
- *  clean ask (the XML framing is engine-only; the operator sees prose). Trims the outer tag lines only. */
-function stripContextPressureTag(nudge: AgentMessage): AgentMessage {
-  const stripped = nudge
-    .replace(/^<context_pressure[^>]*>\s*/, '')
-    .replace(/\s*<\/context_pressure>\s*$/, '')
-    .trim();
-  return agentMessage(stripped);
-}
 
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {
