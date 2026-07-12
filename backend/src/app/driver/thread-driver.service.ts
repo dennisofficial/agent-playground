@@ -1184,7 +1184,12 @@ export class ThreadDriver implements JobDispatcher {
       // (which would let a single Anthropic blip permanently stall EVERY in-flight job; 07-09 incident). Keep the
       // job `running` with the thread `awaiting_input` + owed wake, regardless of prior attempts.
       if (term?.blocked?.reason === 'judge_unavailable') {
-        text = `:hourglass_flowing_sand: *${thread.brief}* is done but the live-verification judge is temporarily unavailable — holding to retry when it recovers (not counted against the fix budget).`;
+        // Name the judge that's actually down via its own `detail` (static- or live-verification), rather
+        // than hardcoding one: either sibling gate can raise `judge_unavailable`, so blaming the live judge
+        // is wrong (and drops the specific detail) when the STATIC judge is the one that's unreachable.
+        const detail =
+          term.blocked.detail ?? 'a verification judge is temporarily unavailable';
+        text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
       } else {
         const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
         if (spent >= HALT_FIX_ATTEMPT_CAP) {
@@ -1880,18 +1885,26 @@ export class ThreadDriver implements JobDispatcher {
           };
           // Run BOTH cheap warm-turn judges against the SAME candidate (decision d2/d3): the static-check
           // judge (typecheck/lint/diagnostics/tests) and the live-verification judge (live e2e). Block if
-          // EITHER is inadequate — prefer the static block so a static miss surfaces first — and carry BOTH
-          // verdicts on the persisted record (jsonb, no migration). Latch ONLY an ACCEPTED `done`: a judge
-          // DOWNGRADE (status still 'blocked', returned with a `warning`) is a REJECTED claim the orchestrator
-          // must be able to fix and re-`complete_thread` in the SAME warm turn (ADR 0005's warning-retry).
+          // EITHER is inadequate — and carry BOTH verdicts on the persisted record (jsonb, no migration).
+          // Latch ONLY an ACCEPTED `done`: a judge DOWNGRADE (status still 'blocked', returned with a
+          // `warning`) is a REJECTED claim the orchestrator must be able to fix and re-`complete_thread` in
+          // the SAME warm turn (ADR 0005's warning-retry).
           const staticGate = await this.gateStaticVerification(
             job, thread, sandbox, record, sectionStartSha, candidate,
           );
           const liveGate = await this.gateLiveVerification(
             job, thread, sandbox, record, sectionStartSha, candidate,
           );
+          // Pick `primary` by reason SEVERITY, not by which gate happens to be blocked first: a firm
+          // `unverified` finding from one judge must win over a transient `judge_unavailable` hold from the
+          // other, otherwise a real defect gets masked behind an infra hold (which `haltJob` retries without
+          // consuming the fix budget or escalating). Static wins genuine ties (a static miss surfaces first).
+          const severity = (r: ThreadTerminalRecord): number =>
+            r.status !== 'blocked' ? 0 : r.blocked?.reason === 'unverified' ? 2 : 1;
           const primary =
-            staticGate.record.status === 'blocked' ? staticGate.record : liveGate.record;
+            severity(staticGate.record) >= severity(liveGate.record)
+              ? staticGate.record
+              : liveGate.record;
           const gatedRecord: ThreadTerminalRecord = {
             ...primary,
             ...(staticGate.record.staticVerification
