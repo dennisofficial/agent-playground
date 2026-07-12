@@ -31,6 +31,9 @@ export interface PromptCtx {
     branch?: string;
     /** The base branch the build cuts from (`job.baseBranch` ?? the repo default). */
     baseBranch?: string;
+    /** True when this repo is the Atlas repo itself (slug === ATLAS_REPO_SLUG). Gates the atlas-prod host-tool
+     *  fragment so its tools are only DESCRIBED where they're actually registered. Absent everywhere else. */
+    isAtlasRepo?: boolean;
   } | null;
   /** User/org-specific settings woven into the prompt. */
   settings?: {

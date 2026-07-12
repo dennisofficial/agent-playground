@@ -206,6 +206,33 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   propose_mcp_removal: { name: 'stripe', rationale: 'No longer used.', scope: 'org' },
   propose_convention_profile: { slug: 'backend-style', rationale: 'Codify the existing convention.' },
   finish_onboarding: { summary: 'Boots green.', verified: 'Brought up the API and worker; both healthy.' },
+
+  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
+  atlas_query: {
+    sql: 'SELECT id FROM jobs WHERE id = $1',
+    params: ['j1'],
+    format: 'json',
+    limit: 100,
+  },
+  atlas_schema: {},
+  atlas_job_overview: { jobId: 'j1' },
+  atlas_session_raw: {
+    jobId: 'j1',
+    sessionId: 's1',
+    raw: false,
+    role: 'assistant',
+    thinking: true,
+    text: true,
+    tools: true,
+    errors: true,
+    tail: 80,
+    since: '2026-07-01T00:00:00.000Z',
+    grep: 'error',
+  },
+  atlas_context_read: { jobId: 'j1', path: 'specs/02-atlas-prod-mcp.md' },
+  atlas_worktree_tree: { jobId: 'j1', subpath: 'src' },
+  atlas_worktree_file: { jobId: 'j1', path: 'src/index.ts' },
+  propose_prod_write: { sql: "UPDATE threads SET halt_fix_attempts = 0 WHERE id = 't1'" },
 };
 
 describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {

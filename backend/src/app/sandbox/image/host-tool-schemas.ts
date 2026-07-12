@@ -340,6 +340,46 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     summary: z.string().optional(),
     verified: z.string(),
   },
+
+  // ── atlas-prod tools (relocated prod-diagnostics reads + gated write) ────────────────────────
+  atlas_query: {
+    sql: z.string(),
+    params: z.array(z.unknown()).optional(),
+    format: z.enum(['json', 'jsonl', 'csv', 'tsv']).optional(),
+    limit: z.number().optional(),
+  },
+  atlas_schema: {},
+  atlas_job_overview: {
+    jobId: z.string(),
+  },
+  atlas_session_raw: {
+    jobId: z.string(),
+    sessionId: z.string().optional(),
+    raw: z.boolean().optional(),
+    role: z.enum(['user', 'assistant']).optional(),
+    thinking: z.boolean().optional(),
+    text: z.boolean().optional(),
+    tools: z.boolean().optional(),
+    errors: z.boolean().optional(),
+    tail: z.number().optional(),
+    since: z.string().optional(),
+    grep: z.string().optional(),
+  },
+  atlas_context_read: {
+    jobId: z.string(),
+    path: z.string().optional(),
+  },
+  atlas_worktree_tree: {
+    jobId: z.string(),
+    subpath: z.string().optional(),
+  },
+  atlas_worktree_file: {
+    jobId: z.string(),
+    path: z.string(),
+  },
+  propose_prod_write: {
+    sql: z.string(),
+  },
 };
 
 export const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -441,6 +481,24 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
     'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
     'auth — not just a local health check.',
+
+  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
+  atlas_query:
+    'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the response shape: json (default, rows array), jsonl, csv, or tsv (rendered text). Large results are auto-written to a file in /playground (you get back a path + preview) — use jsonl/csv for grep/jq/python/duckdb.',
+  atlas_schema:
+    'List every public table and its columns (name, data type, nullability) from information_schema — the map for writing atlas_query SQL.',
+  atlas_job_overview:
+    "A job's core status fields plus its thread list (with a one-line failure summary per thread).",
+  atlas_session_raw:
+    'Raw Claude Code session JSONL for a job — list sessions, render a session (atlas-tx `show` semantics), or grep across sessions.',
+  atlas_context_read:
+    "A job's durable /context dir (specs/generated/artifacts) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
+  atlas_worktree_tree: "A job's git worktree file tree (skips .git, node_modules).",
+  atlas_worktree_file: "One file's contents from a job's git worktree.",
+  propose_prod_write:
+    'Propose an arbitrary single-statement SQL WRITE (INSERT/UPDATE/DELETE/WITH) against the production ' +
+    'database. Structurally gated: this only PROPOSES the statement — it is previewed and an operator must ' +
+    'approve it before anything executes. Nothing runs unapproved.',
 };
 
 /**
