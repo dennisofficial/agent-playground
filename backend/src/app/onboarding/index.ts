@@ -5,6 +5,10 @@
 export { OnboardingModule } from './onboarding.module';
 export { CredentialResolver } from './credential-resolver.service';
 export {
+  CredentialRefreshService,
+  CredentialNeedsReauthError,
+} from './credential-refresh.service';
+export {
   OnboardingService,
   slugifyRepo,
   type OnboardingStatus,

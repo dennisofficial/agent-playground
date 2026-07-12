@@ -8,6 +8,7 @@ import { subscribeSse } from "./sse-manager";
 import type { InboxThread } from "./inbox";
 import type { JobRef } from "./job-api";
 import type { WireOrgUsage } from "./types";
+import { writeUsageCache } from "./usage-cache";
 import {
   applyStreamFrame,
   endLiveTurn,
@@ -207,7 +208,9 @@ export function useJobEvents(ref: JobRef): void {
         // Subscription-usage push (distinct from the per-turn `stream`/`usage` context-window frame): the
         // backend recomputed this org's usage snapshot (a harvested-window burn during a turn, or an account
         // switch). The stream is already server-filtered to this connection's org, so patch the ring's cache
-        // in place — no refetch, no poll.
+        // in place — no refetch, no poll. Mirror it to localStorage too; a pushed snapshot is as real as a
+        // REST-fetched one, and the next reload should seed from it even if no ring component is mounted now.
+        writeUsageCache(qk.orgUsage(orgId).join(":"), frame.usage, Date.now());
         qc.setQueryData(qk.orgUsage(orgId), frame.usage);
         return;
       }

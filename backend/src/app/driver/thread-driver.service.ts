@@ -53,6 +53,7 @@ import {
   webShipReviewCard,
 } from '../surface';
 import { CredentialResolver } from '../onboarding';
+import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { McpResolver, McpOAuthService } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
@@ -193,6 +194,22 @@ function isTransientDriveError(err: unknown): boolean {
  */
 const REVIEW_LENS_CONCURRENCY = 8;
 
+/**
+ * A Claude auth halt whose selected credential was refreshed THIS recently is treated as a lost rotation
+ * race (another turn/keep-alive just rotated the token, so the DB already holds a fresh one) rather than a
+ * dead login — the turn is auto-retried instead of flipped to `needs_reauth`. Kept comfortably above a
+ * single turn's refresh-then-fail window.
+ */
+const AUTH_ROTATION_RACE_MS = 2 * 60_000;
+
+/** How many times a single job may auto-retry a lost-rotation-race auth halt before it's surfaced as a
+ *  genuine `needs_reauth` failure. */
+const AUTH_MAX_AUTO_RETRIES = 2;
+
+/** Short delay before a lost-rotation-race auto-retry re-drives, so the fresh token has settled. The leader
+ *  `SessionResumeSweep` fires the actual resume once this clock is due. */
+const AUTH_RETRY_BACKOFF_MS = 10_000;
+
 /** The model the read-only review-lens FINDER turns run on — Sonnet, not the default Opus worker. The
  *  finding task is well within Sonnet's capability and moving the N per-thread finder turns off Opus is the
  *  dominant token win for the review fan-out. The post_review FIX turn keeps the default worker model. */
@@ -265,7 +282,19 @@ export class ThreadDriver implements JobDispatcher {
     // it found but is deferring (too big to fix inline, not a blocker). @Global TicketsModule; @Optional so
     // unit tests construct the driver without it (undefined → capture_ticket reports it's unavailable).
     @Optional() private readonly tickets?: TicketService,
+    // @Global OnboardingModule. @Optional so unit tests construct the driver without it (undefined → the
+    // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
+    // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
+    @Optional() private readonly claudeCreds?: ClaudeCredentialStore,
   ) {}
+
+  /**
+   * Per-job auto-retry counter for the "lost the rotation race" auth halt (Thread 1, step 6). In-memory by
+   * design — no schema migration is allowed for this fix, and the residual (a process restart forgets the
+   * count) only ever GRANTS a fresh retry budget, never hangs. Cleared on a successful drive and on the
+   * terminal `needs_reauth` surfacing.
+   */
+  private readonly authRetryAttempts = new Map<string, number>();
 
   /** The repo's attached house-style, or null when none. Best-effort: a resolver hiccup never sinks a build. */
   private async repoConventionsFor(job: Job): Promise<ResolvedConventions | null> {
@@ -655,6 +684,9 @@ export class ThreadDriver implements JobDispatcher {
     this.active.add(jobId);
     try {
       await this.runJobWithTransientRetry(jobId);
+      // A clean drive clears the lost-rotation-race auto-retry budget so a future, unrelated auth halt on
+      // this job starts fresh.
+      this.authRetryAttempts.delete(jobId);
     } catch (err) {
       if (isEngineDetachedError(err)) {
         // The host lost its tail to a still-running turn (see EngineDetachedError) — the engine is alive and
@@ -680,7 +712,10 @@ export class ThreadDriver implements JobDispatcher {
       if (err instanceof EngineAuthError) {
         // A credential/401 halt — HALT (don't fail): the phase is preserved and the unfinished step's
         // session_id is persisted, so a ping (`resumePaused`) continues the SAME session once creds are
-        // fixed. Re-driving now would just 401 again, so we wait for the human.
+        // fixed. Re-driving blindly would just 401 again — but a Claude personal cred whose token was
+        // rotated by a CONCURRENT turn/keep-alive an instant ago means this turn merely lost the rotation
+        // race and the DB already holds a fresh token; a bounded auto-retry recovers it (the pre-turn
+        // `ensureFresh` will pick up the fresh token). Otherwise it's a genuinely dead login → `needs_reauth`.
         this.logger.warn(
           `job=${jobId} halted on credential error: ${err.message}`,
         );
@@ -691,7 +726,7 @@ export class ThreadDriver implements JobDispatcher {
             at: new Date().toISOString(),
           })
           .catch(() => undefined);
-        await this.relayPaused(jobId, err);
+        await this.classifyAndSurfaceAuthHalt(jobId, err);
       } else if (isSessionLimitError(err)) {
         // A Claude subscription SESSION/USAGE limit — PARK (don't fail): the phase is preserved and the
         // unfinished step's session_id was persisted at the throw, so the lane resumes the SAME session. It
@@ -796,11 +831,84 @@ export class ThreadDriver implements JobDispatcher {
     }
   }
 
+  /**
+   * Classify a Claude auth halt and either AUTO-RETRY it (a lost rotation race — the selected credential was
+   * refreshed by a concurrent actor an instant ago, so the DB already holds a fresh token) or SURFACE it as a
+   * genuine `needs_reauth` failure. The halt is already set by the caller; this only decides recovery.
+   */
+  private async classifyAndSurfaceAuthHalt(
+    jobId: string,
+    err: EngineAuthError,
+  ): Promise<void> {
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    const orgId = job?.orgId;
+    const selected =
+      orgId && this.claudeCreds
+        ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
+        : null;
+    const refreshedAgoMs =
+      selected?.lastRefreshedAt != null
+        ? Date.now() - selected.lastRefreshedAt.getTime()
+        : Number.POSITIVE_INFINITY;
+    const lostRotationRace = refreshedAgoMs <= AUTH_ROTATION_RACE_MS;
+    const attempts = this.authRetryAttempts.get(jobId) ?? 0;
+
+    if (lostRotationRace && attempts < AUTH_MAX_AUTO_RETRIES) {
+      // Park on the auto-resume clock so the leader `SessionResumeSweep` re-drives the preserved session via
+      // `resumePaused` after a short backoff — no scary "paused" notice, since this self-heals in seconds.
+      this.authRetryAttempts.set(jobId, attempts + 1);
+      const resumeAt = new Date(Date.now() + AUTH_RETRY_BACKOFF_MS).toISOString();
+      await this.store
+        .setSessionResume(jobId, resumeAt, {
+          lane: 'build',
+          reason: err.message,
+          resetSource: 'usage_api',
+        })
+        .catch(() => undefined);
+      this.logger.warn(
+        `job=${jobId} auth halt but selected cred refreshed ${Math.round(
+          refreshedAgoMs / 1000,
+        )}s ago — lost the rotation race; auto-retry ${
+          attempts + 1
+        }/${AUTH_MAX_AUTO_RETRIES} at ${resumeAt}`,
+      );
+      return;
+    }
+
+    // Genuine failure (or the retry budget is spent): flip the selected cred to `needs_reauth` so Settings
+    // shows a reconnect affordance, then post a pause notice and wait for the human. Only claim the login is
+    // dead (the actionable reconnect copy) when we actually marked it; otherwise fall back to the generic
+    // credential-pause notice.
+    this.authRetryAttempts.delete(jobId);
+    let markedReauth = false;
+    if (orgId && selected && this.claudeCreds) {
+      markedReauth = await this.claudeCreds
+        .markNeedsReauth(orgId, selected.id, err.message)
+        .then(() => true)
+        .catch(() => false);
+    }
+    await this.relayPaused(
+      jobId,
+      err,
+      markedReauth
+        ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
+        : undefined,
+    );
+  }
+
   /** Post a "paused on a credential error" notice so the human fixes creds + pings resume. Durable: writes
    *  DIRECTLY to `messages` via the block sink FIRST (independent of route resolution / the live SSE post,
-   *  which is only best-effort) — see {@link relayFailure} for why. */
-  private async relayPaused(jobId: string, err: unknown): Promise<void> {
-    const text = `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
+   *  which is only best-effort) — see {@link relayFailure} for why. An `overrideText` swaps the generic body
+   *  for an actionable one (e.g. the `needs_reauth` reconnect prompt). */
+  private async relayPaused(
+    jobId: string,
+    err: unknown,
+    overrideText?: string,
+  ): Promise<void> {
+    const text =
+      overrideText != null
+        ? `:lock: Build paused — ${overrideText}\n_Your work + the engine session are saved; resume (or reply here) to continue the SAME session._`
+        : `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',

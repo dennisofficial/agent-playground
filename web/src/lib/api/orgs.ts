@@ -1,11 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
 import type { WireOrgUsage } from "./types";
+import { readUsageCache, removeUsageCache, usePersistUsage } from "./usage-cache";
 
 /**
  * Org-scoped reads + the credentials write for the settings page. All hit the Atlas app directly with the
@@ -14,6 +16,8 @@ import type { WireOrgUsage } from "./types";
  */
 
 const BASE = `${env.NEXT_PUBLIC_HTTP_URL}/web`;
+
+const usageCacheKey = (key: readonly string[]) => key.join(":");
 
 async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetchWithRefresh(`${BASE}${path}`, {
@@ -270,7 +274,9 @@ export function useAddClaudeCredential(orgId: string) {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
+    onSuccess: (credential) => {
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credential.id)));
+      if (credential.isSelected) removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -289,6 +295,7 @@ export function useSelectClaudeCredential(orgId: string) {
         body: JSON.stringify({ credentialId }),
       }),
     onSuccess: () => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -306,7 +313,9 @@ export function useDeleteClaudeCredential(orgId: string) {
       webJson<{ ok: true }>(`/orgs/${orgId}/claude-credentials/${credentialId}`, {
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onSuccess: (_result, credentialId) => {
+      removeUsageCache(usageCacheKey(qk.orgUsage(orgId)));
+      removeUsageCache(usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)));
       void qc.invalidateQueries({ queryKey: qk.orgClaudeCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
@@ -350,16 +359,24 @@ export function useCodexAccount(orgId: string, enabled = true) {
  * means "unknown right now".
  */
 export function useOrgUsage(orgId: string) {
-  return useQuery({
+  const cacheKey = useMemo(() => usageCacheKey(qk.orgUsage(orgId)), [orgId]);
+  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
+  const query = useQuery({
     queryKey: qk.orgUsage(orgId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/usage`),
     enabled: Boolean(orgId),
     staleTime: 30_000,
+    // Seed the last-known value from localStorage so the ring paints instantly on mount; its known age still
+    // lets `staleTime` fire a refetch when it's stale.
+    initialData: seed?.data,
+    initialDataUpdatedAt: seed?.at,
     // Re-enable focus refetch (the app disables it globally) so the documented
     // backstop is real: with the poll dropped, this is how a client on an instance
     // that missed the single-process SSE push recovers a stale ring.
     refetchOnWindowFocus: true,
   });
+  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
+  return query;
 }
 
 /**
@@ -368,13 +385,22 @@ export function useOrgUsage(orgId: string) {
  * {@link useOrgUsage} — always 200, `ok:false` just means "unknown right now". Do NOT call for setup tokens.
  */
 export function useCredentialUsage(orgId: string, credentialId: string, enabled = true) {
-  return useQuery({
+  const cacheKey = useMemo(
+    () => usageCacheKey(qk.orgCredentialUsage(orgId, credentialId)),
+    [orgId, credentialId],
+  );
+  const seed = useMemo(() => readUsageCache<WireOrgUsage>(cacheKey), [cacheKey]);
+  const query = useQuery({
     queryKey: qk.orgCredentialUsage(orgId, credentialId),
     queryFn: () => webJson<WireOrgUsage>(`/orgs/${orgId}/claude-credentials/${credentialId}/usage`),
     enabled: Boolean(orgId) && Boolean(credentialId) && enabled,
     staleTime: 180_000,
     refetchInterval: 180_000,
+    initialData: seed?.data,
+    initialDataUpdatedAt: seed?.at,
   });
+  usePersistUsage(cacheKey, query.data, query.dataUpdatedAt);
+  return query;
 }
 
 /**

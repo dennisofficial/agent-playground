@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
   ClaudeUsageWindowKey,
@@ -11,7 +10,7 @@ import type {
 } from '@workspace/shared';
 import { resetEpochToIso } from '../engine/session-limit';
 import { ClaudeCredentialStore } from './claude-credential.store';
-import { DEFAULT_CLAUDE_OAUTH_CONFIG, refresh, type ClaudeOAuthConfig } from './claude-oauth.client';
+import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
 import { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus } from './usage-event-bus';
@@ -77,7 +76,7 @@ export class OauthUsageService {
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
     private readonly bus: UsageEventBus,
-    private readonly env: EnvService,
+    private readonly credRefresh: CredentialRefreshService,
   ) {}
 
   /**
@@ -125,7 +124,19 @@ export class OauthUsageService {
     try {
       const auth = await this.credentials.engineAuth(orgId, 'claude');
       if (!auth) return degradedUsage();
-      const accessToken = bearerTokenFromSecret(auth.secret, auth.kind);
+      // Route the org's SELECTED personal credential through the ONE serialized refresh core before the fetch,
+      // so an open Settings tab can't race a turn/keep-alive on the rotating refresh token — and a dead token
+      // is surfaced as needs_reauth by the core rather than silently degraded. Setup tokens are static (no refresh).
+      let secret = auth.secret;
+      if (auth.kind === 'personal' && auth.refreshBack?.credentialId) {
+        try {
+          secret = await this.credRefresh.ensureFresh(orgId, auth.refreshBack.credentialId);
+        } catch (err) {
+          this.logger.warn(`usage refresh failed org=${orgId}: ${err}`);
+          return degradedUsage();
+        }
+      }
+      const accessToken = bearerTokenFromSecret(secret, auth.kind);
       if (!accessToken) return degradedUsage();
       return this.fetchUsageWithToken(accessToken);
     } catch (err) {
@@ -171,10 +182,12 @@ export class OauthUsageService {
   }
 
   /**
-   * The merged snapshot `GET /web/orgs/:orgId/usage` serves: harvested windows take precedence (fresh,
-   * free); the HTTP fallback only fills windows the harvest hasn't populated, and is re-hit at most once
-   * per {@link LIVE_FLOOR_MS}. Always resolves to a well-formed `OrgUsage` — `ok:false` when nothing is
-   * known from either source.
+   * The merged snapshot `GET /web/orgs/:orgId/usage` serves: whichever source (harvest vs live) was
+   * captured MORE RECENTLY wins, per-window, and `fetchedAt` is stamped honestly to that source's own
+   * capture time — never response-assembly time. A harvest only ever carries the ONE window a
+   * `rate_limit_event` reported, so the fresher source only shadows the windows it actually has; the other
+   * source fills the rest. The HTTP fallback is throttled to at most once per {@link LIVE_FLOOR_MS}. Always
+   * resolves to a well-formed `OrgUsage` — `ok:false` when nothing is known from either source.
    */
   async get(orgId: string): Promise<OrgUsage> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
@@ -195,24 +208,40 @@ export class OauthUsageService {
     // behavior) meant a single fresh session harvest blanked every other row until it went stale.
     const live = await this.liveSnapshot(orgId);
 
-    // `fetchedAt` is the "last updated" the UI shows — the instant the SERVED data was actually captured,
-    // NOT response-assembly time. Harvested windows take precedence, so their capture time (`snapshot.fetchedAt`)
-    // is the meaningful stamp; fall back to the live-fetch time (now) when there's no harvest to show.
-    const fetchedAt =
-      !harvestIsEmpty && snapshot
-        ? new Date(snapshot.fetchedAt).toISOString()
+    // Serve the FRESHER source. A degraded live snapshot stamps `fetchedAt = now` (see `degradedUsage`), so
+    // it must never be mistaken for a "just captured" competitor — only a `live.ok` snapshot has a real
+    // capture time. Prefer harvest per-window only when it's present AND at least as fresh as a usable live
+    // read: during a turn `applyHarvest` stamps `snapshot.fetchedAt = now`, so harvest wins (real-time SSE
+    // preserved); on an idle open harvest is hours old while live was just fetched, so live wins → "just now".
+    const hasHarvest = !harvestIsEmpty;
+    const hasLive = live.ok;
+    const harvestAtMs = snapshot?.fetchedAt;
+    const liveAtMs = new Date(live.fetchedAt).getTime();
+    const harvestWins = hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
+    const liveWins = !harvestWins && hasLive;
+
+    // Whichever source won leads per-window; the other backfills the windows the winner doesn't carry.
+    const pick = (key: ClaudeUsageWindowKey): UsageWindow =>
+      harvestWins ? harvestWindows[key] ?? live[key] ?? null : live[key] ?? harvestWindows[key] ?? null;
+
+    // Stamp the served data's own capture time: the harvest snapshot's when harvest won, the live-fetch time
+    // when live won, else assembly time (both sources unknown → degraded).
+    const fetchedAt = harvestWins
+      ? new Date(harvestAtMs ?? now).toISOString()
+      : liveWins
+        ? live.fetchedAt
         : new Date().toISOString();
 
     const merged: OrgUsage = {
-      fiveHour: harvestWindows.fiveHour ?? live.fiveHour ?? null,
-      sevenDay: harvestWindows.sevenDay ?? live.sevenDay ?? null,
-      sevenDayOpus: harvestWindows.sevenDayOpus ?? live.sevenDayOpus ?? null,
-      sevenDaySonnet: harvestWindows.sevenDaySonnet ?? live.sevenDaySonnet ?? null,
+      fiveHour: pick('fiveHour'),
+      sevenDay: pick('sevenDay'),
+      sevenDayOpus: pick('sevenDayOpus'),
+      sevenDaySonnet: pick('sevenDaySonnet'),
       // Per-model weekly caps (e.g. Fable) are never harvested — they only come from the live snapshot.
       modelWindows: live.modelWindows ?? [],
       fetchedAt,
-      source: !harvestIsEmpty ? 'harvested' : live.ok ? 'usage_api' : 'stale',
-      ok: !harvestIsEmpty || live.ok,
+      source: harvestWins ? 'harvested' : liveWins ? 'usage_api' : 'stale',
+      ok: harvestWins || liveWins,
     };
     return this.withAccount(orgId, merged);
   }
@@ -298,52 +327,28 @@ export class OauthUsageService {
   }
 
   /**
-   * Decrypt a specific credential's token, refresh it on demand when it's expired (persisting the rotated
-   * token via `advanceClaudeCredential`, the same write-back used during turns), then fetch its usage.
-   * Best-effort: any failure degrades to `ok:false` and no write occurs.
+   * Resolve a specific credential's usage through the ONE serialized refresh core (`ensureFresh`), which
+   * refreshes on-demand under the cross-instance row lock when the token is near expiry and flips the row to
+   * `needs_reauth` on a hard failure — so this Settings path can no longer race a turn/keep-alive on the
+   * rotating refresh token or silently swallow a dead-token failure. Best-effort: any failure (including
+   * `CredentialNeedsReauthError`, after the row is already marked) degrades to `ok:false`.
    */
   private async fetchLiveForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
+    let secret: string;
     try {
-      const dec = await this.claudeStore.getDecryptedById(orgId, credentialId);
-      if (!dec || dec.kind !== 'personal') return degradedUsage();
-      const oauth = parseClaudeOauthBlob(dec.secret);
-      if (!oauth) return degradedUsage();
-      let accessToken = oauth.accessToken;
-      if (oauth.expiresAt != null && oauth.expiresAt <= Date.now() + 60_000) {
-        try {
-          const t = await refresh(this.oauthConfig(), { refreshToken: oauth.refreshToken });
-          await this.claudeStore.advanceClaudeCredential(
-            orgId,
-            credentialId,
-            JSON.stringify({
-              claudeAiOauth: {
-                accessToken: t.accessToken,
-                refreshToken: t.refreshToken,
-                expiresAt: t.expiresAt,
-                scopes: t.scopes?.split(' '),
-                subscriptionType: t.subscriptionType,
-              },
-            }),
-          );
-          accessToken = t.accessToken;
-        } catch (err) {
-          this.logger.warn(`cred usage refresh failed ${credentialId}: ${err}`);
-          return degradedUsage();
-        }
-      }
+      secret = await this.credRefresh.ensureFresh(orgId, credentialId);
+    } catch (err) {
+      this.logger.warn(`cred usage refresh failed ${credentialId}: ${err}`);
+      return degradedUsage();
+    }
+    try {
+      const accessToken = bearerTokenFromSecret(secret, 'personal');
+      if (!accessToken) return degradedUsage();
       return this.fetchUsageWithToken(accessToken);
     } catch (err) {
       this.logger.warn(`cred usage fetch failed ${credentialId}: ${err}`);
       return degradedUsage();
     }
-  }
-
-  /** OAuth config for the on-demand refresh — refresh only needs `tokenUrl` (constant) + `clientId` (env-overridable), mirroring the controller's `config()`. */
-  private oauthConfig(): ClaudeOAuthConfig {
-    return {
-      ...DEFAULT_CLAUDE_OAUTH_CONFIG,
-      clientId: this.env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
-    };
   }
 }
 
@@ -414,27 +419,6 @@ function bearerTokenFromSecret(secret: string, kind: 'setup-token' | 'personal' 
     const t = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth
       ?.accessToken;
     return typeof t === 'string' && t.length > 0 ? t : null;
-  } catch {
-    return null;
-  }
-}
-
-type ClaudeOauthBlob = {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt?: number;
-  scopes?: string[];
-  subscriptionType?: string;
-};
-
-/** Guarded parse of a `{claudeAiOauth:{…}}` blob into the fields the refresh path needs; null on malformed input. */
-function parseClaudeOauthBlob(secret: string): ClaudeOauthBlob | null {
-  try {
-    const oauth = (JSON.parse(secret) as { claudeAiOauth?: Partial<ClaudeOauthBlob> }).claudeAiOauth;
-    if (!oauth || typeof oauth.accessToken !== 'string' || typeof oauth.refreshToken !== 'string') {
-      return null;
-    }
-    return oauth as ClaudeOauthBlob;
   } catch {
     return null;
   }

@@ -19,6 +19,8 @@ import { AuthRefreshSinkService } from './auth-refresh.sink';
 import { ClaudeCredentialsController } from './claude-credentials.controller';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { ClaudeOAuthPkceStore } from './claude-oauth-pkce.store';
+import { CredentialKeepAliveService } from './credential-keepalive.service';
+import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
 import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
@@ -81,6 +83,8 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     WorkspaceSecretFileStore,
     WorkspaceConfigStore,
     CredentialResolver,
+    CredentialRefreshService,
+    CredentialKeepAliveService,
     OnboardingService,
     AuthRefreshSinkService,
     { provide: AUTH_REFRESH_SINK, useExisting: AuthRefreshSinkService },
@@ -93,6 +97,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     WorkspaceSecretFileStore,
     WorkspaceConfigStore,
     CredentialResolver,
+    CredentialRefreshService,
     OnboardingService,
     AUTH_REFRESH_SINK,
     OauthUsageService,
