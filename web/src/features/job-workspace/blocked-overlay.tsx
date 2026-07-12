@@ -36,7 +36,7 @@ export function BlockedOverlay({
 
   return (
     <div
-      className="shrink-0 border-b border-border"
+      className="max-h-[70vh] shrink-0 overflow-y-auto border-b border-border"
       style={{
         borderLeft: "3px solid var(--amber)",
         background: "color-mix(in srgb, var(--amber) 5%, var(--surface))",
