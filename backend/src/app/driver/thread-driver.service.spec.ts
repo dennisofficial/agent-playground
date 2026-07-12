@@ -1062,7 +1062,6 @@ function assemble(
     taskSink,
     undefined,
     undefined,
-    undefined,
     opts.claudeCreds as ClaudeCredentialStore | undefined,
   );
   // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the

@@ -77,6 +77,7 @@ import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
+import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
 import {
   chunkKey,
   RESET_VERIFY_TEXT,
@@ -151,19 +152,7 @@ import {
 } from '../sandbox/container-paths';
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
-import { TicketService } from '../tickets';
 import { JobDependencyService } from '../job-deps';
-import type {
-  TicketKind,
-  TicketPriority,
-  TicketSimilarItem,
-  TicketStatus,
-} from '../domain/ticket';
-import {
-  isTicketKind,
-  isTicketPriority,
-  isTicketStatus,
-} from '../domain/ticket';
 import type { Decision } from '../domain';
 import { nextDecisionId, DECISION_CLASS_IDS, HALT_FIX_ATTEMPT_CAP } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
@@ -208,6 +197,11 @@ import {
 } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
+
+type InjectedMemoryDedupState = {
+  sessionId: string | null;
+  factIds: Set<string>;
+};
 
 /**
  * R3 — the AGENT SESSION MANAGER (the chat brain).
@@ -308,6 +302,11 @@ export class AgentSessionManager
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
+  // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's current live
+  // SDK session, so a re-recalled fact is surfaced once but a fresh session can see it again. The first turn
+  // has no session id yet; the set is rebound when the engine emits the session event.
+  private readonly injectedMemoryByJob = new Map<string, InjectedMemoryDedupState>();
+
   /**
    * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
    * signal — the engine emits it only after it PUSHES the steer into the live SDK session, never on the Redis
@@ -353,8 +352,6 @@ export class AgentSessionManager
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     // Passive pipeline-milestone awareness: the durable per-thread buffer drained into each operator turn.
     private readonly awareness: PipelineAwarenessStore,
-    // The internal board/backlog — captured out-of-scope work + promotion to follow-up threads.
-    private readonly tickets: TicketService,
     // Job-to-job "blocked by" edges + the wake funnel (create_job dependsOn, link_job_dependency, manual UI).
     private readonly jobDeps: JobDependencyService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
@@ -1384,7 +1381,14 @@ export class AgentSessionManager
       return;
     }
 
-    await this.stimulusStore.leaseChatStimuli(collected.ids);
+    const leased = await this.stimulusStore
+      .leaseChatStimuli(collected.ids)
+      .then(() => true)
+      .catch((err) => {
+        this.logger.warn(`pump: leaseChatStimuli failed for thread=${jobId}: ${err}`);
+        return false;
+      });
+    if (!leased) return;
     const ids = collected.ids;
     // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
     // message); the brain reads them together as this turn's task. Base fields come from the oldest.
@@ -2232,10 +2236,16 @@ export class AgentSessionManager
       });
     }
 
-    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder` (the reserved
-    // `memory` slot the follow-up recall job fills). Default render is empty → no chunk → byte-identical.
-    if (isOperatorAuthored(stimulus)) {
-      reminderChunks.push(...(this.jit?.collectOperatorPrepends({ jobId: stimulus.jobId }) ?? []));
+    // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
+    // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
+    if (isOperatorAuthored(stimulus) && this.jit?.hasEnabledOperatorPrepends()) {
+      const prependText = (await this.buildMemoryRecallPrefix(stimulus, sessionId)) ?? undefined;
+      reminderChunks.push(
+        ...(this.jit?.collectOperatorPrepends({
+          jobId: stimulus.jobId,
+          ...(prependText ? { prependText } : {}),
+        }) ?? []),
+      );
     }
 
     // Compose the turn through the hub (d18): the operator path frames prefix chunks + chronological `<user>`
@@ -2457,6 +2467,9 @@ export class AgentSessionManager
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
       onEvent: (e) => {
+        if (e.kind === 'session' && e.sessionId) {
+          this.bindInjectedMemorySession(stimulus.jobId, e.sessionId);
+        }
         // Surface THIS turn's fully-assembled prompt on the `main` lane, once, on the turn-START `session`
         // event (see `promptEmitted` above for why this is the right hook). Fire-and-forget; insert-once by
         // stimulus id, so a re-drive/reattach of the same message never duplicates it.
@@ -2673,6 +2686,7 @@ export class AgentSessionManager
 
     // Persist the session_id for resume.
     if (result.sessionId && sandboxRow) {
+      this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
       sandboxRow.session_id = result.sessionId;
       await this.sandboxRows.save(sandboxRow);
     }
@@ -3347,17 +3361,10 @@ export class AgentSessionManager
           overview || goal,
           'feature',
         );
-        const reviewTicket = await this.resolveReviewTicket(
-          stimulus.orgId,
-          stimulus.repoId,
-          jobId,
-        );
-
         const outcome = await this.planReview.review({
           jobId,
           orgId: stimulus.orgId,
           goal,
-          ...(reviewTicket ? { ticket: reviewTicket } : {}),
           overview,
           decisions,
           threadTitles: threads.map((s) => s.title),
@@ -4048,7 +4055,7 @@ export class AgentSessionManager
 
       // List this repo's sibling jobs so the brain can discover real same-repo ids to wire peer
       // dependencies (create_job dependsOn / link_job_dependency). Repo-scoped from the CLOSURE, never
-      // from tool args — the same tenant-safety invariant as create_job/list_tickets.
+      // from tool args — the same tenant-safety invariant as create_job.
       list_jobs: async (args) => {
         try {
           const jobs = await this.jobDeps.listJobs({
@@ -4059,208 +4066,6 @@ export class AgentSessionManager
             limit: typeof args['limit'] === 'number' ? args['limit'] : undefined,
           });
           return { ok: true, jobs };
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-      },
-
-      // ── Tickets (the repo's board/backlog) ─────────────────────────────────────────────────────────
-      // org/repo/thread context comes from the stimulus CLOSURE, never tool args (no cross-tenant escape).
-
-      create_ticket: async (args) => {
-        const title = String(args['title'] ?? '').trim();
-        if (!title) return { ok: false, reason: 'title is required' };
-        const status = optEnum(args['status'], isTicketStatus) as
-          | TicketStatus
-          | undefined;
-        if (args['status'] != null && !status)
-          return {
-            ok: false,
-            reason: `invalid status: ${String(args['status'])}`,
-          };
-        const priority = optEnum(args['priority'], isTicketPriority) as
-          | TicketPriority
-          | undefined;
-        if (args['priority'] != null && !priority)
-          return {
-            ok: false,
-            reason: `invalid priority: ${String(args['priority'])}`,
-          };
-        const kind = optEnum(args['kind'], isTicketKind) as
-          | TicketKind
-          | undefined;
-        if (args['kind'] != null && !kind)
-          return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
-
-        const body = optStr(args['body']);
-
-        // Semantic dedup: unless the model has explicitly confirmed, surface any near-duplicate tickets
-        // already on this board and STOP — so we don't file a second "same bug, one word off" ticket (the
-        // #6/#7 case). The model then either update_ticket's the existing one, skips, or re-calls
-        // create_ticket with confirm:true. Fail-soft: no embedding key → no matches → proceeds to create.
-        const confirm = args['confirm'] === true;
-        let precomputedEmbedding: number[] | undefined;
-        if (!confirm) {
-          const sim = await this.tickets
-            .findSimilar({ orgId: stimulus.orgId, repoId: stimulus.repoId, title, body })
-            .catch(() => ({ queryVector: null, matches: [] as TicketSimilarItem[] }));
-          if (sim.matches.length > 0) {
-            return {
-              ok: false,
-              needsConfirmation: true,
-              similar: sim.matches.map((m) => ({
-                number: m.number,
-                title: m.title,
-                status: m.status,
-                kind: m.kind,
-                similarity: Math.round(m.sim * 100) / 100,
-              })),
-              message:
-                `Found ${sim.matches.length} possibly-related ticket(s) already on this board (see \`similar\`). ` +
-                `If one already covers this, update_ticket that one (or just skip) instead of filing a duplicate. ` +
-                `If this is genuinely new, call create_ticket again with confirm:true.`,
-            };
-          }
-          // No duplicates — reuse the vector we just computed so create() doesn't embed the same text twice.
-          precomputedEmbedding = sim.queryVector ?? undefined;
-        }
-
-        // Stamp provenance from THIS thread + its locked decision (if any) — closure-derived, not args.
-        const job = await this.store
-          .loadJob(stimulus.jobId)
-          .catch(() => null);
-        try {
-          const ticket = await this.tickets.create({
-            orgId: stimulus.orgId,
-            repoId: stimulus.repoId,
-            title,
-            body,
-            status,
-            priority,
-            kind,
-            originThreadId: stimulus.jobId,
-            originDecisionRecordId: job?.decisionRecordId ?? null,
-            dependsOn: strArray(args['dependsOn']),
-            embedding: precomputedEmbedding,
-          });
-          // Relay the capture to the operator's live view — a durable callout card on this job's
-          // conversation. Best-effort: the ticket is already captured, so a transcript-write hiccup must
-          // never fail the tool (own try/catch — the outer catch would wrongly report the capture failed).
-          try {
-            await this.store.appendTicketCard(stimulus.jobId, ticket);
-          } catch {
-            /* swallow — the callout is a nicety, not the capture */
-          }
-          return {
-            ok: true,
-            ticketId: ticket.id,
-            number: ticket.number,
-            message: `Captured ticket #${ticket.number}: ${title}`,
-          };
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-      },
-
-      list_tickets: async (args) => {
-        const status = optEnum(args['status'], isTicketStatus) as
-          | TicketStatus
-          | undefined;
-        if (args['status'] != null && !status)
-          return {
-            ok: false,
-            reason: `invalid status: ${String(args['status'])}`,
-          };
-        try {
-          const rows = await this.tickets.list({
-            orgId: stimulus.orgId,
-            repoId: stimulus.repoId,
-            status,
-          });
-          return {
-            ok: true,
-            tickets: rows.map((t) => ({
-              id: t.id,
-              number: t.number,
-              title: t.title,
-              status: t.status,
-              priority: t.priority,
-              kind: t.kind,
-            })),
-          };
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-      },
-
-      update_ticket: async (args) => {
-        const ticketId = String(args['ticketId'] ?? '').trim();
-        if (!ticketId) return { ok: false, reason: 'ticketId is required' };
-        const status = optEnum(args['status'], isTicketStatus) as
-          | TicketStatus
-          | undefined;
-        if (args['status'] != null && !status)
-          return {
-            ok: false,
-            reason: `invalid status: ${String(args['status'])}`,
-          };
-        const priority = optEnum(args['priority'], isTicketPriority) as
-          | TicketPriority
-          | undefined;
-        if (args['priority'] != null && !priority)
-          return {
-            ok: false,
-            reason: `invalid priority: ${String(args['priority'])}`,
-          };
-        const kind = optEnum(args['kind'], isTicketKind) as
-          | TicketKind
-          | undefined;
-        if (args['kind'] != null && !kind)
-          return { ok: false, reason: `invalid kind: ${String(args['kind'])}` };
-        try {
-          const t = await this.tickets.update(
-            { orgId: stimulus.orgId, repoId: stimulus.repoId, ticketId },
-            {
-              title: optStr(args['title']) ?? undefined,
-              body: 'body' in args ? optStr(args['body']) : undefined,
-              status,
-              priority,
-              kind,
-            },
-          );
-          return {
-            ok: true,
-            ticketId: t.id,
-            number: t.number,
-            status: t.status,
-            message: `Updated ticket #${t.number}`,
-          };
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-      },
-
-      link_ticket_dependency: async (args) => {
-        const ticketId = String(args['ticketId'] ?? '').trim();
-        const dependsOnTicketId = String(
-          args['dependsOnTicketId'] ?? '',
-        ).trim();
-        if (!ticketId || !dependsOnTicketId)
-          return {
-            ok: false,
-            reason: 'ticketId and dependsOnTicketId are required',
-          };
-        try {
-          await this.tickets.addDependency({
-            orgId: stimulus.orgId,
-            repoId: stimulus.repoId,
-            ticketId,
-            dependsOnTicketId,
-          });
-          return {
-            ok: true,
-            message: 'Recorded advisory dependency (blocked-by).',
-          };
         } catch (err) {
           return { ok: false, reason: errText(err) };
         }
@@ -4284,44 +4089,6 @@ export class AgentSessionManager
             message: blocked
               ? 'Linked dependency — the job is now blocked until its blocker resolves.'
               : 'Linked dependency (blocker already resolved — no live block).',
-          };
-        } catch (err) {
-          return { ok: false, reason: errText(err) };
-        }
-      },
-
-      promote_ticket: async (args) => {
-        const ticketId = String(args['ticketId'] ?? '').trim();
-        if (!ticketId) return { ok: false, reason: 'ticketId is required' };
-        try {
-          const current = await this.store.loadJob(stimulus.jobId);
-          const result = await this.tickets.promote({
-            orgId: stimulus.orgId,
-            repoId: stimulus.repoId,
-            ticketId,
-            createdByJobId: stimulus.jobId,
-            createdByTitle: current.title,
-          });
-          if (result.created && result.seedText) {
-            // Kick the new thread's brain in-process (same as create_job). Fire-and-forget.
-            void this.startFollowUpJob(
-              result.jobId,
-              stimulus.orgId,
-              stimulus.repoId,
-              result.seedText,
-            ).catch((err) =>
-              this.logger.warn(
-                `promote_ticket: start of ${result.jobId} failed: ${err}`,
-              ),
-            );
-          }
-          return {
-            ok: true,
-            jobId: result.jobId,
-            created: result.created,
-            message: result.created
-              ? `Promoted "${result.title}" to a new thread and started it.`
-              : `That ticket is already being worked in an existing thread.`,
           };
         } catch (err) {
           return { ok: false, reason: errText(err) };
@@ -4361,10 +4128,10 @@ export class AgentSessionManager
     };
 
     // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
-    // never plan/build/ship) — no propose_plan/start_direct_build/tickets/decisions. They DO get the job
-    // tools (list_jobs/create_job/link_job_dependency): a review may legitimately spin up or relate sibling
-    // jobs even though it does not build its own PR. Matches the `reviewTools` prompt fragment; the omission
-    // of the build/plan/ship tools is enforced (un-callable, not just discouraged).
+    // never plan/build/ship) — no propose_plan/start_direct_build/decisions. They DO get the job tools
+    // (list_jobs/create_job/link_job_dependency): a review may legitimately spin up or relate sibling jobs
+    // even though it does not build its own PR. Matches the `reviewTools` prompt fragment; the omission of
+    // the build/plan/ship tools is enforced (un-callable, not just discouraged).
     if (review) {
       return {
         ask_question: tools.ask_question,
@@ -6715,33 +6482,6 @@ export class AgentSessionManager
     }
   }
 
-  /**
-   * Resolve the originating ticket for a thread's plan review (the operator's captured intent) — null
-   * when the thread isn't tied to a ticket. Best-effort: any lookup failure → null (the review still
-   * runs on the goal + overview).
-   */
-  private async resolveReviewTicket(
-    orgId: string,
-    repoId: string,
-    jobId: string,
-  ): Promise<{ number: number; title: string; body?: string } | null> {
-    try {
-      const ticketId = await this.store.threadTicketId(jobId);
-      if (!ticketId) return null;
-      const { ticket } = await this.tickets.get({ orgId, repoId, ticketId });
-      return {
-        number: ticket.number,
-        title: ticket.title,
-        ...(ticket.body ? { body: ticket.body } : {}),
-      };
-    } catch (err) {
-      this.logger.debug(
-        `resolveReviewTicket failed (continuing without ticket): ${err}`,
-      );
-      return null;
-    }
-  }
-
   // ── Passive pipeline-milestone awareness ─────────────────────────────────────────────────────────
 
   /**
@@ -6833,6 +6573,59 @@ export class AgentSessionManager
   }
 
   /**
+   * Memory auto-retrieval turn-prefix (d1/d2/d5): on a substantive operator turn, recall project+team facts
+   * and format them for the reserved `system_reminder source="memory"` slot. Best-effort — any recall/embed
+   * failure yields null and never blocks the turn (mirrors the `recall` tool's catch). Two-layer kill-switch:
+   * the runtime `MEMORY_AUTORECALL_DISABLED` env guard here + the declarative `memoryPrependRule.enabled`.
+   * Per-session dedup suppresses a fact already injected earlier in the same live session.
+   */
+  private injectedMemoryFactIds(jobId: string, sessionId: string | null): Set<string> {
+    let state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId !== sessionId) {
+      state = { sessionId, factIds: new Set<string>() };
+      this.injectedMemoryByJob.set(jobId, state);
+    }
+    return state.factIds;
+  }
+
+  private bindInjectedMemorySession(jobId: string, sessionId: string): void {
+    const state = this.injectedMemoryByJob.get(jobId);
+    if (!state || state.sessionId === sessionId) return;
+    if (state.sessionId === null) {
+      state.sessionId = sessionId;
+      return;
+    }
+    this.injectedMemoryByJob.set(jobId, { sessionId, factIds: new Set<string>() });
+  }
+
+  private async buildMemoryRecallPrefix(
+    stimulus: ChatStimulus,
+    sessionId?: string,
+  ): Promise<string | null> {
+    if (this.env?.get('MEMORY_AUTORECALL_DISABLED') === 'on') return null;
+    if (!isSubstantiveQuery(stimulus.body)) return null;
+    try {
+      const facts = await this.memory.recall(stimulus.body, {
+        scopes: [`project:${stimulus.repoId}`, `team:${stimulus.orgId}`],
+        orgId: stimulus.orgId,
+        limit: 3,
+        floor: 0.45,
+      });
+      if (facts.length === 0) return null;
+      const seen = this.injectedMemoryFactIds(stimulus.jobId, sessionId ?? null);
+      const fresh = facts.filter((f) => !seen.has(f.id));
+      if (fresh.length === 0) return null;
+      const body = renderMemoryRecall(fresh.map((f) => ({ fact: f.fact, scope: f.scope })));
+      if (!body) return null;
+      for (const f of fresh) seen.add(f.id);
+      return body;
+    } catch (err) {
+      this.logger.debug(`memory auto-recall prefix failed (continuing): ${err}`);
+      return null;
+    }
+  }
+
+  /**
    * The file-request analog of {@link buildOpenQuestionsPrefix}: an advisory reminder of the file-upload
    * cards still awaiting an upload (posted, not yet provided/withdrawn), so a fresh/compacted brain session
    * doesn't re-post a duplicate `request_file`. Lists each open card's id + destination path. Best-effort.
@@ -6893,13 +6686,19 @@ export class AgentSessionManager
 
   /** Post a reply in-thread AND append it to the durable transcript. */
   private async say(stimulus: ChatStimulus, text: string): Promise<void> {
-    const route = await this.store.route({
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      jobId: stimulus.jobId,
-    });
-    const channel = route.channel ?? stimulus.replyRoute.jobRef;
-    const threadTs = route.threadTs ?? stimulus.replyRoute.jobRef;
+    let channel = stimulus.replyRoute.jobRef;
+    let threadTs = stimulus.replyRoute.jobRef;
+    try {
+      const route = await this.store.route({
+        orgId: stimulus.orgId,
+        repoId: stimulus.repoId,
+        jobId: stimulus.jobId,
+      });
+      channel = route.channel ?? channel;
+      threadTs = route.threadTs ?? threadTs;
+    } catch (err) {
+      this.logger.warn(`failed to resolve brain reply route: ${err}`);
+    }
     try {
       await this.surface.post(channel, text, {
         threadTs,
@@ -6908,7 +6707,9 @@ export class AgentSessionManager
     } catch (err) {
       this.logger.warn(`failed to post brain reply: ${err}`);
     }
-    await this.store.appendAtlasMessage(stimulus.jobId, text);
+    await this.store
+      .appendAtlasMessage(stimulus.jobId, text)
+      .catch((err) => this.logger.warn(`failed to persist brain reply: ${err}`));
   }
 
   /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable
@@ -7414,17 +7215,12 @@ function deriveDecisionTitle(source: string): string {
     : cleaned || 'Decision';
 }
 
-// ── Ticket-tool arg coercion (args are Record<string, unknown> from the bridge) ────────────────────
+// ── Tool arg coercion (args are Record<string, unknown> from the bridge) ────────────────────────────
 
 /** A trimmed non-empty string, or undefined. */
 function optStr(v: unknown): string | undefined {
   const s = typeof v === 'string' ? v.trim() : '';
   return s.length > 0 ? s : undefined;
-}
-
-/** Return the value only if it passes the allow-list guard; else undefined (caller decides if that's an error). */
-function optEnum<T>(v: unknown, guard: (x: unknown) => x is T): T | undefined {
-  return guard(v) ? v : undefined;
 }
 
 /** Coerce an arg into an array of non-empty strings (the bridge may pass a single string or an array). */

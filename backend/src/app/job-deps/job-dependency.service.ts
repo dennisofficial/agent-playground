@@ -56,9 +56,8 @@ export type JobListRow = {
 
 /**
  * JOB DEPENDENCY SERVICE — the single source of truth for job-to-job "blocked by" edges and the wake
- * funnel that fires when a blocker resolves. Three surfaces feed edges here (manual link, `create_job`
- * dependsOn, ticket-derived job links); all three share the same guard/park/wake semantics, so the rule
- * lives ONCE.
+ * funnel that fires when a blocker resolves. Two surfaces feed edges here (manual link and `create_job`
+ * dependsOn); both share the same guard/park/wake semantics, so the rule lives ONCE.
  *
  * A dependency is a LIVE block only while its blocker hasn't reached a terminal outcome
  * (`isTerminalBlocker`). Once every blocker on a `blocked` job is terminal, the job is unparked and its

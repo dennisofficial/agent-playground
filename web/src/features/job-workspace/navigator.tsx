@@ -24,7 +24,6 @@ import {
   Server,
   ShieldCheck,
   SquareTerminal,
-  TicketIcon,
   Trash2,
 } from "lucide-react";
 import {
@@ -42,7 +41,6 @@ import {
   useRetryJob,
   useServices,
 } from "@/lib/api/job-queries";
-import { useJobTickets } from "@/lib/api/tickets-queries";
 import { threadHref } from "@/lib/routes";
 import {
   Divider,
@@ -289,9 +287,6 @@ export function Navigator({
     meta.status !== "amending";
   const [editing, setEditing] = useState(false);
 
-  // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
-  const { data: raisedTickets = [] } = useJobTickets(jobRef);
-
   // Jobs Atlas spawned FROM this job — the header "Created jobs" entry appears only once there's ≥1.
   const { data: createdJobs = [] } = useJobCreatedJobs(jobRef);
 
@@ -536,26 +531,6 @@ export function Navigator({
             <span className="font-mono text-[9px] text-faint">—</span>
           ) : null}
         </button>
-        {/* Tickets raised — appears only once Atlas has captured out-of-scope work from this job; opens the
-            standing "Tickets raised" list in the detail pane. */}
-        {raisedTickets.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => onSelectNode("tickets")}
-            className={cn(
-              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-              detailNode === "tickets" && "nav-selected-blue",
-            )}
-          >
-            <TicketIcon size={13} className="w-3.5 shrink-0 text-accent" />
-            <span className="flex-1 text-[11px] font-semibold text-dim">
-              Tickets raised
-            </span>
-            <span className="font-mono text-[9px] text-faint">
-              {raisedTickets.length}
-            </span>
-          </button>
-        ) : null}
         {/* Created jobs — appears only once this job has spawned ≥1 follow-up job; opens the standing
             "Created jobs" list in the detail pane. */}
         {createdJobs.length > 0 ? (
@@ -576,8 +551,8 @@ export function Navigator({
             </span>
           </button>
         ) : null}
-        {/* Blocked by — a REAL gate (the brain doesn't run while it's up), not the tickets board's advisory
-            dependencies; appears whenever the job is parked or still carries live blockers. */}
+        {/* Blocked by — a REAL gate (the brain doesn't run while it's up); appears whenever the job is
+            parked or still carries live blockers. */}
         {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
           <button
             type="button"

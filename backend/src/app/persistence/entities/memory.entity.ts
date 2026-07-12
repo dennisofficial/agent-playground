@@ -29,13 +29,13 @@ export class MemoryEntity extends TimestampedEntity {
   @Column({ type: 'vector', length: 1536, select: false })
   embedding!: string;
 
-  /** The tenant (org id). NULL = the shared/global tier (recalled in every workspace). */
-  @Column({ type: 'uuid', nullable: true })
-  org_id!: string | null;
+  /** The tenant (org id) that owns this fact. Required — memory is strictly tenant-scoped. */
+  @Column({ type: 'uuid', nullable: false })
+  org_id!: string;
 
-  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE', nullable: true })
+  @ManyToOne(() => OrganizationEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'org_id' })
-  org?: OrganizationEntity | null;
+  org!: OrganizationEntity;
 
   /** Access tier: team:<id> | project:<id>. */
   @Column({ type: 'text' })

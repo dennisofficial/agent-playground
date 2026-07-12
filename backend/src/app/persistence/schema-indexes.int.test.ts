@@ -1,11 +1,15 @@
 /**
- * Schema-index regression net (live Postgres). The four indexes 1783597139527-HaltOutcome dropped as
- * pure generator drift — two integrity (`uq_threads_ticket_id`, `uq_threads_job_parent_ordinal`) and two
- * pgvector HNSW perf indexes (`idx_tickets_embedding_hnsw`, `idx_memory_embedding_hnsw`) — must exist
- * after the full migration chain (the RestoreDroppedIndexes heal migration recreates them). Fails loudly
- * in CI if a future migration drops one again. Also asserts uq_threads_job_parent_ordinal actually
- * rejects a duplicate `(job_id, parent_thread_id, ordinal)` — the NULLS NOT DISTINCT partial the
- * generator can't express, so only a functional check proves it is really there.
+ * Schema-index regression net (live Postgres). Of the four indexes 1783597139527-HaltOutcome dropped as
+ * pure generator drift, two — the integrity index `uq_threads_job_parent_ordinal` and the pgvector HNSW
+ * perf index `idx_memory_embedding_hnsw` — must exist after the full migration chain (the
+ * RestoreDroppedIndexes heal migration recreates them). Fails loudly in CI if a future migration drops
+ * one again. Also asserts uq_threads_job_parent_ordinal actually rejects a duplicate
+ * `(job_id, parent_thread_id, ordinal)` — the NULLS NOT DISTINCT partial the generator can't express, so
+ * only a functional check proves it is really there.
+ *
+ * The other two — `uq_threads_ticket_id` and `idx_tickets_embedding_hnsw` — belonged to the native ticket
+ * system; the DropTickets migration removes them (and the `tickets` table) for good, so this net now
+ * asserts their ABSENCE instead.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -18,11 +22,10 @@ import { ENTITIES } from './entities';
 
 const ORG_ID = '2a111111-1111-4111-8111-111111111111';
 const RESTORED_INDEXES = [
-  'uq_threads_ticket_id',
   'uq_threads_job_parent_ordinal',
-  'idx_tickets_embedding_hnsw',
   'idx_memory_embedding_hnsw',
 ] as const;
+const DROPPED_TICKET_INDEXES = ['uq_threads_ticket_id', 'idx_tickets_embedding_hnsw'] as const;
 
 function dbOpts() {
   return {
@@ -67,6 +70,21 @@ describe('restored schema indexes (live Postgres)', () => {
   it.each(RESTORED_INDEXES)('index %s exists after the migration chain', async (idx) => {
     const rows = await ds.query(`SELECT 1 FROM pg_indexes WHERE indexname = $1`, [idx]);
     expect(rows.length, `${idx} must exist after the migration chain`).toBe(1);
+  });
+
+  it.each(DROPPED_TICKET_INDEXES)(
+    'index %s no longer exists after the DropTickets migration',
+    async (idx) => {
+      const rows = await ds.query(`SELECT 1 FROM pg_indexes WHERE indexname = $1`, [idx]);
+      expect(rows.length, `${idx} must not exist after the DropTickets migration`).toBe(0);
+    },
+  );
+
+  it('the tickets table no longer exists after the DropTickets migration', async () => {
+    const rows = await ds.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'tickets'`,
+    );
+    expect(rows.length, 'tickets table must not exist after the DropTickets migration').toBe(0);
   });
 
   it('uq_threads_job_parent_ordinal rejects a duplicate (job_id, parent_thread_id, ordinal)', async () => {

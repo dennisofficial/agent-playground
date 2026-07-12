@@ -85,7 +85,7 @@ them (you observe them, and can interject the current build turn).
 - *decisions/questions:* `create_decision`, `ask_question`, `answer`
 - *memory:* `recall`, `remember`
 - *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
-  `create_ticket` (a note for LATER, no work starts), `request_secret` (onboarding)
+  `request_secret` (onboarding)
 - *fast path:* `start_direct_build` (a small localized change the brain implements itself, lightweight approval)
 
 The brain is genuinely continuous: each turn resumes the same `session_id`, so it remembers the grilling,
