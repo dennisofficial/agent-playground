@@ -189,15 +189,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
    * predecessor has fully drained) it reconciles, resumes, and starts the reaper.
    */
   async onApplicationBootstrap(): Promise<void> {
-    // Claim the build kinds the drive loop provably re-attaches (`runJob`→`findReattachableTurn` re-tails a
-    // live `step`/`gate` turn at its anchor) on the reattach routing table, so the leader watchdog can re-drive
+    // Claim the build kind the drive loop provably re-attaches (`runJob`→`findReattachableTurn` re-tails a
+    // live `step` turn at its anchor) on the reattach routing table, so the leader watchdog can re-drive
     // an orphaned-but-alive build turn (see ThreadDriver.reattachTurnRow). `review`/`autofix` are intentionally
     // NOT claimed — the drive loop doesn't re-tail those at an anchor, so a re-drive could start a fresh stage
     // beside the still-live engine; they keep the once-per-boot `resume()` recovery + the watchdog safety-net.
     // Unconditional + idempotent — the watchdog itself is leader-only, so registration need not be gated.
-    for (const kind of ['step', 'gate'] as const) {
-      this.reattachRegistry?.register(kind, (row) => this.driver.reattachTurnRow(row));
-    }
+    this.reattachRegistry?.register('step', (row) => this.driver.reattachTurnRow(row));
 
     // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
     // independent of leadership (the agent test surface omits resumeRequests$; Caddy routes /resume only

@@ -32,7 +32,6 @@ import {
   isSessionLimitError,
   isEngineDetachedError,
   UNRESUMABLE_SESSION_MARKER,
-  type EngineEvent,
   type EngineHomeKey,
   type EngineHomeType,
   type ToolBridgeOptions,
@@ -63,7 +62,6 @@ import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
-import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
 import type {
   ActiveTurnEntity,
   SessionAnchor,
@@ -73,7 +71,6 @@ import type {
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
-  Agent,
   CODEX_TASK_LIST_NOTE,
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
@@ -95,6 +92,12 @@ import {
   type LiveVerificationVerdict,
 } from './live-verification-judge';
 import {
+  STATIC_VERIFICATION_JUDGE,
+  type StaticVerificationJudge,
+  type StaticVerificationVerdict,
+} from './static-verification-judge';
+import {
+  BUILD_RELEVANT_FILE_RE,
   clampEvidenceOutput,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
@@ -266,6 +269,9 @@ export class ThreadDriver implements JobDispatcher {
     private readonly brainGateway: BrainGateway,
     // The ADR-0005 live-verification judge — gates `complete_thread`'s `done` claim (see `gateLiveVerification`).
     @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
+    // The sibling static-check judge — gates `complete_thread`'s `done` claim on typecheck/lint/diagnostics/
+    // tests ("if applicable"), replacing the eliminated Opus session-resume diagnostics gate (see `gateStaticVerification`).
+    @Inject(STATIC_VERIFICATION_JUDGE) private readonly staticVerificationJudge: StaticVerificationJudge,
     // Folds a Codex master-review thread's `task_create`/`task_update` bridge calls into its `tasks` column
     // (the SAME sink the Claude lanes' SDK TaskCreate/TaskUpdate use), so the web renders its checklist
     // identically. Claude builders keep using their native SDK task tools via the transcript harness.
@@ -273,7 +279,7 @@ export class ThreadDriver implements JobDispatcher {
     // @Global ExposureModule — inert unless PREVIEW_BASE_DOMAIN is set. @Optional so the driver still
     // constructs when previews are off; used to render each running service's public preview URL.
     @Optional() private readonly exposure?: ExposureService,
-    // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER / gate /
+    // The repo's opt-in house-style profile — injected into every build-facing prompt (WORKER /
     // commit) and forwarded on the run args so the in-container FAN_OUT writer subagents get it too.
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
@@ -366,13 +372,6 @@ export class ThreadDriver implements JobDispatcher {
     return 2_000;
   }
 
-  /** Wall-clock budget for the WHOLE diagnostics done-gate (every resume iteration combined), and the max
-   *  number of resume iterations it gets. `PausableDeadline` is one-shot (`runTurnBounded` clears it in
-   *  `finally`), so `runVerificationGate` creates a FRESH deadline per iteration sized to the remaining
-   *  budget rather than reusing one — see `runVerificationGate`. */
-  private readonly gateBudgetMs = 10 * 60_000;
-  private readonly gateMaxIterations = 2;
-
   /**
    * The DISPATCH SEAM (the brain's "hands" edge). Take ownership of an approved, persisted job and kick
    * off the deterministic drive ASYNC — return promptly so the brain doesn't block on the whole build.
@@ -464,12 +463,12 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * WATCHDOG RE-ATTACH (build kinds: step/gate/review/autofix). The leader watchdog calls this for one
+   * WATCHDOG RE-ATTACH (build kind: step). The leader watchdog calls this for one
    * orphaned-but-alive `active_turns` row whose engine is still streaming but whose host relay was severed by
    * a restart / leader flap. We don't re-tail the row directly — that would only re-persist the transcript and
-   * SKIP the driver's deterministic continuation (verification gate, commit/`commit_sha`, step `done`, branch
+   * SKIP the driver's deterministic continuation (completion checks, commit/`commit_sha`, step `done`, branch
    * backstop). Instead we WAKE THE FULL DRIVE: `drive()`→`runJob` fast-forwards completed work, re-reaches the
-   * interrupted batch, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
+   * interrupted batch/commit nudge, and re-attaches it via the existing `findReattachableTurn` path — exactly what boot
    * `resume()` does, just triggered continuously instead of once. Idempotent + safe:
    *   - only a `running`, un-halted job is drivable (`runJob`'s chokepoint) — otherwise 'deferred', so a
    *     halted/parked/terminal job keeps its existing recovery (`resumePaused`/`retry`) and the watchdog keeps
@@ -1329,7 +1328,12 @@ export class ThreadDriver implements JobDispatcher {
       // (which would let a single Anthropic blip permanently stall EVERY in-flight job; 07-09 incident). Keep the
       // job `running` with the thread `awaiting_input` + owed wake, regardless of prior attempts.
       if (term?.blocked?.reason === 'judge_unavailable') {
-        text = `:hourglass_flowing_sand: *${thread.brief}* is done but the live-verification judge is temporarily unavailable — holding to retry when it recovers (not counted against the fix budget).`;
+        // Name the judge that's actually down via its own `detail` (static- or live-verification), rather
+        // than hardcoding one: either sibling gate can raise `judge_unavailable`, so blaming the live judge
+        // is wrong (and drops the specific detail) when the STATIC judge is the one that's unreachable.
+        const detail =
+          term.blocked.detail ?? 'a verification judge is temporarily unavailable';
+        text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
       } else {
         const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
         if (spent >= HALT_FIX_ATTEMPT_CAP) {
@@ -1942,7 +1946,7 @@ export class ThreadDriver implements JobDispatcher {
     // TERMINAL LATCH (ADR 0004 Phase 3): the bridge has no engine-turn-termination primitive, so the model
     // could call a terminal assertion twice (e.g. `complete_thread` after `block_thread`) and overwrite the
     // first one. First assertion wins — a second call never touches the record. Host-side downgrades (the
-    // ADR-0005 judge + the diagnostics gate) run OUTSIDE this bridge and still intentionally rewrite a `done`
+    // ADR-0005 live + static judges) run OUTSIDE this bridge and still intentionally rewrite a `done`
     // record to `blocked` — the latch governs only the in-turn tool calls, not the host.
     //
     // ANTI-SPIN: once latched, the model SHOULD stop — but a model that doesn't will keep calling the terminal
@@ -2025,17 +2029,46 @@ export class ThreadDriver implements JobDispatcher {
             ...(asStrings(args['deviations']) ? { deviations: asStrings(args['deviations']) } : {}),
             ...(asStrings(args['gaps']) ? { gaps: asStrings(args['gaps']) } : {}),
           };
-          const gated = await this.gateLiveVerification(
+          // Run BOTH cheap warm-turn judges against the SAME candidate (decision d2/d3): the static-check
+          // judge (typecheck/lint/diagnostics/tests) and the live-verification judge (live e2e). Block if
+          // EITHER is inadequate — and carry BOTH verdicts on the persisted record (jsonb, no migration).
+          // Latch ONLY an ACCEPTED `done`: a judge DOWNGRADE (status still 'blocked', returned with a
+          // `warning`) is a REJECTED claim the orchestrator must be able to fix and re-`complete_thread` in
+          // the SAME warm turn (ADR 0005's warning-retry).
+          const staticGate = await this.gateStaticVerification(
             job, thread, sandbox, record, sectionStartSha, candidate,
           );
-          // Latch ONLY an ACCEPTED terminal assertion. A Phase-2 judge DOWNGRADE (status still 'blocked',
-          // returned with a `warning`) is a REJECTED claim — the orchestrator must be able to capture the
-          // missing evidence and call `complete_thread` again in the SAME turn (ADR 0005's warning-retry). A
+          const liveGate = await this.gateLiveVerification(
+            job, thread, sandbox, record, sectionStartSha, candidate,
+          );
+          // Pick `primary` by reason SEVERITY, not by which gate happens to be blocked first: a firm
+          // `unverified` finding from one judge must win over a transient `judge_unavailable` hold from the
+          // other, otherwise a real defect gets masked behind an infra hold (which `haltJob` retries without
+          // consuming the fix budget or escalating). Static wins genuine ties (a static miss surfaces first).
+          const severity = (r: ThreadTerminalRecord): number =>
+            r.status !== 'blocked' ? 0 : r.blocked?.reason === 'unverified' ? 2 : 1;
+          const primary =
+            severity(staticGate.record) >= severity(liveGate.record)
+              ? staticGate.record
+              : liveGate.record;
+          const gatedRecord: ThreadTerminalRecord = {
+            ...primary,
+            ...(staticGate.record.staticVerification
+              ? { staticVerification: staticGate.record.staticVerification }
+              : {}),
+            ...(liveGate.record.liveVerification
+              ? { liveVerification: liveGate.record.liveVerification }
+              : {}),
+          };
+          const warning = [staticGate.warning, liveGate.warning].filter(Boolean).join(' ');
+          // Latch ONLY an ACCEPTED terminal assertion. A judge DOWNGRADE (status still 'blocked', returned
+          // with a `warning`) is a REJECTED claim — the orchestrator must be able to capture the missing
+          // evidence and call `complete_thread` again in the SAME turn (ADR 0005's warning-retry). A
           // premature latch here silently traps a genuinely-done thread as `blocked` (caught in live
           // validation: the model curl'd a real 200, then its second complete_thread was wrongly rejected).
-          if (gated.record.status === 'done') terminated = 'done';
-          await this.store.recordThreadTermination(thread.id, gated.record);
-          return gated.warning ? { ok: true, warning: gated.warning } : { ok: true };
+          if (gatedRecord.status === 'done') terminated = 'done';
+          await this.store.recordThreadTermination(thread.id, gatedRecord);
+          return warning ? { ok: true, warning } : { ok: true };
         },
         request_operator_input: async (args) => {
           const question = String(args['question'] ?? '').trim();
@@ -2344,6 +2377,88 @@ export class ThreadDriver implements JobDispatcher {
     return { record: { ...candidate, liveVerification: { verdict: effective } } };
   }
 
+  /**
+   * The STATIC-check sibling of {@link gateLiveVerification} (decision d3) — gates `complete_thread`'s `done`
+   * claim on the static checks (typecheck/build, linter, LSP diagnostics, unit/integration tests "if
+   * applicable") via a cheap Haiku judge, replacing the eliminated Opus session-resume diagnostics gate.
+   * Never throws; the caller always gets back SOME record. Skips (passes `candidate` through) for the
+   * master-review thread and a missing `sectionStartSha`, exactly like the live gate.
+   */
+  private async gateStaticVerification(
+    job: Job,
+    thread: DriverThread,
+    sandbox: FeatureSandbox,
+    record: DecisionRecord | null,
+    sectionStartSha: string | undefined,
+    candidate: ThreadTerminalRecord,
+  ): Promise<{ record: ThreadTerminalRecord; warning?: string }> {
+    if (thread.kind === 'master_review' || !sectionStartSha) {
+      return { record: candidate };
+    }
+
+    const changedFiles = await this.git.changedFileNames(sandbox.worktreePath, sectionStartSha);
+    // Static-check pre-filter — DELIBERATELY DIVERGENT from the live judge's NON_RUNTIME_FILE_RE (see
+    // BUILD_RELEVANT_FILE_RE): fire iff ≥1 changed file is a code file OR build-defining config, because a
+    // broken test file / tsconfig / package.json is exactly what typecheck/lint/test catches. A diff matching
+    // NONE (pure docs/lockfile/.github/image, or no changed files) is inert to static checks and skips.
+    const buildRelevant = changedFiles.some((f) => BUILD_RELEVANT_FILE_RE.test(f));
+
+    let verdict: StaticVerificationVerdict | undefined;
+    if (buildRelevant) {
+      verdict = await this.staticVerificationJudge
+        .judge({
+          terminalRecordSummary: renderTerminalRecordSummary(candidate),
+          changedFiles,
+          lockedDecisionsSummary: renderLockedDecisionsSummary(record),
+          orgId: job.orgId,
+        })
+        .catch(() => undefined);
+    }
+
+    // Conservative default (mirrors the live judge): unavailable/malformed → treat as inadequate, never
+    // toward a silent `done`.
+    const effective: StaticVerificationVerdict = !buildRelevant
+      ? { staticChecksAdequate: true, reason: 'no build-relevant files (pre-filter)' }
+      : (verdict ?? { staticChecksAdequate: false, reason: 'static-verification judge unavailable' });
+
+    if (!effective.staticChecksAdequate) {
+      let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
+      // Distinguish a transient judge outage from a real inadequate verdict (mirrors the live judge): the
+      // judge was CONSULTED (build-relevant diff) but returned nothing → UNAVAILABLE. A missing key is a real
+      // config gap the operator must fix (plain `unverified`); a present key + no verdict is transient infra →
+      // HOLD via `judge_unavailable` rather than burning the fix budget.
+      let reason: 'unverified' | 'judge_unavailable' = 'unverified';
+      if (buildRelevant && !verdict) {
+        const hasKey = await this.creds.anthropicKey(job.orgId).catch(() => undefined);
+        if (!hasKey) {
+          detail = `no Anthropic API key configured for the static-verification judge — configure one. (${detail})`;
+        } else {
+          reason = 'judge_unavailable';
+          detail = `static-verification judge temporarily unavailable (transient infra) — the work may be fine; will retry when the service recovers. (${detail})`;
+        }
+      }
+      const blocked: ThreadTerminalRecord = {
+        status: 'blocked',
+        summary: candidate.summary,
+        ...(candidate.changes ? { changes: candidate.changes } : {}),
+        ...(candidate.verification ? { verification: candidate.verification } : {}),
+        ...(candidate.deviations ? { deviations: candidate.deviations } : {}),
+        ...(candidate.gaps ? { gaps: candidate.gaps } : {}),
+        blocked: { reason, detail },
+        staticVerification: { verdict: effective },
+      };
+      return {
+        record: blocked,
+        warning:
+          reason === 'judge_unavailable'
+            ? `Static-verification judge unavailable (transient) — holding ${thread.brief} to retry, not counted against the fix budget: ${detail}`
+            : `Downgraded to blocked (unverified) by the static-verification judge: ${detail}`,
+      };
+    }
+
+    return { record: { ...candidate, staticVerification: { verdict: effective } } };
+  }
+
   /** Poll a build-origin question card until the operator answers it, bounded by OPERATOR_INPUT_TIMEOUT_MS
    *  (default 6h). On timeout it returns guidance telling the orchestrator to proceed on its best judgment
    *  (rather than erroring the turn). Stops early if the turn is aborted (shutdown/kill). */
@@ -2502,12 +2617,11 @@ export class ThreadDriver implements JobDispatcher {
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
-    // during the verification gate or commit that follows — a much bigger window now that the gate can run
-    // for minutes, across multiple resumed turns. Re-kicking the orchestrator here would re-send its
-    // ORIGINAL batch task into an already-finished conversation (confusing it, and exposing the WRONG tool
-    // bridge — the batch bridge, not the gate's) instead of resuming the gate that's actually in progress.
-    // So: if a `done` terminal record already exists for the terminal batch, skip the kick/reattach dance
-    // entirely and fall straight through to the gate below with the EXISTING assertion.
+    // during the completion gate or commit that follows. Re-kicking the orchestrator here would re-send its
+    // ORIGINAL batch task into an already-finished conversation. So: if a `done` terminal record already
+    // exists for the terminal batch, skip the batch kick entirely and fall through to the completion gate /
+    // commit path with the EXISTING assertion. An in-flight commit nudge is reattached later by
+    // `ensureCommitted`.
     const priorTerm = isLastBatch ? await this.store.getTerminalRecord(thread.id) : null;
 
     let report: string;
@@ -2515,7 +2629,7 @@ export class ThreadDriver implements JobDispatcher {
 
     if (priorTerm?.status === 'done') {
       this.logger.log(
-        `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — terminal record already 'done' from a prior attempt; resuming the verification gate without re-kicking the orchestrator`,
+        `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — terminal record already 'done' from a prior attempt; resuming completion checks without re-kicking the orchestrator`,
       );
       report = priorTerm.summary;
     } else {
@@ -2543,7 +2657,7 @@ export class ThreadDriver implements JobDispatcher {
       // pipe transport falls through to a kick that resumes the persisted session — today's recovery).
       const reattachRow =
         this.turn.canReattach() && anchor.sessionId
-          ? await this.findReattachableTurn(job.id, lane, anchor.id)
+          ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge == null)
           : null;
       // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
       // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
@@ -2676,35 +2790,7 @@ export class ThreadDriver implements JobDispatcher {
       return { outcome, report };
     }
 
-    // DIAGNOSTICS DONE-GATE (ADR 0004 rider 3) — a `done` claim is asked-for-verification, never enforced:
-    // resume the SAME orchestrator session to run a real diagnostics + typecheck pass and fix what it finds,
-    // before the driver trusts the claim enough to commit. Claude worker batches ONLY — master-review is
-    // Codex, which has no host tool bridge (`report_verification` would be uncallable there), and it already
-    // carries its own typecheck/verify mandate in `renderMasterReviewTask`.
-    if (thread.kind !== 'master_review') {
-      const gate = await this.runVerificationGate(
-        job, thread, sandbox, anchor, lane, channel, repo, sectionStartSha,
-      );
-      if (!gate.passed) {
-        this.logger.warn(
-          `thread ${thread.ordinal} batch [${steps.map((p) => p.ordinal).join(',')}] — verification gate failed, not committing: ${gate.detail}`,
-        );
-        // Downgrade the claim to `blocked` (reusing the EXACT status/reason vocabulary the ADR-0005
-        // live-verification judge already uses for the same shape of claim) — reuses haltJob's existing
-        // "Thread blocked" relay + `awaiting_input` status, no new plumbing needed.
-        const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
-        await this.store.recordThreadTermination(thread.id, {
-          status: 'blocked',
-          summary: prior?.summary ?? 'verification gate failed',
-          ...(prior?.changes ? { changes: prior.changes } : {}),
-          ...(prior?.verification ? { verification: prior.verification } : {}),
-          blocked: { reason: 'unverified', detail: gate.detail.slice(0, 2000) },
-        });
-        return { outcome: 'blocked', report };
-      }
-    }
-
-    // The WRITER committed + pushed its own work (its batch prompt + the gate directive both require a
+    // The WRITER committed + pushed its own work (its batch prompt requires a
     // clean tree). The host no longer creates commits — it only READS what the writer produced. If the tree
     // is still dirty (the model forgot), nudge the SAME session to commit + push, bounded; if it stays dirty
     // we block rather than committing on the writer's behalf.
@@ -2746,10 +2832,10 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Ensure the WRITER left a clean tree (its own commit + push). Writers own their commits now (prompt + gate
-   * directive); this only handles the forgot-to-commit case. Re-checks the tree and, if dirty, resumes the
-   * SAME session (via `stepId`) with a commit + push directive — bounded, same resumed-turn pattern as the
-   * verification gate. Returns `ok:false` if the tree stays dirty (the driver then blocks the thread).
+   * Ensure the WRITER left a clean tree (its own commit + push). Writers own their commits now (prompt);
+   * this only handles the forgot-to-commit case. Re-checks the tree and, if dirty, resumes the SAME session
+   * (via `stepId`) with a commit + push directive. Returns `ok:false` if the tree stays dirty (the driver
+   * then blocks the thread).
    */
   private async ensureCommitted(
     job: Job,
@@ -2762,6 +2848,23 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<{ ok: true } | { ok: false; detail: string }> {
     for (let attempt = 0; attempt <= COMMIT_NUDGE_MAX; attempt++) {
       if (!(await this.git.hasChanges(sandbox.worktreePath))) return { ok: true };
+      const reattachRow = this.turn.canReattach()
+        ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge != null)
+        : null;
+      if (reattachRow?.container_id) {
+        const result = await this.reattachBatchTurn(
+          job,
+          thread,
+          lane,
+          {
+            phaseId: anchor.id,
+            commitNudge: (reattachRow.ctx as { commitNudge?: unknown } | null)?.commitNudge ?? 'reattach',
+          },
+          reattachRow,
+          anchor.id,
+        );
+        if (result) continue;
+      }
       if (attempt === COMMIT_NUDGE_MAX) break;
       const deadline = new PausableDeadline(this.phaseTimeoutMs, `commit nudge "${thread.brief}"`);
       try {
@@ -2832,7 +2935,7 @@ export class ThreadDriver implements JobDispatcher {
             orgId: job.orgId,
             channel,
             lane,
-            kind: 'gate', // reuse the gate's reattach path (short resumed turn keyed on the anchor)
+            kind: 'step', // reuse the batch reattach path (short resumed turn keyed on the anchor)
             ctx: { repoId: job.repoId, threadId: thread.id, anchorStepId: anchor.id, commitNudge: attempt },
           },
           onEvent: (e) => harness.onEvent(e),
@@ -2849,17 +2952,16 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Find the still-running registry row for THIS batch's engine turn (restart re-attach), or null. Matches on
-   * (job_id, lane, ctx.anchorStepId) among running turns of the given `kind` — the lane is thread-scoped and a
-   * thread runs one batch (or one gate iteration) at a time, so the match is unique; the anchor id
-   * disambiguates across a thread's batches. `kind` defaults to `'step'` (the batch turn); the verification
-   * gate passes `'gate'` to find its OWN in-flight iteration instead of the (by-then-finished) batch turn.
+   * Find the still-running registry row for THIS batch or commit-nudge engine turn (restart re-attach), or
+   * null. Matches on (job_id, lane, ctx.anchorStepId) among running `'step'`-kind turns — the lane is
+   * thread-scoped and a thread runs one batch/commit nudge at a time, so the match is unique; the anchor id
+   * disambiguates across a thread's batches.
    */
   private async findReattachableTurn(
     jobId: string,
     lane: string,
     anchorStepId: string,
-    kind: 'step' | 'gate' = 'step',
+    matchCtx: (ctx: Record<string, unknown>) => boolean = () => true,
   ): Promise<ActiveTurnEntity | null> {
     const rows = await this.turnRegistry.listRunning().catch((err) => {
       this.logger.warn(`reattach lookup failed (will kick a fresh turn): ${err}`);
@@ -2867,20 +2969,25 @@ export class ThreadDriver implements JobDispatcher {
     });
     return (
       rows.find(
-        (r) =>
-          r.kind === kind &&
-          r.job_id === jobId &&
-          r.lane === lane &&
-          (r.ctx as { anchorStepId?: string } | null)?.anchorStepId === anchorStepId,
+        (r) => {
+          const ctx = (r.ctx ?? {}) as Record<string, unknown>;
+          return (
+            r.kind === 'step' &&
+            r.job_id === jobId &&
+            r.lane === lane &&
+            ctx.anchorStepId === anchorStepId &&
+            matchCtx(ctx)
+          );
+        },
       ) ?? null
     );
   }
 
   /**
-   * RE-ATTACH a batch's in-flight engine turn after a restart: re-tail its live stream (no re-kick) on the
-   * thread lane and persist the result — parity with the brain's boot re-attach. Returns null when the turn
-   * can no longer be tailed (finished + streams reaped, or the container is gone) so the caller re-runs it.
-   * Uses the ORIGINAL turn's channel so replayed frames land on the same SSE key.
+   * RE-ATTACH a batch/commit-nudge in-flight engine turn after a restart: re-tail its live stream (no
+   * re-kick) on the thread lane and persist the result — parity with the brain's boot re-attach. Returns null
+   * when the turn can no longer be tailed (finished + streams reaped, or the container is gone) so the caller
+   * re-runs it. Uses the ORIGINAL turn's channel so replayed frames land on the same SSE key.
    */
   private async reattachBatchTurn(
     job: Job,
@@ -2892,7 +2999,7 @@ export class ThreadDriver implements JobDispatcher {
     toolBridge?: ToolBridgeOptions,
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
     this.logger.log(
-      `thread ${thread.ordinal} — re-attaching in-flight build turn ${row.turn_id} (container ${row.container_id})`,
+      `thread ${thread.ordinal} — re-attaching in-flight engine turn ${row.turn_id} (container ${row.container_id})`,
     );
     const harness = this.turnHarness.create({
       jobId: job.id,
@@ -3295,241 +3402,6 @@ export class ThreadDriver implements JobDispatcher {
     } catch (err) {
       this.logger.debug(`deviations projection write failed (display-only): ${shortReason(err)}`);
     }
-  }
-
-  /** Host tool bridge for a verification-gate turn — exposes ONLY `report_verification`, the structured
-   *  verdict the gate reads instead of parsing prose (mirrors `complete_thread`'s typed-assertion contract).
-   *  `onVerdict` is a plain closure callback (one gate iteration, one verdict) rather than a store write —
-   *  the gate loop decides what to do with it (pass / feed the remainder into the next iteration). */
-  private buildGateToolBridge(
-    jobId: string,
-    onVerdict: (verdict: { passed: boolean; remaining?: string[] }) => void,
-  ): ToolBridgeOptions {
-    return {
-      jobId,
-      tools: {
-        report_verification: async (args) => {
-          const passed = args['passed'] === true;
-          const remaining = Array.isArray(args['remaining'])
-            ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
-            : undefined;
-          onVerdict({ passed, ...(remaining?.length ? { remaining } : {}) });
-          return { ok: true };
-        },
-      },
-    };
-  }
-
-  /**
-   * DIAGNOSTICS DONE-GATE (ADR 0004 rider 3). A `complete_thread` claim is only as good as the verification
-   * the prompt ASKED for — nothing enforced it. This resumes the SAME orchestrator session (via `stepId`,
-   * exactly like a batch resume) after it claims `done`, hands it a directive to run a real diagnostics +
-   * typecheck pass over what it changed and fix what it finds, and reads back a structured verdict via the
-   * `report_verification` host tool — never trusting prose. Called from `runBatch` for Claude worker
-   * batches only, right before the builder commits its batch.
-   *
-   * Skips (passes through) when there's no `sectionStartSha` (best-effort, mirrors `gateLiveVerification`)
-   * or no changed TS/JS file (nothing to typecheck — an empty diff never reaches the gate, same cheap
-   * pre-filter philosophy as ADR-0005 §2f).
-   *
-   * Bounded by a ~10-minute total wall-clock budget across at most 2 resume iterations. Codex review:
-   * `PausableDeadline` is one-shot (`runTurnBounded` calls `.clear()` in `finally`), so each iteration gets
-   * its OWN deadline sized to the REMAINING budget — never a reused/rearmed one. A restart mid-gate is
-   * reattachable exactly like the batch turn: the gate iteration registers `turnMeta.kind:'gate'`, and a
-   * fresh call into this method looks for that live row (`findReattachableTurn(..., 'gate')`) before kicking
-   * a new one.
-   */
-  private async runVerificationGate(
-    job: Job,
-    thread: DriverThread,
-    sandbox: FeatureSandbox,
-    anchor: Step,
-    lane: string,
-    channel: string,
-    repo: ResolvedRepo,
-    sectionStartSha: string | undefined,
-  ): Promise<{ passed: true } | { passed: false; detail: string }> {
-    if (!sectionStartSha) return { passed: true };
-    const changed = await this.git.changedFileNames(sandbox.worktreePath, sectionStartSha);
-    const tsFiles = changed.filter((f) => /\.(ts|tsx|js|jsx)$/i.test(f));
-    if (tsFiles.length === 0) return { passed: true };
-
-    const gateStart = Date.now();
-    let priorErrors: string[] = [];
-    for (let iteration = 1; iteration <= this.gateMaxIterations; iteration++) {
-      const remainingMs = this.gateBudgetMs - (Date.now() - gateStart);
-      if (remainingMs <= 0) break;
-
-      let verdict: { passed: boolean; remaining?: string[] } | undefined;
-      const toolBridge = this.buildGateToolBridge(job.id, (v) => (verdict = v));
-      const task = renderGateTask(tsFiles, iteration, priorErrors);
-      const label = `gate "${thread.brief}" iter ${iteration}`;
-
-      const reattachRow =
-        this.turn.canReattach() && anchor.sessionId
-          ? await this.findReattachableTurn(job.id, lane, anchor.id, 'gate')
-          : null;
-
-      let result: Awaited<ReturnType<TurnRunnerService['runTurn']>> | null = null;
-      try {
-        if (reattachRow?.container_id) {
-          result = await this.reattachGateTurn(
-            job, lane, channel, { phaseId: anchor.id, gateIteration: iteration }, reattachRow, anchor.id, toolBridge,
-          );
-        }
-        if (!result) {
-          result = await this.kickGateTurn(
-            job, sandbox, thread, anchor, task, lane, channel, repo, iteration,
-            new PausableDeadline(remainingMs, label), toolBridge,
-          );
-        }
-      } catch (err) {
-        if (isEngineDetachedError(err)) throw err; // leave running for the next boot to re-attach
-        priorErrors = [`gate iteration ${iteration} error: ${shortReason(err)}`];
-        continue;
-      }
-
-      if (verdict?.passed) return { passed: true };
-      priorErrors = verdict?.remaining?.length
-        ? verdict.remaining
-        : [
-            'no report_verification verdict was recorded for this gate turn' +
-              ' (the orchestrator ended the turn without calling it, or its verdict could not be recovered on resume)',
-          ];
-    }
-    return { passed: false, detail: priorErrors.join('\n') || 'verification gate exhausted its budget' };
-  }
-
-  /** RE-ATTACH an in-flight gate iteration after a restart — same contract as {@link reattachBatchTurn} but
-   *  for the gate's `kind:'gate'` turn (kept separate: the gate's tool bridge/lifecycle is simpler — just
-   *  `report_verification`, no deviations/complete_thread). Returns null when it can no longer be tailed
-   *  (the caller re-runs the iteration); rethrows on a detached tail (leave for the next boot). */
-  private async reattachGateTurn(
-    job: Job,
-    lane: string,
-    channel: string,
-    metaTag: Record<string, unknown>,
-    row: ActiveTurnEntity,
-    anchorStepId: string,
-    toolBridge: ToolBridgeOptions,
-  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>> | null> {
-    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
-    try {
-      const result = await this.turn.reattach({
-        turnId: row.turn_id,
-        containerId: row.container_id!,
-        jobId: job.id,
-        stepId: anchorStepId,
-        onEvent: (e) => {
-          harness.onEvent(e);
-          this.recoverGateVerdictFromReplay(e, toolBridge);
-        },
-        toolBridge,
-      });
-      await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
-      return result;
-    } catch (err) {
-      if (isEngineDetachedError(err)) throw err;
-      await harness.abort();
-      await this.turnRegistry.finalize(row.turn_id, 'failed').catch(() => undefined);
-      this.logger.warn(`re-attach gate turn ${row.turn_id} failed; re-running the iteration: ${err}`);
-      return null;
-    }
-  }
-
-  /** Recover the gate verdict from the REPLAYED events log on a gate reattach. The gate's verdict lives only
-   *  in an in-process closure driven by the tools-bridge channel, which is consumed-once + acked — so a
-   *  `report_verification` call made before an engine-detach is NOT redelivered on reattach, and the gate
-   *  would falsely halt with "…without calling report_verification" even though the call demonstrably
-   *  happened. But the authoritative events log IS replayed from the start on reattach (to rebuild the
-   *  transcript), so the call's `tool_use` event still arrives here — drive the matching bridge handler with
-   *  it to restore the verdict. Guarded to the MAIN agent (a subagent's `tool_use` must not drive the gate).
-   *  Safe ONLY because the gate's sole bridged tool (`report_verification`) is pure — do NOT reuse this on a
-   *  batch reattach, whose tools have real side effects a genuinely-pending live redelivery must own. */
-  private recoverGateVerdictFromReplay(e: EngineEvent, toolBridge: ToolBridgeOptions): void {
-    if (e.kind !== 'tool_use' || e.parentToolUseId) return;
-    const prefix = `mcp__${BRIDGE_SERVER_NAME}__`;
-    const bareName = e.name.startsWith(prefix) ? e.name.slice(prefix.length) : e.name;
-    const impl = toolBridge.tools[bareName];
-    if (!impl) return;
-    // The replayed `tool_use` carries `block.input` verbatim — the model's FLAT payload against the tool's
-    // real per-tool schema (no `{ args }` wrapper), already strict-validated client-side — so the replay
-    // path drives the handler with it directly, exactly like the live dispatch.
-    void impl((e.input ?? {}) as Record<string, unknown>);
-  }
-
-  /** KICK a fresh gate-iteration turn — resumes the orchestrator's persisted session (via `stepId`) with the
-   *  gate directive as its task. Registers `turnMeta.kind:'gate'` so a restart mid-iteration can re-attach
-   *  (see {@link reattachGateTurn}) instead of losing the tail. */
-  private async kickGateTurn(
-    job: Job,
-    sandbox: FeatureSandbox,
-    thread: DriverThread,
-    anchor: Step,
-    task: string,
-    lane: string,
-    channel: string,
-    repo: ResolvedRepo,
-    iteration: number,
-    deadline: PausableDeadline,
-    toolBridge: ToolBridgeOptions,
-  ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
-    const metaTag = { phaseId: anchor.id, gateIteration: iteration };
-    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
-    // Surface this gate iteration's directive (the verify/fix task the orchestrator resumes with) on the
-    // build lane, inline before its activity — the gate resumes the build session with no anchor of its own,
-    // so without this the operator sees the fix work but never what was asked. Keyed per (step, iteration)
-    // so a re-kick after a restart never duplicates it. The reattach path deliberately does NOT emit.
-    await harness.emitPrompt(task, `gate:${anchor.id}:${iteration}`);
-    const repoConventions = await this.repoConventionsFor(job);
-    let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
-    try {
-      result = await this.runTurnBounded(
-        {
-          orgId: job.orgId,
-          jobId: job.id,
-          stepId: anchor.id, // resumes the persisted engine session — same conversation as the build turn
-          sandbox,
-          engine: 'claude',
-          mode: 'execute',
-          systemPrompt: renderAgentPrompt(Agent.WORKER, {
-            jobKind: job.kind,
-            settings: { repoConventions },
-            turnPhase: 'gate',
-          }),
-          task,
-          auth: await this.creds.engineAuth(job.orgId, 'claude'),
-          userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
-          skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
-          ...(repoConventions ? { repoConventions } : {}),
-          ...(threadKindSpec('builder').reasoningEffort
-            ? { modelReasoningEffort: threadKindSpec('builder').reasoningEffort }
-            : {}),
-          gitAuth: await this.resolveTurnGitAuth(
-            job.orgId,
-            repo.projectRepo.gitUrl,
-          ),
-          richStream: true,
-          toolBridge,
-          turnMeta: {
-            jobId: job.id,
-            orgId: job.orgId,
-            channel,
-            lane,
-            kind: 'gate',
-            ctx: { repoId: job.repoId, threadId: thread.id, anchorStepId: anchor.id, iteration },
-          },
-          onEvent: (e) => harness.onEvent(e),
-        },
-        `gate "${thread.brief}" iter ${iteration}`,
-        deadline,
-      );
-    } catch (err) {
-      await harness.abort();
-      throw err;
-    }
-    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
-    return result;
   }
 
   /**
@@ -3965,37 +3837,6 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
       ` completion — the review is NOT recorded as done until you call it. If you genuinely cannot proceed,` +
       ` call \`block_thread\` with a reason and detail instead.`,
   ].join('\n');
-}
-
-/** The task for a verification-gate turn (ADR 0004 rider 3) — resumes the SAME orchestrator session after
- *  it claimed `done`, to run a real diagnostics + typecheck pass before the driver trusts the claim.
- *  `priorErrors` carries the previous iteration's reported remainder, when this is a retry. */
-export function renderGateTask(
-  changedFiles: string[],
-  iteration: number,
-  priorErrors: string[],
-): string {
-  const fileList = changedFiles.map((f) => `- ${f}`).join('\n');
-  const priorBlock = priorErrors.length
-    ? `\nYour last attempt still left these unresolved:\n${priorErrors.map((e) => `- ${e}`).join('\n')}\n`
-    : '';
-  return [
-    `Verification gate (required before your work is accepted) — attempt ${iteration}.`,
-    `\nThis thread's changes touched these files:\n${fileList}`,
-    priorBlock,
-    `\n1. Run \`mcp__atlas-lsp-ts__diagnostics\` on each changed file above — a fast per-file check.`,
-    `\n2. Run the repo's own typecheck command (authoritative, whole-program) — discover it the same way` +
-      ` you would for a normal build (package.json scripts / repo conventions).`,
-    `\n3. Fix every error you find, in THIS session, then re-run both checks to confirm they're clean.`,
-    `\n4. COMMIT: once both checks are clean, \`git add -A\`, commit any fixes with a clear message, and` +
-      ` \`git push\` — leave a CLEAN working tree (the host does NOT commit for you; it reads what you leave).`,
-    `\nWhen both are clean AND your tree is committed + pushed, call \`report_verification\` with` +
-      ` \`{ passed: true }\`. If you cannot get the checks clean, call \`report_verification\` with` +
-      ` \`{ passed: false, remaining: [...] }\`, listing the specific remaining errors (file:line — message)` +
-      ` — never end the turn without calling one or the other.`,
-  ]
-    .filter(Boolean)
-    .join('\n');
 }
 
 /**

@@ -50,7 +50,7 @@ const threadItem = z.object({
 });
 
 export const TOOL_SHAPES: Record<string, ToolShape> = {
-  // ── Driver tools (buildTurnBridge / buildGateToolBridge) ──────────────────────────────────────
+  // ── Driver tools (buildTurnBridge) ────────────────────────────────────────────────────────────
   complete_thread: {
     summary: z.string(),
     changes: z.array(z.string()).optional(),

@@ -28,7 +28,7 @@ import {
 } from '../fragments';
 
 // Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread, record_deviation,
-// and capture_ticket are actually registered. On gate/commit turns those tools aren't in the model's per-turn
+// and capture_ticket are actually registered. On commit turns those tools aren't in the model's per-turn
 // list, so instructing them there would contradict its real tool set. Absent turnPhase ⇒ batch (back-compat).
 const batchOnly = (c: PromptCtx) => (c.turnPhase ?? 'batch') === 'batch';
 
