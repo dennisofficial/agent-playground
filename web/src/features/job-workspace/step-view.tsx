@@ -161,7 +161,9 @@ export function PhaseView({
       ? `generated/${selectedNode.slice("gen:".length)}`
       : selectedNode.startsWith("artifact:")
         ? `artifacts/${selectedNode.slice("artifact:".length)}`
-        : null;
+        : selectedNode.startsWith("evidence:")
+          ? `evidence/${selectedNode.slice("evidence:".length)}`
+          : null;
   const fileQuery = useContextFile(jobRef, filePath);
   // Cheap even when the node isn't a service — React Query dedupes against the navigator's own useServices
   // call (same query key), and gives ServiceLogView a real name/cmd for its header instead of the bare id.
@@ -911,7 +913,9 @@ function contextNodeForLink(fromPath: string, href: string): string | null {
         ? "gen:"
         : bucket === "artifacts"
           ? "artifact:"
-          : null;
+          : bucket === "evidence"
+            ? "evidence:"
+            : null;
   if (!prefix) return null;
   const stack = parts.slice(1, -1); // dir of the current file, within the bucket
   for (const seg of href.split(/[?#]/)[0].split("/")) {

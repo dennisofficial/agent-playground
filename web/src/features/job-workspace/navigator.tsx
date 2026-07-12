@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   FileText,
+  FlaskConical,
   Folder,
   GitBranch,
   GitFork,
@@ -852,6 +853,7 @@ function OutputsRegion({
   const specs = context?.specs ?? [];
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
+  const evidence = context?.evidence ?? [];
   const triaging = status === "triaging";
 
   return (
@@ -933,6 +935,20 @@ function OutputsRegion({
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
+
+      {/* EVIDENCE — live-run proof (logs, screenshots, RESULTS.md), organized per thread. Hidden until the
+          first evidence lands, so historical jobs (no evidence/) show no empty region. */}
+      <OutputGroup
+        label="EVIDENCE"
+        files={evidence}
+        prefix="evidence"
+        loading={loading}
+        hideWhenEmpty
+        emptyIcon={<FlaskConical size={13} />}
+        emptyText="No evidence captured yet"
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
     </>
   );
 }
@@ -956,7 +972,7 @@ function OutputGroup({
 }: {
   label: string;
   files: ContextFile[];
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   loading?: boolean;
   /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
@@ -1505,7 +1521,7 @@ function renderFileTree({
   node: FileTreeNode;
   path: string;
   depth: number;
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;
