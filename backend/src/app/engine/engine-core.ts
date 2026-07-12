@@ -31,6 +31,7 @@ import {
 import {
   EngineAuthError,
   isAuthErrorMessage,
+  NO_ENGINE_CREDENTIAL_MARKER,
   UNRESUMABLE_SESSION_MARKER,
   type CodexReasoningEffort,
   type EngineAuth,
@@ -562,9 +563,13 @@ export class EngineCore {
    */
   private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     if (explicit) return explicit;
-    throw new Error(
-      `No ${engine} subscription secret — the org has no ${engine} credential set (add one via ` +
-        'onboarding, or `pnpm db:seed` in dev). The engine runs subscription-only (no API-key fallback).',
+    // Classify as an auth halt (marker → clean, resumable credentials halt at the driver) rather than a
+    // plain Error that fails the job opaquely: a missing credential is fixable by connecting an account.
+    throw new EngineAuthError(
+      `${NO_ENGINE_CREDENTIAL_MARKER}: no ${engine} subscription secret — the org has no ${engine} ` +
+        'credential set (connect one in Settings).',
+      undefined,
+      engine,
     );
   }
 
@@ -1250,7 +1255,7 @@ export class EngineCore {
       // A 401 / expired token / "not logged in" → a RESUMABLE auth error carrying the live session,
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession);
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
       // graceful end — fall through to the normal post-loop return with the partial result + live session,
       // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
@@ -1489,7 +1494,7 @@ export class EngineCore {
     } catch (err) {
       // 401 / expired creds mid-Codex-turn → resumable auth error carrying the live thread id.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession);
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'codex');
       throw err;
     }
 

@@ -12,7 +12,12 @@ import {
   toCodexEffort,
 } from './engine-core';
 import { atlasEngineHomeDir, type EngineHomeKey } from './engine-home';
-import { isUnresumableSessionMessage, UNRESUMABLE_SESSION_MARKER } from './engine.types';
+import {
+  EngineAuthError,
+  isUnresumableSessionMessage,
+  NO_ENGINE_CREDENTIAL_MARKER,
+  UNRESUMABLE_SESSION_MARKER,
+} from './engine.types';
 import type { EngineEvent, ReasoningEffort } from './engine.types';
 import { agentMessage } from '../prompt-kit/message';
 
@@ -758,11 +763,13 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     }
   });
 
-  it('throws (no API-key or env fallback) when no subscription secret is passed', async () => {
+  it('throws an EngineAuthError with the no-credential marker when no subscription secret is passed', async () => {
     const { sdk } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
-    await expect(
-      core.run({
+    // A missing credential is a clean, resumable auth halt (not a plain Error that fails the job opaquely):
+    // it throws EngineAuthError carrying NO_ENGINE_CREDENTIAL_MARKER so the driver renders actionable copy.
+    const err = await core
+      .run({
         engine: 'claude',
         task: agentMessage('x'),
         cwd: '/tmp/wt',
@@ -770,8 +777,15 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         sandboxKey: TEST_KEY,
         mode: 'execute',
         // no explicit auth → must throw (no env/config fallback exists)
-      }),
-    ).rejects.toThrow(/subscription secret/);
+      })
+      .then(
+        () => {
+          throw new Error('expected resolveAuth to throw');
+        },
+        (e: unknown) => e,
+      );
+    expect(err).toBeInstanceOf(EngineAuthError);
+    expect((err as Error).message).toContain(NO_ENGINE_CREDENTIAL_MARKER);
   });
 
   it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
