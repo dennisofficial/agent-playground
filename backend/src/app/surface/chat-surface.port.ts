@@ -166,6 +166,7 @@ export interface ChatSurface {
       orgId?: string;
       deliveredQuestionId?: string;
       deliveredFileId?: string;
+      deliveredSecretId?: string;
       seedRow?: SeedRow;
     },
   ): string;

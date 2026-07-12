@@ -1303,9 +1303,10 @@ export class AgentSessionManager
     const { jobId, seedQuestionId, seedSecretId, seedFileId } = stimulus;
 
     if (seedQuestionId) {
-      const card = await this.store
-        .getQuestionCard(jobId, seedQuestionId)
-        .catch(() => null);
+      // No .catch here: getQuestionCard returns null for a genuinely-absent card, and a THROWN error is
+      // transient — it must PROPAGATE so the caller skips the trailing markChatDelivered and the sweep re-drives
+      // (never stamping the row delivered while its card stays stranded, per this function's stated invariant).
+      const card = await this.store.getQuestionCard(jobId, seedQuestionId);
       if (card?.answer != null && card.deliveredAt == null) {
         await this.store
           .markQuestionDelivered(jobId, seedQuestionId)
@@ -1316,9 +1317,8 @@ export class AgentSessionManager
     }
 
     if (seedSecretId) {
-      const card = await this.store
-        .getSecretCard(jobId, seedSecretId)
-        .catch(() => null);
+      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
+      const card = await this.store.getSecretCard(jobId, seedSecretId);
       if (card?.provided_at != null && card.delivered_at == null) {
         await this.store
           .markSecretDelivered(jobId, seedSecretId)
@@ -1334,9 +1334,8 @@ export class AgentSessionManager
     }
 
     if (seedFileId) {
-      const card = await this.store
-        .getFileCard(jobId, seedFileId)
-        .catch(() => null);
+      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
+      const card = await this.store.getFileCard(jobId, seedFileId);
       if (card?.provided_at != null && card.delivered_at == null) {
         await this.store
           .markFileDelivered(jobId, seedFileId)
@@ -1517,7 +1516,10 @@ export class AgentSessionManager
       pending: batch,
       userChunks: batch.map((p) => userChunkFor(p)),
       ids: batch.map((p) => p.id),
-      wake: batch.some(isWakeEligible),
+      // Wake is computed over the FULL eligible-pending set, not just `batch`: a wake-eligible row excluded by the
+      // author partition (e.g. a `now` seed behind a `later` operator head) must still start a turn — otherwise no
+      // turn runs, no turn-end re-pump reconsiders the remainder, and the thread stalls until an unrelated wake.
+      wake: pending.some(isWakeEligible),
     };
   }
 
