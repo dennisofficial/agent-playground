@@ -11,6 +11,13 @@ import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
 import type { OperatorJobKind } from "@/lib/api/job-api";
+import {
+  type AutoApproveMode,
+  modeApprovesPlan,
+  modeApprovesShip,
+} from "@workspace/shared";
+import { composeMode } from "@/features/job-workspace/auto-approve-mode";
+import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
 import { useAttachments } from "@/features/job-workspace/use-attachments";
 import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
@@ -46,6 +53,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   // Job kind — "" = auto (brain scopes it, the default). "review" reveals a PR-number field.
   const [kind, setKind] = useState<OperatorJobKind | "">("");
   const [prNumber, setPrNumber] = useState("");
+  // Per-job auto-approve armed at creation — two independent gates (Plan / Ship) composing one mode.
+  // Default "off": both gates wait for a human, unchanged from before this control existed.
+  const [autoApproveMode, setAutoApproveMode] = useState<AutoApproveMode>("off");
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -125,6 +135,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         baseBranch: branch.trim() || undefined,
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
+        ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -255,6 +266,40 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               </p>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {repos.length > 0 ? (
+        <div>
+          <p className="text-[12px] font-medium text-dim">Auto-approve</p>
+          <div className="mt-1.5 rounded-md border border-border-2 px-3 pt-1.5 pb-1">
+            <p className="mb-1 text-[11px] leading-relaxed text-faint">
+              Choose which gates this job clears without you.
+            </p>
+            <SwitchRow
+              title="Plan"
+              description="Approve the plan / direct-build gate automatically"
+              checked={modeApprovesPlan(autoApproveMode)}
+              first
+              testId="create-auto-approve-plan"
+              onChange={(next) =>
+                setAutoApproveMode(
+                  composeMode(next, modeApprovesShip(autoApproveMode)),
+                )
+              }
+            />
+            <SwitchRow
+              title="Ship"
+              description="Approve the ship-review gate automatically"
+              checked={modeApprovesShip(autoApproveMode)}
+              testId="create-auto-approve-ship"
+              onChange={(next) =>
+                setAutoApproveMode(
+                  composeMode(modeApprovesPlan(autoApproveMode), next),
+                )
+              }
+            />
+          </div>
         </div>
       ) : null}
 

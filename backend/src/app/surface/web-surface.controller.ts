@@ -318,6 +318,8 @@ interface CreateThreadDto {
   kind?: string;
   /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
   prNumber?: string | number;
+  /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
+  autoApproveMode?: string;
 }
 
 /**
@@ -746,6 +748,9 @@ export class WebSurfaceController {
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
     const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
+    // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
+    // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
+    const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -755,6 +760,9 @@ export class WebSurfaceController {
         title: placeholder,
         base_branch: body.baseBranch ?? null,
         ...(kind ? { kind } : {}),
+        ...(autoApproveMode && autoApproveMode !== 'off'
+          ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
+          : {}),
       }),
     );
     const operatorText = text ?? '';
