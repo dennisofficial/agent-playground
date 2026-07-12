@@ -213,7 +213,7 @@ export class SkillInstallerService {
   /** Anonymous for public repos / non-GitHub remotes; the org's PAT for private GitHub repos. */
   private async resolveToken(sourceUrl: string, orgId: string): Promise<string | undefined> {
     if (!sourceUrl.startsWith('https://github.com/')) return undefined;
-    return this.creds.githubToken(orgId);
+    return this.creds.hostGithubToken(orgId);
   }
 }
 

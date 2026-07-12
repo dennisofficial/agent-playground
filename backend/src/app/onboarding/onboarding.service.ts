@@ -394,7 +394,7 @@ export class OnboardingService {
     if (!repo) throw new NotFoundException('repo not found');
     const parsed = parseGithubRepoUrl(repo.git_url);
     if (!parsed) throw new BadRequestException(`not an HTTPS GitHub URL: ${repo.git_url}`);
-    const token = await this.creds.githubToken(orgId);
+    const token = await this.creds.hostGithubToken(orgId);
     if (!token) throw new BadRequestException('no GitHub token set for this org');
     const names = await this.pr.listBranches(token, parsed.owner, parsed.repo);
     const def = repo.default_branch || 'main';
@@ -493,13 +493,13 @@ export class OnboardingService {
     if (!repo?.git_url) return { ok: false, reason: 'no repo configured' };
     const parsed = parseGithubRepoUrl(repo.git_url);
     if (!parsed) return { ok: false, reason: `not an HTTPS GitHub URL: ${repo.git_url}` };
-    const token = await this.creds.githubToken(orgId);
+    const token = await this.creds.hostGithubToken(orgId);
     if (!token) return { ok: false, reason: 'no GitHub token set' };
     const info = await this.pr.getRepo(token, parsed.owner, parsed.repo).catch(() => null);
     if (!info) {
       const presence = await this.store.presence(orgId);
       const reason =
-        presence.githubAuthMode === 'app'
+        presence.hasGithubApp
           ? `Atlas's GitHub App can't access ${parsed.owner}/${parsed.repo} — add this repo under the App installation's repository access`
           : `repo unreachable or token lacks access: ${parsed.owner}/${parsed.repo}`;
       return { ok: false, reason };
@@ -583,7 +583,7 @@ export class OnboardingService {
       this.logger.warn(`webhook registration skipped for ${repo.slug} — not an HTTPS GitHub URL: ${repo.git_url}`);
       return;
     }
-    const token = await this.creds.githubToken(orgId);
+    const token = await this.creds.hostGithubToken(orgId);
     if (!token) {
       this.logger.warn(`webhook registration skipped for ${repo.slug} — no GitHub token for org ${orgId}`);
       return;

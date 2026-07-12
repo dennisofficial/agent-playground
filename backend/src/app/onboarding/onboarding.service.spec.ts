@@ -151,6 +151,9 @@ function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): 
     async githubToken() {
       return over.github;
     },
+    async hostGithubToken() {
+      return over.github;
+    },
   } as unknown as CredentialResolver;
 }
 

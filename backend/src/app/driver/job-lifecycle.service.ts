@@ -524,7 +524,7 @@ export class JobLifecycleService {
     }
     const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(job.org_id);
+    const token = await this.creds.hostGithubToken(job.org_id);
     if (!parsed || !token) {
       throw new Error(`cannot resolve GitHub repo/token to close PR for job ${job.id}`);
     }
@@ -630,7 +630,7 @@ export class JobLifecycleService {
           continue;
         const project = await this.projects.findOne({ where: { id: thread.repo_id } });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
-        const token = await this.creds.githubToken(thread.org_id);
+        const token = await this.creds.hostGithubToken(thread.org_id);
         if (!parsed || !token || thread.pr_number == null) continue;
         const state = await this.pr.getPullState(token, {
           owner: parsed.owner,
@@ -821,7 +821,7 @@ export class JobLifecycleService {
     );
 
     try {
-      const token = await this.creds.githubToken(thread.org_id);
+      const token = await this.creds.hostGithubToken(thread.org_id);
       // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.
       const projectRepo = await this.git.ensureRepo({
         repoId: project.slug,
@@ -920,7 +920,7 @@ export class JobLifecycleService {
   private async repoForRow(row: JobSandboxEntity): Promise<ProjectRepo> {
     const project = await this.projects.findOne({ where: { id: row.repo_id } });
     if (!project) throw new Error(`No repos row for id=${row.repo_id} (org=${row.org_id})`);
-    const token = await this.creds.githubToken(row.org_id);
+    const token = await this.creds.hostGithubToken(row.org_id);
     return this.git.ensureRepo({
       repoId: project.slug,
       gitUrl: project.git_url,

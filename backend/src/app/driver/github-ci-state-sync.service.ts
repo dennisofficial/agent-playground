@@ -76,7 +76,7 @@ export class GithubCiStateSync {
     if (!job) return; // route-only: unowned CI is a no-op
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(job.org_id);
+    const token = await this.creds.hostGithubToken(job.org_id);
     if (!parsed || !token) return;
 
     // Resolve the CURRENT PR head authoritatively — NEVER the webhook's own head_sha (deliveries are
