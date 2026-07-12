@@ -42,22 +42,22 @@ function makeStore(opts: { jobs: Repository<JobEntity>; threads: Repository<Thre
 }
 
 describe('BrainStoreService.buildNotStarted', () => {
-  it('direct build path, no verification recorded yet → true (not started)', async () => {
-    const jobs = fakeJobsRepo({ id: 'job-1', build_path: 'direct', direct_build_verification: null });
+  it('direct build path, not started yet → true (not started)', async () => {
+    const jobs = fakeJobsRepo({ id: 'job-1', build_path: 'direct', direct_build_started_at: null });
     const threads = fakeThreadsRepo([]);
     const store = makeStore({ jobs, threads });
     await expect(store.buildNotStarted('job-1')).resolves.toBe(true);
     expect(threads.find).not.toHaveBeenCalled();
   });
 
-  it('direct build path, verification already recorded → false (started)', async () => {
+  it('direct build path, start marker stamped → false (started, even mid-implementation before finalize)', async () => {
     const jobs = fakeJobsRepo({
       id: 'job-1',
       build_path: 'direct',
-      direct_build_verification: {
-        verdict: { runtimeSurfaceTouched: true, liveVerificationAdequate: true, reason: 'ok' },
-        at: new Date().toISOString(),
-      },
+      direct_build_started_at: new Date(),
+      // Still null — verification is only written at the finalize_build gate, at the END of the turn. The
+      // gate must NOT depend on it: the build has already started once the marker is stamped.
+      direct_build_verification: null,
     });
     const threads = fakeThreadsRepo([]);
     const store = makeStore({ jobs, threads });

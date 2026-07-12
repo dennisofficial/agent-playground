@@ -1391,6 +1391,17 @@ export class BrainStoreService {
   }
 
   /**
+   * Stamp the durable "the direct build has STARTED" marker (`jobs.direct_build_started_at`) at the instant
+   * `dispatch_build` fires `runDirectBuild`. This is what closes the pre-start base-check window for the
+   * DIRECT path in {@link buildNotStarted} — it flips at the START of the implement turn, unlike
+   * `direct_build_verification` which is only written at the END (`finalize_build`). Idempotent: a re-fired
+   * `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
+   */
+  async markDirectBuildStarted(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { direct_build_started_at: new Date() });
+  }
+
+  /**
    * The threads whose `activity` is still `turn` — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllActivity} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
@@ -1772,12 +1783,17 @@ export class BrainStoreService {
    * `hold_build` (and any restart-recovery awareness) on THIS, never on `activity`: the base-check seed is
    * delivered on the normal brain-turn path, which sets `activity='turn'` for the duration of the turn, so
    * by the time Atlas calls a tool the activity is already `'turn'`, never `'base_check'`.
+   *
+   * DIRECT path: gated on {@link JobEntity.direct_build_started_at}, stamped when `dispatch_build` fires
+   * `runDirectBuild`. NOT on `direct_build_verification` — that is written only at the `finalize_build` gate
+   * (the END of the implement turn), so it would keep this predicate `true` for the entire minutes-long
+   * implementation, letting `hold_build` reopen planning underneath a live turn.
    */
   async buildNotStarted(jobId: string): Promise<boolean> {
     const row = await this.jobs.findOne({ where: { id: jobId } });
     if (!row) return false;
     if (row.build_path === 'direct') {
-      return row.direct_build_verification == null;
+      return row.direct_build_started_at == null;
     }
     const threads = await this.threads.find({ where: { job_id: jobId } });
     return threads
