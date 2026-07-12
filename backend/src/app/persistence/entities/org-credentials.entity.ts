@@ -52,6 +52,10 @@ export class OrgCredentialsEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'pat' })
   github_auth_mode!: 'pat' | 'app';
 
+  /** Per-org preference for which credential AUTHORS identity-bearing writes (commit/PR/comments/reviews): 'pat' (the PAT owner) or 'app' (the App bot). NULL = unset = resolves as 'pat'. Applied via a preference+fallback chain (CredentialResolver), independent of github_auth_mode. */
+  @Column({ type: 'text', nullable: true })
+  github_identity_mode!: 'pat' | 'app' | null;
+
   /** Claude subscription OAuth token for the SDK harness — ciphertext (the harness runs subscription-only). */
   @Column({ type: 'text', nullable: true })
   claude_oauth_token_enc!: string | null;
