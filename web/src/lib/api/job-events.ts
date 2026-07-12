@@ -102,6 +102,7 @@ export function useJobEvents(ref: JobRef): void {
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(r) });
         void qc.invalidateQueries({ queryKey: qk.threadContext(r) });
         void qc.invalidateQueries({ queryKey: contextFilesKey(r) });
+        void qc.invalidateQueries({ queryKey: qk.jobDiff(r) });
       }, 250);
     };
 
@@ -122,6 +123,7 @@ export function useJobEvents(ref: JobRef): void {
         qc.invalidateQueries({ queryKey: qk.threadPipeline(r) }),
         qc.invalidateQueries({ queryKey: qk.threadContext(r) }),
         qc.invalidateQueries({ queryKey: contextFilesKey(r) }),
+        qc.invalidateQueries({ queryKey: qk.jobDiff(r) }),
       ]);
 
     const onFrame = (data: string) => {
@@ -171,10 +173,14 @@ export function useJobEvents(ref: JobRef): void {
             ev?.kind === "tool_use" &&
             ev.name != null &&
             FILE_WRITE_TOOLS.has(ev.name) &&
-            ev.input?.file_path != null &&
-            CONTEXT_WRITE_RE.test(ev.input.file_path)
+            ev.input?.file_path != null
           ) {
-            refetchContext();
+            // ANY repo-file write changes the accumulated diff — invalidate it (cheap: the query is
+            // disabled while the Changes pane is closed, so nothing refetches until it's opened).
+            void qc.invalidateQueries({
+              queryKey: qk.jobDiff({ orgId, repoId, jobId: fThread }),
+            });
+            if (CONTEXT_WRITE_RE.test(ev.input.file_path)) refetchContext();
           }
         }
         return;

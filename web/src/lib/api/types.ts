@@ -227,6 +227,9 @@ export interface WebReviewCommentItem {
   file: string;
   quote: string;
   note?: string;
+  /** Present when the comment anchors to a diff line range (the GitHub-style gutter flow) rather than a
+   *  free-text selection. `path` is the git-relative file, `side` picks the old/new gutter. */
+  lines?: { path: string; side: "old" | "new"; start: number; end: number };
 }
 
 /**
@@ -633,6 +636,36 @@ export interface ContextFileContent {
   /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
   mime: string;
   content: string;
+}
+
+// ── Job diff (`…/jobs/:jobId/diff`) ───────────────────────────────────────────────────────────────
+/** One hunk of a file's unified diff — mirrors the backend `JobDiffHunk` (`app/surface/job-diff.ts`).
+ *  `lines` are sign-prefixed (`' '` context / `'+'` add / `'-'` del), offsets are 1-based file lines. */
+export interface JobDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+/** One file's change in the accumulated job diff — mirrors the backend `JobDiffFile`. */
+export interface JobDiffFile {
+  path: string;
+  /** Prior path for a rename; absent otherwise. */
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: JobDiffHunk[];
+}
+
+/** The accumulated multi-file diff for a job — mirrors the backend `JobDiff`. `truncated` when the diff
+ *  exceeded the surface's size cap and some files/hunks were dropped. */
+export interface JobDiff {
+  files: JobDiffFile[];
+  truncated: boolean;
 }
 
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────

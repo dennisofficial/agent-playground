@@ -34,6 +34,8 @@ export interface ReviewComment {
   file: CommentTarget;
   quote: string;
   note: string;
+  /** Set for a diff-gutter (line-range) comment; absent for a free-text selection comment. */
+  lines?: { path: string; side: "old" | "new"; start: number; end: number };
 }
 
 /** A selection awaiting a note — the popover renders from this. `rect` is VIEWPORT coords (the popover is
@@ -56,6 +58,15 @@ export interface ReviewCommentsApi {
   beginPending: (sel: { quote: string; rect: DOMRect; range: Range }) => void;
   cancelPending: () => void;
   addComment: (note: string) => void;
+  /** Queue a diff-gutter (line-range) comment — no DOM selection, the anchor is the diff line range. */
+  addLineComment: (a: {
+    path: string;
+    side: "old" | "new";
+    start: number;
+    end: number;
+    code: string;
+    note: string;
+  }) => void;
   removeComment: (id: string) => void;
   clearComments: () => void;
 }
@@ -75,6 +86,8 @@ function newId(): string {
     return crypto.randomUUID();
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+const basename = (p: string): string => p.split("/").pop() ?? p;
 
 export function ReviewCommentsProvider({
   jobRef,
@@ -196,6 +209,30 @@ export function ReviewCommentsProvider({
     [rebuildCommittedHighlight, jobRef],
   );
 
+  const addLineComment = useCallback(
+    (a: {
+      path: string;
+      side: "old" | "new";
+      start: number;
+      end: number;
+      code: string;
+      note: string;
+    }) => {
+      const id = newId();
+      composerStore.setComments(jobRef, (cs) => [
+        ...cs,
+        {
+          id,
+          file: { node: "diff", label: basename(a.path) },
+          quote: a.code,
+          note: a.note.trim(),
+          lines: { path: a.path, side: a.side, start: a.start, end: a.end },
+        },
+      ]);
+    },
+    [jobRef],
+  );
+
   const removeComment = useCallback(
     (id: string) => {
       rangesRef.current.delete(id);
@@ -220,6 +257,7 @@ export function ReviewCommentsProvider({
       beginPending,
       cancelPending,
       addComment,
+      addLineComment,
       removeComment,
       clearComments,
     }),
@@ -231,6 +269,7 @@ export function ReviewCommentsProvider({
       beginPending,
       cancelPending,
       addComment,
+      addLineComment,
       removeComment,
       clearComments,
     ],
@@ -274,8 +313,16 @@ export function formatReviewComments(
   for (const [file, items] of byFile) {
     lines.push(`**${file}**`);
     for (const c of items) {
-      lines.push(`> "${c.quote}"`);
-      if (c.note) lines.push(`— ${c.note}`);
+      if (c.lines) {
+        lines.push(`\`${c.lines.path}:${c.lines.start}-${c.lines.end}\` (${c.lines.side})`);
+        lines.push("```");
+        lines.push(c.quote);
+        lines.push("```");
+        if (c.note) lines.push(`— ${c.note}`);
+      } else {
+        lines.push(`> "${c.quote}"`);
+        if (c.note) lines.push(`— ${c.note}`);
+      }
       lines.push("");
     }
   }

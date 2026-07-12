@@ -52,6 +52,7 @@ import {
 import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { CreatedJobsPane } from "./created-jobs-pane";
 import { BlockedByPane } from "./blocked-by-pane";
+import { DiffPane } from "./diff-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
 import { makeResolveFileLink } from "./repo-file-links";
@@ -219,7 +220,7 @@ export function PhaseView({
   } else if (selectedNode === "diff") {
     title = "Diff";
     subtitle = "the accumulated change across all threads";
-    body = <DiffView />;
+    body = <DiffView jobRef={jobRef} />;
   } else if (selectedNode === "tickets") {
     title = "Tickets raised";
     subtitle = "out-of-scope work Atlas captured from this job";
@@ -812,18 +813,8 @@ function SectionPlanDoc() {
   );
 }
 
-function DiffView() {
-  const contentRef = useCommentableRef<HTMLDivElement>();
-  return (
-    <div className="h-full overflow-y-auto px-8 py-7">
-      <div ref={contentRef} className="max-w-[720px]">
-        <Placeholder
-          title="Diff"
-          body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
-        />
-      </div>
-    </div>
-  );
+function DiffView({ jobRef }: { jobRef: JobRef }) {
+  return <DiffPane jobRef={jobRef} />;
 }
 
 // ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────

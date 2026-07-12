@@ -230,6 +230,7 @@ export function Composer({
             file: c.file.label,
             quote: c.quote,
             note: c.note || undefined,
+            ...(c.lines ? { lines: c.lines } : {}),
           })),
           message: trimmed || undefined,
         },

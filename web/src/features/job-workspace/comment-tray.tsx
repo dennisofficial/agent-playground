@@ -61,9 +61,15 @@ export function CommentTray() {
             >
               <span className="w-0.5 flex-none self-stretch rounded-full bg-accent-line" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] italic leading-snug text-dim">
-                  &ldquo;{c.quote}&rdquo;
-                </div>
+                {c.lines ? (
+                  <div className="truncate font-mono text-[12px] leading-snug text-dim">
+                    {c.lines.path}:{c.lines.start}-{c.lines.end}
+                  </div>
+                ) : (
+                  <div className="truncate text-[12.5px] italic leading-snug text-dim">
+                    &ldquo;{c.quote}&rdquo;
+                  </div>
+                )}
                 <div
                   className={`truncate text-[12.5px] leading-snug ${c.note ? "text-dim" : "text-faint"}`}
                 >
