@@ -304,6 +304,10 @@ export interface WebMcpProposalCard {
   jobId: string;
   requestId: string;
   repoId: string;
+  /** Registration scope: `'org'` (every repo) or `'repo'` (this repo only). Absent on legacy cards ⇒ `'repo'`. */
+  scope?: "org" | "repo";
+  /** `register` new servers (default) or `remove` existing ones. Absent on legacy cards ⇒ `register`. */
+  mode?: "register" | "remove";
   servers: WebMcpProposalServer[];
   approved_at?: string;
   committed?: string[];
