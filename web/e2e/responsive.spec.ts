@@ -24,7 +24,6 @@ const REPO_ID = "63ad1635-966a-427f-8e52-9cc8a8ecfc8b";
 const RICH_JOB_ID = "da700000-0000-4000-8000-000000000104";
 
 const WORKSPACE_PATH = `/workspace/${encodeJobRef({ orgId: ORG_ID, repoId: REPO_ID, jobId: RICH_JOB_ID })}`;
-const TICKETS_PATH = `/tickets/${ORG_ID}/${REPO_ID}`;
 const SETTINGS_PATH = `/orgs/${ORG_ID}/settings?section=general`;
 
 const VIEWPORTS = {
@@ -202,54 +201,6 @@ test.describe("workspace route — responsive tiers", () => {
 
     await page.keyboard.press("Escape");
     await expect(detailDialog).toBeHidden();
-  });
-});
-
-test.describe("tickets route — responsive tiers", () => {
-  for (const [tier, viewport] of Object.entries(VIEWPORTS)) {
-    test(`${tier}: board renders with no horizontal overflow`, async ({
-      page,
-    }) => {
-      await page.setViewportSize(viewport);
-      await page.goto(TICKETS_PATH);
-      await expect(
-        page.getByRole("button", { name: "New ticket" }),
-      ).toBeVisible();
-
-      await expectNoHorizontalOverflow(page);
-      await screenshot(page, `bp-tickets-${viewport.width}`);
-    });
-  }
-
-  test("mobile: RepoSidebar collapses to a drawer opened via the hamburger", async ({
-    page,
-  }) => {
-    await page.setViewportSize(VIEWPORTS.mobile);
-    await page.goto(TICKETS_PATH);
-
-    await expect(page.getByText("REPOSITORIES")).not.toBeVisible();
-
-    const hamburger = page.getByRole("button", { name: "Open navigation" });
-    await expect(hamburger).toBeVisible();
-    await hamburger.click();
-
-    const repoDialog = page.getByRole("dialog", { name: "Repositories" });
-    await expect(repoDialog).toBeVisible();
-    await waitForAnimations(repoDialog);
-    await expect(repoDialog.getByText("REPOSITORIES")).toBeVisible();
-    await screenshot(page, "bp-tickets-375-repo-drawer");
-  });
-
-  test("desktop: RepoSidebar renders inline (no hamburger)", async ({
-    page,
-  }) => {
-    await page.setViewportSize(VIEWPORTS.desktop);
-    await page.goto(TICKETS_PATH);
-
-    await expect(page.getByText("REPOSITORIES")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Open navigation" }),
-    ).not.toBeVisible();
   });
 });
 

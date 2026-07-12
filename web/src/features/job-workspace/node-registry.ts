@@ -48,7 +48,6 @@ const DETAIL_LITERALS = new Set([
   "plan",
   "decision",
   "diff",
-  "tickets",
   "created",
   "blocked-by",
 ]);
@@ -69,7 +68,6 @@ const ID_FREE_NODES = new Set([
   "plan",
   "decision",
   "diff",
-  "tickets",
   "created",
   "blocked-by",
 ]);

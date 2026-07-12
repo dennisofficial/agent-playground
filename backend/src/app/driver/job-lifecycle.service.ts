@@ -21,7 +21,6 @@ import {
   type ServiceLivenessProbe,
 } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { TicketService } from '../tickets';
 import { computeFeatureBranchName } from './branch-naming';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
@@ -125,7 +124,6 @@ export class JobLifecycleService {
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
-    private readonly tickets: TicketService,
     private readonly jobDeps: JobDependencyService,
     private readonly turnRegistry: TurnRegistry,
     // Kept for the lazy `OnboardingService` lookup (revalidateRepo) that would otherwise close a load
@@ -545,20 +543,13 @@ export class JobLifecycleService {
     //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them.
     this.removeJobScratchDirs(orgId, jobId);
 
-    // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
-    //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
-    //    deleted thread would otherwise strand its ticket with no driver. Best-effort — never block teardown.
-    await this.tickets.revertForDeletedThread({ orgId, jobId }).catch((err) => {
-      this.logger.warn(`deleteJobDeep: ticket revert failed for thread ${jobId}: ${err}`);
-    });
-
-    // 2b. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
-    //     (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
+    // 2. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
+    //    (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
     await this.projects
       .update({ org_id: orgId, onboarding_job_id: jobId }, { onboarding_job_id: null })
       .catch(() => undefined);
 
-    // 2c. Wake any job blocked on this one BEFORE the delete cascades its dependency edges away.
+    // 2b. Wake any job blocked on this one BEFORE the delete cascades its dependency edges away.
     await this.jobDeps
       .onBlockerResolved(jobId, 'deleted')
       .catch((err) => this.logger.warn(`deleteJobDeep: wake funnel failed for blocker ${jobId}: ${err}`));

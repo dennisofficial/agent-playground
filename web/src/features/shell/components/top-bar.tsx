@@ -1,19 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Menu, Network, Search, Ticket } from "lucide-react";
+import { Menu, Network, Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES } from "@/lib/routes";
 import { useCurrentUser } from "@/lib/api/me";
 import { HostStats } from "./host-stats";
 
 /**
- * The app-wide top bar (design "Atlas Tickets Board"). Pure chrome: the ATLAS lockup, the primary
- * Threads | Tickets nav switch, and the operator avatar. It wraps BOTH the threads workspace and the
- * tickets board (mounted in `AppChrome`), so the nav is always available. Daylight-only (no theme toggle).
- * Below the sidebar breakpoint (<768px) it also carries the hamburger that opens the off-canvas sidebar
- * drawer and a search shortcut for ⌘K, since neither is reachable without a pointer/keyboard there.
+ * The app-wide top bar. Pure chrome: the ATLAS lockup, the primary Jobs nav item, and the operator avatar.
+ * Daylight-only (no theme toggle). Below the sidebar breakpoint (<768px) it also carries the hamburger
+ * that opens the off-canvas sidebar drawer and a search shortcut for ⌘K, since neither is reachable
+ * without a pointer/keyboard there.
  */
 export function TopBar({
   onOpenSidebar,
@@ -22,10 +20,6 @@ export function TopBar({
   onOpenSidebar?: () => void;
   onOpenSearch?: () => void;
 }) {
-  const pathname = usePathname();
-  const onTickets = pathname.startsWith("/tickets");
-  const onThreads = !onTickets; // workspace, dashboard, new — everything else is the threads side
-
   return (
     <header
       className="relative z-30 flex h-[52px] flex-none items-center gap-2 border-b border-border px-3 md:gap-3.5 md:px-4"
@@ -74,15 +68,9 @@ export function TopBar({
       <nav className="flex h-full items-stretch gap-3.5 md:gap-[22px]">
         <TopNavItem
           href={ROUTES.workspace()}
-          active={onThreads}
+          active
           icon={<Network size={13} />}
           label="Jobs"
-        />
-        <TopNavItem
-          href={ROUTES.tickets()}
-          active={onTickets}
-          icon={<Ticket size={13} />}
-          label="Tickets"
         />
       </nav>
 

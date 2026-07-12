@@ -54,7 +54,7 @@ export class MetaGroup {
       'Weigh the plan against these failure modes, highest-value first. When one is REAL, raise it (with a',
       'severity + a concrete consequence, per <output_contract>); when it is not, say nothing about it:',
       '  1. INTENT GAP — the plan does not achieve what the operator asked for: a missing capability, a misread',
-      '     requirement, scope that drifts from the goal/ticket, or an obvious failure mode / edge case the goal',
+      '     requirement, scope that drifts from the goal, or an obvious failure mode / edge case the goal',
       '     implies that the plan never handles. This is the most important class and usually BLOCKING.',
       '  2. UNGROUNDED / WRONG touch points — a step cites a `path:line` or symbol that is wrong or does not',
       '     exist, or builds against an API/pattern this repo does not actually have. Verify against the code.',

@@ -72,10 +72,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   record_deviation: {
     note: z.string(),
   },
-  capture_ticket: {
-    title: z.string(),
-    body: z.string().optional(),
-  },
   task_create: {
     subject: z.string(),
     description: z.string().optional(),
@@ -204,36 +200,9 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     title: z.string().optional(),
     dependsOn: z.union([z.string(), z.array(z.string())]).optional(),
   },
-  create_ticket: {
-    title: z.string(),
-    status: z.string().optional(),
-    priority: z.string().optional(),
-    kind: z.string().optional(),
-    body: z.string().optional(),
-    confirm: z.boolean().optional(),
-    dependsOn: z.union([z.string(), z.array(z.string())]).optional(),
-  },
-  list_tickets: {
-    status: z.string().optional(),
-  },
-  update_ticket: {
-    ticketId: z.string(),
-    status: z.string().optional(),
-    priority: z.string().optional(),
-    kind: z.string().optional(),
-    title: z.string().optional(),
-    body: z.string().nullable().optional(),
-  },
-  link_ticket_dependency: {
-    ticketId: z.string(),
-    dependsOnTicketId: z.string(),
-  },
   link_job_dependency: {
     jobId: z.string(),
     dependsOnJobId: z.string(),
-  },
-  promote_ticket: {
-    ticketId: z.string(),
   },
   propose_convention_profile_change: {
     slug: z.string(),
@@ -385,7 +354,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Use complete_thread when done instead.',
   record_leg_handoff: 'Record a handoff note for the next leg of this thread before you stop.',
   record_deviation: 'Log a one-line off-spec change you made so it surfaces to the operator.',
-  capture_ticket: 'Capture a follow-up ticket for out-of-scope work you are deferring, not doing now.',
   task_create:
     'Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it ' +
     'up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.',
@@ -434,13 +402,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
   create_job:
     'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',
-  create_ticket: 'Create a ticket with title, status, priority, kind, and optional dependencies.',
-  list_tickets: 'List tickets, optionally filtered by status.',
-  update_ticket: 'Update a ticket by id (status, priority, kind, title, or body).',
-  link_ticket_dependency: 'Link one ticket as depending on another.',
   link_job_dependency:
     'Link one job as blocked-by (depending on) another existing job on this repo; parks the now-blocked job until the blocker resolves.',
-  promote_ticket: 'Promote a ticket into an active job.',
   propose_convention_profile_change:
     'Propose a change to a convention (house-style) profile, with body and rationale.',
 
