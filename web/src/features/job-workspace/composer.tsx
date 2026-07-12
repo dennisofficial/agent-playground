@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import {
   useSay,
@@ -8,7 +8,10 @@ import {
   useSendReviewComments,
   useStop,
 } from "@/lib/api/job-queries";
-import type { JobRef } from "@/lib/api/job-api";
+import { ThreadApiError, type JobRef } from "@/lib/api/job-api";
+import type { PendingAttachment } from "@/lib/api/job-queries";
+import { useConnectivity } from "@/lib/api/connectivity";
+import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -16,7 +19,8 @@ import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
 import { CommentTray } from "./comment-tray";
-import { useReviewComments } from "./review-comments";
+import { QueuedTray } from "./queued-tray";
+import { useReviewComments, type ReviewComment } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
@@ -91,7 +95,11 @@ export function Composer({
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
   const { comments, clearComments } = useReviewComments();
-  const [text, setText] = useState("");
+  const connectivity = useConnectivity();
+  // Per-Job draft text — held in the external store (not local state) so it survives Job-switch and reload
+  // instead of bleeding between Jobs. Read-only/subagent lanes force value "" and never call setText.
+  const text = useComposerDraft(jobRef).text;
+  const setText = (t: string) => composerStore.setText(jobRef, t);
   // `attach` is absent in the subagent variant. Default `attachments` to `[]` so the pre-return computations
   // (showStop, button-disabled) stay safe; the fn refs are only invoked from input handlers that don't render.
   const {
@@ -142,6 +150,12 @@ export function Composer({
     el.style.height = `${el.scrollHeight}px`;
   }, [text]);
 
+  // The tree does not remount on Job switch, so flush the outgoing Job's debounced sessionStorage write
+  // immediately. The store's pagehide listener covers reloads that happen inside the debounce window.
+  useLayoutEffect(() => {
+    return () => composerStore.flushDraft(jobRef.jobId);
+  }, [jobRef.jobId]);
+
   // Measure the overlay so the transcript spacer threads it as the box grows/shrinks.
   useLayoutEffect(() => {
     const el = rootRef.current;
@@ -156,30 +170,98 @@ export function Composer({
   function send() {
     if (inert) return;
     const trimmed = text.trim();
-    if (comments.length > 0) {
-      sendReviewComments.mutate({
-        items: comments.map((c) => ({
-          file: c.file.label,
-          quote: c.quote,
-          note: c.note || undefined,
-        })),
-        message: trimmed || undefined,
+
+    // Offline: don't attempt the POST at all — move the message into the per-Job outbox and clear the
+    // composer so the operator can keep composing. The <OutboxFlusher> drains it FIFO on reconnect.
+    const offline = connectivity !== "online";
+    if (offline) {
+      if (comments.length === 0 && attachments.length === 0 && !trimmed) return;
+      // The flusher drains each queued item with mutually-exclusive precedence (comments → attachments →
+      // text): a single item carrying BOTH comments and attachments would only send its comments and
+      // silently drop the attachments. So when comments are present, enqueue any attachments as their OWN
+      // outbox message (text rides with the comments) so both are delivered on reconnect.
+      const now = Date.now();
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: now,
+        text: trimmed,
+        comments,
+        attachments: comments.length > 0 ? [] : attachments,
       });
+      if (comments.length > 0 && attachments.length > 0) {
+        composerStore.enqueue(jobRef, {
+          id: crypto.randomUUID(),
+          createdAt: now + 1, // orders after the comments item in the FIFO drain
+          text: "",
+          comments: [],
+          attachments,
+        });
+      }
+      // Drop the chips/tray WITHOUT revoking blob URLs — the queued chip still previews them (see
+      // use-attachments' clear()). Only the draft TEXT is cleared here, not the whole draft, so
+      // clearDraft's outbox-preserving re-persist isn't needed on this path.
       clearComments();
-      setText("");
+      clearAttachments?.();
+      composerStore.setText(jobRef, "");
+      return;
+    }
+
+    // Mid-flight fallback: an ONLINE send's mutation can still hit a network drop between the status
+    // check above and the POST landing. Most `ThreadApiError`s mean the server actually answered (a real
+    // 4xx/5xx), so leave them to the mutation's own error handling. The backend's leader-handoff 503 is
+    // explicitly transient ("retry momentarily"), so preserve it in the outbox instead of losing the cleared
+    // composer draft.
+    const reEnqueueOnNetworkError = (
+      e: Error,
+      fields: { text: string; comments: ReviewComment[]; attachments: PendingAttachment[] },
+    ) => {
+      if (e instanceof ThreadApiError && e.status !== 503) return;
+      composerStore.enqueue(jobRef, {
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        ...fields,
+      });
+    };
+
+    if (comments.length > 0) {
+      sendReviewComments.mutate(
+        {
+          items: comments.map((c) => ({
+            file: c.file.label,
+            quote: c.quote,
+            note: c.note || undefined,
+          })),
+          message: trimmed || undefined,
+        },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments, attachments: [] }),
+        },
+      );
+      clearComments();
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (attachments.length > 0) {
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed on composer unmount (the hook's createdUrlsRef backstop).
-      sayWithAttachments.mutate({ text: trimmed, attachments });
+      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
+      sayWithAttachments.mutate(
+        { text: trimmed, attachments },
+        {
+          onError: (e) =>
+            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
+        },
+      );
       clearAttachments?.();
-      setText("");
+      composerStore.clearDraft(jobRef.jobId);
       return;
     }
     if (!trimmed) return;
-    say.mutate(trimmed);
-    setText("");
+    say.mutate(trimmed, {
+      onError: (e) =>
+        reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
+    });
+    composerStore.clearDraft(jobRef.jobId);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -191,6 +273,10 @@ export function Composer({
 
   const modelLabel = formatModelLabel(footer?.model, footer?.engine);
   const effortLabel = formatEffort(footer?.effort);
+  // Sustained mid-session outage: glow the Composer red so the operator sees the box is still theirs
+  // (the message is preserved) while the connectivity store keeps reconnecting. Display-only — typing
+  // and Send stay enabled (offline SEND behavior is handled separately).
+  const showOffline = connectivity === "offline" && !readOnly && !isSubagent;
 
   return (
     <div
@@ -201,12 +287,18 @@ export function Composer({
       }}
     >
       <div className="pointer-events-auto mx-auto max-w-[880px]">
-        {inert || isSubagent ? null : <CommentTray />}
+        {inert || isSubagent ? null : (
+          <>
+            <QueuedTray jobRef={jobRef} />
+            <CommentTray />
+          </>
+        )}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
-            boxShadow:
-              "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
+            boxShadow: showOffline
+              ? "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06), 0 0 0 1.5px var(--red-line), 0 0 18px color-mix(in srgb, var(--red) 22%, transparent)"
+              : "0 8px 30px rgba(20,18,12,.14), 0 2px 8px rgba(20,18,12,.06)",
           }}
         >
           {!inert && !isSubagent ? (
@@ -314,6 +406,11 @@ export function Composer({
                 />
               </>
             )}
+            {showOffline ? (
+              <span className="font-mono text-[11px]" style={{ color: "var(--red)" }}>
+                reconnecting…
+              </span>
+            ) : null}
             <div className="flex-1" />
             {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}

@@ -10,6 +10,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { JobRef } from "@/lib/api/job-api";
+import { composerStore, useComposerComments } from "@/lib/api/composer-store";
 
 /**
  * The inline review-comment feature ("Atlas Workspace HiFi" — select text in the detail pane → comment →
@@ -74,8 +76,16 @@ function newId(): string {
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
-  const [comments, setComments] = useState<ReviewComment[]>([]);
+export function ReviewCommentsProvider({
+  jobRef,
+  children,
+}: {
+  jobRef: JobRef;
+  children: ReactNode;
+}) {
+  // Queued review-comments are per-Job (store-backed) so they don't bleed between Jobs and their
+  // serializable metadata survives reload. The DOM `Range`/highlight machinery below stays per-mount.
+  const comments = useComposerComments(jobRef);
   const [pending, setPending] = useState<PendingSelection | null>(null);
   const [activeTarget, setActiveTargetState] = useState<CommentTarget | null>(
     null,
@@ -127,6 +137,13 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // On Job switch the chip list swaps (store-backed per Job), but the range Map holds the OLD Job's DOM
+  // Ranges (now belonging to unmounted content). Drop them and rebuild so no stale underline lingers.
+  useEffect(() => {
+    rangesRef.current.clear();
+    rebuildCommittedHighlight();
+  }, [jobRef.jobId, rebuildCommittedHighlight]);
+
   const setActiveTarget = useCallback(
     (t: CommentTarget | null) => {
       // No-op guard: `PhaseView` calls this on every render of a stable node — without this, each call
@@ -169,30 +186,30 @@ export function ReviewCommentsProvider({ children }: { children: ReactNode }) {
       rangesRef.current.set(id, { range: current.range, file: current.file });
       pendingHl.current?.clear();
       rebuildCommittedHighlight();
-      setComments((cs) => [
+      composerStore.setComments(jobRef, (cs) => [
         ...cs,
         { id, file: current.file, quote: current.quote, note: note.trim() },
       ]);
       pendingRef.current = null;
       setPending(null);
     },
-    [rebuildCommittedHighlight],
+    [rebuildCommittedHighlight, jobRef],
   );
 
   const removeComment = useCallback(
     (id: string) => {
       rangesRef.current.delete(id);
-      setComments((cs) => cs.filter((c) => c.id !== id));
+      composerStore.setComments(jobRef, (cs) => cs.filter((c) => c.id !== id));
       rebuildCommittedHighlight();
     },
-    [rebuildCommittedHighlight],
+    [rebuildCommittedHighlight, jobRef],
   );
 
   const clearComments = useCallback(() => {
     rangesRef.current.clear();
     committedHl.current?.clear();
-    setComments([]);
-  }, []);
+    composerStore.setComments(jobRef, () => []);
+  }, [jobRef]);
 
   const api = useMemo<ReviewCommentsApi>(
     () => ({

@@ -400,7 +400,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
 
   return (
     <MarkdownActionsProvider value={markdownActions}>
-      <ReviewCommentsProvider>
+      <ReviewCommentsProvider jobRef={ref}>
         <div className="flex h-full min-h-0">
           {navAsDrawer ? null : navigatorPane(false)}
           {!belowXl ? (
