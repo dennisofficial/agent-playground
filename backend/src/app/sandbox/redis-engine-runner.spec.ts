@@ -437,6 +437,46 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(env.env.GH_TOKEN).toBe('ghs_123');
   });
 
+  it('uses apiToken for gh while app-mode git stays on the file-backed transport token', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const writeGithubTokenFile = vi.fn(async () => undefined);
+    const runner = new RedisEngineRunner(
+      containers,
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+      undefined,
+      undefined,
+      { writeGithubTokenFile } as unknown as SandboxProvider,
+    );
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      turnMeta: { jobId: 'job-1', orgId: 'org-1', channel: 'repo-1', lane: 'main', kind: 'step' },
+      target: {
+        containerId: 'c1',
+        worktreeHost: '/wt',
+        gitAuth: {
+          gitUrl: 'https://github.com/o/r.git',
+          token: 'ghs_transport',
+          apiToken: 'ghp_identity',
+          mode: 'app',
+        },
+      },
+    });
+
+    expect(writeGithubTokenFile).toHaveBeenCalledWith('job-1', 'ghs_transport');
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.GIT_CONFIG_KEY_1).toBe('credential.https://github.com.helper');
+    expect(env.env.GIT_CONFIG_VALUE_1).toContain("cat '/.atlas/github-token'");
+    expect(env.env.GITHUB_TOKEN).toBe('ghp_identity');
+    expect(env.env.GH_TOKEN).toBe('ghp_identity');
+  });
+
   it('blanks credential helpers when a GitHub target has no token', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
