@@ -5747,11 +5747,16 @@ export class AgentSessionManager
 
     // AUTO-APPROVE (per-job opt-in): the card is posted above for audit/transcript; now immediately drive the
     // SAME resolution an operator's click would — the awaited handle.verdict below fires and actOnApprovalVerdict
-    // runs identically (dispatch for a plan, direct build for a direct card). No downstream branching.
-    if (job.autoApprove) {
-      const approver = await this.resolveAutoApprover(job);
+    // runs identically (dispatch for a plan, direct build for a direct card). Re-read the flag at gate time:
+    // a brain turn can spend minutes shaping a plan, and the operator may flip auto-approve while it runs.
+    const autoApprovalJob =
+      (await Promise.resolve()
+        .then(() => this.store.loadJob(job.id))
+        .catch(() => null)) ?? job;
+    if (autoApprovalJob.autoApprove) {
+      const approver = await this.resolveAutoApprover(autoApprovalJob);
       await this.saySystemNotice(stimulus, 'Auto-approve is on — approving this plan automatically.');
-      this.approvals.resolve(job.id, 'approve', approver, undefined, decisionRecordId);
+      this.approvals.resolve(autoApprovalJob.id, 'approve', approver, undefined, decisionRecordId);
     }
 
     let resolution;

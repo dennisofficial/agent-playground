@@ -2190,6 +2190,65 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
       expect(mockApprovals.resolve).not.toHaveBeenCalled();
     });
+
+    it('uses the fresh gate-time flag when auto-approve was enabled during the brain turn', async () => {
+      const job = {
+        id: FAKE_JOB_ID,
+        kind: 'feature',
+        title: 'rate limiting',
+        orgId: TEAM_ID,
+        repoId: PROJECT_ID,
+        autoApprove: false,
+        autoApproveBy: null,
+      };
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...job,
+        autoApprove: true,
+        autoApproveBy: 'user-fresh',
+      });
+      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        jobId: FAKE_JOB_ID,
+        verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-fresh' }),
+      });
+      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+
+      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+
+      expect(mockApprovals.resolve).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'approve',
+        'user-fresh',
+        undefined,
+        FAKE_RECORD_ID,
+      );
+    });
+
+    it('uses the fresh gate-time flag when auto-approve was disabled before the card posted', async () => {
+      const job = {
+        id: FAKE_JOB_ID,
+        kind: 'feature',
+        title: 'rate limiting',
+        orgId: TEAM_ID,
+        repoId: PROJECT_ID,
+        autoApprove: true,
+        autoApproveBy: 'user-stale',
+      };
+      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...job,
+        autoApprove: false,
+      });
+      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+        jobId: FAKE_JOB_ID,
+        verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
+      });
+      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+
+      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+
+      expect(mockApprovals.resolve).not.toHaveBeenCalled();
+    });
   });
 
   type PrepareRepropose = { prepareRepropose(jobId: string): Promise<{ refuse?: string }> };
