@@ -1401,7 +1401,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('propose_mcp_servers rejects a reserved system name', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['propose_mcp_servers']({
-      servers: [{ name: 'context7', transport: 'http', url: 'https://x' }],
+      servers: [{ name: 'atlas-lsp-ts', transport: 'http', url: 'https://x' }],
     });
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain('reserved');

@@ -23,7 +23,6 @@ import {
   qualifyWorkspaceProfileToolNames,
 } from './workspace-profile-bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
-import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 import { ToolBridgeReader } from './tool-bridge-reader';
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from './host-tool-schemas';
@@ -177,11 +176,6 @@ async function runOverRedis(turnId: string): Promise<void> {
     // lsp-bridge-options.ts for why it's gated to execute-mode turns and confined to `spec.cwd`.
     const lsp = buildLspBridgeOptions(spec.mode, spec.cwd);
 
-    // ── Context7 docs bridge (remote HTTP MCP server) ───────────────────────────────────────────
-    // Version-pinned library docs for the `docs` subagent. OFF unless CONTEXT7_API_KEY is in the
-    // container env; execute-mode only (same gate as the LSP bridge). See context7-bridge-options.ts.
-    const context7 = buildContext7BridgeOptions(spec.mode);
-
     // ── User-defined MCP servers (org/repo tiers, resolved host-side) ────────────────────────────
     // Whatever `McpResolver` picked for this turn's org/repo/surface (secrets already inlined). No mode
     // gate — the host already filtered by surface. Claude gets every server; Codex gets the stdio ones.
@@ -242,14 +236,12 @@ async function runOverRedis(turnId: string): Promise<void> {
       ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(workspaceProfileBridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
-      ...(context7?.extraClaudeOptions.mcpServers ?? {}),
       ...(userMcp?.extraClaudeOptions.mcpServers ?? {}),
     };
     const mergedToolNames = [
       ...(bridge?.bridgeToolNames ?? []),
       ...(workspaceProfileBridge?.bridgeToolNames ?? []),
       ...(lsp?.lspToolNames ?? []),
-      ...(context7?.context7ToolNames ?? []),
       ...(userMcp?.userMcpToolNames ?? []),
     ];
     // For a Codex execute turn, hand the BARE bridge tool names to `runCodex` — it renders them into the

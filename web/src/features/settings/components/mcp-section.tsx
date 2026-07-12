@@ -40,7 +40,7 @@ import { useOrgRepos } from "@/lib/api/job-queries";
 
 /**
  * MCP servers — extra tool servers the agent can call, resolved in three layers:
- *  - **System** — built-in (TypeScript LSP, Context7). Read-only; shown so operators know what's on.
+ *  - **System** — built-in (TypeScript LSP). Read-only; shown so operators know what's on.
  *  - **Organization** — user servers shared across every repo and job.
  *  - **Repository** — user servers scoped to one repo; they override an org server of the same name.
  *
