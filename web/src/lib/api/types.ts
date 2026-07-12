@@ -281,7 +281,7 @@ export interface WebMcpProposalServer {
   env?: { name: string; secret?: boolean; value?: string }[];
   /**
    * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
-   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   * owner completes after approving by clicking Connect on the proposal card or in MCP settings (no secret slot to fill).
    */
   authKind?: "static" | "oauth";
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */

@@ -4467,8 +4467,8 @@ export class AgentSessionManager
           return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
         }
         if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
-        // An OAuth server has NO fillable secret slot — its Authorization is minted by the console "Connect"
-        // flow (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
+        // An OAuth server has NO fillable secret slot — its Authorization is minted by the owner Connect flow
+        // (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
         // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
         // land on THIS repo's scope, so check the repo-scoped row.
         const oauthRow = await this.mcpStore
@@ -4477,7 +4477,7 @@ export class AgentSessionManager
         if (oauthRow?.auth_kind === 'oauth') {
           return {
             ok: false,
-            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
+            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER via the Connect button on the MCP proposal card or in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
           };
         }
         const requestId = `s-${randomUUID()}`;
@@ -4915,7 +4915,7 @@ export class AgentSessionManager
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
         // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
-        // the OWNER completes in the console). OAuth is http/sse-only and owns the Authorization header itself,
+        // the OWNER completes via Connect). OAuth is http/sse-only and owns the Authorization header itself,
         // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
         // McpServersController.assertShape.
         const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
@@ -4926,7 +4926,7 @@ export class AgentSessionManager
           if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
             return {
               ok: false,
-              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
+              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth with the proposal-card Connect button or in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
             };
           }
         }
@@ -4990,7 +4990,7 @@ export class AgentSessionManager
             (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.') +
             (oauthNames.length
               ? ` OAuth server(s) [${oauthNames.join(', ')}] have NO secret to fill — after approval the OWNER ` +
-                'must Connect them in the console (MCP settings → Connect) to complete consent. You cannot ' +
+                'must Connect them from the MCP proposal card or in the console (MCP settings → Connect) to complete consent. You cannot ' +
                 'consent yourself; do NOT try to inject an Authorization/Bearer header via request_secret.'
               : ''),
         };
@@ -5164,7 +5164,7 @@ export class AgentSessionManager
           enabled: s.enabled,
           secretKeys: s.secretKeys,
           // Auth model, so the brain reads a 401 correctly: `authKind:'oauth'` + `oauthConnected:false` means
-          // the OWNER must Connect it in the console (NOT a request_secret target); `'static'` uses secretKeys.
+          // the OWNER must Connect it (NOT a request_secret target); `'static'` uses secretKeys.
           authKind: s.authKind,
           oauthConnected: s.oauthConnected,
           // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
@@ -5180,7 +5180,7 @@ export class AgentSessionManager
               ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
               : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).') +
             (servers.some((s) => s.authKind === 'oauth' && !s.oauthConnected)
-              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
+              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it from the MCP proposal card or in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
               : ''),
         };
       } catch (err) {

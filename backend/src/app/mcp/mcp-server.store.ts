@@ -348,7 +348,8 @@ export class McpServerStore {
   private oauthHasToken(r: McpServerEntity): boolean {
     if (r.auth_kind !== 'oauth' || r.oauth_enc == null) return false;
     try {
-      return this.readOAuthBlob(r).tokens?.['access_token'] != null;
+      const accessToken = this.readOAuthBlob(r).tokens?.['access_token'];
+      return typeof accessToken === 'string' && accessToken.length > 0;
     } catch {
       // Undecryptable blob (e.g. key rotation) → treat as not-connected (the gap fires; safe).
       return false;

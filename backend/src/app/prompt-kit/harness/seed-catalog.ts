@@ -514,10 +514,10 @@ export function secretEphemeralDelivered(name: string): AgentMessage {
 }
 
 /** `/provide-secret` (MCP target, OAuth server) — refuses the pasted secret; an OAuth server's Authorization
- *  is only minted by the console "Connect" flow. */
+ *  is only minted by the owner Connect flow. */
 export function mcpSecretOauthRefused(server: string): AgentMessage {
   return agentMessage(
-    `Did not store a secret for MCP server \`${server}\` — it uses OAuth. Its access is granted by the OWNER via the console (MCP settings → Connect), not a secret slot.`,
+    `Did not store a secret for MCP server \`${server}\` — it uses OAuth. Its access is granted by the OWNER via the Connect button on the MCP proposal card (or the console: MCP settings → Connect), not a secret slot.`,
   );
 }
 

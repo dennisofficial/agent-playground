@@ -313,6 +313,17 @@ describe('McpServerStore', () => {
       expect(JSON.stringify(server)).not.toContain('at-live');
     });
 
+    it('an empty access_token is not connected and still needs connect', async () => {
+      await registerOAuth('jira');
+      await store.writeOAuthBlob('org1', '*', 'jira', {
+        nonce: 'abc123',
+        tokens: { access_token: '', refresh_token: 'rt-live' },
+      });
+      const [server] = await store.list('org1');
+      expect(server.oauthConnected).toBe(false);
+      expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([{ name: 'jira', scope: 'org' }]);
+    });
+
     it('skips disabled and non-oauth servers', async () => {
       await registerOAuth('off');
       await store.write('org1', '*', 'off', { transport: 'http', url: 'https://x', authKind: 'oauth', enabled: false });

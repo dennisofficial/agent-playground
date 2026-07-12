@@ -210,8 +210,12 @@ export function McpProposalCard({
                 loading={approve.isPending || oauth.busy}
                 loadingText={approve.isPending ? "Registering…" : "Connecting…"}
                 onClick={async () => {
-                  await approve.mutateAsync(card.requestId);
-                  await oauth.connect({ scope: scopeOf, name: oauthServers[0].name });
+                  try {
+                    await approve.mutateAsync(card.requestId);
+                    await oauth.connect({ scope: scopeOf, name: oauthServers[0].name });
+                  } catch {
+                    /* approve.isError renders the failure state */
+                  }
                 }}
               >
                 Approve &amp; Connect

@@ -447,7 +447,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   // ── Workspace-profile tools ───────────────────────────────────────────────────────────────────
   request_secret:
     'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
-    'those are connected by the owner in the console (MCP settings → Connect), never via a pasted secret.',
+    'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
   request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
