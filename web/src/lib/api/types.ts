@@ -87,6 +87,12 @@ export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
  *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
 export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
 export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
+/** The `atlas-prod` gated-write approval card's buttons — `Execute write` runs the operator's approved
+ *  single SQL statement on the DML-only `mcp_writer` role; `Deny` marks the ledger row rejected. Its button
+ *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id). Must match the backend
+ *  strings in `approval-blocks.ts` exactly. */
+export const DB_WRITE_APPROVE_ACTION_ID = "atlas_approval:db_write_approve";
+export const DB_WRITE_DENY_ACTION_ID = "atlas_approval:db_write_deny";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -95,7 +101,9 @@ export type ApprovalActionId =
   | typeof SHIP_ACTION_ID
   | typeof RETRACT_SHIP_ACTION_ID
   | typeof AMEND_APPROVE_ACTION_ID
-  | typeof AMEND_DISMISS_ACTION_ID;
+  | typeof AMEND_DISMISS_ACTION_ID
+  | typeof DB_WRITE_APPROVE_ACTION_ID
+  | typeof DB_WRITE_DENY_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -123,9 +131,11 @@ export interface WebApprovalCard {
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
    * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
-   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `db_write` — the `atlas-prod`
+   * gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the proposed
+   * statement rides `sql`/`estimatedRows`/`estimateLabel`/`error`.
    */
-  kind?: "plan" | "direct" | "ship" | "amend";
+  kind?: "plan" | "direct" | "ship" | "amend" | "db_write";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -134,6 +144,17 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `db_write` card only — the exact proposed single SQL statement (the approved artifact). */
+  sql?: string;
+  /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
+  estimatedRows?: number;
+  /** `db_write` card only — whether {@link estimatedRows} is a real planner `estimate`, `unavailable`
+   *  (the SELECT-only role can't EXPLAIN this statement — expected/benign for DML), or the EXPLAIN
+   *  surfaced a genuine statement `error`. Kept in sync with backend `webDbWriteApprovalCard`. */
+  estimateLabel?: "estimate" | "unavailable" | "error";
+  /** `db_write` card only — a genuine EXPLAIN-time failure (syntax/bad column) so the operator sees the
+   *  statement will fail BEFORE approving. Absent for a benign permission-denied preview. */
+  error?: string;
 }
 
 export interface WebVerdictCard {
