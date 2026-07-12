@@ -33,6 +33,8 @@ export interface SendOptions {
   authorName?: string;
   /** The tenant id the message belongs to (default the surface's configured `orgId`). */
   orgId?: string;
+  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
+  priority?: 'now' | 'queue' | 'later';
 }
 
 /** A captured approval card + the ids needed to resolve it (parsed from the card's button value). */
@@ -111,6 +113,7 @@ export class AgentChatSurface implements ChatSurface {
       orgId: opts.orgId ?? this.orgId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
       ts: new Date(),
     };
     this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);

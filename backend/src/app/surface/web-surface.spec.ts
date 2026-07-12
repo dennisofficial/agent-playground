@@ -61,6 +61,7 @@ describe('WebSurface — inbound + outbound', () => {
       authorName: 'Operator',
       orgId: 'T-acme',
       threadTs: 'root-ts',
+      priority: 'queue',
     });
 
     const msg = await received;
@@ -71,6 +72,7 @@ describe('WebSurface — inbound + outbound', () => {
     expect(msg.authorName).toBe('Operator');
     expect(msg.orgId).toBe('T-acme');
     expect(msg.threadTs).toBe('root-ts');
+    expect(msg.priority).toBe('queue');
   });
 
   it('receiveFromClient defaults orgId/author when not supplied', async () => {

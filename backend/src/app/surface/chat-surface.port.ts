@@ -60,6 +60,8 @@ export interface InboundChatMessage {
   seedFileId?: string;
   /** SEED RENDER COMMAND — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
+  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
+  priority?: 'now' | 'queue' | 'later';
   /**
    * Optional structured card payload to persist alongside this message (render-only — the brain still
    * reads `text`, never `card`). E.g. the review-comments batch renders as a styled card in the web

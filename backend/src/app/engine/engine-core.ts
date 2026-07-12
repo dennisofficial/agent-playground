@@ -22,6 +22,7 @@ import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
+  legRotationRule,
   svcNudgeRule,
   svcNudgeShouldFire,
   detectLongRunningCommand,
@@ -678,7 +679,9 @@ export class EngineCore {
       capping = true;
       onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
       cancelEnd();
-      input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      if (bgTaskCapRule.enabled) {
+        input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      }
       capKillTimer = setTimeout(() => {
         if (!turnEnded) input.end();
       }, CAP_ACK_GRACE_MS);
@@ -1074,7 +1077,7 @@ export class EngineCore {
               // by the driver from `ROTATION_SOFT_NUDGE`/`ROTATION_REMINDER_NUDGE`). The `leg-rotation` JIT rule
               // is the catalog SOURCE of those thresholds (see `resolveRotationThresholds`) and mirrors the same
               // payload text — kept as the injectable per-turn field so a caller can distinguish the phases.
-              if (rotationNudge && contextTokens >= rotationNudge.softTokens) {
+              if (rotationNudge && legRotationRule.enabled && contextTokens >= rotationNudge.softTokens) {
                 const level = Math.floor(
                   (contextTokens - rotationNudge.softTokens) / rotationNudge.reminderDeltaTokens,
                 );

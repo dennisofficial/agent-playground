@@ -3492,6 +3492,9 @@ export class AgentSessionManager
         // direct builds): 'direct' runs the in-session implement turn (fire-and-forget — it streams in this
         // same brain session, so it must not be awaited here); 'plan' dispatches the full build pipeline.
         if (job.buildPath === 'direct') {
+          if (!(await this.store.buildNotStarted(job.id))) {
+            return { ok: true, jobId: job.id, message: 'Build already started.' };
+          }
           // Stamp the durable "direct build started" marker BEFORE firing the (fire-and-forget) implement
           // turn, so `buildNotStarted()` closes the pre-start base-check window the instant the build begins
           // — otherwise `hold_build` would stay callable throughout the whole implementation turn and could

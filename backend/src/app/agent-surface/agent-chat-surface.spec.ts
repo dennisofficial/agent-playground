@@ -27,11 +27,12 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const surface = new AgentChatSurface();
     const next = firstValueFrom(surface.inbound$.pipe(take(1)));
 
-    surface.sendFromHuman('C1', 'yes, use Postgres', { threadTs: 'root.001', authorId: 'U9' });
+    surface.sendFromHuman('C1', 'yes, use Postgres', { threadTs: 'root.001', authorId: 'U9', priority: 'queue' });
 
     const msg = await next;
     expect(msg.threadTs).toBe('root.001');
     expect(msg.authorId).toBe('U9');
+    expect(msg.priority).toBe('queue');
   });
 
   it('post records into the outbox, emits on outbound$, and returns a synthetic ts', async () => {

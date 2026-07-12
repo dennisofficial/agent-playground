@@ -125,6 +125,7 @@ function runTurn(
 
 const holdTrigger = bgTaskCapRule.trigger as { holdMs: number };
 const ORIG_HOLD_MS = holdTrigger.holdMs;
+const ORIG_ENABLED = bgTaskCapRule.enabled;
 const ORIG_GRACE = process.env.BG_TASK_CAP_ACK_GRACE_MS;
 const restoreEnv = (key: string, value: string | undefined): void => {
   if (value === undefined) delete process.env[key];
@@ -132,6 +133,7 @@ const restoreEnv = (key: string, value: string | undefined): void => {
 };
 afterEach(() => {
   holdTrigger.holdMs = ORIG_HOLD_MS;
+  bgTaskCapRule.enabled = ORIG_ENABLED;
   restoreEnv('BG_TASK_CAP_ACK_GRACE_MS', ORIG_GRACE);
 });
 
@@ -221,5 +223,31 @@ describe('EngineCore — run_in_background hold + cap', () => {
 
     expect(pushed).toContain(BG_TASK_CAP_NOTICE);
     expect(endedByBackstop).toBe(true); // the unconditional backstop bounded the hold
+  });
+
+  it('honors bg-task-cap.enabled=false by capping without injecting the JIT notice', async () => {
+    holdTrigger.holdMs = 50;
+    bgTaskCapRule.enabled = false;
+    process.env.BG_TASK_CAP_ACK_GRACE_MS = '100';
+    let endedByBackstop = false;
+    const { sdk, pushed } = makeSteerFake(async function* (state) {
+      yield initMsg();
+      await tick();
+      yield assistantBash();
+      await tick();
+      yield taskStarted('X');
+      await tick();
+      yield resultMsg('first', 10, 5);
+      await sleep(80); // > HOLD_CAP_MS → cap fires, but the disabled rule emits no prompt text
+      yield taskProgress('X');
+      await sleep(150); // > CAP_ACK_GRACE_MS from the cap → the backstop closes input
+      endedByBackstop = state.inputEnded;
+    });
+    const events: EngineEvent[] = [];
+    await runTurn(sdk, events);
+
+    expect(pushed).not.toContain(BG_TASK_CAP_NOTICE);
+    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(endedByBackstop).toBe(true);
   });
 });

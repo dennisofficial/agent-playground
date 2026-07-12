@@ -119,6 +119,7 @@ import {
   type LegRotationRunState,
   type LegRotationThresholds,
 } from './leg-rotation-watch';
+import { legRotationRule } from '../prompt-kit/jit';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -2354,7 +2355,10 @@ export class ThreadDriver implements JobDispatcher {
       // Codex master-review emits no per-call occupancy (never latches) and has no `record_leg_handoff`; review
       // children run elsewhere. The per-Leg run state is filled DURING the turn (by the watch + the handoff tool)
       // and read AFTER it to decide whether to rotate; `record_leg_handoff` is exposed only when armed.
-      const rotationArmed = thread.kind === 'builder' && threadKindSpec(thread.kind).engine === 'claude';
+      const rotationArmed =
+        legRotationRule.enabled &&
+        thread.kind === 'builder' &&
+        threadKindSpec(thread.kind).engine === 'claude';
       const rotationThresholds = resolveRotationThresholds();
       const rotationState = freshLegRotationState();
       const toolBridge = this.buildTurnBridge(

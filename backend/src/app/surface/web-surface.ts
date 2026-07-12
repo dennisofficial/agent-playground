@@ -41,6 +41,8 @@ export interface WebInboundOptions {
   seedFileId?: string;
   /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
+  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
+  priority?: 'now' | 'queue' | 'later';
   /** Optional structured card payload to persist alongside this message (see `InboundChatMessage.card`). */
   card?: Record<string, unknown>;
 }
@@ -163,6 +165,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
       ts: new Date(),
     };

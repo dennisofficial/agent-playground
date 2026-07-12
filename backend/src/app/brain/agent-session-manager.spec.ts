@@ -79,6 +79,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     cancel: vi.fn(),
     reopenPlanning: vi.fn(),
     loadJob: vi.fn(),
+    buildNotStarted: vi.fn(),
+    markDirectBuildStarted: vi.fn(),
     // Working-set decisions (create_decision / submit_plan source these); default to empty.
     pendingDecisions: vi.fn().mockResolvedValue([]),
     createDecision: vi.fn().mockResolvedValue({ decision: { id: 'd1' }, all: [{ id: 'd1' }] }),
@@ -325,6 +327,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.openJob as ReturnType<typeof vi.fn>).mockResolvedValue(FAKE_JOB_ID);
     // Default loadJob: no prior job state (propose_plan's idempotency guard proceeds; other tests override).
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (mockStore.markDirectBuildStarted as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockDriverStore.retractShip as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
     // Working-set decisions default to empty; card lookups default to none (reset wiped inline defaults).
@@ -1885,6 +1889,64 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
     expect(markerIds).toContain(`approved:${FAKE_RECORD_ID}`);
     expect(markerIds).not.toContain(`dispatched:${FAKE_RECORD_ID}`);
+  });
+
+  it('(d1) dispatch_build starts a direct build once and stamps the durable start marker first', async () => {
+    const directJob = {
+      id: THREAD_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'running',
+      halt: null,
+      buildPath: 'direct',
+    };
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(directJob);
+    (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const runDirect = vi
+      .spyOn(manager as unknown as { runDirectBuild(s: unknown, j: unknown): Promise<void> }, 'runDirectBuild')
+      .mockResolvedValue(undefined);
+    const compact = vi
+      .spyOn(manager as unknown as { enqueueCompaction(s: unknown): Promise<void> }, 'enqueueCompaction')
+      .mockResolvedValue(undefined);
+
+    const result = await manager.buildTools(fakeStimulus)['dispatch_build']({});
+
+    expect(result).toMatchObject({ ok: true, jobId: THREAD_ID, message: 'Build started.' });
+    expect(mockStore.buildNotStarted).toHaveBeenCalledWith(THREAD_ID);
+    expect(mockStore.markDirectBuildStarted).toHaveBeenCalledWith(THREAD_ID);
+    expect(runDirect).toHaveBeenCalledWith(fakeStimulus, directJob);
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(compact).toHaveBeenCalledWith(fakeStimulus);
+    const markOrder = (mockStore.markDirectBuildStarted as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const runOrder = runDirect.mock.invocationCallOrder[0];
+    expect(markOrder).toBeLessThan(runOrder);
+  });
+
+  it('(d1b) dispatch_build is idempotent for direct builds after the start marker is stamped', async () => {
+    const directJob = {
+      id: THREAD_ID,
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      status: 'running',
+      halt: null,
+      buildPath: 'direct',
+    };
+    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(directJob);
+    (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const runDirect = vi
+      .spyOn(manager as unknown as { runDirectBuild(s: unknown, j: unknown): Promise<void> }, 'runDirectBuild')
+      .mockResolvedValue(undefined);
+    const compact = vi
+      .spyOn(manager as unknown as { enqueueCompaction(s: unknown): Promise<void> }, 'enqueueCompaction')
+      .mockResolvedValue(undefined);
+
+    const result = await manager.buildTools(fakeStimulus)['dispatch_build']({});
+
+    expect(result).toMatchObject({ ok: true, jobId: THREAD_ID, message: 'Build already started.' });
+    expect(mockStore.markDirectBuildStarted).not.toHaveBeenCalled();
+    expect(runDirect).not.toHaveBeenCalled();
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(compact).not.toHaveBeenCalled();
   });
 
   it('(d2) resolveApprovalDurably: restart-safe approve (no live handle) fires the plan-approved JIT rule from durable state, NOT an immediate dispatch', async () => {
