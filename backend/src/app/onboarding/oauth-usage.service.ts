@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
   ClaudeUsageWindowKey,
@@ -77,7 +76,6 @@ export class OauthUsageService {
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
     private readonly bus: UsageEventBus,
-    private readonly env: EnvService,
     private readonly credRefresh: CredentialRefreshService,
   ) {}
 

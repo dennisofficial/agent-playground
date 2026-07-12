@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } from '@workspace/shared';
-import type { EnvService } from '@core/config/env/env.service';
 import { OauthUsageService, parseModelWindows, toPercentUtilization } from './oauth-usage.service';
 import type { ClaudeCredentialStore, ClaudeCredentialSummary } from './claude-credential.store';
 import type { CredentialRefreshService } from './credential-refresh.service';
@@ -157,7 +156,6 @@ function makeService(
     store as unknown as TenantCredentialStore,
     claudeStore as unknown as ClaudeCredentialStore,
     bus,
-    { get: () => undefined } as unknown as EnvService,
     credRefresh as unknown as CredentialRefreshService,
   );
   return { svc, bus, published, claudeStore };
