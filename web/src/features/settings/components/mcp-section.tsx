@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -17,14 +17,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Spinner } from "@/components/ui/spinner";
 import { useOrg } from "@/lib/api/me";
 import {
   useDeleteMcpServer,
+  useMcpOAuthConnect,
   useMcpServers,
   useSaveMcpServer,
-  useStartMcpOAuth,
   useValidateMcpServer,
   type McpAuthKind,
   type McpServer,
@@ -35,7 +34,6 @@ import {
   type StoredMcpConfig,
   type SystemMcpServer,
 } from "@/lib/api/orgs";
-import { qk } from "@/lib/api/query-keys";
 import { useOrgRepos } from "@/lib/api/job-queries";
 
 /**
@@ -713,8 +711,6 @@ function ServerForm({
 }) {
   const save = useSaveMcpServer(orgId);
   const validate = useValidateMcpServer(orgId);
-  const startOAuth = useStartMcpOAuth(orgId);
-  const qc = useQueryClient();
 
   // Once a new server is committed (via in-form Validate), lock its name like an edit.
   const [committed, setCommitted] = useState(existing !== null);
@@ -744,39 +740,11 @@ function ServerForm({
   const [formErr, setFormErr] = useState("");
   const [valResult, setValResult] = useState<McpValidateResult | null>(null);
   // Live consent state for the OAuth Connect flow (the popup posts back here on completion).
-  const [oauthBusy, setOauthBusy] = useState(false);
-  const [oauthMsg, setOauthMsg] = useState<{ ok: boolean; text: string } | null>(
-    null,
-  );
+  const { connect: connectOAuth, busy: oauthBusy, result: oauthMsg } = useMcpOAuthConnect(orgId);
 
   const isRemote = transport === "http" || transport === "sse";
   const isOAuth = isRemote && authKind === "oauth";
 
-  // Listen for the callback popup's postMessage (cross-origin in prod → the backend targets FRONTEND_HOST) so the
-  // form reflects the result and the server list refetches. A window focus re-poll covers a popup closed manually.
-  useEffect(() => {
-    if (!oauthBusy) return;
-    function onMessage(e: MessageEvent) {
-      const data = e.data as { type?: string; ok?: boolean } | null;
-      if (!data || data.type !== "atlas-mcp-oauth") return;
-      setOauthBusy(false);
-      setOauthMsg(
-        data.ok
-          ? { ok: true, text: "Connected." }
-          : { ok: false, text: "Authorization did not complete." },
-      );
-      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
-    }
-    function onFocus() {
-      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
-    }
-    window.addEventListener("message", onMessage);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener("message", onMessage);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [oauthBusy, orgId, qc]);
   const canSave =
     name.trim().length > 0 &&
     surfaces.length > 0 &&
@@ -841,19 +809,7 @@ function ServerForm({
   async function onConnect() {
     const saved = await persist();
     if (!saved) return;
-    setOauthMsg(null);
-    try {
-      const { authorizeUrl } = await startOAuth.mutateAsync({ scope, name: saved });
-      setOauthBusy(true);
-      const popup = window.open(authorizeUrl, "atlas-mcp-oauth", "width=520,height=680");
-      if (!popup) {
-        setOauthBusy(false);
-        setOauthMsg({ ok: false, text: "Popup blocked — allow popups and retry." });
-      }
-    } catch (e) {
-      setOauthBusy(false);
-      setOauthMsg({ ok: false, text: (e as Error)?.message || "Could not start OAuth." });
-    }
+    await connectOAuth({ scope, name: saved });
   }
 
   async function persist(): Promise<string | null> {
@@ -1004,7 +960,7 @@ function ServerForm({
               existing={existing}
               scope={oauthScope}
               onScopeChange={setOauthScope}
-              busy={oauthBusy || startOAuth.isPending || save.isPending}
+              busy={oauthBusy || save.isPending}
               message={oauthMsg}
               onConnect={onConnect}
             />

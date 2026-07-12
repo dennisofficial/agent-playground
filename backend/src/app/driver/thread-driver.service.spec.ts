@@ -1062,7 +1062,6 @@ function assemble(
     taskSink,
     undefined,
     undefined,
-    undefined,
     opts.claudeCreds as ClaudeCredentialStore | undefined,
   );
   // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the
@@ -1905,6 +1904,30 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     } finally {
       rmSync(ctxDir, { recursive: true, force: true });
       rmSync(worktreeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('creates the host evidence/<threadDirName>/ subfolder when dispatching a thread leg', async () => {
+    const ctxDir = mkdtempSync(join(tmpdir(), 'atlas-evi-'));
+    try {
+      const state: StoreState = {
+        job: makeJob(),
+        record: makeRecord(),
+        threads: [thread('sec-be', 10, 'Backend')],
+        steps: [],
+        route: { channel: 'C1', threadTs: 't1' },
+        operatorInputCards: [],
+      };
+      const h = assemble(state, { contextDirHost: ctxDir });
+
+      await h.driver.dispatch(state.job);
+      await flushUntil(() => state.job.status === 'done');
+
+      // `evidenceDirForThread` lazily mkdirs `<contextDirHost>/evidence/<ordinal>-<slug>` on the execute
+      // turn — here `010-backend` (ordinal 10, brief "Backend").
+      expect(existsSync(join(ctxDir, 'evidence', '010-backend'))).toBe(true);
+    } finally {
+      rmSync(ctxDir, { recursive: true, force: true });
     }
   });
 

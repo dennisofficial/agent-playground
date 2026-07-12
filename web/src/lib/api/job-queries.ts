@@ -1,7 +1,14 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { qk } from "./query-keys";
+import { useOrgs } from "./me";
 import {
   addJobDependency,
   answerQuestion,
@@ -40,6 +47,7 @@ import {
   type CreateThreadBody,
   type JobMessage,
   type JobRef,
+  type RepoView,
   type ReviewCommentItemBody,
 } from "./job-api";
 import type { AutoApproveMode } from "@workspace/shared";
@@ -52,6 +60,41 @@ import type {
 /** Tanstack Query hooks over the org → repo → thread API. */
 
 const hasRef = (ref: JobRef) => Boolean(ref.orgId && ref.repoId && ref.jobId);
+
+/** A repo in a flat cross-org picker — its org context + the connected-repo view. */
+export interface RepoChoice {
+  orgId: string;
+  orgName: string;
+  repo: RepoView;
+}
+
+/**
+ * Every connected repo across all the operator's orgs. Built from the session orgs + one
+ * `GET /orgs/:id/repos` per org (parallel). Only `accessOk` repos are conversation containers, but we
+ * return all connected repos and let the caller reflect emptiness.
+ */
+export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
+  const { orgs, isLoading: orgsLoading } = useOrgs();
+  const results = useQueries({
+    queries: orgs.map((o) => ({
+      queryKey: qk.orgRepos(o.id),
+      queryFn: () => fetchOrgRepos(o.id),
+      staleTime: 30_000,
+    })),
+  });
+
+  const repos = useMemo(() => {
+    const out: RepoChoice[] = [];
+    orgs.forEach((o, i) => {
+      const list = results[i]?.data ?? [];
+      for (const repo of list) out.push({ orgId: o.id, orgName: o.name, repo });
+    });
+    return out;
+  }, [orgs, results]);
+
+  const isLoading = orgsLoading || results.some((r) => r.isLoading);
+  return { repos, isLoading };
+}
 
 /** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */
 export function useJobMessages(ref: JobRef) {

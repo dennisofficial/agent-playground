@@ -7,7 +7,6 @@ import type {
   WebReviewCommentsCard,
   WebSecretInputCard,
   WebSkillProposalCard,
-  WebTicketCard,
   WebVerdictCard,
 } from "@/lib/api/types";
 import type { JobMessage } from "@/lib/api/job-api";
@@ -35,8 +34,6 @@ export type ClassifiedMessage =
   | { kind: "mcp_proposal"; message: JobMessage; card: WebMcpProposalCard }
   /** A skill proposal (install a maintained skill / author a repo-idiom one / remove) — owner approves. */
   | { kind: "skill_proposal"; message: JobMessage; card: WebSkillProposalCard }
-  /** Atlas raised a ticket mid-job (`create_ticket`) — a callout relayed live, links to the board. */
-  | { kind: "ticket"; message: JobMessage; card: WebTicketCard }
   /** A sent inline-highlight review-comment batch — rendered as a distinct card, prose (if any) underneath. */
   | {
       kind: "review_comments";
@@ -137,9 +134,6 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   }
   if (message.card?.type === "skill_proposal_card") {
     return { kind: "skill_proposal", message, card: message.card };
-  }
-  if (message.card?.type === "ticket_card") {
-    return { kind: "ticket", message, card: message.card };
   }
 
   // The driver's build relays are a real backend kind (`build_event`) — the only system-pill source. A

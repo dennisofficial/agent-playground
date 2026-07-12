@@ -26,7 +26,6 @@ import type {
   ThreadCondition,
 } from '../domain';
 import { HALT_FIX_ATTEMPT_CAP } from '../domain';
-import { TICKET_AUTO_SKIP_SIM, TICKET_TERMINAL_STATUSES } from '../domain/ticket';
 import {
   EngineAuthError,
   EngineSessionLimitError,
@@ -61,6 +60,7 @@ import { ConventionProfileResolver, type ResolvedConventions } from '../conventi
 import { SkillResolver } from '../skills';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
+import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 // Direct path (not the '../sandbox' barrel, which doesn't re-export it) — mirrors the brain's import.
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
@@ -134,7 +134,6 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
-import { TicketService } from '../tickets';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -295,10 +294,6 @@ export class ThreadDriver implements JobDispatcher {
     // @Optional so unit tests construct the driver without it (undefined → no house style injected); DI
     // (@Global ConventionsModule) supplies it live.
     @Optional() private readonly conventions?: ConventionProfileResolver,
-    // The per-repo ticket board — a builder's `capture_ticket` drops a `bug` here for an out-of-scope defect
-    // it found but is deferring (too big to fix inline, not a blocker). @Global TicketsModule; @Optional so
-    // unit tests construct the driver without it (undefined → capture_ticket reports it's unavailable).
-    @Optional() private readonly tickets?: TicketService,
     // @Global OnboardingModule. @Optional so unit tests construct the driver without it (undefined → the
     // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
@@ -1437,6 +1432,28 @@ export class ThreadDriver implements JobDispatcher {
     );
   }
 
+  /** Resolve this thread leg's evidence subfolder and return the CONTAINER path emitted as
+   *  ATLAS_EVIDENCE_DIR so the turn's writers (worker + validate/prototype subagents) land their live-run
+   *  proof in evidence/<leg>/. Pre-creating the host dir is BEST-EFFORT (mirrors writeCompletionMd) — the
+   *  /context/evidence bind already exists and the in-sandbox writer creates the leg subfolder itself, so a
+   *  host mkdir failure (e.g. an unwritable path) must NEVER block the build turn. */
+  private async evidenceDirForThread(job: Job, thread: DriverThread): Promise<string> {
+    const leg = threadDirName(thread);
+    try {
+      const hostDir = join(
+        this.threadLifecycle.contextDirHost(job.id, job.orgId),
+        'evidence',
+        leg,
+      );
+      await mkdir(hostDir, { recursive: true });
+    } catch (err) {
+      this.logger.debug(
+        `evidence dir pre-create for thread ${thread.ordinal} failed (continuing): ${String(err)}`,
+      );
+    }
+    return `${CONTAINER_CONTEXT}/evidence/${leg}`;
+  }
+
   /**
    * Run ONE thread, returning its handoff for the next. The per-thread flow, in order:
    *   a. lock the thread's single step (or reuse it on a resume);
@@ -2185,8 +2202,7 @@ export class ThreadDriver implements JobDispatcher {
 
     // OUT-OF-SCOPE routing (real builder lanes only, NOT the Codex master_review). A builder that trips over
     // something outside its assignment routes it by cost: a CHEAP, clearly-correct fix it makes inline and
-    // logs via `record_deviation`; an EXPENSIVE-but-known defect it defers via `capture_ticket` and keeps
-    // building; a genuine open DESIGN gap it hands up via `block_thread`. These two are the first two rungs.
+    // logs via `record_deviation`; a genuine open DESIGN gap it hands up via `block_thread`.
     if (thread.kind !== 'master_review') {
       // record_deviation — the builder made a small out-of-scope fix INLINE. Persist it to the durable
       // per-thread store, then re-project `/context/generated/deviations.md` (host-owned; the sandbox mount
@@ -2201,66 +2217,6 @@ export class ThreadDriver implements JobDispatcher {
         return { ok: true };
       };
 
-      // capture_ticket — the builder found an out-of-scope defect too big to fix inline (but not a blocker):
-      // drop a `bug` on the board and keep building. WRITE-ONLY — no list/update/promote (those stay on the
-      // brain). Resume-safe: a re-driven turn that re-captures the same title is deduped against this job's
-      // already-captured tickets (create always allocates a fresh number, so we must guard before creating).
-      tools.capture_ticket = async (args) => {
-        if (!this.tickets) {
-          return { ok: false, error: 'ticket board unavailable in this environment' };
-        }
-        const title = String(args['title'] ?? '').trim();
-        if (!title) {
-          return { ok: false, error: 'title is required (imperative one-line summary of the out-of-scope defect)' };
-        }
-        const body = String(args['body'] ?? '').trim() || undefined;
-        try {
-          const existing = await this.tickets
-            .list({ orgId: job.orgId, repoId: job.repoId, originJobId: job.id })
-            .catch(() => []);
-          const dup = existing.find((t) => t.title.trim().toLowerCase() === title.toLowerCase());
-          if (dup) {
-            return { ok: true, ticketId: dup.id, number: dup.number, alreadyCaptured: true };
-          }
-          // Semantic guard on top of the exact-title one: the builder has no human in the loop, so at the
-          // HIGH auto-skip bar collapse a near-identical capture into an existing OPEN ticket rather than
-          // filing a "same bug, one word off" duplicate (the #6/#7 case). Restricted to non-terminal
-          // statuses so a done/cancelled match never suppresses a fresh capture. Fail-soft (no key → skip).
-          const semantic = await this.tickets
-            .findSimilar({
-              orgId: job.orgId,
-              repoId: job.repoId,
-              title,
-              body,
-              minSim: TICKET_AUTO_SKIP_SIM,
-              limit: 1,
-              excludeStatuses: [...TICKET_TERMINAL_STATUSES],
-            })
-            .catch(() => ({ queryVector: null, matches: [] }));
-          const near = semantic.matches[0];
-          if (near) {
-            return { ok: true, ticketId: near.id, number: near.number, alreadyCaptured: true };
-          }
-          const ticket = await this.tickets.create({
-            orgId: job.orgId,
-            repoId: job.repoId,
-            title,
-            body,
-            kind: 'bug',
-            status: 'backlog',
-            originThreadId: job.id,
-            originDecisionRecordId: record?.id ?? job.decisionRecordId ?? null,
-          });
-          return {
-            ok: true,
-            ticketId: ticket.id,
-            number: ticket.number,
-            message: `Captured bug #${ticket.number}: ${title}. Keep building your assigned scope.`,
-          };
-        } catch (err) {
-          return { ok: false, error: shortReason(err) };
-        }
-      };
     }
 
     // LIVE TASK LIST for the Codex master-review thread (parity with Claude Code's TaskCreate/TaskUpdate).
@@ -2915,6 +2871,7 @@ export class ThreadDriver implements JobDispatcher {
     const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
+    const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -2930,6 +2887,7 @@ export class ThreadDriver implements JobDispatcher {
             settings: { repoConventions },
             turnPhase: 'commit',
           }),
+          evidenceDir,
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
           task,
           auth: await this.creds.engineAuth(job.orgId, spec.engine),
@@ -3130,6 +3088,7 @@ export class ThreadDriver implements JobDispatcher {
     // `request_operator_input` human wait). On breach it both signals the SDK to abort AND hard-rejects so
     // the DRIVER gives up even if the SDK can't interrupt a stuck subprocess. Events attribute to the anchor
     // step (a batch is one turn; minor observability coarsening for the step transcript).
+    const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
       result = await this.runTurnBounded(
@@ -3141,6 +3100,7 @@ export class ThreadDriver implements JobDispatcher {
           engine,
           mode: 'execute',
           systemPrompt,
+          evidenceDir,
           // High reasoning effort for the whole-diff review pass (parity with plan-review), from the spec.
           // Undefined for Claude builder turns. The `toolBridge` below now reaches Codex too — `runCodex`
           // renders its tool names into a config.toml `[mcp_servers.atlasbridge]` block (the MCP bridge).

@@ -3,6 +3,7 @@ import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '../engine';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { LocalGitService } from '../git';
+import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
 import { TurnHarnessFactory, type TurnHarness } from '../surface/turn-harness.service';
 import { laneFor } from '../surface/thread-registry';
 import { Agent, buildFixPrompt, buildReviewPrompt, renderAgentPrompt } from '../prompt-kit';
@@ -108,6 +109,8 @@ export class AutoFixStage {
       // The fix turn commits + pushes its own work — give it the authenticated remote (parity with the
       // builder/gate/master-review turns). Absent gitAuth → no push (host-local / unit-test path).
       ...(ctx.gitAuth ? { gitAuth: ctx.gitAuth } : {}),
+      // AutoFixContext carries no thread ordinal/brief to key a per-thread subfolder — root fallback.
+      evidenceDir: `${CONTAINER_CONTEXT}/evidence`,
     };
   }
 

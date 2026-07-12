@@ -12,11 +12,10 @@ import { LeftNavProvider } from "@/features/shell/left-nav";
 import { OutboxFlusher } from "@/features/job-workspace/outbox-flusher";
 
 /**
- * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Threads | Tickets nav + avatar)
- * spans everything; below it sit the two destinations: the threads workspace keeps its org → repo → thread
- * sidebar, while the tickets board brings its own repo sidebar (so the org sidebar is hidden there). Below
- * the sidebar breakpoint (<768px) the workspace sidebar becomes an off-canvas drawer, opened from the top
- * bar's hamburger. Owns the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-job modal).
+ * The persistent app chrome (client). The app-wide TOP BAR (ATLAS lockup + Jobs nav + avatar) spans
+ * everything; below it sits the threads workspace with its org → repo → thread sidebar. Below the sidebar
+ * breakpoint (<768px) the workspace sidebar becomes an off-canvas drawer, opened from the top bar's
+ * hamburger. Owns the ⌘K palette; `dialog` is the `@dialog` parallel slot (the create-job modal).
  */
 export function AppChrome({
   children,
@@ -28,7 +27,6 @@ export function AppChrome({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const onTickets = pathname.startsWith("/tickets");
   const { isMobile } = useBreakpoint();
 
   // One shell-wide realtime subscription keeps every thread's "needs you" dot + status live across the
@@ -63,7 +61,7 @@ export function AppChrome({
       />
       <LeftNavProvider value={{ open: sidebarOpen, setOpen: setSidebarOpen }}>
         <div className="flex min-h-0 flex-1">
-          {onTickets ? null : isMobile ? (
+          {isMobile ? (
             <Drawer
               side="left"
               open={sidebarOpen}
