@@ -2159,9 +2159,10 @@ export class WebSurfaceController {
       s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;
     }
 
-    // Fire-and-forget: converge Caddy to the freshly-observed live set on every poll (immediacy), never
-    // blocking the response. No-op when exposure is disabled.
-    if (exposure?.enabled) {
+    // Fire-and-forget: persist the sidebar port_state and converge Caddy to the freshly-observed live set
+    // on every poll (immediacy), never blocking the response. Caddy route mutation remains a no-op when
+    // exposure is disabled.
+    if (exposure) {
       void exposure.reconcile(jobId).catch(() => undefined);
     }
 

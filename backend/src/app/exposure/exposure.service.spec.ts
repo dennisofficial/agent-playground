@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import type { Repository } from 'typeorm';
@@ -32,7 +35,12 @@ function fakeQueryBuilder() {
   return { qb, calls };
 }
 
-function makeService(provider: Partial<SandboxProvider>) {
+function makeService(
+  provider: Partial<SandboxProvider>,
+  options: { previewBaseDomain?: string | null } = {},
+) {
+  const previewBaseDomain =
+    options.previewBaseDomain === undefined ? 'example.com' : options.previewBaseDomain;
   const caddy = {
     deleteRoutesByPrefix: vi.fn(async () => undefined),
     unbridgeCaddyFromSandbox: vi.fn(async () => undefined),
@@ -42,7 +50,7 @@ function makeService(provider: Partial<SandboxProvider>) {
   } as unknown as CaddyAdminClient;
   const env = {
     get: (key: string) => {
-      if (key === 'PREVIEW_BASE_DOMAIN') return 'example.com';
+      if (key === 'PREVIEW_BASE_DOMAIN') return previewBaseDomain ?? undefined;
       if (key === 'PREVIEW_ID_SECRET') return 'preview-secret';
       if (key === 'SECRETS_ENCRYPTION_KEY') return 'secrets-key';
       return undefined;
@@ -54,8 +62,53 @@ function makeService(provider: Partial<SandboxProvider>) {
     env,
     undefined as unknown as Repository<JobEntity>,
   );
-  return svc;
+  return { svc, caddy };
 }
+
+describe('ExposureService.reconcile — port_state', () => {
+  it('persists internal when a service is running and preview exposure is disabled', async () => {
+    const startedAt = '2026-07-10T00:00:00Z';
+    const dir = mkdtempSync(join(tmpdir(), 'atlas-exposure-'));
+    try {
+      writeFileSync(
+        join(dir, 'web.json'),
+        JSON.stringify({
+          name: 'web',
+          cmd: 'pnpm dev',
+          pid: 10,
+          pgid: 10,
+          startedAt,
+          port: 3000,
+          expose: true,
+        }),
+      );
+      const { qb, calls } = fakeQueryBuilder();
+      const createQueryBuilder = vi.fn(() => qb);
+      const provider: Partial<SandboxProvider> = {
+        supervisorDirHost: vi.fn(() => dir),
+        probeLiveness: vi.fn(async () => ({
+          status: 'up' as const,
+          containerStartedAt: startedAt,
+          alive: [10],
+        })),
+      };
+      const { svc, caddy } = makeService(provider, { previewBaseDomain: null });
+      (svc as any).jobs = { createQueryBuilder };
+
+      await svc.reconcile('job-1');
+
+      expect(calls.set).toEqual({ port_state: 'internal' });
+      expect(calls.where).toEqual([
+        'id = :id AND port_state IS DISTINCT FROM :ps',
+        { id: 'job-1', ps: 'internal' },
+      ]);
+      expect(caddy.upsertRoute).not.toHaveBeenCalled();
+      expect(caddy.deleteRoutesByPrefix).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
   it('clears non-live jobs, scoping the sweep to the live set', async () => {
@@ -66,7 +119,7 @@ describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
       supervisorDirHost: vi.fn(() => '/tmp/does-not-exist-atlas-svc-fixture'),
       probeLiveness: vi.fn(async () => ({ status: 'down' }) as const),
     };
-    const svc = makeService(provider);
+    const { svc } = makeService(provider);
     (svc as any).jobs = { createQueryBuilder };
 
     await svc.reconcileAll();
@@ -86,7 +139,7 @@ describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
       supervisorDirHost: vi.fn(() => '/tmp/does-not-exist-atlas-svc-fixture'),
       probeLiveness: vi.fn(async () => ({ status: 'down' }) as const),
     };
-    const svc = makeService(provider);
+    const { svc } = makeService(provider);
     (svc as any).jobs = { createQueryBuilder };
 
     await svc.reconcileAll();
@@ -106,7 +159,7 @@ describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
       supervisorDirHost: vi.fn(() => '/tmp/does-not-exist-atlas-svc-fixture'),
       probeLiveness: vi.fn(async () => ({ status: 'down' }) as const),
     };
-    const svc = makeService(provider);
+    const { svc } = makeService(provider);
     (svc as any).jobs = { createQueryBuilder };
 
     await svc.reconcileAll();

@@ -61,10 +61,10 @@ export class ExposureService {
    * durable markers, probes liveness (generation-gated), then: if any service is desired, bridges Caddy
    * into the sandbox network once and upserts each route (deleting stale ones); if none, deletes the
    * job's whole route set and unbridges. Best-effort throughout — one Caddy/docker failure is logged and
-   * skipped rather than aborting the loop. No-op when exposure is disabled.
+   * skipped rather than aborting the loop. The sidebar port_state is still persisted when preview exposure
+   * is disabled; only the Caddy route mutation is gated on PREVIEW_BASE_DOMAIN.
    */
   async reconcile(jobId: string): Promise<void> {
-    if (!this.enabled) return;
     const dir = this.provider.supervisorDirHost(jobId);
     const markers = dir ? readServiceMarkers(dir) : [];
     const allPgids = markers.map((m) => m.pgid).filter((p): p is number => p != null);
@@ -85,6 +85,8 @@ export class ExposureService {
         .execute()
         .catch((err) => this.logger.debug(`persist port_state(${jobId}) failed: ${err}`));
     }
+
+    if (!this.enabled) return;
 
     const exposable = markers.filter((m) => m.port != null && m.expose);
 
@@ -145,7 +147,6 @@ export class ExposureService {
 
   /** Reconcile every live managed thread sandbox — the periodic self-heal driven by the reap timer. */
   async reconcileAll(): Promise<void> {
-    if (!this.enabled) return;
     let jobIds: string[];
     try {
       jobIds = await this.provider.listLiveThreadJobIds();
