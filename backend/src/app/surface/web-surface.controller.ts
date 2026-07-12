@@ -1171,6 +1171,38 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/jobs/:jobId/threads/:threadId/retry-verification` — the "Retry now" lever on a thread held on a
+   * verification-judge outage (`judge_unavailable`). Re-arms the judge-cap re-drive budget and re-drives.
+   * Scoped to the caller's org via the membership guard + `requireThread` (job ownership).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification')
+  @UseGuards(OrgMembershipGuard)
+  async retryVerification(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('threadId') threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    await this.requireThread(jobId, org.id);
+    return this.dispatcher.operatorRetryStuckThread(jobId, threadId);
+  }
+
+  /**
+   * `POST …/jobs/:jobId/threads/:threadId/accept` — the "Skip & accept" lever on a thread held on a
+   * verification-judge outage. Sets a durable accept marker and re-enters the drive, which finalizes the
+   * thread `done` with the live sandbox. Safety-gated server-side (judge_unavailable + static checks passed).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/accept')
+  @UseGuards(OrgMembershipGuard)
+  async acceptThread(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('threadId') threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    await this.requireThread(jobId, org.id);
+    return this.dispatcher.operatorAcceptStuckThread(jobId, threadId);
+  }
+
+  /**
    * `POST …/threads/:jobId/retry-turn` — the "Resume" button on a `retryable` system→operator error box
    * (a brain chat-turn that hit a transient engine failure, e.g. a 529). Distinct from `/retry` (which only
    * re-drives a HALTED build) — a chat-turn failure never touches job status, so that

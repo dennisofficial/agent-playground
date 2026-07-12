@@ -1382,6 +1382,12 @@ export class DriverStoreService {
       type: coerceThreadType(s.type),
       status: s.status,
       condition: s.condition,
+      blockReason: s.terminal_record?.blocked?.reason ?? null,
+      // True only when the LIVE judge was the outage and static build+tests passed — gates the "Skip & accept"
+      // button (mirrors operatorAcceptStuckThread's server-side guard, so the UI never offers an unsafe accept).
+      acceptableOnJudgeOutage:
+        s.terminal_record?.blocked?.reason === 'judge_unavailable' &&
+        s.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
       // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
       defaultFooter: laneDefaultFooter(s.kind),
       // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"

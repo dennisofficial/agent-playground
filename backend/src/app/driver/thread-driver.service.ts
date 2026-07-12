@@ -25,7 +25,7 @@ import type {
   SessionEngine,
   ThreadCondition,
 } from '../domain';
-import { HALT_FIX_ATTEMPT_CAP } from '../domain';
+import { HALT_FIX_ATTEMPT_CAP, JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
 import {
   EngineAuthError,
   EngineSessionLimitError,
@@ -587,11 +587,14 @@ export class ThreadDriver implements JobDispatcher {
       );
       return { ok: false, reason: `thread ${threadId} is already complete` };
     }
+    const term = await this.store.getTerminalRecord(threadId).catch(() => null);
+    const effectiveCap: number | undefined =
+      term?.blocked?.reason === 'judge_unavailable' ? JUDGE_UNAVAILABLE_REDRIVE_CAP : cap;
     let attempt = 0;
-    if (cap != null) {
-      const claim = await this.store.claimHaltFixAttempt(threadId, cap);
+    if (effectiveCap != null) {
+      const claim = await this.store.claimHaltFixAttempt(threadId, effectiveCap);
       if (!claim.ok) {
-        return { ok: false, reason: `re-drive budget exhausted (${claim.used}/${cap})` };
+        return { ok: false, reason: `re-drive budget exhausted (${claim.used}/${effectiveCap})` };
       }
       attempt = claim.used;
     }
@@ -617,6 +620,66 @@ export class ThreadDriver implements JobDispatcher {
       ),
     );
     return { ok: true, attempt };
+  }
+
+  /**
+   * "Retry now" operator lever for a thread held on a verification-judge outage. Safety-guards the hold is
+   * judge_unavailable, re-arms the (judge-cap) re-drive budget, then re-drives uncapped — `redriveThread`
+   * promotes the omitted cap to `JUDGE_UNAVAILABLE_REDRIVE_CAP`, so the operator re-drive gets a fresh judge
+   * budget and patient auto-retry restarts. `redriveThread` owns the active/exists/belongs/not-done chain.
+   */
+  async operatorRetryStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const term = await this.store.getTerminalRecord(threadId).catch(() => null);
+    if (term?.blocked?.reason !== 'judge_unavailable') {
+      return { ok: false, reason: 'thread is not held on a verification-judge outage' };
+    }
+    await this.store.rearmHaltedThreads(jobId).catch(() => 0); // fresh judge-cap budget
+    const r = await this.redriveThread(jobId, threadId, undefined); // omit cap; redriveThread promotes to judge cap
+    return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+  }
+
+  /**
+   * "Skip & accept" operator entry point for a thread held on a verification-judge outage. No sandbox here —
+   * we only set a durable marker (`acceptRequested`) + kick the drive; the real commit/step finalization runs
+   * inside `runThread` (`finalizeAcceptedThread`) where the sandbox is live. Safety-gated (Decision d4): the
+   * hold must be judge_unavailable AND the STATIC gate must have passed, or we'd ship work that never built.
+   */
+  async operatorAcceptStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    if (this.active.has(jobId)) {
+      return { ok: false, reason: 'the build is running right now — retry momentarily' };
+    }
+    const owner = await this.store.threadJobId(threadId).catch(() => null);
+    if (owner !== jobId) return { ok: false, reason: 'thread is not part of this job' };
+    const cur = await this.store.getThread(threadId).catch(() => null);
+    if (cur?.status === 'done') return { ok: false, reason: 'thread is already complete' };
+    const term = await this.store.getTerminalRecord(threadId).catch(() => null);
+    if (term?.blocked?.reason !== 'judge_unavailable') {
+      return { ok: false, reason: 'only a verification-judge outage can be accepted this way' };
+    }
+    if (term.staticVerification?.verdict?.staticChecksAdequate !== true) {
+      return {
+        ok: false,
+        reason: 'the build/test (static) checks have not passed — cannot accept; retry instead',
+      };
+    }
+    // Mark the record for the drive to finalize (jsonb, no migration; keep status 'blocked' so runThread's
+    // blocked-thread branch still catches it). Then clear halt + re-enter the drive; finalization happens there.
+    await this.store
+      .recordThreadTermination(threadId, { ...term, acceptRequested: true })
+      .catch(() => undefined);
+    await this.store.clearHalt(threadId).catch(() => undefined); // drop owed-wake so the drive isn't racing a wake
+    await this.store.clearJobHalt(jobId).catch(() => undefined); // in case the backstop rested it
+    await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    void this.drive(jobId).catch((err) =>
+      this.logger.error(`operatorAccept drive job=${jobId} crashed: ${err}`),
+    );
+    return { ok: true };
   }
 
   /**
@@ -1339,7 +1402,19 @@ export class ThreadDriver implements JobDispatcher {
         // is wrong (and drops the specific detail) when the STATIC judge is the one that's unreachable.
         const detail =
           term.blocked.detail ?? 'a verification judge is temporarily unavailable';
-        text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
+        const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
+        if (spent >= JUDGE_UNAVAILABLE_REDRIVE_CAP) {
+          // Patient auto-retry exhausted → REST for the operator (Decision d3). The web still shows the
+          // judge_unavailable controls (keyed on thread state); this stops the re-drive loop + lights the
+          // classic halt surfaces. 'incomplete' is a JobHaltKind the operator Retry banner already renders.
+          await this.store
+            .setJobHalt(job.id, { kind: 'incomplete', reason: detail, at })
+            .catch(() => undefined);
+          owedWake = false;
+          text = `:hourglass_flowing_sand: *${thread.brief}* — ${detail}. Auto-retry has run its course — *paused for you*. Use “Retry now” or “Skip & accept”.`;
+        } else {
+          text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
+        }
       } else {
         const spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
         if (spent >= HALT_FIX_ATTEMPT_CAP) {
@@ -1467,6 +1542,16 @@ export class ThreadDriver implements JobDispatcher {
     // thread. (Live-observed on job 43705139 — the master review "blocked again" hundreds of times.)
     const prior = await this.store.getTerminalRecord(thread.id).catch(() => null);
     if (prior?.status === 'blocked') {
+      if (prior.blocked?.reason === 'judge_unavailable' && prior.acceptRequested) {
+        return await this.finalizeAcceptedThread(
+          job,
+          route,
+          repo,
+          sandbox,
+          thread,
+          prior,
+        );
+      }
       // Suppress the redundant re-notify (re-posted card + re-armed brain wake) ONLY when the durable
       // owed-wake row already exists (`halt_outcome` set → `haltJob` already ran) AND this isn't the
       // transient `judge_unavailable` hold. If `halt_outcome` is still missing (crash between
@@ -1608,6 +1693,64 @@ export class ThreadDriver implements JobDispatcher {
       this.logger.warn(`thread ${thread.ordinal} — service teardown skipped: ${stopped.reason}`);
     }
     return { outcome: 'done', handoff: handoffOut };
+  }
+
+  /**
+   * Finalize an operator-accepted `judge_unavailable` thread (Decision d4). Runs inside `runThread` with the
+   * LIVE sandbox because the live-verification judge runs BEFORE the writer-commit finalization — so a
+   * direct-write `done` would advance with an un-finalized step (null commit_sha / step still building). This
+   * mirrors the normal commit-stamp + done-tail, waiving ONLY the live judge; it refuses honestly if the tree
+   * is dirty (uncommitted work can't be safely shipped and won't survive a drive re-entry) and stays
+   * recoverable. It does NOT run the per-thread review-children pass (it never ran — the live gate blocks
+   * before `runReviewChildren`); the diff is still covered by the master-review + the operator ship gate.
+   */
+  private async finalizeAcceptedThread(
+    job: Job,
+    route: JobRoute,
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    prior: ThreadTerminalRecord,
+  ): Promise<ThreadResult> {
+    const startSha = await this.resolveThreadStartSha(thread, sandbox);
+    if (await this.git.hasChanges(sandbox.worktreePath)) {
+      await this.post(
+        route,
+        `:warning: Can't accept *${thread.brief}* — uncommitted changes in the tree. Use “Retry now”.`,
+      ).catch(() => undefined);
+      await this.store
+        .recordThreadTermination(thread.id, { ...prior, acceptRequested: undefined })
+        .catch(() => undefined);
+      await this.store.setHaltOwed(thread.id, 'blocked').catch(() => undefined); // stay recoverable
+      return { outcome: 'blocked', handoff: null, suppressHaltNotify: true };
+    }
+    const steps = await this.store.stepsForThread(thread.id).catch(() => []); // the thread's step row(s); anchor = first
+    const anchor = steps[0];
+    const head = await this.git.headSha(sandbox.worktreePath).catch(() => null);
+    const sha = head && head !== startSha ? head : NOTHING_COMMITTED;
+    if (anchor) await this.store.setStepCommit(anchor.id, sha).catch(() => undefined);
+    for (const p of steps) await this.store.setStepState(p.id, 'done', 'done').catch(() => undefined);
+    const handoff =
+      prior.summary ?? `${thread.brief} accepted by operator (live judge unavailable).`;
+    await this.store.setThreadHandoffOut(thread.id, handoff).catch(() => undefined);
+    await this.store.dropOpenThreadTasks(thread.id).catch(() => 0);
+    const { blocked: _b, acceptRequested: _a, ...rest } = prior;
+    await this.store
+      .recordThreadTermination(thread.id, { ...rest, status: 'done' })
+      .catch(() => undefined);
+    await this.store.setThreadStatus(thread.id, 'done').catch(() => undefined);
+    await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
+    await this.store.clearHalt(thread.id).catch(() => undefined);
+    await this.recordMilestone(
+      job.id,
+      `thread:${thread.id}:accepted`,
+      `Operator accepted "${thread.brief}" despite an unavailable live-verification judge.`,
+    ).catch(() => undefined);
+    await this.post(
+      route,
+      `:white_check_mark: Accepted *${thread.brief}* — live-verification judge was unavailable.`,
+    ).catch(() => undefined);
+    return { outcome: 'done', handoff };
   }
 
   /**
