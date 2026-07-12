@@ -9,7 +9,6 @@ import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 import type { TaskItem } from './thread.entity';
-import { TicketEntity } from './ticket.entity';
 import { UserEntity } from './user.entity';
 
 /**
@@ -50,7 +49,6 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
-@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -92,20 +90,6 @@ export class JobEntity extends TimestampedEntity {
    *  existing session on wake, no replay). */
   @Column({ type: 'text', nullable: true })
   blocked_seed_message!: string | null;
-
-  /**
-   * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
-   * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
-   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), modeled on this entity via
-   * `@Index('uq_threads_ticket_id', …)`. SET NULL if the ticket is deleted (the thread/PR outlives the
-   * board entry).
-   */
-  @Column({ type: 'uuid', nullable: true })
-  ticket_id!: string | null;
-
-  @ManyToOne(() => TicketEntity, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'ticket_id' })
-  ticket?: TicketEntity | null;
 
   /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
    *  operator/system top-level jobs. Powers the "Created jobs" children query. */

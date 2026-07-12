@@ -63,7 +63,6 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     m.messages as never,
     {} as never, // repos
     {} as never, // threadTitle
-    {} as never, // ticketEvents
     {} as never, // usageBus
     { available: false } as never, // realtime
     {} as never, // election

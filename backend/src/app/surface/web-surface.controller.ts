@@ -105,7 +105,6 @@ import {
   realtimeDisabledStream,
   subscriptionToObservable,
 } from '../realtime';
-import { TicketEventBus } from '../tickets';
 import {
   renderReviewSeedXml,
   renderUploadedFilesXml,
@@ -525,7 +524,6 @@ export class WebSurfaceController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
-    private readonly ticketEvents: TicketEventBus,
     private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
@@ -1052,24 +1050,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    // Board mutations for this repo → a live `ticket_event`; the client invalidates its ticket queries.
-    // Carries no payload beyond the ids (the client refetches the authoritative ticket), matching the
-    // `message`-frame refetch model — and reaches the board even when the brain mutates tickets.
-    const tickets$ = this.ticketEvents.stream$.pipe(
-      filter((e) => e.repoId === repoId),
-      map(
-        (e): MessageEvent => ({
-          data: { type: 'ticket_event', ticketId: e.ticketId, kind: e.kind },
-        }),
-      ),
-    );
     // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
       filter((e) => e.orgId === orgId),
       map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
+    return merge(snapshot$, live$, messages$, meta$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */

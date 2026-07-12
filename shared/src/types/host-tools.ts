@@ -43,12 +43,7 @@ export const ATLAS_HOST_BRIDGE_TOOLS = [
   'start_direct_build',
   'finalize_build',
   'create_job',
-  'create_ticket',
-  'list_tickets',
-  'update_ticket',
-  'link_ticket_dependency',
   'link_job_dependency',
-  'promote_ticket',
   'reset_sandbox',
   'finish_onboarding',
 ] as const;

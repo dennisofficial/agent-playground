@@ -277,7 +277,7 @@ export const DEVIATION_NOTE =
   "make the change; it is logged to `/context/generated/deviations.md`, the operator's deviation log (NOT " +
   'the PR body). If you do NOT have that tool (you are a writer subagent), report each such change on its ' +
   "own line starting 'DEVIATION:' in your summary back to the orchestrator, who records it. Reserve this for " +
-  'fixes you actually MADE — use `capture_ticket` for out-of-scope work you are deferring, not fixing.';
+  'fixes you actually MADE.';
 
 /**
  * CLARITY OVER COMMENTS — the house coding style for every persona that AUTHORS code (the brain's direct

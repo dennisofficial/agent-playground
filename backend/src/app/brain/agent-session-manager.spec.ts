@@ -11,7 +11,6 @@ import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
-import type { TicketService } from '../tickets';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
@@ -117,7 +116,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
-    threadTicketId: vi.fn().mockResolvedValue(null),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
@@ -367,7 +365,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
       findings: [],
@@ -437,7 +434,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockShip,
       mockRepos,
       mockAwareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -2814,7 +2810,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
       awareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3664,7 +3659,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3822,7 +3816,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3956,14 +3949,14 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
       stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
-      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
-      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
-      { register: () => undefined } as never, // threadInput (29, ThreadInputService)
-      { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
-      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
+      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (26)
+      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
+      { register: () => undefined } as never, // threadInput (28, ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (29, LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30, OauthUsageService)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -4160,11 +4153,11 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
       stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
-      inert, inert, inert, inert, // turnRecovery…git (27)
-      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
+      inert, inert, inert, inert, // turnRecovery…git (26)
+      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
@@ -4379,14 +4372,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // sandboxRows (11)
         inert, // stimulusRows (12)
         stimulusStore as never, // stimulusStore (13)
-        inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-        inert, // mcp (McpResolver, 22)
-        election, // election (23)
-        inert, inert, inert, inert, // turnRecovery…git (27)
-        { generate: () => 'SYSTEM' } as never, // prompts (28)
-        { register: () => undefined } as never, // threadInput (29)
-        { judge: async () => undefined } as never, // liveVerificationJudge (30)
-        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+        inert, // mcp (McpResolver, 21)
+        election, // election (22)
+        inert, inert, inert, inert, // turnRecovery…git (26)
+        { generate: () => 'SYSTEM' } as never, // prompts (27)
+        { register: () => undefined } as never, // threadInput (28)
+        { judge: async () => undefined } as never, // liveVerificationJudge (29)
+        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi
