@@ -63,12 +63,17 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO mcp_writer
 --    AFTER the CREATE TABLE migration (see the "AFTER migrate" note in the header), so the table exists.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON prod_maintenance_write FROM mcp_writer;
 
+-- 5b. Protect migration bookkeeping STRUCTURALLY, for the same reason. TypeORM's `migrations` table tracks
+--    applied migration state and is what future `migration:run` invocations rely on; corrupting it via an
+--    approved (or mistyped) DELETE/UPDATE is a direct migration/schema-integrity risk, not merely a data
+--    sensitivity concern. mcp_writer never legitimately writes it, so this is unconditional.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON migrations FROM mcp_writer;
+
 -- 6. Optional crown-jewel hardening (d4) — DEFERRED to a follow-up ticket unless the operator asks. The
 --    human-approval gate is otherwise the only backstop, so an operator may additionally REVOKE write on
 --    the most sensitive tables. Uncomment to apply:
 --   REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON users FROM mcp_writer;
 --   REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON org_credentials FROM mcp_writer;
---   REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON migrations FROM mcp_writer;
 
 -- 7. Cap any single statement so a runaway recovery write can't load prod Postgres (belt).
 ALTER ROLE mcp_writer SET statement_timeout = '15s';
