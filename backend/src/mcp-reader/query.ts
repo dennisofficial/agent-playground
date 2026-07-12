@@ -48,13 +48,27 @@ export async function runReadOnlyQuery(
       let truncated = rows.length > effective;
       let kept = truncated ? rows.slice(0, effective) : rows;
       // Byte guard: even under the row cap, a handful of huge rows can produce an oversized payload.
-      // Drop from the tail until the serialized size fits (or only one row remains).
-      while (
-        kept.length > 1 &&
-        Buffer.byteLength(JSON.stringify(kept), 'utf8') > MAX_RESULT_BYTES
-      ) {
-        kept = kept.slice(0, -1);
-        truncated = true;
+      // Serialize each row ONCE and keep the longest prefix whose combined size fits, instead of
+      // re-serializing the whole array per dropped tail row (that is O(n²) and can block the
+      // single-threaded reader for seconds on a large result). Byte accounting mirrors
+      // JSON.stringify(array): `[` + `]` brackets plus a `,` between rows.
+      if (kept.length > 0) {
+        let total = 2; // '[' + ']'
+        let fit = 0;
+        for (let i = 0; i < kept.length; i++) {
+          const rowBytes = Buffer.byteLength(JSON.stringify(kept[i]), 'utf8');
+          const comma = i > 0 ? 1 : 0;
+          if (total + comma + rowBytes > MAX_RESULT_BYTES) break;
+          total += comma + rowBytes;
+          fit += 1;
+        }
+        // Always keep at least one row (parity with the old loop) so a single oversized row is still
+        // returned rather than an empty result.
+        const keepCount = Math.max(fit, 1);
+        if (keepCount < kept.length) {
+          kept = kept.slice(0, keepCount);
+          truncated = true;
+        }
       }
       return {
         rows: kept,

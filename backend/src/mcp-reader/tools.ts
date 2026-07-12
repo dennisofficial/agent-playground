@@ -17,6 +17,7 @@ import type { ThreadTerminalRecord } from '../app/persistence/entities/thread.en
 import { QUERY_FORMATS, renderRows, type QueryFormat } from './format';
 import { resolveJailed } from './path-jail';
 import { introspectSchema, runReadOnlyQuery } from './query';
+import { redactSecrets } from './redact';
 import {
   findSandboxDir,
   grepFiles,
@@ -110,11 +111,19 @@ async function atlasQuery(
   );
   ctx.audit.rowCount = rowCount;
   if (format === 'json') return { format, rowCount, truncated, rows };
+  // Redact the row OBJECTS before flattening to text. redact.ts's key-name masking (SECRET_KEY_PATTERN)
+  // blanks opaque values in secret-named columns (e.g. `access_token`, `password`), but that key context
+  // is lost once rows are rendered to csv/tsv — the header and value land on separate lines, so the
+  // string-pattern scan main.ts runs on the flattened text can't recover it. Redacting here preserves the
+  // key-name masking for all rendered formats.
+  const redactedRows = redactSecrets(
+    rows as Record<string, unknown>[],
+  ) as Record<string, unknown>[];
   return {
     format,
     rowCount,
     truncated,
-    text: renderRows(rows as Record<string, unknown>[], format),
+    text: renderRows(redactedRows, format),
   };
 }
 
