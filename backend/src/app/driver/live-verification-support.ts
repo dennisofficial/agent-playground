@@ -31,6 +31,19 @@ export const NON_RUNTIME_FILE_RE =
   /(^|\/)docs\/|\.md$|\.spec\.ts$|\.test\.ts$|(^|\/)package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|(^|\/)\.gitignore$|(^|\/)\.github\//i;
 
 /**
+ * Deterministic pre-filter for the STATIC-check judge — deliberately DIVERGENT from {@link NON_RUNTIME_FILE_RE}
+ * (which is right for *live e2e* but wrong for *static checks*). A test file, a `tsconfig`, or a `package.json`
+ * is exactly what typecheck/lint/test catches, so those MUST reach the static judge even though the live judge
+ * skips them. Fire the static judge iff ≥1 changed file MATCHES this: a code file (a superset of the old Opus
+ * gate's `.(ts|tsx|js|jsx)` trigger — `.spec.ts`/`.test.ts` ARE covered) OR build-defining config
+ * (`package.json`, `tsconfig*.json`). A diff that matches NONE (pure `.md`/`docs/`, lockfiles, `.github/`,
+ * images) is clearly inert to static checks and skips the judge — the downstream Master Review + ship
+ * whole-diff typecheck still backstop it.
+ */
+export const BUILD_RELEVANT_FILE_RE =
+  /\.(ts|tsx|cts|mts|js|jsx|cjs|mjs)$|(^|\/)package\.json$|(^|\/)tsconfig[^/]*\.json$/i;
+
+/**
  * Head+TAIL clamp for one piece of evidence output — used at BOTH truncation layers (ingestion in the two
  * producers, and the judge-input renderer) so they never drift. A plain head-only `slice(0, N)` silently
  * dropped the DECISIVE line of a curated proof when it sat past the cut — the exact bug that starved the

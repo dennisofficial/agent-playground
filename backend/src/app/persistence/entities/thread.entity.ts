@@ -307,6 +307,16 @@ export interface ThreadTerminalRecord {
       missingChecks?: string;
     };
   };
+  /** The static-check judge's verdict on this claim (typecheck/lint/diagnostics/tests, "if applicable"), when
+   *  the sibling gate ran. Basis for a `blocked`/`unverified` downgrade (also recorded when the claim passed,
+   *  for observability). jsonb — no migration. */
+  staticVerification?: {
+    verdict: {
+      staticChecksAdequate: boolean;
+      reason: string;
+      missingChecks?: string;
+    };
+  };
 }
 
 /** One inline out-of-scope fix the orchestrator made while building a thread (see {@link ThreadEntity.deviations}). */

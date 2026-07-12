@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   COMMIT_AND_PUSH_INSTRUCTION,
   renderBatchTask,
-  renderGateTask,
   renderMasterReviewTask,
 } from './thread-driver.service';
 import type { DriverThread } from './driver-store.service';
@@ -84,12 +83,6 @@ describe('driver/engine prose golden snapshots', () => {
     await expect(renderMasterReviewTask(record, repo)).toMatchFileSnapshot(
       './__snapshots__/render-master-review-task.txt',
     );
-  });
-
-  it('renderGateTask', async () => {
-    await expect(
-      renderGateTask(['src/a.ts', 'src/b.ts'], 2, ['prior error text']),
-    ).toMatchFileSnapshot('./__snapshots__/render-gate-task.txt');
   });
 
   it('SANDBOX_RESET_NOTICE', async () => {

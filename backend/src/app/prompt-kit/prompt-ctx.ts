@@ -14,7 +14,7 @@ export interface PromptCtx {
   threadType?: string | null;
   /** Which WORKER turn this prompt is for. Selects whether batch-only host-tool instructions render.
    *  Absent ⇒ treated as 'batch' (backward-compatible with bare renderAgentPrompt calls). */
-  turnPhase?: 'batch' | 'commit' | 'gate';
+  turnPhase?: 'batch' | 'commit';
   /** User/org-specific settings woven into the prompt. */
   settings?: {
     /** Standing operator/org instructions appended to the assembled prompt when present. */

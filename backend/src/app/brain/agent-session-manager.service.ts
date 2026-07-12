@@ -2840,9 +2840,9 @@ export class AgentSessionManager
       };
     };
 
-    // Diagnostics done-gate for the DIRECT-BUILD path (ADR 0004 rider 3) — lighter-weight than the
-    // build-thread gate (`ThreadDriver.runVerificationGate`), since `finalize_build` already runs INSIDE a
-    // live brain turn (no separate resume needed): the brain must self-report a clean verification pass via
+    // Diagnostics done-gate for the DIRECT-BUILD path (ADR 0004 rider 3) — this is the brain's own
+    // `finalize_build` gate, which runs INSIDE a live brain turn (no separate resume needed): the brain
+    // must self-report a clean verification pass via
     // `report_verification` before `finalize_build` will ship. Reset per turn (this closure is rebuilt fresh
     // at turn start / boot re-attach — see `buildTools` call sites), so a later turn must re-verify.
     let directBuildVerified = false;

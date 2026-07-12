@@ -43,9 +43,17 @@ export {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
+export {
+  STATIC_VERIFICATION_JUDGE,
+  AnthropicStaticVerificationJudge,
+  JudgeStaticVerificationChain,
+  type StaticVerificationJudge,
+  type StaticVerificationVerdict,
+} from './static-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
   clampEvidenceOutput,
+  BUILD_RELEVANT_FILE_RE,
   NON_RUNTIME_FILE_RE,
   renderLockedDecisionsSummary,
   renderTerminalRecordSummary,
