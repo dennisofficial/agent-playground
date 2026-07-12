@@ -340,8 +340,17 @@ interface ReviewCommentItemDto {
   /** The selected/quoted text. */
   quote: string;
   note?: string;
-  /** Optional GitHub-style line anchor into a diff file. Omitted for markdown/plan/decision comments. */
-  lines?: { path: string; side: 'old' | 'new'; start: number; end: number };
+  /** Optional GitHub-style line anchor into a diff file (omitted for markdown/plan/decision comments):
+   *  the old-file and/or new-file spans the selection covered (both when it straddles deletions and
+   *  additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 interface ReviewCommentsDto {
   items: ReviewCommentItemDto[];
@@ -480,38 +489,54 @@ export function mapMessageSource(
  * markdown Atlas reads as the operator's chat turn. Companion to the `review_comments_card` payload
  * persisted alongside it — that card is render-only; this text is what actually drives the brain.
  */
+/** Escape the five XML-significant characters for safe use in element text / attribute values. */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Render a batch of inline review comments into the XML the brain reads as the operator's chat turn.
+ * One <comment> element per item (clear, unambiguous boundaries); a diff line-comment carries the
+ * old-file/new-file line spans it covers as attributes AND the signed diff fragment the operator selected
+ * inside a ```diff fence — so Atlas sees exactly what was highlighted (old + new) with no extra file Read.
+ * A free-text (markdown/plan/decision) comment carries the quoted selection instead. The operator's typed
+ * message rides in a trailing <message>. Companion to the render-only `review_comments_card`.
+ */
 export function formatReviewComments(
   items: ReviewCommentItemDto[],
   message?: string,
 ): string {
-  const byFile = new Map<string, ReviewCommentItemDto[]>();
+  const out: string[] = [`<review-comments count="${items.length}">`];
+  const span = (s?: number, e?: number): string | null =>
+    s == null ? null : e != null && e !== s ? `${s}-${e}` : `${s}`;
   for (const item of items) {
-    const group = byFile.get(item.file) ?? [];
-    group.push(item);
-    byFile.set(item.file, group);
-  }
-  const lines: string[] = [
-    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'}:`,
-  ];
-  for (const [file, group] of byFile) {
-    lines.push('', `**${file}**`);
-    for (const item of group) {
-      if (item.lines) {
-        lines.push(`\`${item.lines.path}:${item.lines.start}-${item.lines.end}\` (${item.lines.side})`);
-        lines.push('```');
-        lines.push(item.quote);
-        lines.push('```');
-        if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
-        continue;
-      }
-      lines.push(`> "${item.quote}"`);
-      if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
+    if (item.lines) {
+      const attrs = [`file="${xmlEscape(item.lines.path)}"`];
+      const oldSpan = span(item.lines.oldStart, item.lines.oldEnd);
+      const newSpan = span(item.lines.newStart, item.lines.newEnd);
+      if (oldSpan) attrs.push(`old-lines="${oldSpan}"`);
+      if (newSpan) attrs.push(`new-lines="${newSpan}"`);
+      out.push(`  <comment ${attrs.join(' ')}>`);
+      out.push('    ```diff');
+      for (const line of item.lines.fragment.split('\n')) out.push(`    ${line}`);
+      out.push('    ```');
+      if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+      out.push('  </comment>');
+      continue;
     }
+    out.push(`  <comment file="${xmlEscape(item.file)}">`);
+    out.push(`    <quote>${xmlEscape(item.quote)}</quote>`);
+    if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+    out.push('  </comment>');
   }
-  if (message?.trim()) {
-    lines.push('', message.trim());
-  }
-  return lines.join('\n');
+  if (message?.trim()) out.push(`  <message>${xmlEscape(message.trim())}</message>`);
+  out.push('</review-comments>');
+  return out.join('\n');
 }
 
 /**

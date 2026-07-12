@@ -39,6 +39,7 @@ import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
 import {
   useJobCreatedJobs,
+  useJobDiff,
   useRetryJob,
   useServices,
 } from "@/lib/api/job-queries";
@@ -242,8 +243,8 @@ export function Navigator({
   // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
   // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
   const hasPr = Boolean(job?.prState);
-  // We can't read a real +/− line stat (no diff endpoint), but a job that hasn't built anything yet
-  // (planning / awaiting / triaging) plainly has no changes — show a muted "—" on the Changes row then.
+  // A job that hasn't built anything yet (planning / awaiting / triaging) plainly has no changes — show a
+  // muted "—" on the Changes row then, and skip the diff fetch below.
   const noChanges =
     !hasPr &&
     meta.status !== "done" &&
@@ -263,6 +264,14 @@ export function Navigator({
   const { data: servicesData, isLoading: servicesLoading } =
     useServices(jobRef);
   const services = servicesData?.services ?? [];
+
+  // Real +/− line totals for the "Changes" row — summed from the diff endpoint (shared query with the diff
+  // pane; fetched only when the job could actually have changes). Mirrors the per-file badges in the diff.
+  const { data: diffData } = useJobDiff(jobRef, !noChanges);
+  const diffAdditions =
+    diffData?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
+  const diffDeletions =
+    diffData?.files.reduce((n, f) => n + f.deletions, 0) ?? 0;
 
   const st = meta.status;
   const router = useRouter();
@@ -495,7 +504,16 @@ export function Navigator({
           <span className="flex-1 text-[11px] font-semibold text-dim">
             Changes
           </span>
-          {noChanges ? (
+          {diffAdditions > 0 || diffDeletions > 0 ? (
+            <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold tabular-nums">
+              {diffAdditions > 0 ? (
+                <span style={{ color: "var(--add)" }}>+{diffAdditions}</span>
+              ) : null}
+              {diffDeletions > 0 ? (
+                <span style={{ color: "var(--del)" }}>−{diffDeletions}</span>
+              ) : null}
+            </span>
+          ) : noChanges ? (
             <span className="font-mono text-[9px] text-faint">—</span>
           ) : null}
         </button>

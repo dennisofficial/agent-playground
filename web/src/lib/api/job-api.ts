@@ -233,8 +233,16 @@ export interface ReviewCommentItemBody {
   file: string;
   quote: string;
   note?: string;
-  /** Line-range anchor for a diff-gutter comment (absent for a free-text selection comment). */
-  lines?: { path: string; side: "old" | "new"; start: number; end: number };
+  /** Line-range anchor for a diff-gutter comment (absent for a free-text selection comment): the old/new
+   *  spans covered plus the signed diff fragment the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**

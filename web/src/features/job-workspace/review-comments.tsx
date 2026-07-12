@@ -34,8 +34,20 @@ export interface ReviewComment {
   file: CommentTarget;
   quote: string;
   note: string;
-  /** Set for a diff-gutter (line-range) comment; absent for a free-text selection comment. */
-  lines?: { path: string; side: "old" | "new"; start: number; end: number };
+  /** Set for a diff-gutter (line-range) comment; absent for a free-text selection comment. Carries the
+   *  old-file and/or new-file spans the selection covered (both when it straddles deletions and additions)
+   *  plus the signed diff `fragment` the operator selected. */
+  lines?: DiffLineAnchor;
+}
+
+/** The stored anchor for a diff line comment (mirrors the backend `ReviewCommentItemDto.lines`). */
+export interface DiffLineAnchor {
+  path: string;
+  oldStart?: number;
+  oldEnd?: number;
+  newStart?: number;
+  newEnd?: number;
+  fragment: string;
 }
 
 /** A selection awaiting a note — the popover renders from this. `rect` is VIEWPORT coords (the popover is
@@ -59,14 +71,7 @@ export interface ReviewCommentsApi {
   cancelPending: () => void;
   addComment: (note: string) => void;
   /** Queue a diff-gutter (line-range) comment — no DOM selection, the anchor is the diff line range. */
-  addLineComment: (a: {
-    path: string;
-    side: "old" | "new";
-    start: number;
-    end: number;
-    code: string;
-    note: string;
-  }) => void;
+  addLineComment: (a: DiffLineAnchor & { note: string }) => void;
   removeComment: (id: string) => void;
   clearComments: () => void;
 }
@@ -210,23 +215,17 @@ export function ReviewCommentsProvider({
   );
 
   const addLineComment = useCallback(
-    (a: {
-      path: string;
-      side: "old" | "new";
-      start: number;
-      end: number;
-      code: string;
-      note: string;
-    }) => {
+    (a: DiffLineAnchor & { note: string }) => {
       const id = newId();
+      const { note, ...lines } = a;
       composerStore.setComments(jobRef, (cs) => [
         ...cs,
         {
           id,
           file: { node: "diff", label: basename(a.path) },
-          quote: a.code,
-          note: a.note.trim(),
-          lines: { path: a.path, side: a.side, start: a.start, end: a.end },
+          quote: a.fragment,
+          note: note.trim(),
+          lines,
         },
       ]);
     },
@@ -291,41 +290,6 @@ export function useReviewComments(): ReviewCommentsApi {
   return ctx;
 }
 
-/**
- * Format the queued comments (grouped by file) into the markdown sent to Atlas — mirrors the backend's
- * `formatReviewComments` so the operator's chip preview matches what's actually delivered. Kept here (not
- * shared with the backend) since the two run in different runtimes; the shapes are the shared contract.
- */
-export function formatReviewComments(
-  comments: ReviewComment[],
-  message?: string,
-): string {
-  const byFile = new Map<string, ReviewComment[]>();
-  for (const c of comments) {
-    const list = byFile.get(c.file.label);
-    if (list) list.push(c);
-    else byFile.set(c.file.label, [c]);
-  }
-  const lines: string[] = [
-    `${comments.length} review comment${comments.length === 1 ? "" : "s"}:`,
-    "",
-  ];
-  for (const [file, items] of byFile) {
-    lines.push(`**${file}**`);
-    for (const c of items) {
-      if (c.lines) {
-        lines.push(`\`${c.lines.path}:${c.lines.start}-${c.lines.end}\` (${c.lines.side})`);
-        lines.push("```");
-        lines.push(c.quote);
-        lines.push("```");
-        if (c.note) lines.push(`— ${c.note}`);
-      } else {
-        lines.push(`> "${c.quote}"`);
-        if (c.note) lines.push(`— ${c.note}`);
-      }
-      lines.push("");
-    }
-  }
-  if (message?.trim()) lines.push(message.trim());
-  return lines.join("\n").trim();
-}
+// NOTE: the message Atlas actually receives is formatted SERVER-SIDE (backend `formatReviewComments` in
+// web-surface.controller.ts) — the single source of truth for the prompt shape. The client only sends the
+// structured items (quote/note + optional `lines` anchor); it does not format the delivered text.

@@ -2,6 +2,7 @@
 
 import { MessageSquarePlus, X } from "lucide-react";
 import { useReviewComments } from "./review-comments";
+import { anchorLabel } from "./diff-anchor";
 
 /**
  * The queued-comments tray above the composer ("Atlas Workspace HiFi") — one chip per pending review
@@ -63,7 +64,7 @@ export function CommentTray() {
               <div className="min-w-0 flex-1">
                 {c.lines ? (
                   <div className="truncate font-mono text-[12px] leading-snug text-dim">
-                    {c.lines.path}:{c.lines.start}-{c.lines.end}
+                    {c.lines.path} · {anchorLabel(c.lines)}
                   </div>
                 ) : (
                   <div className="truncate text-[12.5px] italic leading-snug text-dim">

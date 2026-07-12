@@ -228,8 +228,16 @@ export interface WebReviewCommentItem {
   quote: string;
   note?: string;
   /** Present when the comment anchors to a diff line range (the GitHub-style gutter flow) rather than a
-   *  free-text selection. `path` is the git-relative file, `side` picks the old/new gutter. */
-  lines?: { path: string; side: "old" | "new"; start: number; end: number };
+   *  free-text selection. Carries the old-file and/or new-file spans covered (both when the selection
+   *  straddles deletions and additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**

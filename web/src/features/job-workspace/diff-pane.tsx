@@ -8,10 +8,11 @@ import {
   useState,
 } from "react";
 import { Check, ChevronDown, MessageSquarePlus, Plus, X } from "lucide-react";
-import { useJobDiff } from "@/lib/api/job-queries";
+import { useJobDiff, useJobMessages } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { JobDiffFile } from "@/lib/api/types";
 import { rowsFromHunk, type DiffRow } from "./tool-calls/diff-rows";
+import { anchorEnd, anchorLabel, deriveLineAnchor } from "./diff-anchor";
 import {
   langFromPath,
   renderTokenLine,
@@ -33,26 +34,6 @@ const GUTTER = 28;
 const SIGN = 16;
 
 type FileRow = DiffRow & { flatIdx: number; hunkIdx: number };
-
-/**
- * Derive a GitHub-style line anchor from a contiguous run of selected diff rows. Each row contributes its
- * own side's display number (a deletion its old-file line, everything else its new-file line); the whole
- * anchor reads 'old' only when every selected row is a deletion, else 'new'.
- */
-export function deriveLineAnchor(
-  rows: Pick<DiffRow, "type" | "oldNo" | "newNo" | "code">[],
-): { side: "old" | "new"; start: number; end: number; code: string } | null {
-  if (rows.length === 0) return null;
-  const displayNo = (r: Pick<DiffRow, "type" | "oldNo" | "newNo">) =>
-    r.type === "del" ? r.oldNo! : r.newNo!;
-  const nums = rows.map(displayNo);
-  return {
-    side: rows.every((r) => r.type === "del") ? "old" : "new",
-    start: Math.min(...nums),
-    end: Math.max(...nums),
-    code: rows.map((r) => r.code).join("\n"),
-  };
-}
 
 export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   const { data, isLoading, error } = useJobDiff(jobRef, true);
@@ -88,6 +69,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
       {data.files.map((file) => (
         <DiffFileSection
           key={file.oldPath ? `${file.oldPath}→${file.path}` : file.path}
+          jobRef={jobRef}
           file={file}
           collapsed={collapsed.has(file.path)}
           onToggleCollapse={() => toggleCollapse(file.path)}
@@ -97,23 +79,44 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   );
 }
 
+/** A comment rendered inline on the diff, in one of its two persisted states (the third — `composing` —
+ *  is the live `InlineComposer`). `queued` lives in the composer store until sent; `sent` is read back
+ *  from the job's `review_comments_card` messages so it stays anchored after the batch goes out. */
+type InlineThread = {
+  key: string;
+  state: "queued" | "sent";
+  label: string;
+  note: string;
+  /** Only queued comments can be removed (they haven't left the composer yet). */
+  onRemove?: () => void;
+};
+
 function DiffFileSection({
+  jobRef,
   file,
   collapsed,
   onToggleCollapse,
 }: {
+  jobRef: JobRef;
   file: JobDiffFile;
   collapsed: boolean;
   onToggleCollapse: () => void;
 }) {
-  const { addLineComment } = useReviewComments();
+  const { addLineComment, comments, removeComment } = useReviewComments();
+  const { data: messages } = useJobMessages(jobRef);
   const sectionRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
+  // `draggingRef` drives the synchronous mousemove extension (read in a stable callback); this reactive
+  // twin gates the inline composer so it appears only AFTER the drag is released, not while selecting.
+  const [dragging, setDragging] = useState(false);
   const [selection, setSelection] = useState<{
     anchorIdx: number;
     headIdx: number;
   } | null>(null);
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  // Which stored comment thread is hovered — its exact lines get the full wash so OVERLAPPING comments
+  // stay distinguishable (at rest each commented line shows only a quiet gutter marker, not a full wash).
+  const [hoveredThreadKey, setHoveredThreadKey] = useState<string | null>(null);
 
   // Rows per hunk, each tagged with a running flat index so a contiguous selection is a plain index range
   // and syntax tokens (one highlight pass over the whole file) can be looked up by that same index.
@@ -143,6 +146,118 @@ function DiffFileSection({
       }
     : null;
 
+  // Map a stored line anchor (side + end line) back to the flat row it docks under, so a queued/sent
+  // comment re-attaches to the diff exactly where it was made. Falls back across sides, then to the last
+  // row, so a comment never disappears even if its exact line isn't in view.
+  const rowIdxByLine = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of flatRows) {
+      if (r.oldNo != null) m.set(`old:${r.oldNo}`, r.flatIdx);
+      if (r.newNo != null) m.set(`new:${r.newNo}`, r.flatIdx);
+    }
+    return m;
+  }, [flatRows]);
+  const lastIdx = flatRows.length ? flatRows[flatRows.length - 1].flatIdx : -1;
+  const anchorIdxFor = useCallback(
+    (a: { oldEnd?: number; newEnd?: number }) => {
+      const end = anchorEnd(a);
+      if (!end) return lastIdx;
+      return (
+        rowIdxByLine.get(`${end.side}:${end.line}`) ??
+        rowIdxByLine.get(`new:${end.line}`) ??
+        rowIdxByLine.get(`old:${end.line}`) ??
+        lastIdx
+      );
+    },
+    [rowIdxByLine, lastIdx],
+  );
+
+  // Queued (still in the composer, removable) + sent (read back from review_comments_card messages, so they
+  // persist on the diff after the batch is sent) threads for THIS file. One pass builds: `threadsByIdx`
+  // (grouped by docking row, for rendering); `anchoredIdx` (every commented row — gets a quiet gutter marker
+  // at rest); and `rowsByKey` (each thread's exact rows — the full wash lights up only for the hovered one,
+  // so overlapping comments stay legible).
+  const { threadsByIdx, anchoredIdx, rowsByKey } = useMemo(() => {
+    const byIdx = new Map<number, InlineThread[]>();
+    const anchored = new Set<number>();
+    const rowsByKey = new Map<string, number[]>();
+    const rowsForAnchor = (a: {
+      oldStart?: number;
+      oldEnd?: number;
+      newStart?: number;
+      newEnd?: number;
+    }): number[] => {
+      const out: number[] = [];
+      for (const r of flatRows) {
+        const inOld =
+          a.oldStart != null &&
+          r.oldNo != null &&
+          r.oldNo >= a.oldStart &&
+          r.oldNo <= a.oldEnd!;
+        const inNew =
+          a.newStart != null &&
+          r.newNo != null &&
+          r.newNo >= a.newStart &&
+          r.newNo <= a.newEnd!;
+        if (inOld || inNew) out.push(r.flatIdx);
+      }
+      return out;
+    };
+    const add = (
+      thread: InlineThread,
+      lines: {
+        oldStart?: number;
+        oldEnd?: number;
+        newStart?: number;
+        newEnd?: number;
+      },
+    ) => {
+      const rows = rowsForAnchor(lines);
+      rowsByKey.set(thread.key, rows);
+      for (const idx of rows) anchored.add(idx);
+      const dockIdx = anchorIdxFor(lines);
+      const list = byIdx.get(dockIdx);
+      if (list) list.push(thread);
+      else byIdx.set(dockIdx, [thread]);
+    };
+    for (const m of messages ?? []) {
+      if (m.card?.type !== "review_comments_card") continue;
+      m.card.items.forEach((it, i) => {
+        if (it.lines?.path !== file.path) return;
+        add(
+          {
+            key: `sent:${m.ts}:${i}`,
+            state: "sent",
+            label: anchorLabel(it.lines),
+            note: it.note ?? "",
+          },
+          it.lines,
+        );
+      });
+    }
+    for (const c of comments) {
+      if (c.lines?.path !== file.path) continue;
+      add(
+        {
+          key: `queued:${c.id}`,
+          state: "queued",
+          label: anchorLabel(c.lines),
+          note: c.note,
+          onRemove: () => removeComment(c.id),
+        },
+        c.lines,
+      );
+    }
+    return { threadsByIdx: byIdx, anchoredIdx: anchored, rowsByKey };
+  }, [messages, comments, file.path, flatRows, anchorIdxFor, removeComment]);
+
+  // The hovered thread's exact rows — these get the full accent wash; every other commented row shows only
+  // the quiet gutter marker. Empty when nothing is hovered.
+  const hoveredRows = useMemo(
+    () => new Set(hoveredThreadKey ? (rowsByKey.get(hoveredThreadKey) ?? []) : []),
+    [hoveredThreadKey, rowsByKey],
+  );
+
   // Clicking outside the section (or Escape) drops the in-progress selection + its composer.
   useEffect(() => {
     if (!selection) return;
@@ -170,10 +285,13 @@ function DiffFileSection({
         return { anchorIdx: prev.anchorIdx, headIdx: idx };
       });
       if (shift) return;
-      // A plain press starts a drag: extend `head` as the pointer moves over rows, until mouseup.
+      // A plain press starts a drag: extend `head` as the pointer moves over rows, until mouseup. The
+      // composer stays hidden while `dragging` is true and only surfaces once the pointer is released.
       draggingRef.current = true;
+      setDragging(true);
       const onUp = () => {
         draggingRef.current = false;
+        setDragging(false);
         document.removeEventListener("mouseup", onUp);
       };
       document.addEventListener("mouseup", onUp);
@@ -204,14 +322,7 @@ function DiffFileSection({
   const submitComment = useCallback(
     (note: string) => {
       if (!anchor) return;
-      addLineComment({
-        path: file.path,
-        side: anchor.side,
-        start: anchor.start,
-        end: anchor.end,
-        code: anchor.code,
-        note,
-      });
+      addLineComment({ path: file.path, ...anchor, note });
       setSelection(null);
     },
     [anchor, addLineComment, file.path],
@@ -272,35 +383,45 @@ function DiffFileSection({
       {collapsed ? null : (
         <div
           className="font-mono text-[11px]"
-          style={{ background: "var(--term)", lineHeight: 1.75, padding: "8px 20px" }}
+          style={{ background: "var(--term)", lineHeight: 1.75, overflowX: "auto" }}
         >
+          {/* max-content + min-width:100% makes every row as wide as the WIDEST line, so the add/del tints
+              and the selection/anchor highlight span the full content width even when scrolled right. */}
+          <div style={{ width: "max-content", minWidth: "100%", padding: "8px 0" }}>
           {file.binary ? (
-            <div className="py-1 text-term-dim" style={{ color: "var(--term-dim)" }}>
+            <div className="px-5 py-1 text-term-dim" style={{ color: "var(--term-dim)" }}>
               Binary file
             </div>
           ) : file.hunks.length === 0 ? (
-            <div className="py-1" style={{ color: "var(--term-dim)" }}>
+            <div className="px-5 py-1" style={{ color: "var(--term-dim)" }}>
               Diff hidden — file too large
             </div>
           ) : (
             hunks.map(({ hunk, hi, rows }) => (
               <div key={hi}>
                 <div
-                  className="flex items-center py-1 text-[10px]"
+                  className="flex items-center px-3 py-1 text-[10px]"
                   style={{ color: "var(--term-purple)" }}
                 >
                   @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},
                   {hunk.newLines} @@
                 </div>
                 {rows.map((r) => {
-                  const selected =
-                    range != null && r.flatIdx >= range.lo && r.flatIdx <= range.hi;
+                  const inActiveSel =
+                    range != null &&
+                    r.flatIdx >= range.lo &&
+                    r.flatIdx <= range.hi;
+                  // Full wash only for the ACTIVE drag selection or the HOVERED comment's lines; every
+                  // other commented row just gets a quiet gutter marker (so overlaps don't merge).
+                  const selected = inActiveSel || hoveredRows.has(r.flatIdx);
+                  const marked = !selected && anchoredIdx.has(r.flatIdx);
                   return (
                     <Fragment key={r.key}>
                       <DiffRowLine
                         row={r}
                         tokens={lineTokens?.[r.flatIdx]}
                         selected={selected}
+                        marked={marked}
                         hovered={hoveredIdx === r.flatIdx && !selected}
                         onMouseDownRow={(shift) => beginSelect(r.flatIdx, shift)}
                         onMouseEnterRow={() => onRowEnter(r.flatIdx)}
@@ -309,9 +430,21 @@ function DiffFileSection({
                         }
                         onAdd={() => beginSelect(r.flatIdx, false)}
                       />
-                      {range != null && r.flatIdx === range.hi && anchor ? (
+                      {threadsByIdx.get(r.flatIdx)?.map((t) => (
+                        <InlineCommentThread
+                          key={t.key}
+                          state={t.state}
+                          label={t.label}
+                          note={t.note}
+                          onRemove={t.onRemove}
+                          onHoverChange={(h) =>
+                            setHoveredThreadKey(h ? t.key : null)
+                          }
+                        />
+                      ))}
+                      {!dragging && range != null && r.flatIdx === range.hi && anchor ? (
                         <InlineComposer
-                          label={`${file.path}:${anchor.start}-${anchor.end}`}
+                          label={anchorLabel(anchor)}
                           onAdd={submitComment}
                           onCancel={() => setSelection(null)}
                         />
@@ -322,6 +455,7 @@ function DiffFileSection({
               </div>
             ))
           )}
+          </div>
         </div>
       )}
     </div>
@@ -332,6 +466,7 @@ function DiffRowLine({
   row,
   tokens,
   selected,
+  marked,
   hovered,
   onMouseDownRow,
   onMouseEnterRow,
@@ -341,6 +476,8 @@ function DiffRowLine({
   row: FileRow;
   tokens: ThemedToken[] | null | undefined;
   selected: boolean;
+  /** Carries a comment but isn't the focused/selected one — shows a quiet gutter marker, not a full wash. */
+  marked: boolean;
   hovered: boolean;
   onMouseDownRow: (shift: boolean) => void;
   onMouseEnterRow: () => void;
@@ -361,10 +498,18 @@ function DiffRowLine({
       : "transparent";
   const rowStyle = selected
     ? {
-        background: "color-mix(in srgb, var(--accent) 16%, var(--term))",
+        // Active selection OR the hovered comment's lines — the BRIGHT accent wash.
+        background: "color-mix(in srgb, var(--accent) 26%, var(--term))",
         boxShadow: "inset 3px 0 0 var(--accent)",
       }
-    : { background: hovered ? "rgba(255,255,255,0.035)" : baseBg };
+    : marked
+      ? {
+          // A commented line at rest: the SAME full accent wash, just dimmer — so it's clearly visible,
+          // and hovering its comment brightens it (which is how overlapping comments stay distinguishable).
+          background: "color-mix(in srgb, var(--accent) 12%, var(--term))",
+          boxShadow: "inset 3px 0 0 color-mix(in srgb, var(--accent) 60%, transparent)",
+        }
+      : { background: hovered ? "rgba(255,255,255,0.035)" : baseBg };
   return (
     <div
       className="relative flex cursor-pointer select-none"
@@ -449,6 +594,93 @@ function DiffRowLine({
   );
 }
 
+/** A persisted inline comment docked under its line range — `queued` (pending send, removable) or `sent`
+ *  (already delivered, read back from the message log). The live typing state is `InlineComposer` above.
+ *  "Quiet / note-forward" style: no pill — a small amber dot / green check + faint word carries state, the
+ *  note is the hero, and the remove × reveals on hover (queued only). Sent is quieter: borderless + dimmed. */
+function InlineCommentThread({
+  state,
+  label,
+  note,
+  onRemove,
+  onHoverChange,
+}: {
+  state: "queued" | "sent";
+  label: string;
+  note: string;
+  onRemove?: () => void;
+  /** Hovering the thread lights up its exact lines on the diff (so overlapping comments stay legible). */
+  onHoverChange?: (hovered: boolean) => void;
+}) {
+  const sent = state === "sent";
+  return (
+    <div
+      className="group my-2 rounded-[9px]"
+      style={{
+        // Pinned to the scroller's left edge + width-capped so the thread stays readable and doesn't
+        // stretch to the widest code line inside the horizontal max-content scroller.
+        position: "sticky",
+        left: 0,
+        margin: "8px 14px",
+        maxWidth: 640,
+        background: sent
+          ? "var(--surface-2)"
+          : "color-mix(in srgb, var(--amber) 5%, var(--surface-2))",
+        border: `1px solid ${sent ? "transparent" : "var(--border)"}`,
+        padding: "9px 11px 10px",
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseEnter={() => onHoverChange?.(true)}
+      onMouseLeave={() => onHoverChange?.(false)}
+    >
+      <div className="mb-[5px] flex items-center gap-1.5">
+        {sent ? (
+          <Check
+            size={11}
+            strokeWidth={2.6}
+            className="flex-none"
+            style={{ color: "var(--green)" }}
+          />
+        ) : (
+          <span
+            className="h-1.5 w-1.5 flex-none rounded-full"
+            style={{ background: "var(--amber)" }}
+          />
+        )}
+        <span
+          className="font-mono text-[9.5px] font-semibold tracking-[0.04em]"
+          style={{ color: sent ? "var(--faint)" : "var(--accent-2)" }}
+        >
+          {sent ? "Sent" : "Pending"}
+        </span>
+        <span className="font-mono text-[9px]" style={{ color: "var(--border-2)" }}>
+          ·
+        </span>
+        <span className="font-mono text-[9.5px]" style={{ color: "var(--faint)" }}>
+          {label}
+        </span>
+        <span className="flex-1" />
+        {onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label="Remove comment"
+            className="flex h-[17px] w-[17px] items-center justify-center rounded-[5px] text-faint opacity-0 transition group-hover:opacity-100 hover:text-[var(--red)] focus-visible:opacity-100"
+          >
+            <X size={12} />
+          </button>
+        ) : null}
+      </div>
+      <div
+        className="text-[12.5px] leading-[1.5]"
+        style={{ color: sent ? "var(--dim)" : "var(--text)" }}
+      >
+        {note || <span className="text-faint">No note added</span>}
+      </div>
+    </div>
+  );
+}
+
 function InlineComposer({
   label,
   onAdd,
@@ -465,8 +697,14 @@ function InlineComposer({
   }, []);
   return (
     <div
-      className="my-1 rounded-[13px] border border-border-2 bg-panel p-3"
-      style={{ boxShadow: "var(--shadow-menu)" }}
+      className="rounded-[13px] border border-border-2 bg-panel p-3"
+      style={{
+        position: "sticky",
+        left: 0,
+        margin: "6px 14px",
+        maxWidth: 640,
+        boxShadow: "var(--shadow-menu)",
+      }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="mb-2 flex items-center gap-1.5">

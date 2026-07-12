@@ -3,6 +3,7 @@
 import { Pencil } from "lucide-react";
 import { MessageTime, UserBubble } from "./bubbles";
 import { Markdown } from "./markdown";
+import { anchorLabel } from "./diff-anchor";
 import type {
   WebReviewCommentItem,
   WebReviewCommentsCard,
@@ -60,8 +61,7 @@ export function ReviewCommentsCardView({
                   {it.lines ? (
                     <>
                       <div className="font-mono text-[10px] leading-relaxed text-accent-2">
-                        {it.lines.path}:{it.lines.start}-{it.lines.end} (
-                        {it.lines.side})
+                        {it.lines.path} · {anchorLabel(it.lines)}
                       </div>
                       <pre
                         className="mt-1 overflow-x-auto rounded px-2 py-1 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-text"
