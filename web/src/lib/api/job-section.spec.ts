@@ -16,6 +16,7 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     pr: null,
     ci: null,
     ciCounts: null,
+    portState: null,
     halt: null,
     shipping: false,
     createdBy: null,
