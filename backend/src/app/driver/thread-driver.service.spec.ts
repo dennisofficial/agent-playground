@@ -395,6 +395,28 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return s?.halt_fix_attempts ?? 0;
     }),
+    haltBudgetReason: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as
+        | (DriverThread & { config?: Record<string, unknown> })
+        | undefined;
+      const recovery = s?.config?.recovery as Record<string, unknown> | undefined;
+      return recovery?.haltBudgetReason === 'judge_unavailable'
+        ? 'judge_unavailable'
+        : null;
+    }),
+    setHaltBudgetReason: vi.fn(async (threadId: string, reason: 'judge_unavailable' | null) => {
+      const s = state.threads.find((x) => x.id === threadId) as
+        | (DriverThread & { config?: Record<string, unknown> })
+        | undefined;
+      if (!s) return;
+      const config = { ...(s.config ?? {}) };
+      const recovery = { ...((config.recovery as Record<string, unknown> | undefined) ?? {}) };
+      if (reason) recovery.haltBudgetReason = reason;
+      else delete recovery.haltBudgetReason;
+      if (Object.keys(recovery).length > 0) config.recovery = recovery;
+      else delete config.recovery;
+      s.config = config;
+    }),
     haltOutcome: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null;
@@ -2404,6 +2426,7 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     haltOutcome?: 'blocked' | null;
     haltWakedAt?: Date | null;
     haltFixAttempts?: number;
+    haltBudgetReason?: 'judge_unavailable';
   }): StoreState {
     const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
     (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
@@ -2415,6 +2438,11 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     h.halt_outcome = o.haltOutcome ?? null;
     h.halt_waked_at = o.haltWakedAt ?? null;
     h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    if (o.haltBudgetReason) {
+      (t as DriverThread & { config?: Record<string, unknown> }).config = {
+        recovery: { haltBudgetReason: o.haltBudgetReason },
+      };
+    }
     return {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
@@ -2488,6 +2516,29 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false — the sweep stops re-waking the brain
     expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
     expect(h.posts.some((p) => p.includes('Retry now'))).toBe(true);
+  });
+
+  it('judge retry budget does NOT consume the real defect budget when the hold flips to unverified', async () => {
+    // Two patient judge-outage retries used the shared counter. If the next drive reaches the judges and gets
+    // a genuine unverified result, that stale judge budget must reset before the 2-attempt defect cap is read.
+    const state = blockedState({
+      reason: 'unverified',
+      haltOutcome: null,
+      haltWakedAt: null,
+      haltFixAttempts: 2,
+      haltBudgetReason: 'judge_unavailable',
+    });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be');
+    expect(h.store.setHaltBudgetReason).toHaveBeenCalledWith('sec-be', null);
+    expect(state.job.halt).toBeNull();
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked');
+    expect(await h.store.haltFixAttempts('sec-be')).toBe(0);
   });
 });
 

@@ -231,6 +231,42 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     expect(readBack?.staticVerification?.verdict?.staticChecksAdequate).toBe(true);
   });
 
+  it('setHaltBudgetReason persists the judge budget owner without clobbering other thread config', async () => {
+    const job = await seedJob();
+    const thread = await threads.save(
+      threads.create({
+        kind: 'review_lens',
+        job_id: job.id,
+        org_id: ORG_ID,
+        ordinal: 10,
+        brief: 'Backend — budget-owner marker',
+        status: 'executing',
+        config: {
+          lensId: 'security',
+          recovery: { keep: 'existing' },
+        },
+      }),
+    );
+
+    await store.setHaltBudgetReason(thread.id, 'judge_unavailable');
+
+    expect(await store.haltBudgetReason(thread.id)).toBe('judge_unavailable');
+    let readBack = await threads.findOneOrFail({ where: { id: thread.id } });
+    expect(readBack.config).toEqual({
+      lensId: 'security',
+      recovery: { keep: 'existing', haltBudgetReason: 'judge_unavailable' },
+    });
+
+    await store.setHaltBudgetReason(thread.id, null);
+
+    expect(await store.haltBudgetReason(thread.id)).toBeNull();
+    readBack = await threads.findOneOrFail({ where: { id: thread.id } });
+    expect(readBack.config).toEqual({
+      lensId: 'security',
+      recovery: { keep: 'existing' },
+    });
+  });
+
   it('claimHaltFixAttempt is a CAS bounded by JUDGE_UNAVAILABLE_REDRIVE_CAP (patient loop, then refuses)', async () => {
     expect(JUDGE_UNAVAILABLE_REDRIVE_CAP).toBe(20);
 

@@ -588,8 +588,9 @@ export class ThreadDriver implements JobDispatcher {
       return { ok: false, reason: `thread ${threadId} is already complete` };
     }
     const term = await this.store.getTerminalRecord(threadId).catch(() => null);
+    const judgeUnavailableRedrive = term?.blocked?.reason === 'judge_unavailable';
     const effectiveCap: number | undefined =
-      term?.blocked?.reason === 'judge_unavailable' ? JUDGE_UNAVAILABLE_REDRIVE_CAP : cap;
+      judgeUnavailableRedrive ? JUDGE_UNAVAILABLE_REDRIVE_CAP : cap;
     let attempt = 0;
     if (effectiveCap != null) {
       const claim = await this.store.claimHaltFixAttempt(threadId, effectiveCap);
@@ -598,6 +599,10 @@ export class ThreadDriver implements JobDispatcher {
       }
       attempt = claim.used;
     }
+    await this.store.setHaltBudgetReason(
+      threadId,
+      judgeUnavailableRedrive ? 'judge_unavailable' : null,
+    );
     await this.store.clearTerminalRecord(threadId).catch(() => undefined);
     await this.store.clearHalt(threadId).catch(() => undefined);
     // Clear the JOB-level phase-preserving halt too (budget-aware recovery path): the brain's authorized
@@ -1429,15 +1434,20 @@ export class ThreadDriver implements JobDispatcher {
           text = `:hourglass_flowing_sand: *${thread.brief}* is done but ${detail} — holding to retry when it recovers (not counted against the fix budget).`;
         }
       } else {
-        // The `halt_fix_attempts` counter is SHARED with the judge-outage patient-retry loop, whose cap
-        // (JUDGE_UNAVAILABLE_REDRIVE_CAP) is far higher than the defect cap. If prior judge_unavailable
-        // auto-retries inflated it and the block reason has now flipped to a genuine defect, this thread must
-        // still get its full defect budget. A defect-only flow can never push the counter ABOVE the defect cap
-        // (`claimHaltFixAttempt` refuses at the cap), so any value above it is stale judge-outage budget —
-        // reset it before deciding to rest, or a real failure would wedge with zero fix attempts.
+        // The `halt_fix_attempts` counter is SHARED with the judge-outage patient-retry loop. If the last
+        // claimed budget belonged to a judge outage and this block has flipped to a real defect, reset before
+        // deciding whether to rest; even 1-2 judge retries must not steal the 2-attempt defect budget.
         let spent = await this.store.haltFixAttempts(thread.id).catch(() => 0);
-        if (spent > HALT_FIX_ATTEMPT_CAP) {
-          await this.store.rearmThread(thread.id).catch(() => undefined);
+        const budgetReason = await this.store.haltBudgetReason(thread.id);
+        if (budgetReason === 'judge_unavailable' && spent > 0) {
+          await this.store.rearmThread(thread.id);
+          await this.store.setHaltBudgetReason(thread.id, null);
+          spent = 0;
+        } else if (spent > HALT_FIX_ATTEMPT_CAP) {
+          // Legacy/stale judge-outage budget from before the durable owner marker existed. A defect-only flow
+          // can never push the counter above its cap (`claimHaltFixAttempt` refuses at the cap), so this is safe.
+          await this.store.rearmThread(thread.id);
+          await this.store.setHaltBudgetReason(thread.id, null);
           spent = 0;
         }
         if (spent >= HALT_FIX_ATTEMPT_CAP) {
@@ -1687,6 +1697,7 @@ export class ThreadDriver implements JobDispatcher {
     }
     await this.store.setThreadStatus(thread.id, 'done');
     await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
+    await this.store.setHaltBudgetReason(thread.id, null).catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
     await this.recordMilestone(
       job.id,
@@ -1763,6 +1774,7 @@ export class ThreadDriver implements JobDispatcher {
       .catch(() => undefined);
     await this.store.setThreadStatus(thread.id, 'done').catch(() => undefined);
     await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
+    await this.store.setHaltBudgetReason(thread.id, null).catch(() => undefined);
     await this.store.clearHalt(thread.id).catch(() => undefined);
     await this.recordMilestone(
       job.id,

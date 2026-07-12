@@ -55,6 +55,7 @@ const ORDINAL_GAP = 10;
  * extra field rather than the driver re-querying the thread for it.
  */
 export type DriverThread = Thread & { orgId: string };
+type HaltBudgetReason = 'judge_unavailable';
 
 /**
  * A builder's review CHILD thread (a `review_lens` or `post_review` row) as the driver's child-thread
@@ -1108,6 +1109,38 @@ export class DriverStoreService {
     return row?.halt_fix_attempts ?? 0;
   }
 
+  /** Which recovery path last consumed the shared `halt_fix_attempts` counter. Stored in existing jsonb so a
+   *  `judge_unavailable` patient retry that later reveals a real defect does not steal the 2-attempt defect
+   *  budget. */
+  async haltBudgetReason(threadId: string): Promise<HaltBudgetReason | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, config: true },
+    });
+    return haltBudgetReasonFromConfig(row?.config);
+  }
+
+  /** Durable marker for the shared halt budget's current owner. `null` clears the marker while preserving the
+   *  rest of the thread config. */
+  async setHaltBudgetReason(
+    threadId: string,
+    reason: HaltBudgetReason | null,
+  ): Promise<void> {
+    const recoveryObject = `(CASE WHEN jsonb_typeof(config->'recovery') = 'object' THEN config->'recovery' ELSE '{}'::jsonb END)`;
+    const configObject = `COALESCE(config, '{}'::jsonb)`;
+    const clearedRecovery = `(${recoveryObject} - 'haltBudgetReason')`;
+    const nextConfig = reason
+      ? `jsonb_set(${configObject}, '{recovery}', ${recoveryObject} || jsonb_build_object('haltBudgetReason', CAST(:reason AS text)), true)`
+      : `CASE WHEN ${clearedRecovery} = '{}'::jsonb THEN ${configObject} - 'recovery' ELSE jsonb_set(${configObject}, '{recovery}', ${clearedRecovery}, true) END`;
+    await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ config: () => nextConfig })
+      .where('id = :threadId', { threadId })
+      .setParameters({ reason })
+      .execute();
+  }
+
   /** OPERATOR RE-ARM (ADR 0004 rider 4): reset the autonomous re-drive budget for a job's spent threads so a
    *  human re-engagement (`resumePaused`/`retry`) grants Atlas a fresh set of attempts. The counter is a
    *  LIFETIME budget for AUTONOMOUS loops — only an explicit operator action re-arms it (never boot-resume),
@@ -1616,6 +1649,16 @@ function toThread(row: ThreadEntity): DriverThread {
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function haltBudgetReasonFromConfig(config: unknown): HaltBudgetReason | null {
+  const recovery = isRecord(config) ? config.recovery : null;
+  const reason = isRecord(recovery) ? recovery.haltBudgetReason : null;
+  return reason === 'judge_unavailable' ? reason : null;
 }
 
 function toReviewChild(row: ThreadEntity): ReviewChildThread {
