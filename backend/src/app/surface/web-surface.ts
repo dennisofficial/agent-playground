@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
 import type { SeedRow } from '../domain/stimulus';
+import type { AgentMessage } from '../prompt-kit/message';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
@@ -40,6 +41,8 @@ export interface WebInboundOptions {
   seedFileId?: string;
   /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
+  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
+  priority?: 'now' | 'queue' | 'later';
   /** Optional structured card payload to persist alongside this message (see `InboundChatMessage.card`). */
   card?: Record<string, unknown>;
 }
@@ -162,6 +165,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
       ts: new Date(),
     };
@@ -180,7 +184,7 @@ export class WebSurface implements ChatSurface {
   seedSystemNotification(
     channel: string,
     jobId: string,
-    body: string,
+    body: AgentMessage,
     opts: {
       orgId?: string;
       deliveredQuestionId?: string;

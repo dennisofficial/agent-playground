@@ -85,23 +85,8 @@ describe('LegRotationWatch', () => {
 });
 
 describe('resolveRotationThresholds', () => {
-  it('defaults when no env override is set', () => {
-    expect(resolveRotationThresholds({})).toEqual({
-      softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
-      reminderDeltaTokens: DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
-    });
-  });
-
-  it('honours valid env overrides', () => {
-    expect(
-      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '40000', ROTATION_REMINDER_DELTA_TOKENS: '8000' }),
-    ).toEqual({ softTokens: 40_000, reminderDeltaTokens: 8_000 });
-  });
-
-  it('falls back to defaults on non-positive / non-numeric overrides', () => {
-    expect(
-      resolveRotationThresholds({ ROTATION_SOFT_TOKENS: '-5', ROTATION_REMINDER_DELTA_TOKENS: 'abc' }),
-    ).toEqual({
+  it('returns the declared JIT-rule catalog defaults (no env override — removed by d4)', () => {
+    expect(resolveRotationThresholds()).toEqual({
       softTokens: DEFAULT_ROTATION_SOFT_TOKENS,
       reminderDeltaTokens: DEFAULT_ROTATION_REMINDER_DELTA_TOKENS,
     });

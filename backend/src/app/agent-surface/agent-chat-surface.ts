@@ -7,6 +7,7 @@ import type {
   PostOptions,
 } from '../surface/chat-surface.port';
 import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from '../surface/chat-surface.port';
+import type { AgentMessage } from '../prompt-kit/message';
 import { APPROVE_ACTION_ID, type ApprovalActionMeta } from '../surface/approval-blocks';
 
 /** A message Atlas POSTED, captured for inspection by a programmatic driver. */
@@ -32,6 +33,8 @@ export interface SendOptions {
   authorName?: string;
   /** The tenant id the message belongs to (default the surface's configured `orgId`). */
   orgId?: string;
+  /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
+  priority?: 'now' | 'queue' | 'later';
 }
 
 /** A captured approval card + the ids needed to resolve it (parsed from the card's button value). */
@@ -110,6 +113,7 @@ export class AgentChatSurface implements ChatSurface {
       orgId: opts.orgId ?? this.orgId,
       channel,
       ...(opts.threadTs ? { threadTs: opts.threadTs } : {}),
+      ...(opts.priority ? { priority: opts.priority } : {}),
       ts: new Date(),
     };
     this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);
@@ -121,7 +125,7 @@ export class AgentChatSurface implements ChatSurface {
   seedSystemNotification(
     channel: string,
     jobId: string,
-    body: string,
+    body: AgentMessage,
     opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
   ): string {
     const ts = this.mintTs();

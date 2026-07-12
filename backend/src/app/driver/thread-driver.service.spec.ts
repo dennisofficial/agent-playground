@@ -16,7 +16,7 @@ import type {
   DriverThread,
   JobRoute,
 } from './driver-store.service';
-import type { PlannedStep } from './render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
@@ -747,6 +747,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     title: 'Add widgets',
     baseBranch: null,
     kind: 'feature',
+    buildPath: 'plan',
     status: 'running',
     activity: 'build',
     halt: null,

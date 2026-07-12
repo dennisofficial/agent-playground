@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyConventionsToAgents } from './engine-core';
-import { Agent } from '../prompt-kit/agent';
-import { renderAgentPrompt } from '../prompt-kit/assemble';
+import { Agent } from '../prompt-kit/system/agent';
+import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 
 /**
  * The engine-assembled subagent personas are built IN-CONTAINER from static prompts, so the wire-forwarded

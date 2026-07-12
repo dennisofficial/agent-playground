@@ -20,6 +20,7 @@ import { AgentSessionManager } from './agent-session-manager.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
+import { JitHostExecutor } from './jit-host-executor';
 import { PlanReviewService } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 
@@ -74,6 +75,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     TurnRecoveryService,
     AgentSessionManager,
     DrainService,
+    JitHostExecutor,
     // INPUT SEAM — the brain IS the sink (chat → its session, event → a harness-message delivery).
     {
       provide: BRAIN_SINK,
@@ -93,6 +95,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     AgentSessionManager,
     DecisionApprovalService,
     BrainStoreService,
+    JitHostExecutor,
     BRAIN_SINK,
   ],
 })

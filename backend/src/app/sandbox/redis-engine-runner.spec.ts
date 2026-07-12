@@ -12,6 +12,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine, ContainerInfo } from './container-engine.port';
+import { agentMessage } from '../prompt-kit/message';
 import type { SandboxProvider } from './sandbox-provider.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
@@ -51,9 +52,9 @@ function fakeContainers(redis: InMemoryRedisStream, frames: unknown[]) {
 function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
   return {
     engine: 'claude',
-    task: 'do the thing',
+    task: agentMessage('do the thing'),
     cwd: '/wt',
-    systemPrompt: 'SYS',
+    systemPrompt: agentMessage('SYS'),
     sandboxKey: { orgId: 'org-1', repoId: 'repo-1', jobId: 'job-1', type: 'build' },
     mode: 'execute',
     onEvent,

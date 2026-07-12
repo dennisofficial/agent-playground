@@ -195,6 +195,7 @@ describe('StimulusIntake.intakeChat', () => {
       author: { id: 'U1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'slack', jobRef: '100.1' },
       receivedAt: new Date(),
+      priority: 'queue',
     };
     const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
     const filter = { admit: vi.fn() } as unknown as EventFilterService;
@@ -203,6 +204,7 @@ describe('StimulusIntake.intakeChat', () => {
 
     await intake.intakeChat(recorded);
     expect(store.recordChatStimulus).toHaveBeenCalledOnce();
+    expect(store.recordChatStimulus).toHaveBeenCalledWith(expect.objectContaining({ priority: 'queue' }));
     expect(filter.admit).not.toHaveBeenCalled(); // chat bypasses the filter
     expect(chats[0]).toMatchObject({ kind: 'chat', id: 'chat-1' });
     // DURABLE ROUTING: a plain, persisted operator message rides the delivery pump (`enqueueChat`), NOT

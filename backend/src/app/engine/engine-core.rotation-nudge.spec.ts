@@ -12,12 +12,17 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
+import { legRotationRule } from '../prompt-kit/jit';
 
 const HOME_ROOT = join(tmpdir(), `atlas-rotation-nudge-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
+const ORIG_ENABLED = legRotationRule.enabled;
+afterEach(() => {
+  legRotationRule.enabled = ORIG_ENABLED;
+});
 
 /** A steerInput that never yields — it just flips the engine into streaming-input mode so `input` exists. */
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
@@ -99,6 +104,12 @@ describe('EngineCore — engine-local Leg-rotation nudge (race-free)', () => {
 
   it('never nudges while occupancy stays below SOFT', async () => {
     const injected = await runWithOccupancies([10_000, 20_000, 40_000, 49_000]);
+    expect(injected).toEqual([]);
+  });
+
+  it('honors leg-rotation.enabled=false by suppressing engine-local nudges', async () => {
+    legRotationRule.enabled = false;
+    const injected = await runWithOccupancies([20_000, 55_000, 75_000, 95_000]);
     expect(injected).toEqual([]);
   });
 });

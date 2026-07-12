@@ -7,6 +7,7 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine';
 import type { FeatureSandbox } from '../git';
+import { agentMessage } from '../prompt-kit/message';
 import type { StepEntity } from '../persistence/entities';
 import { TurnRunnerService } from '../runner/turn-runner.service';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
@@ -146,8 +147,8 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
         sandbox: s1,
         engine: 'claude',
         mode: 'execute',
-        task: 'pre-restart task',
-        systemPrompt: 'persona',
+        task: agentMessage('pre-restart task'),
+        systemPrompt: agentMessage('persona'),
       });
 
       // Session id must be persisted onto the (durable) step row.
@@ -186,8 +187,8 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
         sandbox: s2,
         engine: 'claude',
         mode: 'execute',
-        task: 'post-restart task',
-        systemPrompt: 'persona',
+        task: agentMessage('post-restart task'),
+        systemPrompt: agentMessage('persona'),
       });
 
       expect(fakeEngine2ReceivedArgs).toHaveLength(1);

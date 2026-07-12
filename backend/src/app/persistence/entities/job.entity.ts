@@ -353,6 +353,18 @@ export class JobEntity extends TimestampedEntity {
   direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
 
   /**
+   * When the DIRECT-BUILD implementation turn actually STARTED — stamped the instant `dispatch_build` fires
+   * `runDirectBuild` (post base-check, plan judged valid). This is the durable "the direct build has
+   * started" marker: unlike {@link direct_build_verification} (written only at the END, at the
+   * `finalize_build` gate), it flips at the START, so {@link BrainStoreService.buildNotStarted} can close the
+   * pre-start base-check window as soon as the implement turn begins — not only once it finishes. Without it
+   * `hold_build` would stay callable for the entire (minutes-long) implementation turn and could reopen
+   * planning underneath a live turn. Null for jobs that never ran a direct build.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  direct_build_started_at!: Date | null;
+
+  /**
    * Which BUILD PATH was committed for this job: 'direct' (the fast, brain-implemented path) or 'plan'
    * (the driver-run multi-thread path). Null until an approval commits the path — a proposal still sitting
    * at `awaiting_approval` (which can still be re-proposed as the other path) has no value here, so a

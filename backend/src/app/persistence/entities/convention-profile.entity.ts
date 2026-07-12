@@ -7,7 +7,7 @@ import { OrganizationEntity } from './organization.entity';
  * structure, architecture idioms, stack rules) authored ONCE per org and attached to any number of repos
  * via `RepoEntity.convention_profile_slug`. When a repo points at a profile, its `body` is injected into
  * every build-facing prompt (brain, workers, review/fix) inside a fixed Atlas-owned envelope — see
- * `prompt-kit/groups/conventions.group.ts`. A repo with NO pointer gets nothing extra, so a profile can
+ * `prompt-kit/system/groups/conventions.group.ts`. A repo with NO pointer gets nothing extra, so a profile can
  * never misfire on a repo that doesn't follow the style.
  *
  * Composite PK (org_id, slug) mirrors {@link McpServerEntity} — `slug` is the stable identity the repo

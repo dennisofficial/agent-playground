@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Agent } from './agent';
-import { renderAgentPrompt } from './assemble';
+import { Agent } from './system/agent';
+import { renderAgentPrompt } from './system/assemble';
 
 /**
  * The unified WORKSPACE PROFILE group — the one named area (secrets, mounts, caches, setup, MCP, skills,

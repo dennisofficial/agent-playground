@@ -151,6 +151,12 @@ export interface ChatStimulus extends BaseStimulus {
    * so recovery renders identically. Never persisted.
    */
   chunks?: TurnChunk[];
+  /**
+   * DELIVERY PRIORITY (d18). `now` (default/absent) steers into a live turn or starts one; `queue` holds until
+   * the current turn ends then wakes a FRESH turn; `later` never wakes on its own but rides along the next turn
+   * that runs for any other reason. Persisted opportunistically inside `reply_route` jsonb — no schema change.
+   */
+  priority?: 'now' | 'queue' | 'later';
 }
 
 /**

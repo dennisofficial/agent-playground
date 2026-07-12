@@ -8,7 +8,8 @@ import { parseSkillFrontmatter, stripSkillFrontmatter } from '../skills/skill-fr
 import { SkillResolver } from '../skills/skill-resolver.service';
 import { orgSkillsRootHost, skillRelativeDir } from '../skills/skill-store-paths';
 import type { WorkspaceSkillStore } from '../skills/workspace-skill.store';
-import { buildReviewPrompt, lensById, reviewAgentsForThread } from './autofix-lenses';
+import { lensById, reviewAgentsForThread } from './autofix-lenses';
+import { buildReviewPrompt } from '../prompt-kit';
 import type { AutoFixContext } from './autofix.types';
 
 // Isolates these tests from whatever `system-skill-registry.ts` actually ships (it ships a real

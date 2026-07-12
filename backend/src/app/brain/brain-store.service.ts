@@ -19,10 +19,12 @@ import { JobDependencyService } from '../job-deps';
 import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
 import { nextFileRequestId } from '../surface/web-file-request-card';
-import { renderPlan } from '../driver/render-plan';
-import type { PlannedStep } from '../driver/render-plan';
+import { renderPlan } from '../prompt-kit/messages/render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import type { AgentMessage } from '../prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { coerceThreadType } from '../thread-kind';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
 import {
   CodexReviewEntity,
   DecisionRecordEntity,
@@ -281,7 +283,7 @@ export class BrainStoreService {
   async recordSystemChunk(input: {
     jobId: string;
     kind: 'system_notice' | 'system_reminder' | 'untrusted';
-    text: string;
+    text: AgentMessage;
     chunkKey: string;
     reminderKind?: string;
     /** `<untrusted>` provenance/severity — surfaced on the web's untrusted pill. */
@@ -292,42 +294,13 @@ export class BrainStoreService {
      * Stashed in `meta` and revealed on row-expand in the console (mirrors `meta.compactionSummary`), so the
      * operator can inspect the actual context injected into Atlas. Omit when `text` already IS the full body.
      */
-    fullBody?: string;
+    fullBody?: AgentMessage;
     /** The TRUSTED harness framing that rode with this chunk (e.g. the wake preamble), carried
      *  separately from `text` so the web can render it as its own trusted block. */
     framing?: string;
     createdAt?: Date;
   }): Promise<void> {
-    const dup = await this.messages
-      .createQueryBuilder('m')
-      .where('m.job_id = :jobId', { jobId: input.jobId })
-      .andWhere('m.meta @> :key::jsonb', {
-        key: JSON.stringify({ chunkKey: input.chunkKey }),
-      })
-      .getCount();
-    if (dup > 0) return;
-    await this.messages.save(
-      this.messages.create({
-        job_id: input.jobId,
-        author: 'System',
-        author_id: 'U-SYSTEM',
-        author_bot_id: null,
-        text: input.text,
-        kind: 'chat',
-        meta: {
-          source: input.kind,
-          chunkKey: input.chunkKey,
-          ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
-          ...(input.untrustedSource
-            ? { untrustedSource: input.untrustedSource }
-            : {}),
-          ...(input.severity ? { severity: input.severity } : {}),
-          ...(input.fullBody ? { fullBody: input.fullBody } : {}),
-          ...(input.framing ? { framing: input.framing } : {}),
-        },
-        ...(input.createdAt ? { created_at: input.createdAt } : {}),
-      }),
-    );
+    return writeSystemChunk(this.messages, input);
   }
 
   /**
@@ -1455,6 +1428,17 @@ export class BrainStoreService {
   }
 
   /**
+   * Stamp the durable "the direct build has STARTED" marker (`jobs.direct_build_started_at`) at the instant
+   * `dispatch_build` fires `runDirectBuild`. This is what closes the pre-start base-check window for the
+   * DIRECT path in {@link buildNotStarted} — it flips at the START of the implement turn, unlike
+   * `direct_build_verification` which is only written at the END (`finalize_build`). Idempotent: a re-fired
+   * `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
+   */
+  async markDirectBuildStarted(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { direct_build_started_at: new Date() });
+  }
+
+  /**
    * The threads whose `activity` is still `turn` — i.e. a conversational turn was streaming when the
    * process died. Captured on boot BEFORE {@link resetAllActivity} clears the flags, so crash recovery
    * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
@@ -1830,6 +1814,30 @@ export class BrainStoreService {
     await this.jobs.update({ id: jobId }, { status: 'planning' });
   }
 
+  /**
+   * The DURABLE "the approved build has NOT started yet" predicate for the pre-start base-check window
+   * (post plan-approval, pre `dispatch_build`). Computed from EXISTING rows — no schema change. Gate
+   * `hold_build` (and any restart-recovery awareness) on THIS, never on `activity`: the base-check seed is
+   * delivered on the normal brain-turn path, which sets `activity='turn'` for the duration of the turn, so
+   * by the time Atlas calls a tool the activity is already `'turn'`, never `'base_check'`.
+   *
+   * DIRECT path: gated on {@link JobEntity.direct_build_started_at}, stamped when `dispatch_build` fires
+   * `runDirectBuild`. NOT on `direct_build_verification` — that is written only at the `finalize_build` gate
+   * (the END of the implement turn), so it would keep this predicate `true` for the entire minutes-long
+   * implementation, letting `hold_build` reopen planning underneath a live turn.
+   */
+  async buildNotStarted(jobId: string): Promise<boolean> {
+    const row = await this.jobs.findOne({ where: { id: jobId } });
+    if (!row) return false;
+    if (row.build_path === 'direct') {
+      return row.direct_build_started_at == null;
+    }
+    const threads = await this.threads.find({ where: { job_id: jobId } });
+    return threads
+      .filter((t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind))
+      .every((t) => t.status === 'pending');
+  }
+
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
@@ -1908,6 +1916,7 @@ function toThread(row: JobEntity): Job {
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
+    buildPath: row.build_path,
     status: row.status as Job['status'],
     activity: row.activity,
     halt: row.halt ?? null,

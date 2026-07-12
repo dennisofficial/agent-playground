@@ -17,6 +17,7 @@ import type {
 } from '../domain';
 import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
   BuildLegEntity,
   DecisionRecordEntity,
@@ -42,7 +43,8 @@ import {
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
-import type { PlannedStep } from './render-plan';
+import type { PlannedStep } from '../prompt-kit/messages/render-plan';
+import type { AgentMessage } from '../prompt-kit/message';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -661,32 +663,20 @@ export class DriverStoreService {
     phaseId: string;
     legOrdinal: number;
     kind: 'system_notice' | 'system_reminder';
-    text: string;
+    text: AgentMessage;
     chunkKey: string;
     reminderKind?: string;
   }): Promise<void> {
-    const dup = await this.messages
-      .createQueryBuilder('m')
-      .where('m.job_id = :jobId', { jobId: input.jobId })
-      .andWhere('m.meta @> :key::jsonb', { key: JSON.stringify({ chunkKey: input.chunkKey }) })
-      .getCount();
-    if (dup > 0) return;
-    await this.messages.save(
-      this.messages.create({
-        job_id: input.jobId,
-        author: 'System',
-        author_id: 'U-SYSTEM',
-        author_bot_id: null,
+    return writeSystemChunk(
+      this.messages,
+      {
+        jobId: input.jobId,
+        kind: input.kind,
         text: input.text,
-        kind: 'chat',
-        meta: {
-          source: input.kind,
-          phaseId: input.phaseId,
-          legOrdinal: input.legOrdinal,
-          chunkKey: input.chunkKey,
-          ...(input.reminderKind ? { reminderKind: input.reminderKind } : {}),
-        },
-      }),
+        chunkKey: input.chunkKey,
+        reminderKind: input.reminderKind,
+      },
+      { phaseId: input.phaseId, legOrdinal: input.legOrdinal },
     );
   }
 
@@ -1568,6 +1558,7 @@ function toJob(row: JobEntity): Job {
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
+    buildPath: row.build_path,
     status: row.status as JobStatus,
     activity: row.activity,
     halt: row.halt ?? null,

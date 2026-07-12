@@ -104,6 +104,8 @@ export interface Job {
   baseBranch: string | null;
   /** Build intent; null until the thread enters the build lifecycle. */
   kind: JobKind | null;
+  /** The committed build path ('direct' | 'plan'); null until an approval commits it (see `approve`). */
+  buildPath: 'direct' | 'plan' | null;
   status: JobStatus;
   /** What the SYSTEM is doing right now — the ephemeral "working" axis, orthogonal to {@link status} (the
    *  phase) and {@link halt} (the failure gate). Any non-`idle` value suppresses the needs-you dot; reset

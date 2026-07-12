@@ -19,6 +19,7 @@ import { firstValueFrom } from 'rxjs';
 import { take, toArray, filter } from 'rxjs/operators';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WebSurface } from './web-surface';
+import { agentMessage } from '../prompt-kit/message';
 import {
   decisionApprovalBlocks,
   APPROVE_ACTION_ID,
@@ -60,6 +61,7 @@ describe('WebSurface — inbound + outbound', () => {
       authorName: 'Operator',
       orgId: 'T-acme',
       threadTs: 'root-ts',
+      priority: 'queue',
     });
 
     const msg = await received;
@@ -70,6 +72,7 @@ describe('WebSurface — inbound + outbound', () => {
     expect(msg.authorName).toBe('Operator');
     expect(msg.orgId).toBe('T-acme');
     expect(msg.threadTs).toBe('root-ts');
+    expect(msg.priority).toBe('queue');
   });
 
   it('receiveFromClient defaults orgId/author when not supplied', async () => {
@@ -83,7 +86,7 @@ describe('WebSurface — inbound + outbound', () => {
 
   it('seedSystemNotification emits a System-authored, <system_notice>-wrapped, non-persisted seed', async () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
-    const ts = surface.seedSystemNotification('C-web', 'thread-9', 'Build failed on step 3', {
+    const ts = surface.seedSystemNotification('C-web', 'thread-9', agentMessage('Build failed on step 3'), {
       orgId: 'T-acme',
     });
     const msg = await received;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { Agent } from './agent';
-import { primeFragments, renderAgentPrompt } from './assemble';
-import { AGENT_PROMPTS } from './preview';
-import type { PromptCtx } from './prompt-ctx';
+import { Agent } from './system/agent';
+import { primeFragments, renderAgentPrompt } from './system/assemble';
+import { AGENT_PROMPTS } from './system/preview';
+import type { PromptCtx } from './system/prompt-ctx';
 import {
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
@@ -29,7 +29,7 @@ import {
   TASK_LIST_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
-} from './fragments';
+} from './system/fragments';
 
 /**
  * prompt-lint — STRUCTURAL invariants over the assembled prompt matrix (a lint, not a golden snapshot). Each

@@ -18,6 +18,7 @@ import {
 import { JobTitler } from '../titling';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BrainStoreService } from './brain-store.service';
+import { agentMessage } from '../prompt-kit/message';
 
 /**
  * Int test for the request-changes / RE-PROPOSE path (issue #0). A rejected plan flips the job back to
@@ -752,7 +753,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.recordSystemChunk({
       jobId,
       kind: 'system_reminder',
-      text: 'open questions: q-1 (which region?)',
+      text: agentMessage('open questions: q-1 (which region?)'),
       chunkKey: 'brain:s1:system_reminder:0',
       reminderKind: 'open_questions',
       createdAt: new Date(at.getTime() - 2),
@@ -780,7 +781,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.recordSystemChunk({
       jobId,
       kind: 'system_reminder',
-      text: 'open questions: q-1 (which region?)',
+      text: agentMessage('open questions: q-1 (which region?)'),
       chunkKey: 'brain:s1:system_reminder:0',
       reminderKind: 'open_questions',
       createdAt: new Date(at.getTime() - 2),
@@ -817,15 +818,15 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.recordSystemChunk({
       jobId,
       kind: 'system_notice',
-      text: 'A harness system notification was delivered to Atlas.',
+      text: agentMessage('A harness system notification was delivered to Atlas.'),
       chunkKey: `seed:fullbody:${jobId}:with`,
-      fullBody: rawPayload,
+      fullBody: agentMessage(rawPayload),
     });
     // A row whose text already IS the full body carries no redundant fullBody.
     await store.recordSystemChunk({
       jobId,
       kind: 'system_notice',
-      text: 'Opening the pull request.',
+      text: agentMessage('Opening the pull request.'),
       chunkKey: `seed:fullbody:${jobId}:without`,
     });
 
@@ -996,7 +997,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.recordSystemChunk({
       jobId,
       kind: 'untrusted',
-      text: 'summary: build parked at ship gate',
+      text: agentMessage('summary: build parked at ship gate'),
       chunkKey: `seed:done:framing-it`,
       untrustedSource: 'thread-done:th-x',
       severity: 'final',

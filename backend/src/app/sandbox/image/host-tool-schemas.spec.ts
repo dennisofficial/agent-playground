@@ -84,6 +84,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   get_pipeline_state: {},
   get_decision_record: {},
   dispatch_build: {},
+  hold_build: { reason: 'plan is now redundant' },
   finalize_build: {},
   list_mcp_servers: {},
   list_skills: {},

@@ -5,7 +5,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { threadDirName } from './thread-dir-name';
+import { threadDirName } from '../prompt-kit/harness/thread-dir-name';
 import { PlanVisibilityService } from '../decision-gate';
 import { BrainGateway } from '../brain-gateway';
 import {
@@ -74,13 +74,21 @@ import {
   CODEX_TASK_LIST_NOTE,
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
+  renderBatchTask,
+  renderMasterReviewTask,
+  renderOpenLegTasks,
+  renderOpenTasksWarning,
   renderRunningServicesNote,
-  ROTATION_PREAMBLE,
-  ROTATION_RESUME_TAIL,
+  composeLegSeed,
+  foldLegTurn,
+  stripContextPressureTag,
   ROTATION_SOFT_NUDGE,
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
+  renderCommitTurnTask,
 } from '../prompt-kit';
+import { chunkKey } from '../prompt-kit/harness';
+import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -109,7 +117,7 @@ import {
   type JobRoute,
   type ReviewChildThread,
 } from './driver-store.service';
-import { renderPlan, type PlannedStep } from './render-plan';
+import { renderPlan, type PlannedStep } from '../prompt-kit/messages/render-plan';
 import {
   LegRotationWatch,
   resolveRotationThresholds,
@@ -117,6 +125,7 @@ import {
   type LegRotationRunState,
   type LegRotationThresholds,
 } from './leg-rotation-watch';
+import { legRotationRule } from '../prompt-kit/jit';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -2613,7 +2622,7 @@ export class ThreadDriver implements JobDispatcher {
     // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
     const servicesBlock =
       thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
-    const task = this.foldTurn(legSeed, baseTask, servicesBlock);
+    const task = foldLegTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2642,7 +2651,10 @@ export class ThreadDriver implements JobDispatcher {
       // Codex master-review emits no per-call occupancy (never latches) and has no `record_leg_handoff`; review
       // children run elsewhere. The per-Leg run state is filled DURING the turn (by the watch + the handoff tool)
       // and read AFTER it to decide whether to rotate; `record_leg_handoff` is exposed only when armed.
-      const rotationArmed = thread.kind === 'builder' && threadKindSpec(thread.kind).engine === 'claude';
+      const rotationArmed =
+        legRotationRule.enabled &&
+        thread.kind === 'builder' &&
+        threadKindSpec(thread.kind).engine === 'claude';
       const rotationThresholds = resolveRotationThresholds();
       const rotationState = freshLegRotationState();
       const toolBridge = this.buildTurnBridge(
@@ -2727,7 +2739,7 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+          legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2741,7 +2753,7 @@ export class ThreadDriver implements JobDispatcher {
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = this.foldTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+        legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
       }
       report = result!.report;
 
@@ -2897,11 +2909,7 @@ export class ThreadDriver implements JobDispatcher {
     const spec = threadKindSpec(thread.kind);
     const metaTag = { phaseId: anchor.id, commitNudge: attempt };
     const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
-    const task =
-      `You have UNCOMMITTED changes in the working tree, but the thread is otherwise finished. Commit them` +
-      ` now: run \`git add -A\` (your \`.gitignore\` governs what's tracked — if build/cache junk appears,` +
-      ` add it to \`.gitignore\` instead of committing it), commit with a clear message, and \`git push\`` +
-      ` your branch. Leave the tree CLEAN, then stop. Do nothing else.`;
+    const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
@@ -3055,7 +3063,7 @@ export class ThreadDriver implements JobDispatcher {
     sandbox: FeatureSandbox,
     thread: DriverThread,
     steps: Step[],
-    task: string,
+    task: AgentMessage,
     lane: string,
     channel: string,
     metaTag: Record<string, unknown>,
@@ -3110,7 +3118,7 @@ export class ThreadDriver implements JobDispatcher {
           legOrdinal,
           kind: 'system_reminder',
           text: nudgeText,
-          chunkKey: `rot-nudge:${anchor.id}:leg${legOrdinal}:${sig.phase}${sig.reminderIndex}`,
+          chunkKey: chunkKey.rotNudge(anchor.id, legOrdinal, sig.phase, sig.reminderIndex),
           reminderKind: 'context_pressure',
         })
         .catch((err) => this.logger.debug(`rotation nudge row failed (display-only): ${shortReason(err)}`));
@@ -3266,8 +3274,8 @@ export class ThreadDriver implements JobDispatcher {
         phaseId: anchor.id,
         legOrdinal: res.fromLeg,
         kind: 'system_notice',
-        text: handoff,
-        chunkKey: `rot-handoff:${anchor.id}:leg${res.fromLeg}`,
+        text: fromExternal(handoff),
+        chunkKey: chunkKey.rotHandoff(anchor.id, res.fromLeg),
         reminderKind: 'leg_handoff',
       })
       .catch((err) => this.logger.debug(`rotation handoff row failed (display-only): ${shortReason(err)}`));
@@ -3278,7 +3286,7 @@ export class ThreadDriver implements JobDispatcher {
         legOrdinal: res.toLeg,
         kind: 'system_notice',
         text: seed,
-        chunkKey: `rot-seed:${anchor.id}:leg${res.toLeg}`,
+        chunkKey: chunkKey.rotSeed(anchor.id, res.toLeg),
         reminderKind: 'leg_seed',
       })
       .catch((err) => this.logger.debug(`rotation seed row failed (display-only): ${shortReason(err)}`));
@@ -3298,31 +3306,11 @@ export class ThreadDriver implements JobDispatcher {
    * it back and render the still-open items into the seed — the fresh Leg continues the checklist instead of
    * restarting it. The web checklist stays authoritative across Legs regardless (it reads the same column).
    */
-  private async buildLegSeed(threadId: string, handoff: string): Promise<string> {
+  private async buildLegSeed(threadId: string, handoff: string): Promise<AgentMessage> {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
-    const tasksBlock = renderOpenLegTasks(tasks);
-    return [ROTATION_PREAMBLE, handoff, ...(tasksBlock ? [tasksBlock] : [])].join('\n\n');
-  }
-
-  /**
-   * Fold a rotation seed into the fresh Leg's turn task. The seed ({@link buildLegSeed} — preamble + handoff +
-   * carried checklist) leads so it lands in the PRIMACY slot; the original batch task sits in the middle; and the
-   * {@link ROTATION_RESUME_TAIL} operative directive trails LAST, in the RECENCY slot where LLM recall is highest.
-   * A non-rotated Leg (no seed) gets the bare batch task unchanged.
-   */
-  private foldLegSeed(seed: string | null, baseTask: string): string {
-    return seed ? `${seed}\n\n---\n\n${baseTask}\n\n---\n\n${ROTATION_RESUME_TAIL}` : baseTask;
-  }
-
-  /**
-   * Fold a turn-kick's task: append the freshly-probed running-services block to the batch task, THEN apply
-   * the leg-seed fold. Appending to `baseTask` (rather than after the seed fold) keeps `ROTATION_RESUME_TAIL`
-   * in the RECENCY slot for a rotated Leg while still surfacing what's already online. An empty block leaves
-   * the task unchanged.
-   */
-  private foldTurn(seed: string | null, baseTask: string, servicesBlock: string): string {
-    const withServices = servicesBlock ? `${baseTask}\n\n${servicesBlock}` : baseTask;
-    return this.foldLegSeed(seed, withServices);
+    // Compose through the hub factory (byte-identical to the former inline join) — the mint and the
+    // `fromExternal` seam for the self-authored handoff both live inside prompt-kit, not at this call site.
+    return composeLegSeed(handoff, renderOpenLegTasks(tasks));
   }
 
   /**
@@ -3638,106 +3626,10 @@ const COMMIT_NUDGE_MAX = 2;
  *  Leg can't spin forever. On the cap we kick one final Leg with rotation DISARMED and run it to completion. */
 const MAX_LEGS_PER_BATCH = 8;
 
-/** Render the still-OPEN task-list items into a `<carried_tasks>` block for the fresh Leg's seed (B5). The
- *  durable `threads.tasks` outlives the abandoned session's in-memory to-do, so the fresh Leg keeps its
- *  checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the block. */
-function renderOpenLegTasks(tasks: TaskItem[]): string {
-  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
-  if (!open.length) return '';
-  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
-  return [
-    '<carried_tasks>',
-    "Your task list carried across the rotation (the previous session's in-memory to-do is gone; this is the",
-    'durable checklist). Continue these — do NOT recreate completed items or restart finished ones:',
-    ...lines,
-    '</carried_tasks>',
-  ].join('\n');
-}
-
-/** The warning-retry payload for the done-gate task double-check. Lists the still-OPEN tasks and directs the
- *  model to reconcile each before re-asserting `done`. The caller only builds this when `open` is non-empty,
- *  so it never renders an empty block. This is the model's ONE reminder — anything still open after the next
- *  `complete_thread` is host-dropped from the checklist at the done transition. */
-function renderOpenTasksWarning(open: TaskItem[]): string {
-  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
-  return [
-    `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
-    'assert done. For EACH task below: if the work is genuinely finished, mark it completed' +
-      ' (`TaskUpdate` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
-      ' then mark it completed; if it is no longer needed, delete it (`TaskUpdate` status: deleted). Then',
-    'call `complete_thread` again. This is your ONE reminder — anything still open after your next',
-    '`complete_thread` will be dropped from the checklist.',
-    '<open_tasks>',
-    ...lines,
-    '</open_tasks>',
-  ].join('\n');
-}
-
-/** Strip the `<context_pressure …>` wrapper off a rotation nudge so the VISIBLE transcript row shows the
- *  clean ask (the XML framing is engine-only; the operator sees prose). Trims the outer tag lines only. */
-function stripContextPressureTag(nudge: string): string {
-  return nudge
-    .replace(/^<context_pressure[^>]*>\s*/, '')
-    .replace(/\s*<\/context_pressure>\s*$/, '')
-    .trim();
-}
-
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {
   return { title: step.title ?? step.brief, brief: step.brief };
 }
-
-/** Render the ORCHESTRATOR turn's task — ONE turn owns the whole thread. The single step's brief is the
- *  thread brief; the orchestrator reads the real plan in `/context/specs` and decomposes the work live. */
-export function renderBatchTask(
-  record: DecisionRecord | null,
-  thread: DriverThread,
-  steps: Step[],
-): string {
-  const decisions = record?.decisions.length
-    ? record.decisions
-        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
-    : '(none)';
-  const blocks = steps
-    .map(
-      (p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`,
-    )
-    .join('\n\n');
-  return [
-    `Feature overview:\n${record?.overview ?? ''}`,
-    `\nLocked decisions (respect these):\n${decisions}`,
-    `\nThread: ${thread.brief}`,
-    `\nYour grounding is \`/context/specs/\` — read its \`plan.md\` index, this thread's \`sections/NN-*.md\`` +
-      ` file, and \`data-model.md\`; treat \`/context/specs\` and \`/context/generated\` as READ-ONLY. Make ALL` +
-      ` code changes under \`/workspace\`. The one \`/context\` bucket you may write is \`/context/artifacts/\`:` +
-      ` leave your live-validation evidence there (logs, screenshots, a \`RESULTS.md\` index) so it surfaces in` +
-      ` the operator's ARTIFACTS panel.`,
-    // Advisory orientation cheat-sheet, when a prior pass captured one (may be absent — the fresh session
-    // then orients off the repo docs itself). Kept subordinate to the code + specs (authoritative).
-    ...(thread.orientation
-      ? [
-          `\nRepo orientation (a cheat-sheet from an earlier pass — the CODE and \`/context/specs/\` remain` +
-            ` authoritative if anything here is stale):\n` +
-            thread.orientation,
-        ]
-      : []),
-    `\nImplement this thread: read the specs, then delegate the work to writer subagents (one at a time),` +
-      ` making small edits yourself where a subagent would be overkill, and verify the whole thread before` +
-      ` finishing. If you hit a decision the locked plan does NOT cover: if a one-line human answer would` +
-      ` unblock you right now, call \`request_operator_input\` and wait; if you genuinely cannot make progress` +
-      ` this turn (a missing secret/service, or a substantive decision that needs deliberation), call` +
-      ` \`block_thread\` to hand it to Atlas rather than guessing or stopping silently.\n\n${blocks}`,
-    COMMIT_AND_PUSH_INSTRUCTION,
-  ].join('\n');
-}
-
-/**
- * The batch writer's commit instruction — the shared `COMMIT_AND_PUSH_NOTE`, prefixed with the leading
- * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
- * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
- */
-export const COMMIT_AND_PUSH_INSTRUCTION = '\n' + COMMIT_AND_PUSH_NOTE;
 
 /**
  * Render the durable halt trail for `/context/generated/threads/<ordinal>-<slug>/completion.md` (ADR 0004 Phase 3). Pure
@@ -3803,40 +3695,6 @@ export function renderCompletionMd(
     }
   }
   return lines.join('\n') + '\n';
-}
-
-/**
- * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
- * and applies fixes IN-CONTAINER (where the repo toolchain lives), then verifies with the repo's own build.
- * Execute-voice counterpart to the old read-only `run_master_review` tool prompt. No writer-subagent mention
- * (Codex has none). Does NOT push — the host commits the edits and ships.
- */
-export function renderMasterReviewTask(record: DecisionRecord | null, repo: ResolvedRepo): string {
-  const decisions = record?.decisions.length
-    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
-    : '(none)';
-  return [
-    `Feature overview:\n${record?.overview ?? ''}`,
-    `\nLocked decisions (respect these):\n${decisions}`,
-    `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
-    `\nTRACK YOUR WORK: ${CODEX_TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
-    `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
-      ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
-      ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
-    `\n2. FIX what you find: the smallest safe change per finding, never expanding scope; skip anything` +
-      ` unsafe or ambiguous rather than guessing. Make edits directly under \`/workspace\`.`,
-    `\n3. VERIFY: run the repo's own typecheck/build/test commands and confirm they pass — do this even if` +
-      ` you changed nothing (a clean review still deserves a green build). If verification fails, fix and` +
-      ` re-verify rather than leaving it red.`,
-    `\n4. COMMIT: if you made fixes, \`git add -A\`, commit with a clear message, and \`git push\` — leave a` +
-      ` CLEAN tree. Do NOT open a PR (Atlas does the final ship). If the review found nothing actionable,` +
-      ` change nothing and skip the commit.`,
-    `\n5. FINISH: when done and the build is green (and your fixes, if any, are committed + pushed), you MUST` +
-      ` call the \`complete_thread\` host tool (available via the "atlasbridge" MCP server) with a one-line` +
-      ` \`summary\` of what you reviewed/fixed and the \`verification\` you ran. This is how you signal` +
-      ` completion — the review is NOT recorded as done until you call it. If you genuinely cannot proceed,` +
-      ` call \`block_thread\` with a reason and detail instead.`,
-  ].join('\n');
 }
 
 /**

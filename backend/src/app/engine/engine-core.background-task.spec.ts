@@ -10,11 +10,15 @@
  * These three tests drive a fake SDK whose generator scripts the exact system/assistant/result frames and
  * whose single drain loop records both engine-injected steers (`pushed`) and whether `input.end()` fired
  * (`state.inputEnded`) — the observable proof of hold, cap-with-ack, and cap-backstop.
+ *
+ * BG_TASK_MAX_HOLD_MS is gone (d4): the hold cap now comes LIVE from the `bg-task-cap` JIT rule's
+ * `trigger.holdMs`, so a test that needs a small cap mutates the rule directly (restored in `afterEach`).
  */
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { bgTaskCapRule } from '../prompt-kit/jit';
 import { EngineCore } from './engine-core';
 import { type EngineHomeKey } from './engine-home';
 import { BG_TASK_CAP_NOTICE, type EngineEvent } from './engine.types';
@@ -119,20 +123,23 @@ function runTurn(
   } as never);
 }
 
-const ORIG_HOLD = process.env.BG_TASK_MAX_HOLD_MS;
+const holdTrigger = bgTaskCapRule.trigger as { holdMs: number };
+const ORIG_HOLD_MS = holdTrigger.holdMs;
+const ORIG_ENABLED = bgTaskCapRule.enabled;
 const ORIG_GRACE = process.env.BG_TASK_CAP_ACK_GRACE_MS;
 const restoreEnv = (key: string, value: string | undefined): void => {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 };
 afterEach(() => {
-  restoreEnv('BG_TASK_MAX_HOLD_MS', ORIG_HOLD);
+  holdTrigger.holdMs = ORIG_HOLD_MS;
+  bgTaskCapRule.enabled = ORIG_ENABLED;
   restoreEnv('BG_TASK_CAP_ACK_GRACE_MS', ORIG_GRACE);
 });
 
 describe('EngineCore — run_in_background hold + cap', () => {
   it('holds the turn open until the task settles, captures the auto-continuation, and sums usage across results', async () => {
-    process.env.BG_TASK_MAX_HOLD_MS = '600000'; // large — the cap must never fire here
+    holdTrigger.holdMs = 600_000; // large — the cap must never fire here
     process.env.BG_TASK_CAP_ACK_GRACE_MS = '15000';
     let heldWhileRunning = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
@@ -166,7 +173,7 @@ describe('EngineCore — run_in_background hold + cap', () => {
   });
 
   it('caps a stuck task, steers the agent with the cap notice, and closes directly when the agent acks', async () => {
-    process.env.BG_TASK_MAX_HOLD_MS = '50';
+    holdTrigger.holdMs = 50;
     process.env.BG_TASK_CAP_ACK_GRACE_MS = '500';
     let endedAfterAck = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
@@ -193,7 +200,7 @@ describe('EngineCore — run_in_background hold + cap', () => {
   });
 
   it('caps a stuck task and unconditionally closes after the ack grace when the agent never acks', async () => {
-    process.env.BG_TASK_MAX_HOLD_MS = '50';
+    holdTrigger.holdMs = 50;
     process.env.BG_TASK_CAP_ACK_GRACE_MS = '150';
     let endedByBackstop = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
@@ -216,5 +223,31 @@ describe('EngineCore — run_in_background hold + cap', () => {
 
     expect(pushed).toContain(BG_TASK_CAP_NOTICE);
     expect(endedByBackstop).toBe(true); // the unconditional backstop bounded the hold
+  });
+
+  it('honors bg-task-cap.enabled=false by capping without injecting the JIT notice', async () => {
+    holdTrigger.holdMs = 50;
+    bgTaskCapRule.enabled = false;
+    process.env.BG_TASK_CAP_ACK_GRACE_MS = '100';
+    let endedByBackstop = false;
+    const { sdk, pushed } = makeSteerFake(async function* (state) {
+      yield initMsg();
+      await tick();
+      yield assistantBash();
+      await tick();
+      yield taskStarted('X');
+      await tick();
+      yield resultMsg('first', 10, 5);
+      await sleep(80); // > HOLD_CAP_MS → cap fires, but the disabled rule emits no prompt text
+      yield taskProgress('X');
+      await sleep(150); // > CAP_ACK_GRACE_MS from the cap → the backstop closes input
+      endedByBackstop = state.inputEnded;
+    });
+    const events: EngineEvent[] = [];
+    await runTurn(sdk, events);
+
+    expect(pushed).not.toContain(BG_TASK_CAP_NOTICE);
+    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(endedByBackstop).toBe(true);
   });
 });

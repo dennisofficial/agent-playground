@@ -1,14 +1,80 @@
-# prompt-kit authoring standard
+# prompt-kit — the hub for everything Atlas sends an agent
 
-The reference every fragment in `prompt-kit/` (and every coding-agent prompt sourced from it) follows. It
-exists so the system prompts stay DRY, single-concern, and reviewable. The CODE is authoritative where it
-disagrees with this doc; when you change the code in a way this doc should reflect, update the doc in the same
-change.
+`backend/src/app/prompt-kit/` is the ONE home for all prompt/context-engineering CONTENT: every string that
+reaches an agent session originates here. The CODE is authoritative where it disagrees with this doc; when you
+change the code in a way this doc should reflect, update the doc in the same change.
+
+## The four areas
+
+The hub is split into four named sub-areas, one per category of agent-facing text:
+
+| Area | Pillar | What lives there |
+| --- | --- | --- |
+| `system/` | System prompts | the `@Fragment`/`@FragmentGroup` library assembled per `Agent` (`groups/`, `agent.ts`, `assemble.ts`, `fragments.ts`, `conditions.ts`, `prompt-ctx.ts`, `fragment.decorator.ts`, `job-kind.ts`, `preview.ts`) |
+| `messages/` | Message templates | user-message / task-body templates (the relocated task builders + `turns/`) |
+| `harness/` | Harness messages | the seeded system-event catalog + the ONE owned XML tag vocabulary |
+| `jit/` | JIT context | the declarative JIT-context rule catalog (trigger · threshold · delivery · payload, co-located) |
+
+Each area has an `index.ts` barrel; the root `index.ts` re-exports them. `prompt.service.ts` /
+`prompt-kit.module.ts` are the DI facade over `system/` and stay at the root (wiring, not content).
+
+## Organizing principle — content in the hub, wiring in services (load-bearing)
+
+The hub owns pure CONTENT/DEFINITIONS ONLY: zero heavy/NestJS deps, safe to bundle into the in-container
+engine. The host/engine services (`brain`, `driver`, `engine`, `surface`) own TRIGGERING + DELIVERY and shrink
+to thin callers into the hub — exactly how `messages/turns/build-handoff.ts` text already lives in the hub
+while `thread-driver` does the wiring. A template DECLARES the runtime context it needs (its typed ctx); the
+SERVICE gathers that dynamic state (job kind, repo, live token count, running services, operator answer) and
+passes it in.
+
+## The enforced seam — `AgentMessage` (`message.ts`)
+
+Nothing reaches an agent except a hub-minted `AgentMessage` (`type AgentMessage = string & { brand }`; runtime
+value is the plain string). Two enforcement layers, distinct jobs:
+
+- **Brand.** Every agent-facing body param (`RunEngineArgs.task`/`systemPrompt`, `steerUserMessage` content,
+  `seedSystemNotification` body, the unified `recordSystemChunk` text/fullBody) takes `AgentMessage`. Its
+  CONTENT can therefore only be minted by a hub factory (`agentMessage(...)`); handing a bare string is a
+  compile error. These params are callable from anywhere — delivery wiring stays in services.
+- **Lint.** A structural spec seals the RAW delivery constructors (`SEALED_DELIVERY_PRIMITIVES` —
+  `steerUserMessage(`, a direct SDK `.query(`) to the `SANCTIONED_SEAM_GLOBS` so nobody stands up a NEW
+  delivery path (a hand-built `SDKUserMessage`, a direct `sdk.query()`) that bypasses the brand. The
+  delivery-WIRING helpers (`seedSystemNotification`, `recordSystemChunk`) are NOT sealed — they legitimately
+  live in services and are already guarded by their `AgentMessage` params.
+
+Both inventories live in `message.ts` as the single source of truth. The brand catches "handed a string to a
+seam"; the lint catches "stood up a new raw delivery path bypassing the seam".
+
+## Templating standard — typed-function templates (d11)
+
+Every template in every area is a typed function `(ctx: TypedContext) => AgentMessage` (system fragments return
+`string`, minted to `AgentMessage` at the seam). Variables are TYPED FIELDS on a per-area context object
+(system → `PromptCtx`; messages → per-builder typed args / a `MessageCtx`; harness → seed-builder args; jit →
+`JitFireCtx`), interpolated in code (template literals / `.join`). Conditionals are code — a `condition(ctx)`
+predicate (system fragments) or plain `if`/ternary in a builder. There is NO placeholder/`{{var}}` DSL and no
+template engine: typed functions are compile-time checked and refactor-safe, and they avoid reopening the
+untrusted-interpolation / tag-forgery surface a raw `{{var}}` layer would create.
+
+## Terminology (canonical — avoid the drift words)
+
+- **JIT context** — benign, on-demand context injected into a LIVE session when a trigger fires. ONE mechanism
+  regardless of payload size; a one-line **nudge** and a full **on-demand instruction** are the same primitive.
+  The module/area/type names use "JIT". **"Prompt injection" is RESERVED** for the security-attack meaning
+  (untrusted content as a prompt-injection channel, per `CLAUDE.md`) and must NOT name this feature.
+
+---
+
+# System area (Pillar 1) — fragment authoring standard
+
+The reference every fragment in `prompt-kit/system/` (and every coding-agent prompt sourced from it) follows. It
+exists so the system prompts stay DRY, single-concern, and reviewable. It is the `system/` area's sub-standard
+under the hub-wide rules above.
 
 ## What the system is
 
-`backend/src/app/prompt-kit/` composes every coding-agent system prompt from `@Fragment`-decorated METHODS on
-`@FragmentGroup` classes (`groups/*.ts`). A prompt is assembled for exactly ONE `Agent` (the audience
+`backend/src/app/prompt-kit/system/` composes every coding-agent system prompt from `@Fragment`-decorated
+METHODS on `@FragmentGroup` classes (`system/groups/*.ts`; paths below are relative to `system/`). A prompt is
+assembled for exactly ONE `Agent` (the audience
 dimension, `agent.ts`): `assemble.ts` lifts every fragment method, filters by `meta.usedBy.includes(agent)` and
 `meta.condition(ctx)`, sorts by `meta.order`, renders, trims, drops empties, and joins with `\n\n`. Shared
 prose lives ONCE in `fragments.ts` as exported consts and is spliced into the groups that need it. Boot

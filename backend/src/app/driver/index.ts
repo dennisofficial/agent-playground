@@ -34,7 +34,7 @@ export {
   type DriverRepoResolver,
   type ResolvedRepo,
 } from './repo-resolver';
-export { renderPlan, type PlannedStep } from './render-plan';
+export { renderPlan, type PlannedStep } from '../prompt-kit/messages/render-plan';
 export { JOB_TEARDOWN, type JobTeardownPort } from './job-teardown.port';
 export {
   LIVE_VERIFICATION_JUDGE,

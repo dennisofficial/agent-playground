@@ -6,15 +6,19 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth, EngineHomeKey } from '../engine';
-import type { Decision } from '../domain';
-import type { PlannedStep } from '../driver/render-plan';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
 import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
-import { Agent, renderAgentPrompt } from '../prompt-kit';
+import {
+  Agent,
+  renderAgentPrompt,
+  renderPlanForReview,
+  renderReReview,
+  type PlanReviewInput,
+} from '../prompt-kit';
 import { ConventionProfileResolver } from '../conventions';
 import { threadKindSpec } from '../thread-kind/registry';
 import {
@@ -23,6 +27,8 @@ import {
   serializeFindings,
   deserializeFindings,
 } from './plan-review-findings';
+
+export type { PlanReviewInput } from '../prompt-kit/messages/plan-review';
 
 /** The transcript lane a job's Codex review streams on (rendered as an inline run card by the web).
  *  Thin re-export of the THREAD_REGISTRY — byte-identical string. */
@@ -66,108 +72,6 @@ export type ReviewOutcome = {
   /** True when the safety ceiling was hit — Atlas should stop re-reviewing and finalize/revise. */
   ceilingHit?: boolean;
 };
-
-/** What `review` needs to render the review task (orientation; the specs on disk are authoritative). */
-export type PlanReviewInput = {
-  jobId: string;
-  orgId: string;
-  goal: string;
-  ticket?: { number: number; title: string; body?: string } | null;
-  overview: string;
-  decisions: Decision[];
-  threadTitles: string[];
-  stepsByThread?: PlannedStep[][];
-  /** On a RESUME (re-review): what Atlas changed / a point-by-point pushback. Ignored on the first run. */
-  note?: string;
-};
-
-/** Render the structured review task: the operator's INTENT first, then the authored plan index to grade. */
-function renderPlanForReview(input: PlanReviewInput): string {
-  const decisions = input.decisions.length
-    ? input.decisions
-        .map((d: Decision) => `  [${d.decisionClass}] ${d.title}: ${d.ruling}`)
-        .join('\n')
-    : '  (none)';
-
-  const threads = input.threadTitles.length
-    ? input.threadTitles
-        .map((b, i) => {
-          const steps = input.stepsByThread?.[i] ?? [];
-          if (!steps.length) return `  ${i + 1}. ${b}`;
-          const body = steps
-            .map(
-              (p, j) =>
-                `     ${i + 1}.${j + 1} ${p.title}\n       ${p.brief.replace(/\n/g, '\n       ')}`,
-            )
-            .join('\n');
-          return `  ${i + 1}. ${b}\n${body}`;
-        })
-        .join('\n')
-    : '  (none)';
-
-  const hasPhases = (input.stepsByThread ?? []).some((p) => p.length);
-
-  const intent = [
-    '<intent>',
-    'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
-    '',
-    `GOAL: ${input.goal || '(see overview)'}`,
-  ];
-  if (input.ticket) {
-    intent.push(
-      '',
-      `ORIGINATING TICKET #${input.ticket.number} — ${input.ticket.title}`,
-      ...(input.ticket.body ? [input.ticket.body] : []),
-    );
-  }
-  intent.push('', "OVERVIEW (Atlas's framing of the work):", input.overview, '</intent>');
-
-  const authoredPlan = [
-    '<authored_plan>',
-    'The structured plan Atlas authored. The `/context/specs/` files are authoritative — read them; this is',
-    'just the index to orient your reading.',
-    '',
-    'LOCKED DECISIONS:',
-    decisions,
-    '',
-    hasPhases
-      ? 'THREADS (each with its execute-ready steps — the build runs these directly):'
-      : 'THREADS (high-level briefs):',
-    threads,
-    '</authored_plan>',
-  ];
-
-  return [
-    ...intent,
-    '',
-    ...authoredPlan,
-    '',
-    'Now judge per <what_to_judge> + <output_contract>. Read the specs and the referenced code first.',
-  ].join('\n');
-}
-
-/**
- * Render the task for a RESUMED review (Atlas revised the specs and/or is pushing back). Codex remembers
- * its prior findings from the session history, so this just re-orients it to re-read the live specs and
- * adjudicate per the <output_contract>'s RE-REVIEW rule (concede what's fixed, hold firm on what stands,
- * don't manufacture ever-smaller findings).
- */
-function renderReReview(input: PlanReviewInput, note?: string): string {
-  return [
-    '<re_review>',
-    'You have reviewed this plan before (your prior findings are in this conversation). Atlas has revised the',
-    'specs and/or is responding to your findings. RE-READ the current `/context/specs/` and the referenced',
-    'code — do NOT rely on any description of what changed. For EACH prior finding decide: genuinely RESOLVED',
-    '(concede it), or does it STILL STAND (hold firm, restate concisely). Only raise something NEW if it is as',
-    'serious as a first-pass BLOCKING issue.',
-    ...(note?.trim() ? ['', "ATLAS'S NOTE:", note.trim()] : []),
-    '</re_review>',
-    '',
-    'Now output per your <output_contract>: a severity-tagged `FINDING [...]:` line for every issue that STILL',
-    'STANDS or is newly revealed, or EXACTLY `NO_FINDINGS` if everything is resolved and the plan achieves the',
-    'intent.',
-  ].join('\n');
-}
 
 @Injectable()
 export class PlanReviewService {

@@ -1,0 +1,29 @@
+<intent>
+What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.
+
+GOAL: Show each user's last login time on their profile.
+
+ORIGINATING TICKET #42 — Surface last login on the profile page
+Users have asked to see when they last signed in.
+
+OVERVIEW (Atlas's framing of the work):
+Stamp last_login_at on successful login and expose it on GET /users/:id.
+</intent>
+
+<authored_plan>
+The structured plan Atlas authored. The `/context/specs/` files are authoritative — read them; this is
+just the index to orient your reading.
+
+LOCKED DECISIONS:
+  [data_model] Use a nullable timestamptz column: last_login_at
+
+THREADS (each with its execute-ready steps — the build runs these directly):
+  1. Backend
+     1.1 Add last_login_at column
+       Migration + entity column.
+  2. Frontend
+     2.1 Render last login on the profile
+       Format + display the timestamp.
+</authored_plan>
+
+Now judge per <what_to_judge> + <output_contract>. Read the specs and the referenced code first.
