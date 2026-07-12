@@ -2,7 +2,7 @@
  * prompt-kit / turns / ship-open-pr — the SHIP-TIME open-PR turn, delivered as a BRAIN harness-turn body.
  * The host seeds `shipOpenPrBody(...)` into the job-brain session, which
  * reconciles the branch against its base, pushes, AUTHORS a Claude-Code-style PR body from the real diff +
- * its `/context/artifacts/` evidence bundle, and opens the PR with its own authenticated git + `gh`.
+ * its `/context/evidence/` bundle(s), and opens the PR with its own authenticated git + `gh`.
  *
  * Task-ONLY: the brain turn always runs under the `ATLAS_MAIN` system prompt, so this turn carries no
  * `system` string — the reconcile / PR-body / git-safety guidance is folded into the body below. The host
@@ -56,8 +56,10 @@ export function shipOpenPrBody(args: ShipOpenPrArgs): AgentMessage {
     `\`git push -u origin ${quotedBranch}\`. Nothing ` +
     `uncommitted is left behind: the host does NOT commit on your behalf, so if you don't commit it, it ships nowhere.\n` +
     `  4. AUTHOR THE PR BODY yourself, from what you ACTUALLY shipped — run ` +
-    `\`git diff ${quotedBaseRef}...HEAD\` for the real change and read \`/context/artifacts/RESULTS.md\` ` +
-    `(your evidence bundle) if it exists. Do NOT restate the plan. Compose a Markdown body with these sections:\n` +
+    `\`git diff ${quotedBaseRef}...HEAD\` for the real change and SCAN \`/context/evidence/\` for any ` +
+    `\`RESULTS.md\` evidence bundle(s) — per-thread bundles live at \`/context/evidence/<NNN>-…/RESULTS.md\`, a ` +
+    `direct build's at the \`/context/evidence/\` root. Do NOT restate the plan. Compose a Markdown body with ` +
+    `these sections:\n` +
     `       ## Summary\n` +
     `       — 1–3 bullets on what the diff actually changes (behavior/mechanism), not a restatement of the plan.\n` +
     `       ## Verification\n` +

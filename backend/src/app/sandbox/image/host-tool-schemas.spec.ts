@@ -140,6 +140,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     decisions: [decisionItemPayload],
   },
   create_job: { firstMessage: 'Please fix the flaky test.', title: 'Fix flaky test' },
+  list_jobs: { status: 'all', query: 'auth', limit: 10 },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
   propose_convention_profile_change: {
     slug: 'backend-style',

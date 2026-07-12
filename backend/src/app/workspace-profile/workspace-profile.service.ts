@@ -35,10 +35,12 @@ export interface WorkspaceProfileSnapshot {
  * MCP server whose auth USED to work and later FAILED (expired static secret / dead OAuth refresh token).
  */
 export interface ProfileGap {
-  kind: 'unfilled_mcp_secret' | 'new_stack' | 'broken_auth';
+  kind: 'unfilled_mcp_secret' | 'new_stack' | 'broken_auth' | 'needs_oauth_connect';
   /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
   detail: string;
 }
+
+const gapKey = (scope: string, name: string): string => `${scope}\u0000${name}`;
 
 /**
  * Read-model over the seven Workspace Profile dimensions. It COMPOSES the existing per-dimension stores —
@@ -122,17 +124,34 @@ export class WorkspaceProfileService {
     // Broken auth: a server that USED to work and later failed its validation probe (expired static
     // secret / dead OAuth refresh token). De-dupe against the unfilled set (name+scope): a never-filled
     // slot is already reported above and shouldn't also read as "broken" — unfilled wins.
-    const unfilledKeys = new Set(unfilled.map((u) => `${u.scope}\0${u.name}`));
+    const unfilledKeys = new Set(unfilled.map((u) => gapKey(u.scope, u.name)));
     const authFailing = await this.mcp.authFailingServers(orgId, repoId);
     for (const s of authFailing) {
-      if (unfilledKeys.has(`${s.scope}\0${s.name}`)) continue;
+      if (unfilledKeys.has(gapKey(s.scope, s.name))) continue;
       // The fix differs by auth kind: the brain CAN re-provide a static secret itself, but OAuth
       // re-consent is operator-only (it cannot re-authorize an OAuth flow).
       const detail =
         s.authKind === 'oauth'
-          ? `MCP server "${s.name}" [${s.scope}] needs re-authorization (OAuth refresh failed) — the OWNER must reconnect it in the console (MCP settings → Reconnect); the brain cannot re-consent OAuth itself.`
+          ? `MCP server "${s.name}" [${s.scope}] needs re-authorization (OAuth refresh failed) — the OWNER must Reconnect it from the MCP proposal card or the console (MCP settings → Reconnect); the brain cannot re-consent OAuth itself.`
           : `MCP server "${s.name}" [${s.scope}] is failing auth (${s.reason}) — re-provide its credential via request_secret({ mcp: { server, slot, key } }), then reset_sandbox to reload.`;
       gaps.push({ kind: 'broken_auth', detail });
+    }
+
+    // Needs-connect: an OAuth server registered but never connected (no access token — a never-started or
+    // started-but-cancelled consent). Only the OWNER can complete OAuth consent, so the brain can't fix it
+    // itself; the nudge keeps it from being silently forgotten once the proposal card scrolls away. Dedup
+    // defensively against the already-emitted keys (exclusive with broken_auth/unfilled in practice).
+    const emitted = new Set([
+      ...unfilled.map((u) => gapKey(u.scope, u.name)),
+      ...authFailing.map((s) => gapKey(s.scope, s.name)),
+    ]);
+    const needConnect = await this.mcp.needsOAuthConnect(orgId, repoId);
+    for (const s of needConnect) {
+      if (emitted.has(gapKey(s.scope, s.name))) continue;
+      gaps.push({
+        kind: 'needs_oauth_connect',
+        detail: `MCP server "${s.name}" [${s.scope}] is registered but not yet connected (OAuth consent never completed) — the OWNER must Connect it: use the Connect button on the MCP proposal card, or the console (MCP settings → Connect). The brain cannot consent OAuth itself.`,
+      });
     }
 
     // New-stack: only once the profile has been SEEDED (seen !== null) — an un-onboarded repo never

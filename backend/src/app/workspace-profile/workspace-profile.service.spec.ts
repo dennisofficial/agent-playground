@@ -13,6 +13,7 @@ function make(overrides?: {
   conventionName?: string | null;
   unfilledSlots?: { name: string; scope: string; slots: string[] }[];
   authFailing?: { name: string; scope: string; authKind: 'static' | 'oauth'; reason: string }[];
+  needConnect?: { name: string; scope: string }[];
   seenManifests?: string[] | null;
 }): WorkspaceProfileService {
   const o = overrides ?? {};
@@ -27,6 +28,7 @@ function make(overrides?: {
     rowsForTurn: async () => o.mcpRows ?? [],
     unfilledSecretSlots: async () => o.unfilledSlots ?? [],
     authFailingServers: async () => o.authFailing ?? [],
+    needsOAuthConnect: async () => o.needConnect ?? [],
   };
   const skills = { rowsForTurn: async () => o.skillRows ?? [] };
   const conventions = {
@@ -172,5 +174,29 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
     const gaps = await svc.computeGaps('org1', 'repo-1');
     expect(gaps).toHaveLength(1);
     expect(gaps[0].kind).toBe('unfilled_mcp_secret');
+  });
+
+  it('flags a registered-but-unconnected OAuth server as needs_oauth_connect (owner must Connect, names only)', async () => {
+    const svc = make({ needConnect: [{ name: 'jira', scope: 'org' }] });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('needs_oauth_connect');
+    const rendered = svc.renderGaps(gaps);
+    expect(rendered).toContain('PROFILE GAPS');
+    expect(rendered).toContain('jira');
+    expect(rendered).toContain('Connect');
+    expect(rendered).toContain('not yet connected');
+    // Owner-only, brain cannot consent — and never a token/secret value.
+    expect(rendered).toContain('cannot consent OAuth');
+  });
+
+  it('does not double-report a server as needs_oauth_connect when it is already unfilled/broken (dedup)', async () => {
+    const svc = make({
+      authFailing: [{ name: 'jira', scope: 'org', authKind: 'oauth', reason: 'needs re-auth' }],
+      needConnect: [{ name: 'jira', scope: 'org' }],
+    });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('broken_auth');
   });
 });
