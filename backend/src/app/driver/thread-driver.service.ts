@@ -731,7 +731,7 @@ export class ThreadDriver implements JobDispatcher {
         await this.store
           .setJobHalt(jobId, {
             kind: 'blocked_credentials',
-            reason: cleanAuthHaltReason(err.message),
+            reason: cleanAuthHaltReason(err.message, err.engine),
             at: new Date().toISOString(),
           })
           .catch(() => undefined);
@@ -901,7 +901,7 @@ export class ThreadDriver implements JobDispatcher {
       err,
       markedReauth
         ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
-        : cleanAuthHaltReason(err.message),
+        : cleanAuthHaltReason(err.message, err.engine),
     );
   }
 

@@ -16,4 +16,15 @@ describe('cleanAuthHaltReason', () => {
     );
     expect(clean).not.toMatch(/not logged in|\/login/i);
   });
+
+  it('names Codex (not Claude) when a Codex auth halt supplies the failing engine', () => {
+    const noCred = `${NO_ENGINE_CREDENTIAL_MARKER}: no codex subscription secret — the org has no codex credential set`;
+    expect(cleanAuthHaltReason(noCred, 'codex')).toBe(
+      'No Codex account is connected for this org — connect one in Settings, then resume.',
+    );
+    // A raw mid-turn 401 (no engine hint in the text) still renders Codex copy from the passed engine.
+    expect(cleanAuthHaltReason('401 Unauthorized', 'codex')).toBe(
+      'Your Codex login needs to be reconnected — reconnect the account in Settings, then resume.',
+    );
+  });
 });

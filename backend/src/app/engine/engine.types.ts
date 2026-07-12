@@ -870,6 +870,8 @@ export class EngineAuthError extends Error {
     message: string,
     /** The engine session to resume on a re-ping (undefined if the 401 hit before a session started). */
     readonly sessionId?: string,
+    /** Which engine's credential failed — so the operator halt copy names the RIGHT integration (Claude vs Codex). */
+    readonly engine?: SessionEngine,
   ) {
     super(message);
     this.name = 'EngineAuthError';
@@ -948,10 +950,13 @@ export function isAuthErrorMessage(message: string): boolean {
 /** Sentinel prefix a no-credential auth halt carries so the operator copy can be specific. */
 export const NO_ENGINE_CREDENTIAL_MARKER = 'NO_ENGINE_CREDENTIAL';
 
-/** Map a raw EngineAuthError message to clean, actionable operator copy — never leak SDK/CLI text. */
-export function cleanAuthHaltReason(rawMessage: string): string {
+/** Map a raw EngineAuthError message to clean, actionable operator copy — never leak SDK/CLI text. The
+ *  `engine` names the failing integration so the copy points at the RIGHT account (Claude vs Codex);
+ *  when unknown, the message itself is inspected and Claude is the safe default. */
+export function cleanAuthHaltReason(rawMessage: string, engine?: SessionEngine): string {
+  const label = (engine ?? (/\bcodex\b/i.test(rawMessage) ? 'codex' : 'claude')) === 'codex' ? 'Codex' : 'Claude';
   if (rawMessage.includes(NO_ENGINE_CREDENTIAL_MARKER)) {
-    return 'No Claude account is connected for this org — connect one in Settings, then resume.';
+    return `No ${label} account is connected for this org — connect one in Settings, then resume.`;
   }
-  return 'Your Claude login needs to be reconnected — reconnect the account in Settings, then resume.';
+  return `Your ${label} login needs to be reconnected — reconnect the account in Settings, then resume.`;
 }

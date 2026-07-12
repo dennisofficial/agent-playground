@@ -276,12 +276,19 @@ async function runOverRedis(turnId: string): Promise<void> {
     );
     await xadd(eventsKey, { t: 'final', r: result });
   } catch (err) {
-    const e = err as { isAuthError?: boolean; sessionId?: string; stack?: string; message?: string };
+    const e = err as {
+      isAuthError?: boolean;
+      sessionId?: string;
+      engine?: string;
+      stack?: string;
+      message?: string;
+    };
     await xadd(eventsKey, {
       t: 'error',
       message: err instanceof Error ? (err.stack ?? err.message) : String(err),
       ...(e?.isAuthError ? { auth: true } : {}),
       ...(typeof e?.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+      ...(typeof e?.engine === 'string' ? { engine: e.engine } : {}),
     }).catch(() => undefined);
     process.exitCode = 1;
   } finally {
