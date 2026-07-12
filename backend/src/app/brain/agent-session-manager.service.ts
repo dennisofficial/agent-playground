@@ -3466,8 +3466,10 @@ export class AgentSessionManager
       },
 
       dispatch_build: async (_args) => {
-        // GATED tool — only dispatches an already-approved (status=running) job. Resolve the job by id
-        // (NOT openJobOnThread, which is planning-only) and let the running-status check gate it.
+        // GATED tool — only starts an already-approved (status=running) job, AFTER the base-check judged the
+        // plan still valid. Resolve the job by id (NOT openJobOnThread, which is planning-only) and let the
+        // running-status check gate it; idempotent (a re-fire lands on the same 'running' job harmlessly, and
+        // the dispatcher/runDirectBuild it calls are themselves the SOLE start of the build).
         const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
         if (!job) {
           return {
@@ -3481,13 +3483,56 @@ export class AgentSessionManager
             reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
           };
         }
-        await this.dispatcher.dispatch(job);
-        // MILESTONE COMPACTION: the plan is now durable and the build runs in its own sessions, so the heavy
-        // planning transcript is redundant. Compact the brain session while the build proceeds so follow-ups
-        // start lean. Fire-and-forget onto the serialized queue — it runs AFTER this turn drains (never
-        // awaited here, which would deadlock on the queue).
+        // Branch on the committed build path (d16 — ONE tool, not a separate "proceed to implement" for
+        // direct builds): 'direct' runs the in-session implement turn (fire-and-forget — it streams in this
+        // same brain session, so it must not be awaited here); 'plan' dispatches the full build pipeline.
+        if (job.buildPath === 'direct') {
+          void this.runDirectBuild(stimulus, job);
+        } else {
+          await this.dispatcher.dispatch(job);
+        }
+        // MILESTONE COMPACTION: the plan is now durable and the build runs on its own (either the driver's
+        // own sessions, or this session's in-flight direct implement) — the heavy planning transcript is
+        // redundant. Compact the brain session while the build proceeds so follow-ups start lean.
+        // Fire-and-forget onto the serialized queue — it runs AFTER this turn drains (never awaited here,
+        // which would deadlock on the queue).
         void this.enqueueCompaction(stimulus);
-        return { ok: true, jobId: job.id, message: 'Build dispatched.' };
+        return { ok: true, jobId: job.id, message: 'Build started.' };
+      },
+
+      hold_build: async (args) => {
+        // GATED tool, the mirror of dispatch_build for the OTHER base-check outcome: the rebased base made
+        // the plan redundant or requires revision. Gated on the DURABLE "build not started" predicate, never
+        // on `activity` — the base-check seed runs on the normal turn path, which sets activity='turn' for
+        // its duration, so by the time Atlas calls this the activity is already 'turn', never 'base_check'.
+        const reason = String(args['reason'] ?? '').trim();
+        const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+        if (!job) return { ok: false, reason: 'No job on this thread.' };
+        if (job.status !== 'running' || job.halt != null) {
+          return {
+            ok: false,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ' and halted' : ''} — hold_build only applies to a running, un-halted job in the pre-start base-check window.`,
+          };
+        }
+        if (!(await this.store.buildNotStarted(job.id))) {
+          return {
+            ok: false,
+            reason: 'The build has already started — too late to hold. Use the normal build controls.',
+          };
+        }
+        await this.store.reopenPlanning(job.id);
+        await this.recordMilestone(
+          stimulus.jobId,
+          `hold:${job.decisionRecordId ?? job.id}`,
+          `Build held after the base-check — back to planning${reason ? `: ${reason}` : '.'}`,
+        );
+        return {
+          ok: true,
+          jobId: job.id,
+          status: 'planning',
+          message:
+            'Build held — back to planning. Revise the plan against the new base and re-propose (propose_plan), or confirm with the operator.',
+        };
       },
 
       retry_thread: async (args) => {
@@ -5834,8 +5879,10 @@ export class AgentSessionManager
   /**
    * Apply a ruled approval verdict — the durable effect, shared by the live in-session await
    * ({@link requestApprovalAndAct}) and the restart-safe fallback ({@link resolveApprovalDurably}).
-   * `approve` → flip the decision record + thread to `running` then dispatch (full plan) or implement
-   * directly (`isDirect`); `request_changes` → back to planning; `deny` → cancel.
+   * `approve` → flip the decision record + thread to `running`, commit the build path (`isDirect`), then
+   * fire the `plan-approved` JIT rule to rebase-check the base branch BEFORE the build starts (the seed
+   * itself calls `dispatch_build`/`hold_build` once Atlas judges the plan); `request_changes` → back to
+   * planning; `deny` → cancel.
    */
   private async actOnApprovalVerdict(
     stimulus: ChatStimulus,
@@ -5862,38 +5909,28 @@ export class AgentSessionManager
         );
         return;
       }
-      if (isDirect) {
-        // FAST PATH: the brain implements it ITSELF in an autonomous in-sandbox turn (no driver).
-        await this.saySystemNotice(stimulus, 'Approved — implementing the change directly.');
-        // Passive milestone (drained into the NEXT operator turn — the synthetic direct-build turn skips
-        // the drain). Recorded AFTER the durable `approve`.
-        await this.recordMilestone(
-          stimulus.jobId,
-          `approved:${decisionRecordId}`,
-          'Your direct-build plan was approved; I am implementing it directly now.',
-        );
-        void this.runDirectBuild(stimulus, running);
-      } else {
-        await this.dispatcher.dispatch(running);
-        await this.saySystemNotice(stimulus, 'Plan approved — dispatching the build.');
-        // Passive milestones — recorded AFTER the durable `approve` + `dispatch`.
-        await this.recordMilestone(
-          stimulus.jobId,
-          `approved:${decisionRecordId}`,
-          'Your plan was approved by the operator.',
-        );
-        await this.recordMilestone(
-          stimulus.jobId,
-          `dispatched:${decisionRecordId}`,
-          'The build pipeline has started running the approved plan.',
-        );
-        // MILESTONE COMPACTION: the plan is durable and the FULL build now runs in its own driver
-        // sessions — the heavy planning transcript is redundant. Compact the brain session while the build
-        // proceeds so follow-ups start lean. This (operator-approval → dispatch) is the primary trigger;
-        // the `dispatch_build` tool carries an idempotent second one. NOT on the direct-build branch above —
-        // that path implements in THIS same session, so compacting it would abandon live work.
-        void this.enqueueCompaction(stimulus);
-      }
+      // Approval no longer dispatches/implements immediately (Thread 6): the plan-approved JIT rule seeds
+      // Atlas to rebase-check the base branch (always auto-resolving git conflicts inline) and judge PLAN
+      // VALIDITY before it calls `dispatch_build` (valid) or `hold_build` (redundant/needs-revision). This
+      // is the SAME seed for both build paths — only `dispatch_build`'s internal branch differs.
+      await this.store.setActivity(stimulus.jobId, 'base_check').catch(() => undefined);
+      // Passive milestone — the plan WAS approved (drained into the NEXT operator turn). Recorded AFTER the
+      // durable `approve`. The former `dispatched:` milestone is dropped — it now fires when the build
+      // actually starts (inside `dispatch_build`), not at approval.
+      await this.recordMilestone(
+        stimulus.jobId,
+        `approved:${decisionRecordId}`,
+        'Your plan was approved by the operator.',
+      );
+      await this.saySystemNotice(stimulus, 'Approved — checking the base branch before starting…');
+      this.jit?.fireLifecycle('plan-approved', {
+        repoId: running.repoId,
+        jobId: running.id,
+        orgId: running.orgId,
+        buildPath: isDirect ? 'direct' : 'plan',
+        baseBranch: running.baseBranch ?? undefined,
+        decisionRecordId: recId,
+      });
       return;
     }
 

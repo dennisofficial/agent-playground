@@ -1538,6 +1538,7 @@ function toJob(row: JobEntity): Job {
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as Job['kind'],
+    buildPath: row.build_path,
     status: row.status as JobStatus,
     activity: row.activity,
     halt: row.halt ?? null,

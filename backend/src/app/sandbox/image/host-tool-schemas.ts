@@ -109,6 +109,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   get_pipeline_state: {},
   get_decision_record: {},
   dispatch_build: {},
+  hold_build: { reason: z.string() },
   finalize_build: {},
   list_mcp_servers: {},
   list_skills: {},
@@ -406,7 +407,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state: 'Read the current pipeline state (threads, decisions, plan) for this job.',
   get_decision_record: 'Read the full decision record for this job.',
-  dispatch_build: 'Dispatch the approved plan to the build phase.',
+  dispatch_build:
+    'Start the approved build after the base-check (branches internally: full plan → build pipeline, direct → in-session implement).',
+  hold_build:
+    'Hold the approved build and return to planning when the rebased base makes the plan redundant or requires revision (reason surfaced to the operator).',
   finalize_build: 'Finalize the build once every thread is complete and verified.',
   list_mcp_servers: 'List the MCP servers configured for this org/repo.',
   list_skills: 'List the skills available to this workspace.',

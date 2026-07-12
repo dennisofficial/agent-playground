@@ -15,6 +15,7 @@ import { PREVIEW_PREP_SEED_BODY } from '../system/fragments';
 import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
+import { planApprovedRule } from './plan-approved';
 import { type JitRule, validateJitRules } from './rule';
 
 /** Was `DEFAULT_SVC_NUDGE_DELTA_TOKENS` (env `SVC_NUDGE_DELTA_TOKENS`). */
@@ -107,6 +108,7 @@ export const JIT_RULES: JitRule[] = [
   legRotationRule,
   bgTaskCapRule,
   previewPrepRule,
+  planApprovedRule,
   memoryPrependRule,
 ];
 

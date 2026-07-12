@@ -18,6 +18,12 @@ export type JitLifecycleFireCtx = {
    * bound `CHAT_SURFACE` can differ (e.g. the in-process agent surface in tests/tooling).
    */
   surface?: ChatSurface;
+  /** The committed build path (lifecycle:plan-approved) — which branch `dispatch_build` will take. */
+  buildPath?: 'direct' | 'plan';
+  /** The base branch to rebase-check against (lifecycle:plan-approved). */
+  baseBranch?: string;
+  /** The approved decision record id (lifecycle:plan-approved) — seeds the once-per-approval dedup key. */
+  decisionRecordId?: string;
 };
 
 /**
@@ -39,7 +45,12 @@ export class JitHostExecutor {
   fireLifecycle(event: JitLifecycleEvent, ctx: JitLifecycleFireCtx): string {
     const rule = findLifecycleRule(event);
     if (!rule || rule.delivery !== 'host-seed-notice' || !rule.seed) return '';
-    const fireCtx: JitFireCtx = { jobId: ctx.jobId };
+    const fireCtx: JitFireCtx = {
+      jobId: ctx.jobId,
+      ...(ctx.buildPath !== undefined ? { buildPath: ctx.buildPath } : {}),
+      ...(ctx.baseBranch !== undefined ? { baseBranch: ctx.baseBranch } : {}),
+      ...(ctx.decisionRecordId !== undefined ? { decisionRecordId: ctx.decisionRecordId } : {}),
+    };
     const body = rule.render(fireCtx);
     const surface = ctx.surface ?? this.surface;
     return (

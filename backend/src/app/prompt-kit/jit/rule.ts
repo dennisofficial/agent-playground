@@ -60,6 +60,12 @@ export type JitFireCtx = {
    * dependent follow-up job.
    */
   prependText?: string;
+  /** The committed build path (lifecycle:plan-approved) — which branch `dispatch_build` will take. */
+  buildPath?: 'direct' | 'plan';
+  /** The base branch to rebase-check against (lifecycle:plan-approved); null/absent → "the base branch". */
+  baseBranch?: string;
+  /** The approved decision record id (lifecycle:plan-approved) — seeds the once-per-approval dedup key. */
+  decisionRecordId?: string;
 };
 
 /**

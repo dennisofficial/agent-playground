@@ -737,6 +737,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     title: 'Add widgets',
     baseBranch: null,
     kind: 'feature',
+    buildPath: 'plan',
     status: 'running',
     activity: 'build',
     halt: null,

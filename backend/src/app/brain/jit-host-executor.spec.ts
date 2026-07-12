@@ -2,6 +2,7 @@ import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
 import type { ChatSurface, InboundChatMessage } from '../surface/chat-surface.port';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
+import { renderPlanApprovedSeed } from '../prompt-kit/jit';
 import { JitHostExecutor } from './jit-host-executor';
 
 /** Captures the exact args a `seedSystemNotification` call receives — the parity proof. */
@@ -50,12 +51,29 @@ describe('JitHostExecutor', () => {
     expect(executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J' })).toBe('');
   });
 
-  it('returns "" for a lifecycle event with no matching enabled rule', () => {
+  it('fires the plan-approved rule, threading buildPath/baseBranch/decisionRecordId through to render + chunkKey', () => {
     const surface = new FakeSurface();
     const executor = new JitHostExecutor(surface);
 
-    expect(executor.fireLifecycle('plan-approved', { repoId: 'R', jobId: 'J' })).toBe('');
-    expect(surface.calls).toHaveLength(0);
+    const ts = executor.fireLifecycle('plan-approved', {
+      repoId: 'R',
+      jobId: 'J',
+      orgId: 'O',
+      buildPath: 'plan',
+      baseBranch: 'main',
+      decisionRecordId: 'dr-1',
+    });
+
+    expect(ts).toBe('seeded-ts');
+    expect(surface.calls).toHaveLength(1);
+    const [channel, jobId, body, opts] = surface.calls[0];
+    expect(channel).toBe('R');
+    expect(jobId).toBe('J');
+    expect(body).toBe(renderPlanApprovedSeed({ jobId: 'J', buildPath: 'plan', baseBranch: 'main', decisionRecordId: 'dr-1' }));
+    expect(opts?.seedRow).toEqual({
+      label: 'Plan approved — checking the base branch before starting',
+      chunkKey: 'seed:plan-approved:dr-1',
+    });
   });
 
   it('seeds onto ctx.surface instead of the ambiently-injected one, when given', () => {

@@ -44,6 +44,7 @@ import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
+import type { JitHostExecutor } from './jit-host-executor';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
@@ -234,6 +235,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     dispatch: vi.fn(),
     redriveThread: vi.fn(), // ADR 0004 Phase 3 — the brain's autonomous re-drive (retry_thread → this)
   } as unknown as JobDispatcher;
+
+  // Thread 6 — the host-side JIT executor: approval now fires 'plan-approved' through this instead of
+  // dispatching/implementing directly.
+  const mockJit = {
+    fireLifecycle: vi.fn(),
+    collectOperatorPrepends: vi.fn().mockReturnValue([]),
+  } as unknown as JitHostExecutor;
 
   const mockSurface = {
     post: vi.fn(),
@@ -447,6 +455,19 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      undefined, // usageProjector
+      undefined, // env
+      undefined, // conventions
+      undefined, // workspaceProfile
+      undefined, // skills
+      undefined, // skillStore
+      undefined, // skillFiles
+      undefined, // skillInstaller
+      undefined, // mcpStore
+      undefined, // scheduler
+      undefined, // brainGateway
+      undefined, // reattachRegistry
+      mockJit, // jit
     );
   });
 
@@ -1833,8 +1854,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: false, knownIds: ['d1'] });
   });
 
-  it('(d) approve buffers PASSIVE "approved" + "dispatched" milestones (no brain turn) after the durable approve/dispatch', async () => {
-    const runningJob = { id: FAKE_JOB_ID, kind: 'feature', title: 'rate limiting' };
+  it('(d) approve does NOT dispatch/implement synchronously — it fires the plan-approved JIT rule and buffers only the PASSIVE "approved" milestone (Thread 6)', async () => {
+    const runningJob = { id: FAKE_JOB_ID, orgId: TEAM_ID, repoId: PROJECT_ID, baseBranch: 'main', kind: 'feature', title: 'rate limiting' };
     (mockStore.approve as ReturnType<typeof vi.fn>).mockResolvedValue(runningJob);
     (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
     (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -1849,20 +1870,29 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { jobId: FAKE_JOB_ID, decisionRecordId: FAKE_RECORD_ID, title: 'rate limiting', summary: 'x', decisions: [], threads: [] } as never,
     );
 
-    // The build was dispatched (the durable action) — and the milestones were buffered AFTER it, not pushed.
-    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
+    // NEITHER dispatcher.dispatch NOR runDirectBuild fires on approval — only the plan-approved JIT rule does.
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(mockJit.fireLifecycle as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('plan-approved', {
+      repoId: PROJECT_ID,
+      jobId: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      buildPath: 'plan',
+      baseBranch: 'main',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
     const markerIds = (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mock.calls.map(
       (c) => (c[1] as { id: string }).id,
     );
     expect(markerIds).toContain(`approved:${FAKE_RECORD_ID}`);
-    expect(markerIds).toContain(`dispatched:${FAKE_RECORD_ID}`);
+    expect(markerIds).not.toContain(`dispatched:${FAKE_RECORD_ID}`);
   });
 
-  it('(d2) resolveApprovalDurably: restart-safe approve (no live handle) dispatches the full build from durable state', async () => {
+  it('(d2) resolveApprovalDurably: restart-safe approve (no live handle) fires the plan-approved JIT rule from durable state, NOT an immediate dispatch', async () => {
     const awaitingJob = {
       id: FAKE_JOB_ID,
       orgId: TEAM_ID,
       repoId: PROJECT_ID,
+      baseBranch: 'main',
       status: 'awaiting_approval',
       decisionRecordId: FAKE_RECORD_ID,
       kind: 'feature',
@@ -1882,7 +1912,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     expect(acted).toBe(true);
     expect(mockStore.approve).toHaveBeenCalledWith(FAKE_JOB_ID, FAKE_RECORD_ID, 'U-OP', 'plan');
-    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(runningJob);
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(mockJit.fireLifecycle as ReturnType<typeof vi.fn>).toHaveBeenCalledWith('plan-approved', {
+      repoId: PROJECT_ID,
+      jobId: FAKE_JOB_ID,
+      orgId: TEAM_ID,
+      buildPath: 'plan',
+      baseBranch: 'main',
+      decisionRecordId: FAKE_RECORD_ID,
+    });
   });
 
   it('(d3) resolveApprovalDurably: no-op (returns false) when the job is no longer awaiting_approval', async () => {
@@ -1983,18 +2021,36 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       vi.spyOn(manager as unknown as { runDirectBuild(s: unknown, j: unknown): Promise<void> }, 'runDirectBuild').mockResolvedValue(undefined);
     };
 
-    it('plan-approve → "Plan approved — dispatching the build." (System notice, not Atlas)', async () => {
-      setup(['Backend']); // non-empty ⇒ full plan ⇒ dispatch (not direct)
+    it('plan-approve → "Approved — checking the base branch before starting…" (System notice, not Atlas); fires plan-approved, not dispatch', async () => {
+      setup(['Backend']); // non-empty ⇒ full plan
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
-      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Plan approved — dispatching the build.');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'Approved — checking the base branch before starting…',
+      );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+      expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+      expect(mockJit.fireLifecycle as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        'plan-approved',
+        expect.objectContaining({ jobId: FAKE_JOB_ID, buildPath: 'plan' }),
+      );
     });
 
-    it('direct-approve → "Approved — implementing the change directly." (System notice, not Atlas)', async () => {
+    it('direct-approve → same "Approved — checking the base branch before starting…" notice (System notice, not Atlas); fires plan-approved, not runDirectBuild', async () => {
       setup([]); // empty threadTitles ⇒ direct build
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
-      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(FAKE_JOB_ID, 'Approved — implementing the change directly.');
+      expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
+        FAKE_JOB_ID,
+        'Approved — checking the base branch before starting…',
+      );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
+      expect(
+        (manager as unknown as { runDirectBuild: ReturnType<typeof vi.fn> }).runDirectBuild,
+      ).not.toHaveBeenCalled();
+      expect(mockJit.fireLifecycle as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+        'plan-approved',
+        expect.objectContaining({ jobId: FAKE_JOB_ID, buildPath: 'direct' }),
+      );
     });
 
     it('request_changes (no note) → System notice ack, reopens planning, not Atlas', async () => {

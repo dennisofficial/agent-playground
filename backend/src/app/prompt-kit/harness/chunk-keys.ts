@@ -45,6 +45,11 @@ function preview(jobId: string): string {
   return `seed:preview:${jobId}`;
 }
 
+/** The once-per-approval plan-approved base-check seed, keyed by decision record id. */
+function planApproved(decisionRecordId: string): string {
+  return `seed:plan-approved:${decisionRecordId}`;
+}
+
 /** An MCP server-approval request. */
 function mcpApprove(jobId: string, requestId: string): string {
   return `seed:mcp-approve:${jobId}:${requestId}`;
@@ -103,6 +108,7 @@ export const chunkKey = {
   qa,
   retry,
   preview,
+  planApproved,
   mcpApprove,
   mcpRemove,
   convApprove,

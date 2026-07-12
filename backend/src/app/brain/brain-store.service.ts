@@ -22,7 +22,7 @@ import { renderPlan } from '../prompt-kit/messages/render-plan';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
-import { coerceThreadType } from '../thread-kind';
+import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
 import {
   CodexReviewEntity,
   DecisionRecordEntity,
@@ -1766,6 +1766,25 @@ export class BrainStoreService {
     await this.jobs.update({ id: jobId }, { status: 'planning' });
   }
 
+  /**
+   * The DURABLE "the approved build has NOT started yet" predicate for the pre-start base-check window
+   * (post plan-approval, pre `dispatch_build`). Computed from EXISTING rows — no schema change. Gate
+   * `hold_build` (and any restart-recovery awareness) on THIS, never on `activity`: the base-check seed is
+   * delivered on the normal brain-turn path, which sets `activity='turn'` for the duration of the turn, so
+   * by the time Atlas calls a tool the activity is already `'turn'`, never `'base_check'`.
+   */
+  async buildNotStarted(jobId: string): Promise<boolean> {
+    const row = await this.jobs.findOne({ where: { id: jobId } });
+    if (!row) return false;
+    if (row.build_path === 'direct') {
+      return row.direct_build_verification == null;
+    }
+    const threads = await this.threads.find({ where: { job_id: jobId } });
+    return threads
+      .filter((t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind))
+      .every((t) => t.status === 'pending');
+  }
+
   /** Cancel a thread's build (a denied plan). */
   async cancel(jobId: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { status: 'cancelled' });
@@ -1844,6 +1863,7 @@ function toThread(row: JobEntity): Job {
     title: row.title,
     baseBranch: row.base_branch,
     kind: row.kind as JobKind | null,
+    buildPath: row.build_path,
     status: row.status as Job['status'],
     activity: row.activity,
     halt: row.halt ?? null,
