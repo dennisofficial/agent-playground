@@ -88,8 +88,19 @@ const JOBS: SeedJob[] = [
     id: BLOCKED,
     title: 'Wire feature flags into auth middleware',
     status: 'blocked',
-    blockedSeedMessage:
+    // Deliberately long, multi-paragraph so the blocked banner's "when this unblocks" preview overflows —
+    // this is the scenario that must scroll on mobile rather than clip (see mobile-scroll-fixes.spec.ts).
+    blockedSeedMessage: [
       'Add per-flag gating to the shared auth middleware once it is extracted, so flags can toggle auth behavior per request.',
+      '',
+      'GOAL — thread the feature-flag evaluator through the shared auth middleware so a request can be allowed, denied, or shadow-logged based on the flags resolved for the authenticated principal. This must run AFTER the middleware has resolved identity but BEFORE any route handler executes, so a denied flag short-circuits with a 403 and never reaches domain code.',
+      '',
+      'WHY — flag decisions are currently duplicated in three call sites and drift apart; centralizing them in the middleware makes the policy one source of truth and lets us roll out auth changes behind a flag without touching every route.',
+      '',
+      'SCOPE — (1) inject the flag evaluator into the middleware; (2) resolve the principal→flags set once per request and stash it on the request context; (3) add per-flag gating hooks that routes can opt into declaratively; (4) emit a shadow-log line when a flag WOULD have changed the outcome, so we can measure impact before enforcing. Out of scope: the flag admin UI and the storage backend, which land in follow-up jobs.',
+      '',
+      'CONSTRAINTS — zero added latency on the hot path when no flags apply; the evaluator must be memoized per request; and the middleware must fail OPEN for read-only routes but fail CLOSED for mutations if the evaluator is unavailable.',
+    ].join('\n'),
   },
 ];
 

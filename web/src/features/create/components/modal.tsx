@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { useBreakpoint } from "@/lib/use-breakpoint";
+import { cn } from "@/lib/cn";
 
 /**
  * Modal shell for the intercepted `/new` route. Closes via backdrop click, the ✕, or Escape — all
@@ -18,6 +20,7 @@ export function Modal({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const { isMobile } = useBreakpoint();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -29,7 +32,10 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-start justify-center px-4 pt-[10vh]"
+      className={cn(
+        "fixed inset-0 z-[90] flex",
+        isMobile ? "" : "items-start justify-center px-4 pt-[10vh]",
+      )}
       onMouseDown={() => router.back()}
     >
       <div
@@ -37,13 +43,18 @@ export function Modal({
         style={{ background: "rgba(0,0,0,0.4)" }}
       />
       <div
-        className="anim-pop relative w-full max-w-lg overflow-hidden rounded-lg border border-border bg-panel"
+        className={cn(
+          "anim-pop relative flex min-h-0 flex-col overflow-hidden border-border bg-panel",
+          isMobile
+            ? "h-full w-full"
+            : "max-h-[80vh] w-full max-w-lg rounded-lg border",
+        )}
         style={{ boxShadow: "var(--shadow-palette)" }}
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal
       >
-        <div className="flex items-start justify-between border-b border-border px-5 py-4">
+        <div className="flex flex-none items-start justify-between border-b border-border px-5 py-4">
           <div>
             <h2 className="font-disp text-[16px] font-semibold text-text">
               {title}
@@ -61,7 +72,7 @@ export function Modal({
             <X size={16} />
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
       </div>
     </div>
   );
