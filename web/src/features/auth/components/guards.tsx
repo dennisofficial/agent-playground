@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ServerUnreachable } from "@/components/error/server-unreachable";
 import { auth, type AuthState } from "@/lib/auth";
 import { ROUTES, safeNext } from "@/lib/routes";
@@ -37,6 +37,7 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [state, setState] = useState<AuthState | null>(null);
+  const renderedAuthenticatedApp = useRef(false);
 
   useEffect(() => auth.onAuthStateChanged(setState), []);
 
@@ -49,8 +50,10 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
   }, [state, router, pathname]);
 
   if (state === null) return <FullScreenMessage>Loading…</FullScreenMessage>;
-  if (state.backendUnreachable) return <ServerUnreachable />;
+  if (state.backendUnreachable && !renderedAuthenticatedApp.current)
+    return <ServerUnreachable />;
   if (!state.authenticated) return null; // redirecting
+  renderedAuthenticatedApp.current = true;
   return <>{children}</>;
 }
 
@@ -58,6 +61,7 @@ export function PrivateGuard({ children }: { children: ReactNode }) {
 export function PublicGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<AuthState | null>(null);
+  const renderedPublicApp = useRef(false);
 
   useEffect(() => auth.onAuthStateChanged(setState), []);
 
@@ -72,7 +76,9 @@ export function PublicGuard({ children }: { children: ReactNode }) {
   }, [state, router]);
 
   if (state === null) return <FullScreenMessage>Loading…</FullScreenMessage>;
-  if (state.backendUnreachable) return <ServerUnreachable />;
+  if (state.backendUnreachable && !renderedPublicApp.current)
+    return <ServerUnreachable />;
   if (state.authenticated) return null; // redirecting
+  renderedPublicApp.current = true;
   return <>{children}</>;
 }

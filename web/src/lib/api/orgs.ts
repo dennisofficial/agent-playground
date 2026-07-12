@@ -66,6 +66,10 @@ export interface CredentialPresence {
   engineAuthSet: boolean;
   /** An optional Codex coding-engine subscription is set. */
   hasCodex: boolean;
+  /** The org has connected the Atlas GitHub App (a non-null installation id). */
+  hasGithubApp: boolean;
+  /** Which GitHub credential resolves for this org: `pat` (default) or `app`. */
+  githubAuthMode: "pat" | "app";
   llmValidated: boolean;
 }
 
@@ -75,6 +79,88 @@ export function useOrgCredentials(orgId: string) {
     queryFn: () => webJson<CredentialPresence>(`/orgs/${orgId}/credentials`),
     enabled: Boolean(orgId),
     staleTime: 15_000,
+  });
+}
+
+// ── GitHub App (connect the platform Atlas App as an alternative to the per-org PAT) ────────────────
+// One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
+// plus a `githubAuthMode` (pat|app). The App's installation token has its OWN rate-limit pool, sidestepping
+// a human's personal 5,000/hr budget. `configured` reflects whether the platform App env is set server-side;
+// when false the connect affordance hides. Connecting is a redirect flow: `install-url` mints a nonce-backed
+// GitHub install URL, the owner installs, and GitHub redirects back to the settings page (`?githubApp=…`).
+// Every write is owner-only server-side; `status` is member-readable (no secrets).
+
+/** Connect state for the settings card (`GET …/github-app/status`) — never any secret value. */
+export interface GithubAppStatus {
+  /** The platform Atlas App env is configured server-side (app id + key). When false, hide Connect. */
+  configured: boolean;
+  /** This org has a connected installation. */
+  connected: boolean;
+  /** The org's active GitHub credential. */
+  mode: "pat" | "app";
+  /** The connected installation id (plaintext, non-secret); null when not connected. */
+  installationId: string | null;
+  /** The installation's GitHub account login (display) — null when not connected. */
+  account: string | null;
+}
+
+export function useGithubAppStatus(orgId: string) {
+  return useQuery({
+    queryKey: qk.orgGithubAppStatus(orgId),
+    queryFn: () => webJson<GithubAppStatus>(`/orgs/${orgId}/github-app/status`),
+    enabled: Boolean(orgId),
+    staleTime: 15_000,
+  });
+}
+
+/**
+ * Owner-only: mint the org's single-use GitHub App install URL. Does not persist anything — the install
+ * lands on GitHub's redirect back to the settings page, which the backend callback verifies + stores.
+ */
+export function useGithubAppInstallUrl(orgId: string) {
+  return useMutation({
+    mutationFn: () =>
+      webJson<{ url: string }>(`/orgs/${orgId}/github-app/install-url`, {
+        method: "POST",
+      }),
+  });
+}
+
+/**
+ * Owner-only: switch the resolved GitHub credential between `pat` and `app`. `app` requires a connected
+ * installation server-side. Invalidates presence + status (the mode drives which credential authenticates)
+ * and the session (mode can flip the onboarding checklist).
+ */
+export function useSetGithubAuthMode(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (mode: "pat" | "app") =>
+      webJson<{ ok: true; mode: "pat" | "app" }>(`/orgs/${orgId}/github-app/mode`, {
+        method: "PUT",
+        body: JSON.stringify({ mode }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
+  });
+}
+
+/**
+ * Owner-only: disconnect the App — clears the installation and falls back to `pat` mode. Invalidates
+ * presence + status + session (the org may fall back onto its PAT, or lose GitHub access if it had none).
+ */
+export function useDisconnectGithubApp(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      webJson<{ ok: true }>(`/orgs/${orgId}/github-app`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
+      void qc.invalidateQueries({ queryKey: qk.session() });
+    },
   });
 }
 

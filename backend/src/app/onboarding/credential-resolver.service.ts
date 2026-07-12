@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { GitHubAppTokenService } from '../git/github-app-token.service';
 import type { EngineAuth } from '../engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { TenantCredentialStore } from './tenant-credential.store';
@@ -14,9 +15,12 @@ import { TenantCredentialStore } from './tenant-credential.store';
  */
 @Injectable()
 export class CredentialResolver {
+  private readonly logger = new Logger(CredentialResolver.name);
+
   constructor(
     private readonly store: TenantCredentialStore,
     private readonly claudeStore: ClaudeCredentialStore,
+    private readonly appTokens: GitHubAppTokenService,
   ) {}
 
   /** Anthropic key for LLM calls — the org's stored key, or undefined. */
@@ -31,10 +35,53 @@ export class CredentialResolver {
     return (await this.store.read(orgId))?.openaiApiKey;
   }
 
-  /** GitHub token for clone/push/PR — the org's stored PAT, or undefined. */
+  /** The org's GitHub auth mode ('pat' default). Drives whether in-sandbox git uses the file-backed credential helper (app) or a static extraheader (pat). */
+  async githubAuthMode(orgId?: string): Promise<'pat' | 'app'> {
+    if (!orgId) return 'pat';
+    return (await this.store.read(orgId))?.githubAuthMode ?? 'pat';
+  }
+
+  /** GitHub token for clone/push/PR: an installation token for app-mode orgs, else the org PAT, else undefined. NEVER throws — a mint blip yields undefined (same as an absent PAT). */
   async githubToken(orgId?: string): Promise<string | undefined> {
     if (!orgId) return undefined;
-    return (await this.store.read(orgId))?.githubPat;
+    const creds = await this.store.read(orgId);
+    if (!creds) return undefined;
+    if (creds.githubAuthMode === 'app') {
+      if (!creds.githubAppInstallationId) {
+        this.logger.warn(
+          `org ${orgId} is app-mode but has no installation id — falling back to PAT`,
+        );
+        return creds.githubPat;
+      }
+      try {
+        return await this.appTokens.getInstallationToken(
+          creds.githubAppInstallationId,
+        );
+      } catch (e) {
+        this.logger.error(
+          `installation-token mint failed for org ${orgId}: ${(e as Error).message}`,
+        );
+        return undefined;
+      }
+    }
+    return creds.githubPat;
+  }
+
+  /** Commit identity for app-mode orgs (the App's bot, since an installation token is not a user); undefined for pat-mode (callers fall back to GitIdentityService.resolve(token)). Best-effort — never throws. */
+  async githubCommitIdentity(
+    orgId?: string,
+  ): Promise<{ name: string; email: string } | undefined> {
+    if (!orgId) return undefined;
+    const creds = await this.store.read(orgId);
+    if (creds?.githubAuthMode !== 'app') return undefined;
+    try {
+      return await this.appTokens.appBotIdentity();
+    } catch (e) {
+      this.logger.warn(
+        `app bot identity resolve failed for org ${orgId}: ${(e as Error).message}`,
+      );
+      return undefined;
+    }
   }
 
   /**

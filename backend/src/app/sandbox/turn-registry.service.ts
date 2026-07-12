@@ -137,11 +137,22 @@ export class TurnRegistry {
     await this.turns.update({ status: 'running' }, { last_heartbeat_at: at });
   }
 
-  /** Mark a turn terminal and drop it from the live set (the durable transcript lives in `messages`). */
-  async finalize(turnId: string, status: 'done' | 'failed'): Promise<void> {
+  /**
+   * Mark a turn terminal and drop it from the live set (the durable transcript lives in `messages`).
+   *
+   * Returns `true` iff THIS caller's DELETE actually removed the row. Postgres row-locks concurrent
+   * deletes, so when two attachers finish the same `turn_id` (two replicas mid rolling-deploy, or a
+   * same-process boot-sweep/watchdog race) exactly one gets `affected = 1` (the winner) and the other
+   * gets `affected = 0` (the loser). Callers use this as a single-winner claim: the winner persists the
+   * transcript + usage, the loser persists nothing. An UNREGISTERED turn (no row to race on) always sees
+   * `affected = 0` here yet is the sole finisher — `runAttached` maps that case to claimed via its
+   * `wasRegistered` guard, so this return is only the row-level truth.
+   */
+  async finalize(turnId: string, status: 'done' | 'failed'): Promise<boolean> {
     // Stamp the terminal status first (audit/observability), then remove the live row.
-    await this.turns.update({ turn_id: turnId }, { status });
-    await this.turns.delete({ turn_id: turnId });
+    await this.turns.update({ turn_id: turnId }, { status }); // audit status (best-effort)
+    const res = await this.turns.delete({ turn_id: turnId });
+    return (res.affected ?? 0) > 0; // true = THIS caller deleted the row (unregistered-turn caveat handled in runAttached)
   }
 
   /**

@@ -9,6 +9,7 @@ import { JobEntity } from './job.entity';
  */
 @Entity({ name: 'messages' })
 @Index(['job_id', 'created_at'])
+@Index('ux_messages_idem_key', ['idem_key'], { unique: true, where: `"idem_key" IS NOT NULL` })
 export class MessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -62,4 +63,13 @@ export class MessageEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   meta!: Record<string, unknown> | null;
+
+  /**
+   * Stable per-block identity `${turn_id}:${ordinal}` for idempotent (re)persist of a brain transcript
+   * block; null for rows written without a turn context (legacy rows, non-turn writers). Deduped by the
+   * partial unique index `ux_messages_idem_key` (WHERE idem_key IS NOT NULL) so two racing finishers of the
+   * same turn upsert into one row instead of duplicating.
+   */
+  @Column({ type: 'text', nullable: true })
+  idem_key!: string | null;
 }

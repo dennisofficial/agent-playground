@@ -190,6 +190,15 @@ export const CONTAINER_MCP_HUB_DIR = `${CONTAINER_AGENT_HOME}/mcp-hub`;
  */
 export const CONTAINER_MCP_HUB_CONFIG = `${CONTAINER_AGENT_HOME}/mcp-hub.json`;
 
+/**
+ * The in-sandbox path of the host-refreshed GitHub App installation-token file (App-mode orgs only). A git
+ * `credential.helper` (see {@link gitCredHelperEnv}) `cat`s this on every git op; a leader-gated host sweep
+ * rewrites it with the current cached token so a >1h build turn's push/fetch is always fresh. Under the
+ * durable {@link CONTAINER_AGENT_HOME} bind (host-writable, container-readable), same trust boundary as the
+ * MCP hub config. Host counterpart: `<hostHome>/github-token`.
+ */
+export const GITHUB_TOKEN_FILE = `${CONTAINER_AGENT_HOME}/github-token`;
+
 /** True if a mount `path` is an ABSOLUTE container path (an external mount) vs a worktree-relative one. */
 export function isExternalMountPath(path: string): boolean {
   return posix.isAbsolute(path);

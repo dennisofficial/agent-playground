@@ -41,7 +41,7 @@ import {
   type JobRef,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { WebAttachmentsCard, WebReviewCommentsCard } from "./types";
+import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
@@ -393,6 +393,21 @@ export function useRemoveJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** Removes EVERY current blocker edge in one go (the kebab "Unblock" and the conversation-pane blocked
+ *  overlay share this) — the backend has no batch endpoint, so it fires one `DELETE …/dependencies/:id`
+ *  per blocker. Once the last edge is gone the backend flips the job off `blocked` and wakes its brain. */
+export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      Promise.all(blockedBy.map((b) => removeJobDependency(ref, b.jobId))),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
