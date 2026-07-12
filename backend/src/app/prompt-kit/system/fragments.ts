@@ -508,13 +508,14 @@ const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
  *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
  *  stale one — the "stop re-discovering" memory loop (d4). */
 export function composePreviewPrepSeed(instructions: string | null): string {
-  const recipe = instructions?.trim() ? instructions.trim() : null;
-  const block = [
-    'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):',
-    '```md',
-    recipe ?? PREVIEW_RECIPE_NONE,
-    '```',
-  ].join('\n');
+  const recipe = instructions?.trim() ? instructions : null;
+  const recipeBody = recipe ?? PREVIEW_RECIPE_NONE;
+  const block =
+    'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):\n' +
+    '```md\n' +
+    recipeBody +
+    (recipeBody.endsWith('\n') ? '' : '\n') +
+    '```';
   const footer = recipe
     ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
       'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
