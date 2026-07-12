@@ -1,18 +1,30 @@
 /**
- * Regression test for the `run_in_background` Bash "the SDK kills the still-running shell" fix. A tool-native
- * background task closes the turn's FIRST `result` immediately (terminal_reason=completed), which — without
- * this fix — let the post-result grace close the streaming input and force the SDK to kill the live shell.
- * The engine now HOLDS the query() session open while any background task is in flight (gated on the
- * task_started/task_notification pair, NOT the result), so the task's completion AND the model's
- * auto-continuation arrive in the SAME turn. The hold is bounded by BG_TASK_MAX_HOLD_MS; on the cap the agent
- * is steered with BG_TASK_CAP_NOTICE and given BG_TASK_CAP_ACK_GRACE_MS to ack before an unconditional close.
+ * Regression test for the `run_in_background` Bash "the SDK kills the still-running shell" fix, and for the
+ * follow-up decision (d3) that made the hold cap purely ADVISORY. A tool-native background task closes the
+ * turn's FIRST `result` immediately (terminal_reason=completed), which — without the hold — would let the
+ * post-result grace close the streaming input and force the SDK to kill the live shell. The engine instead
+ * HOLDS the query() session open while any background task is in flight (gated on the task_started/
+ * task_notification pair, NOT the result), so the task's completion AND the model's auto-continuation arrive
+ * in the SAME turn.
  *
- * These three tests drive a fake SDK whose generator scripts the exact system/assistant/result frames and
- * whose single drain loop records both engine-injected steers (`pushed`) and whether `input.end()` fired
- * (`state.inputEnded`) — the observable proof of hold, cap-with-ack, and cap-backstop.
+ * d3 — the hold cap NEVER severs the stream:
+ *   - a live background SUBAGENT (task_started carrying `subagent_type`) runs UNCAPPED — held open with NO
+ *     timer at all, since a subagent may run for hours; bounded only by the outer PHASE_TIMEOUT / an operator
+ *     Stop. `input.end()` is never called as a cap reaction for it.
+ *   - a bare backgrounded Bash shell (no `subagent_type`) that outlives the hold is capped ADVISORY-only: the
+ *     agent gets a `bg_task` `status:'capped'` event and (if the rule is enabled) the `BG_TASK_CAP_NOTICE`
+ *     steer, but stdin is NEVER closed by the cap. The turn ends only when the model's next natural result
+ *     lands (the normal post-result grace) or via the outer PHASE_TIMEOUT.
+ * The old `capKillTimer` / unconditional `input.end()` / `BG_TASK_CAP_ACK_GRACE_MS` ack-then-close /
+ * backstop-close are GONE — closing stdin under a still-active turn made every subsequent host-tool call
+ * throw a bare "Stream closed" (prod incident b30616d2).
  *
- * BG_TASK_MAX_HOLD_MS is gone (d4): the hold cap now comes LIVE from the `bg-task-cap` JIT rule's
- * `trigger.holdMs`, so a test that needs a small cap mutates the rule directly (restored in `afterEach`).
+ * These tests drive a fake SDK whose generator scripts the exact system/assistant/result frames and whose
+ * single drain loop records both engine-injected steers (`pushed`) and whether `input.end()` fired
+ * (`state.inputEnded`) — the observable proof of hold vs. advisory-cap-without-closing.
+ *
+ * The hold cap comes LIVE from the `bg-task-cap` JIT rule's `trigger.holdMs` (d4), so a test that needs a
+ * small cap mutates the rule directly (restored in `afterEach`).
  */
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,8 +60,15 @@ const assistantText = (text: string): Record<string, unknown> => ({
   type: 'assistant',
   message: { model: 'opus', content: [{ type: 'text', text }] },
 });
+// A bare backgrounded Bash shell — no `subagent_type`, so the engine tracks it only in `liveBgTasks` and it
+// is subject to the advisory hold cap.
 const taskStarted = (taskId: string): Record<string, unknown> => ({
   type: 'system', subtype: 'task_started', task_id: taskId, description: 'pnpm test', task_type: 'bash', session_id: 'sess-1',
+});
+// A backgrounded Task subagent — carries `subagent_type`, so the engine also tracks it in `liveSubagentTasks`
+// and holds it open with NO timer (uncapped).
+const taskStartedSubagent = (taskId: string): Record<string, unknown> => ({
+  type: 'system', subtype: 'task_started', task_id: taskId, description: 'validate', subagent_type: 'general-purpose', task_type: 'local_agent', session_id: 'sess-1',
 });
 const taskNotification = (taskId: string, status: string, summary: string): Record<string, unknown> => ({
   type: 'system', subtype: 'task_notification', task_id: taskId, status, summary, output_file: '/tmp/out.log', session_id: 'sess-1',
@@ -126,21 +145,14 @@ function runTurn(
 const holdTrigger = bgTaskCapRule.trigger as { holdMs: number };
 const ORIG_HOLD_MS = holdTrigger.holdMs;
 const ORIG_ENABLED = bgTaskCapRule.enabled;
-const ORIG_GRACE = process.env.BG_TASK_CAP_ACK_GRACE_MS;
-const restoreEnv = (key: string, value: string | undefined): void => {
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
-};
 afterEach(() => {
   holdTrigger.holdMs = ORIG_HOLD_MS;
   bgTaskCapRule.enabled = ORIG_ENABLED;
-  restoreEnv('BG_TASK_CAP_ACK_GRACE_MS', ORIG_GRACE);
 });
 
 describe('EngineCore — run_in_background hold + cap', () => {
   it('holds the turn open until the task settles, captures the auto-continuation, and sums usage across results', async () => {
     holdTrigger.holdMs = 600_000; // large — the cap must never fire here
-    process.env.BG_TASK_CAP_ACK_GRACE_MS = '15000';
     let heldWhileRunning = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
       yield initMsg();
@@ -172,64 +184,64 @@ describe('EngineCore — run_in_background hold + cap', () => {
     expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(false);
   });
 
-  it('caps a stuck task, steers the agent with the cap notice, and closes directly when the agent acks', async () => {
-    holdTrigger.holdMs = 50;
-    process.env.BG_TASK_CAP_ACK_GRACE_MS = '500';
-    let endedAfterAck = false;
+  it('a live background SUBAGENT is uncapped: input never closes and no cap fires while it runs', async () => {
+    holdTrigger.holdMs = 30; // small — would trip a bare bg Bash almost immediately
+    let stillOpenPastHold = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
       yield initMsg();
       await tick();
       yield assistantBash();
       await tick();
-      yield taskStarted('X');
+      yield taskStartedSubagent('S');
+      await tick();
+      yield resultMsg('first', 10, 5); // the immediate tool-native first result
+      await sleep(120); // well past holdMs, with NO task_notification — a bare bg Bash would have capped by now
+      stillOpenPastHold = !state.inputEnded;
+      yield taskNotification('S', 'completed', 'validated');
+      await tick();
+      yield assistantText('done validating');
+      await tick();
+      yield resultMsg('done', 20, 7); // the model's auto-continuation, same turn — settles the subagent + ends the turn
+      await tick();
+    });
+    const events: EngineEvent[] = [];
+    await runTurn(sdk, events);
+
+    expect(stillOpenPastHold).toBe(true); // NO timer holds a live subagent — never capped
+    expect(pushed).toEqual([]); // onCap bails while a subagent is live: no advisory nudge either
+    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(false);
+  });
+
+  it('a bare backgrounded Bash shell gets the advisory cap nudge, but the cap never force-closes input', async () => {
+    holdTrigger.holdMs = 30;
+    bgTaskCapRule.enabled = true;
+    let cappedButOpen = false;
+    const { sdk, pushed } = makeSteerFake(async function* (state) {
+      yield initMsg();
+      await tick();
+      yield assistantBash();
+      await tick();
+      yield taskStarted('X'); // bare Bash — no subagent_type
       await tick();
       yield resultMsg('first', 10, 5);
-      await sleep(120); // > HOLD_CAP_MS with NO task_notification → onCap fires
-      yield taskUpdated('X', 'running'); // a late frame — must NOT undo the forced close
+      await sleep(120); // > holdMs with NO task_notification → onCap fires
+      cappedButOpen = !state.inputEnded; // core d3 assertion: the cap fired but stdin is still open
+      yield resultMsg('done', 20, 7); // the model's NEXT natural result — the normal grace now closes the turn
       await tick();
-      yield resultMsg('ACKED', 20, 7); // the agent acked the cap notice
       await tick();
-      endedAfterAck = state.inputEnded;
     });
     const events: EngineEvent[] = [];
     await runTurn(sdk, events);
 
     expect(pushed).toContain(BG_TASK_CAP_NOTICE);
     expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
-    expect(endedAfterAck).toBe(true); // the ack result closed input directly (past the `!capping` guard)
+    expect(cappedButOpen).toBe(true); // no code path calls input.end() as a direct cap reaction
   });
 
-  it('caps a stuck task and unconditionally closes after the ack grace when the agent never acks', async () => {
-    holdTrigger.holdMs = 50;
-    process.env.BG_TASK_CAP_ACK_GRACE_MS = '150';
-    let endedByBackstop = false;
-    const { sdk, pushed } = makeSteerFake(async function* (state) {
-      yield initMsg();
-      await tick();
-      yield assistantBash();
-      await tick();
-      yield taskStarted('X');
-      await tick();
-      yield resultMsg('first', 10, 5);
-      await sleep(80); // > HOLD_CAP_MS → onCap fires, arms the ack-grace backstop
-      yield taskProgress('X');
-      await sleep(60);
-      yield taskProgress('X'); // only progress, never a result to ack
-      await sleep(200); // > CAP_ACK_GRACE_MS from the cap → the backstop closes input
-      endedByBackstop = state.inputEnded;
-    });
-    const events: EngineEvent[] = [];
-    await runTurn(sdk, events);
-
-    expect(pushed).toContain(BG_TASK_CAP_NOTICE);
-    expect(endedByBackstop).toBe(true); // the unconditional backstop bounded the hold
-  });
-
-  it('honors bg-task-cap.enabled=false by capping without injecting the JIT notice', async () => {
-    holdTrigger.holdMs = 50;
+  it('honors bg-task-cap.enabled=false by capping without injecting the notice, still never force-closing input', async () => {
+    holdTrigger.holdMs = 30;
     bgTaskCapRule.enabled = false;
-    process.env.BG_TASK_CAP_ACK_GRACE_MS = '100';
-    let endedByBackstop = false;
+    let cappedButOpen = false;
     const { sdk, pushed } = makeSteerFake(async function* (state) {
       yield initMsg();
       await tick();
@@ -238,16 +250,17 @@ describe('EngineCore — run_in_background hold + cap', () => {
       yield taskStarted('X');
       await tick();
       yield resultMsg('first', 10, 5);
-      await sleep(80); // > HOLD_CAP_MS → cap fires, but the disabled rule emits no prompt text
-      yield taskProgress('X');
-      await sleep(150); // > CAP_ACK_GRACE_MS from the cap → the backstop closes input
-      endedByBackstop = state.inputEnded;
+      await sleep(120); // > holdMs → cap fires, but the disabled rule emits no prompt text
+      cappedButOpen = !state.inputEnded;
+      yield resultMsg('done', 20, 7);
+      await tick();
+      await tick();
     });
     const events: EngineEvent[] = [];
     await runTurn(sdk, events);
 
     expect(pushed).not.toContain(BG_TASK_CAP_NOTICE);
     expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
-    expect(endedByBackstop).toBe(true);
+    expect(cappedButOpen).toBe(true);
   });
 });

@@ -528,6 +528,10 @@ function makeTurn(
   opts: {
     completeThread?: boolean;
     transientFailures?: number;
+    /** The message the simulated transient failure throws (default: a sandbox connection-reset blip). Lets a
+     *  test drive a SPECIFIC transient shape — e.g. the d1 circuit-breaker's `in-sandbox engine turn failed:
+     *  Error: engine stream closed …` — through the REAL `runJobWithTransientRetry`/`TRANSIENT_ERROR_RE`. */
+    transientMessage?: string;
     /** Simulate the orchestrator VOLUNTARILY halting via `block_thread` (ADR 0004 Phase 3) instead of
      *  asserting completion — the turn calls `block_thread` with this and returns cleanly. */
     blockThread?: { reason: string; detail: string };
@@ -554,7 +558,7 @@ function makeTurn(
         if (remainingFailures > 0) {
           remainingFailures -= 1;
           // A transient infra blip (NOT auth/detached/timeout/unresumable) — the driver retries it silently.
-          throw new Error('sandbox exec failed: connection reset by peer');
+          throw new Error(opts.transientMessage ?? 'sandbox exec failed: connection reset by peer');
         }
         // Simulate the orchestrator voluntarily blocking (Phase 3) — a terminal assertion, no complete_thread.
         if (opts.blockThread && input.toolBridge?.tools?.['block_thread']) {
@@ -1934,6 +1938,35 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       ),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom error relay
+  });
+
+  it('SILENTLY RE-DRIVES the lane on the d1 stream-closed circuit-breaker throw — restarts on a fresh turn (never failed)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    // The EXACT wrapped shape the engine produces when the circuit-breaker trips: EngineCore throws
+    // `engine stream closed: control channel severed mid-turn (circuit-breaker)`; the entrypoint relays it
+    // (err.stack) and redis-engine-runner rewraps it as `in-sandbox engine turn failed: <msg>`. Its "stream
+    // closed" substring must drive the driver's TRANSIENT_ERROR_RE → runJobWithTransientRetry (fresh turn).
+    const streamClosedThrow =
+      'in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn (circuit-breaker)';
+    const { turn, calls } = makeTurn({ transientFailures: 1, transientMessage: streamClosedThrow });
+    const h = assemble(state, { turn, env: { DRIVER_TRANSIENT_RETRY_MS: '1' } });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.status).toBe('done'); // the lane self-healed on a fresh turn
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(2); // re-drove after the storm throw
+    expect(
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
+    ).toBe(false); // never stamped failed
+    expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom failure relay
   });
 
   it('shutdown drain: a step error WHILE DRAINING leaves the job running (resumable on boot), never failed', async () => {

@@ -132,8 +132,10 @@ export type EngineEvent =
    * query() session open while any such task is in flight (see the `bg_task` handling in engine-core), so the
    * task's completion and the model's auto-continuation arrive in the SAME turn. `status:'started'` is emitted
    * on `system/task_started`; the settlement statuses (`completed`/`failed`/`stopped`) mirror
-   * `system/task_notification`; `capped` is emitted when the hold hit BG_TASK_MAX_HOLD_MS and the turn was
-   * force-finalized (the task was still running and gets killed). Live-only — not part of the durable transcript.
+   * `system/task_notification`; `capped` is emitted when a bare bg Bash task exceeds the hold cap — an ADVISORY
+   * signal only (the task keeps running and is NOT killed; the agent is nudged toward atlas-svc and the model's
+   * next natural result ends the turn). Subagents run uncapped, so they never emit `capped`. Live-only — not
+   * part of the durable transcript.
    */
   | {
       kind: 'bg_task';
@@ -150,6 +152,19 @@ export type EngineEvent =
        * `capped` synthetic (no originating tool call to attribute).
        */
       parentToolUseId?: string;
+    }
+  /**
+   * Diagnostic breadcrumb for a streaming turn's control channel — emitted on each success `result`
+   * (carrying that result's `terminal_reason`/`stop_reason`) and once at teardown (carrying the per-turn
+   * `streamClosedCount`). Purely instrumentation: it lands in the transcript/logs so a control-channel
+   * wobble ("Stream closed" host-tool results) is diagnosable after the fact. Live-only, never persisted
+   * as a durable block.
+   */
+  | {
+      kind: 'turn_debug';
+      terminalReason?: string;
+      stopReason?: string | null;
+      streamClosedCount?: number;
     };
 
 /**
@@ -778,6 +793,8 @@ export interface EngineRunResult {
    * held-open resume) — the caller parks the lane + schedules an auto-resume at `resetAt`.
    */
   sessionLimit?: SessionLimitHit;
+  /** Count of "Stream closed" host-tool results seen in this turn (control-channel failures). Absent/0 on a healthy turn; a positive value flags a control-channel wobble even if the circuit-breaker didn't trip. */
+  streamClosedCount?: number;
   /**
    * False ⇒ another finisher already claimed (deleted) this turn's active_turns row, so the caller MUST
    * discard (persist nothing). Undefined ⇒ treat as claimed (back-compat for non-redis / test paths).

@@ -640,6 +640,11 @@ export class EngineCore {
     const input = streaming ? makeManualInput() : undefined;
     let turnEnded = false;
     let endTimer: ReturnType<typeof setTimeout> | undefined;
+    const STREAM_CLOSED_THRESHOLD = Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) > 0
+      ? Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) : 3;   // consecutive control-channel failures ⇒ breaker trips
+    let streamClosedRun = 0;      // consecutive "Stream closed" tool_results in the live run (any healthy result resets)
+    let streamClosedTotal = 0;    // per-turn total (instrumentation)
+    let streamClosedTripped = false;   // latched right before the breaker throw so the catch never swallows it as a cooperative abort
     const cancelEnd = (): void => {
       if (endTimer) {
         clearTimeout(endTimer);
@@ -651,19 +656,20 @@ export class EngineCore {
       cancelEnd();
       endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
     };
-    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash): a tool-native background task closes the turn's
-    // first `result` immediately (terminal_reason=completed), which would let the STEER_IDLE_GRACE close the
-    // input and force the SDK to KILL the still-running shell. Instead we hold the query() session open while
-    // any task is in flight so the task's `task_notification` AND the model's auto-continuation land in THIS
-    // turn. The hold is bounded by HOLD_CAP_MS (a stuck/endless task can't wedge the turn forever); after the
-    // cap we steer the agent with the `bg-task-cap` rule's notice and give it CAP_ACK_GRACE_MS to acknowledge
-    // before an unconditional close. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can
-    // mutate the rule); CAP_ACK_GRACE_MS is still process.env-driven (unaffected by d4).
+    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash + backgrounded Task subagents): a tool-native
+    // background task closes the turn's first `result` immediately (terminal_reason=completed), which would
+    // let the STEER_IDLE_GRACE close the input while work is still in flight. Instead we hold the query()
+    // session open so the task's `task_notification` AND the model's auto-continuation land in THIS turn.
+    // A background SUBAGENT runs UNCAPPED — held open with NO timer (it may run for hours; bounded only by
+    // the outer PHASE_TIMEOUT / an operator Stop). A bare background Bash shell that exceeds HOLD_CAP_MS gets
+    // an ADVISORY nudge (the `bg-task-cap` rule's notice) and the model's NEXT natural result ends the turn —
+    // nothing is ever killed, and the stream is NEVER severed by the cap. Closing stdin under a still-active
+    // turn makes every subsequent host-tool call throw a bare "Stream closed" (prod incident b30616d2), so the
+    // cap never does it. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can mutate the rule).
     const HOLD_CAP_MS = bgTaskCapRule.trigger.kind === 'hold-timer' ? bgTaskCapRule.trigger.holdMs : BG_TASK_HOLD_CAP_MS;
-    const CAP_ACK_GRACE_MS = Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) > 0 ? Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) : 15_000;
     const liveBgTasks = new Set<string>();
+    const liveSubagentTasks = new Set<string>();   // task_ids whose task_started carried subagent_type (a Task subagent, not a bare bg Bash)
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
-    let capKillTimer: ReturnType<typeof setTimeout> | undefined;
     let capping = false;
     const clearHold = (): void => {
       if (holdTimer) {
@@ -671,26 +677,24 @@ export class EngineCore {
         holdTimer = undefined;
       }
     };
-    // Cap fired: warn the agent IN-TURN (mirrors injectRotationNudge), stop the loop from cancelling closes
-    // (`capping`), and arm an UNCONDITIONAL backstop close that a late progress frame can never undo.
+    // Cap fired (bare bg Bash only): warn the agent IN-TURN (mirrors injectRotationNudge) and stop the loop
+    // from cancelling closes (`capping`) so the model's next natural result ends the turn. Advisory-only —
+    // the stream is never severed and no task is killed.
     const onCap = (): void => {
       if (!input || turnEnded || capping) return;
-      capping = true;
-      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
+      if (liveSubagentTasks.size > 0) return;   // safety: never cap while a subagent is live
+      capping = true;                           // the model's NEXT natural result ends the turn (no forced kill)
+      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)` });
       cancelEnd();
-      if (bgTaskCapRule.enabled) {
-        input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
-      }
-      capKillTimer = setTimeout(() => {
-        if (!turnEnded) input.end();
-      }, CAP_ACK_GRACE_MS);
+      if (bgTaskCapRule.enabled) input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      // NO capKillTimer / NO input.end() — the cap is purely advisory; stdin is never severed.
     };
     const armHoldTimer = (): void => {
       clearHold();
       holdTimer = setTimeout(onCap, HOLD_CAP_MS);
     };
     const resetHoldTimer = (): void => {
-      if (liveBgTasks.size > 0) armHoldTimer();
+      if (liveBgTasks.size > 0 && liveSubagentTasks.size === 0) armHoldTimer();
       else clearHold();
     };
     const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
@@ -971,8 +975,13 @@ export class EngineCore {
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
         } else if (message.type === 'system' && message.subtype === 'task_started') {
           // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
-          // task settles (its `task_notification`) instead of closing on the immediate first `result`.
-          if (message.task_id) liveBgTasks.add(message.task_id);
+          // task settles (its `task_notification`) instead of closing on the immediate first `result`. A Task
+          // SUBAGENT's task_started carries `subagent_type` (task_type "local_agent"); a bare bg Bash does not
+          // (task_type "local_bash") — a live subagent runs uncapped, so track it separately.
+          if (message.task_id) {
+            liveBgTasks.add(message.task_id);
+            if ((message as { subagent_type?: string }).subagent_type) liveSubagentTasks.add(message.task_id);
+          }
           onEvent?.({
             kind: 'bg_task',
             taskId: message.task_id,
@@ -988,7 +997,10 @@ export class EngineCore {
         } else if (message.type === 'system' && message.subtype === 'task_notification') {
           // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
           // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
-          if (message.task_id) liveBgTasks.delete(message.task_id);
+          if (message.task_id) {
+            liveBgTasks.delete(message.task_id);
+            liveSubagentTasks.delete(message.task_id);
+          }
           onEvent?.({
             kind: 'bg_task',
             taskId: message.task_id,
@@ -1159,7 +1171,11 @@ export class EngineCore {
               content?: unknown;
               is_error?: boolean;
             }>) {
-              if (block.type === 'tool_result')
+              if (block.type === 'tool_result') {
+                const isStreamClosed = block.is_error === true &&
+                  typeof block.content === 'string' && block.content.includes('Stream closed');
+                streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0;   // any healthy result resets the run
+                if (isStreamClosed) streamClosedTotal++;
                 onEvent?.({
                   kind: 'tool_result',
                   id: block.tool_use_id ?? '',
@@ -1168,12 +1184,19 @@ export class EngineCore {
                   ...(patch ? { structuredPatch: patch } : {}),
                   ...sub,
                 });
+                if (streamClosedRun >= STREAM_CLOSED_THRESHOLD) {
+                  streamClosedTripped = true;
+                  abortController.abort();   // stop the orphaned CLI child
+                  throw new Error('engine stream closed: control channel severed mid-turn (circuit-breaker)');
+                }
+              }
             }
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
           if (message.subtype === 'success') {
             result = message.result;
+            onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
             // A background-task hold produces ≥2 results per turn (the immediate first result + the
             // auto-continuation after the task settles). SUM the billing tokens across results; the
             // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
@@ -1190,12 +1213,9 @@ export class EngineCore {
             // Streaming-input mode: decide whether this success result ends the turn.
             if (streaming) {
               if (capping) {
-                // The agent acked the cap notice with this result → close NOW, directly (skip the backstop).
-                if (capKillTimer) {
-                  clearTimeout(capKillTimer);
-                  capKillTimer = undefined;
-                }
-                input!.end();
+                // The advisory cap fired — the model's next natural result ends the turn via the NORMAL
+                // grace (stdin is never force-closed under it).
+                scheduleEnd();
               } else if (
                 !isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })
               ) {
@@ -1207,12 +1227,11 @@ export class EngineCore {
                 if (sessionLimit) scheduleEnd();
                 else cancelEnd();
               } else if (liveBgTasks.size === 0) {
-                // Genuinely done and no background task in flight — close after the short steer grace.
-                scheduleEnd();
+                scheduleEnd();                 // genuinely done, nothing in flight — close after the steer grace
+              } else if (liveSubagentTasks.size > 0) {
+                cancelEnd();                   // a live SUBAGENT — hold input open with NO timer (may run for hours; bounded only by PHASE_TIMEOUT / Stop)
               } else {
-                // Genuinely done, but a background task is still in flight — hold input open, bounded by
-                // HOLD_CAP_MS (armHoldTimer → onCap).
-                armHoldTimer();
+                armHoldTimer();                // only bare bg Bash left → the advisory cap
               }
             }
           } else {
@@ -1250,6 +1269,7 @@ export class EngineCore {
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
+      if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
       // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
       // graceful end — fall through to the normal post-loop return with the partial result + live session,
       // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
@@ -1260,10 +1280,6 @@ export class EngineCore {
       turnEnded = true;
       cancelEnd();
       clearHold();
-      if (capKillTimer) {
-        clearTimeout(capKillTimer);
-        capKillTimer = undefined;
-      }
       input?.end();
       void steerIter?.return?.(undefined);
     }
@@ -1272,6 +1288,7 @@ export class EngineCore {
     const planText = (planMode && capturedPlan) || undefined;
     const summary = planText || result || '(no summary)';
     onEvent?.({ kind: 'result', text: summary });
+    if (streamClosedTotal > 0) onEvent?.({ kind: 'turn_debug', streamClosedCount: streamClosedTotal });
 
     // Auth-refresh write-back: a personal credential's `.credentials.json` is rewritten in place when the
     // SDK self-refreshes it. Read it back and relay it so the host can persist the fresh blob. Gated on
@@ -1291,6 +1308,7 @@ export class EngineCore {
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
+      ...(streamClosedTotal > 0 ? { streamClosedCount: streamClosedTotal } : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
