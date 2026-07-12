@@ -28,7 +28,7 @@ import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity, StimulusEntity } from '../persistence/entities';
+import { ENTITIES, JobEntity } from '../persistence/entities';
 import { StimulusStoreService } from './stimulus-store.service';
 
 const ORG_ID = '51111111-1111-4111-8111-111111111111';
@@ -56,7 +56,6 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
   let ds: DataSource;
   let store: StimulusStoreService;
   let jobs: Repository<JobEntity>;
-  let stimuli: Repository<StimulusEntity>;
   let repoId: string;
 
   beforeAll(async () => {
@@ -71,7 +70,6 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
     store = mod.get(StimulusStoreService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    stimuli = mod.get(getRepositoryToken(StimulusEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
