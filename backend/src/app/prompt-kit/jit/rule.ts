@@ -53,6 +53,13 @@ export type JitFireCtx = {
   phase?: 'soft' | 'reminder';
   /** The job this fire targets (lifecycle rules — feeds the seed's dedup key). */
   jobId?: string;
+  /**
+   * The text an `operator-message` turn-prefix rule prepends (Thread 5's rail, d18). The host executor supplies
+   * it when composing an operator turn; an empty/absent value renders NO prefix chunk (so a turn with no rail
+   * content stays byte-identical). This job ships the RAIL — the semantic memory recall that fills it is the
+   * dependent follow-up job.
+   */
+  prependText?: string;
 };
 
 /**
@@ -76,6 +83,11 @@ export type JitRule = {
    * transcript row + insert-once key stay byte-identical (NOT the generic fallback pill).
    */
   seed?: { label?: string; chunkKey: (ctx: JitFireCtx) => string };
+  /**
+   * `turn-prefix` delivery only: the `system_reminder` sub-kind the prepended chunk renders as (surfaces as
+   * `source="…"` in the tag). The memory rail uses `'memory'` — the reserved slot the follow-up recall job fills.
+   */
+  reminderKind?: string;
 };
 
 /**

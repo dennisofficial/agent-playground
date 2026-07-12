@@ -11,6 +11,8 @@ import {
   bgTaskCapRule,
   findLifecycleRule,
   legRotationRule,
+  memoryPrependRule,
+  operatorMessageRules,
   previewPrepRule,
   svcNudgeRule,
 } from './rules';
@@ -86,6 +88,26 @@ describe('previewPrepRule', () => {
   it('carries the shipped seed label + chunkKey', () => {
     expect(previewPrepRule.seed?.label).toBe('Spin up preview requested');
     expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:preview:J');
+  });
+});
+
+describe('memoryPrependRule (turn-prefix rail, d18)', () => {
+  it('is an operator-message rule delivered as a turn-prefix in the reserved memory slot', () => {
+    expect(memoryPrependRule.trigger).toEqual({ kind: 'operator-message' });
+    expect(memoryPrependRule.delivery).toBe('turn-prefix');
+    expect(memoryPrependRule.reminderKind).toBe('memory');
+  });
+
+  it('renders nothing without prepend content (byte-identical default: no prefix chunk)', () => {
+    expect(memoryPrependRule.render({})).toBe('');
+  });
+
+  it('renders the supplied prepend text (the rail the follow-up recall job fills)', () => {
+    expect(memoryPrependRule.render({ prependText: 'memory: prefers pnpm' })).toBe('memory: prefers pnpm');
+  });
+
+  it('operatorMessageRules() enumerates it', () => {
+    expect(operatorMessageRules()).toContain(memoryPrependRule);
   });
 });
 

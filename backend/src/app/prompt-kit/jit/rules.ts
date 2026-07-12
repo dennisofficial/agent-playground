@@ -84,8 +84,31 @@ export const previewPrepRule: JitRule = {
   seed: { label: 'Spin up preview requested', chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? '') },
 };
 
+/**
+ * Memory turn-prefix rail (d18) — the exemplar `operator-message` rule. While the host composes an operator turn,
+ * this rule may prepend a `system_reminder source="memory"` chunk BEFORE the `<user>` bubble. It is the general
+ * prepend RAIL this job ships; its payload comes from `ctx.prependText`, which is EMPTY until the dependent
+ * memory-auto-retrieval follow-up job wires `MemoryStore.recall` into it — so an operator turn with no memory
+ * content renders no prefix chunk and stays byte-identical. `enabled` keeps the rail live so the wiring is
+ * exercised end-to-end; the no-op render is what preserves default behavior.
+ */
+export const memoryPrependRule: JitRule = {
+  id: 'memory-prepend',
+  enabled: true,
+  trigger: { kind: 'operator-message' },
+  delivery: 'turn-prefix',
+  reminderKind: 'memory',
+  render: (ctx) => agentMessage(ctx.prependText ?? ''),
+};
+
 /** The declarative catalog every executor reads. */
-export const JIT_RULES: JitRule[] = [svcNudgeRule, legRotationRule, bgTaskCapRule, previewPrepRule];
+export const JIT_RULES: JitRule[] = [
+  svcNudgeRule,
+  legRotationRule,
+  bgTaskCapRule,
+  previewPrepRule,
+  memoryPrependRule,
+];
 
 // Boot-validate on import (validateFragments spirit): a malformed rule fails loud, never ships silently.
 validateJitRules(JIT_RULES);
@@ -98,4 +121,12 @@ export function findLifecycleRule(event: 'preview-requested' | 'plan-approved'):
   return JIT_RULES.find(
     (r) => r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
   );
+}
+
+/**
+ * Every enabled `operator-message` turn-prefix rule, in catalog order — the host-side executor's lookup for the
+ * turn-prefix prepend rail (d18). Kept here so the catalog stays the one place rules are enumerated.
+ */
+export function operatorMessageRules(): JitRule[] {
+  return JIT_RULES.filter((r) => r.enabled && r.trigger.kind === 'operator-message');
 }
