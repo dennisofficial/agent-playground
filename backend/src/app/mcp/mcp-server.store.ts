@@ -117,8 +117,10 @@ export class McpServerStore {
       lastValidatedAt: r.last_validated_at ? new Date(r.last_validated_at).toISOString() : null,
       validationError: r.validation_error,
       authKind: r.auth_kind,
-      // Cheap: a NULL check on the ciphertext column — no decrypt, no token ever leaves the store.
-      oauthConnected: r.auth_kind === 'oauth' && r.oauth_enc != null,
+      // Token presence, not blob presence: beginAuthorization writes a blob (nonce + PKCE/DCR state)
+      // BEFORE consent completes, so oauth_enc != null would show a started-but-cancelled consent as
+      // Connected. Only a stored access_token means a working connection. No token ever leaves the store.
+      oauthConnected: this.oauthHasToken(r),
       needsReauth: r.auth_kind === 'oauth' && r.validation_error != null,
     };
   }
@@ -307,6 +309,23 @@ export class McpServerStore {
     return out;
   }
 
+  /**
+   * For each ENABLED org/repo OAuth server that is registered but NOT yet connected — no access token
+   * stored (a never-started, or started-but-cancelled, consent). Mirrors {@link authFailingServers} and
+   * keys off the same {@link oauthHasToken} predicate as `redact().oauthConnected`, so the "needs connect"
+   * gap and the card's "Connected" status never disagree. Surfaced as a Workspace Profile
+   * `needs_oauth_connect` gap. Returns secret-SAFE data only — name + scope, never a token.
+   */
+  async needsOAuthConnect(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ name: string; scope: 'org' | string }[]> {
+    const rows = await this.rowsForTurn(orgId, repoId);
+    return rows
+      .filter((r) => r.enabled && r.auth_kind === 'oauth' && !this.oauthHasToken(r))
+      .map((r) => ({ name: r.name, scope: McpServerStore.fromDbScope(r.scope) }));
+  }
+
   /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */
   decryptSecrets(row: McpServerEntity): McpSecretValues {
     if (!row.secrets_enc) return {};
@@ -319,6 +338,21 @@ export class McpServerStore {
   readOAuthBlob(row: McpServerEntity): McpOAuthBlob {
     if (!row.oauth_enc) return {};
     return JSON.parse(decryptSecret(row.oauth_enc, this.key())) as McpOAuthBlob;
+  }
+
+  /**
+   * True only once a real access token is stored — the honest "connected" signal (blob presence is NOT).
+   * `beginAuthorization` writes a blob (nonce, then DCR client + PKCE verifier) BEFORE consent completes,
+   * so `oauth_enc != null` is true even for a started-but-cancelled consent that never got a token.
+   */
+  private oauthHasToken(r: McpServerEntity): boolean {
+    if (r.auth_kind !== 'oauth' || r.oauth_enc == null) return false;
+    try {
+      return this.readOAuthBlob(r).tokens?.['access_token'] != null;
+    } catch {
+      // Undecryptable blob (e.g. key rotation) → treat as not-connected (the gap fires; safe).
+      return false;
+    }
   }
 
   /**

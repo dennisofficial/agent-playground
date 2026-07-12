@@ -273,4 +273,55 @@ describe('McpServerStore', () => {
       expect(await store.authFailingServers('org1', 'repo-1')).toEqual([]);
     });
   });
+
+  describe('oauthConnected / needsOAuthConnect — the token-presence boundary', () => {
+    /** Register an OAuth server row (no blob yet — the state right after Approve). */
+    async function registerOAuth(name: string, dbScope = '*'): Promise<void> {
+      await store.write('org1', dbScope, name, {
+        transport: 'http',
+        url: 'https://mcp.atlassian.com',
+        authKind: 'oauth',
+      });
+    }
+
+    it('a just-registered OAuth server (no blob) is not connected and needs connect', async () => {
+      await registerOAuth('jira');
+      const [server] = await store.list('org1');
+      expect(server.oauthConnected).toBe(false);
+      expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([{ name: 'jira', scope: 'org' }]);
+    });
+
+    it('a started-but-cancelled consent (blob = {nonce}, no token) reads as NOT connected and needs connect', async () => {
+      await registerOAuth('jira');
+      // beginAuthorization writes a blob before consent completes — nonce/PKCE state, but no tokens.
+      await store.writeOAuthBlob('org1', '*', 'jira', { nonce: 'abc123' });
+      const [server] = await store.list('org1');
+      expect(server.oauthConnected).toBe(false);
+      expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([{ name: 'jira', scope: 'org' }]);
+    });
+
+    it('a connected server (blob has tokens.access_token) reads as connected and does NOT need connect', async () => {
+      await registerOAuth('jira');
+      await store.writeOAuthBlob('org1', '*', 'jira', {
+        nonce: 'abc123',
+        tokens: { access_token: 'at-live', refresh_token: 'rt-live' },
+      });
+      const [server] = await store.list('org1');
+      expect(server.oauthConnected).toBe(true);
+      expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([]);
+      // The token itself never leaks through the redacted view.
+      expect(JSON.stringify(server)).not.toContain('at-live');
+    });
+
+    it('skips disabled and non-oauth servers', async () => {
+      await registerOAuth('off');
+      await store.write('org1', '*', 'off', { transport: 'http', url: 'https://x', authKind: 'oauth', enabled: false });
+      await store.write('org1', 'repo-1', 'static-svc', {
+        transport: 'http',
+        url: 'https://x',
+        headers: [{ name: 'Authorization', value: '', secret: true }],
+      });
+      expect(await store.needsOAuthConnect('org1', 'repo-1')).toEqual([]);
+    });
+  });
 });

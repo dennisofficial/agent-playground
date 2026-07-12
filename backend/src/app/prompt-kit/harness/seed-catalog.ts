@@ -573,7 +573,7 @@ export function mcpApproved(input: {
           ? ` Fill each secret slot now via request_secret (mcp target): ${needSecrets.join('; ')}. After every slot is filled, reset_sandbox to load the server(s), then invoke a tool to verify (see MCP SERVERS).`
           : '') +
         (needConnect.length
-          ? ` OAuth server(s) ${needConnect.map((n) => `\`${n}\``).join(', ')} have NO secret to fill — the OWNER must open the console (MCP settings → Connect) to complete consent; you cannot consent yourself and must NOT inject an Authorization/Bearer header. Once the owner connects, reset_sandbox to load it.`
+          ? ` OAuth server(s) ${needConnect.map((n) => `\`${n}\``).join(', ')} have NO secret to fill — the OWNER must complete consent via the Connect button on the MCP proposal card (or the console: MCP settings → Connect); you cannot consent yourself and must NOT inject an Authorization/Bearer header. Once the owner connects, reset_sandbox to load it.`
           : '') +
         (readyStatic && !needSecrets.length
           ? ' No secrets needed for the rest — reset_sandbox to load the server(s) into a fresh session, then invoke one of their tools to verify it works (see MCP SERVERS).'
