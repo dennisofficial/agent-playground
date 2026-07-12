@@ -1432,17 +1432,25 @@ export class ThreadDriver implements JobDispatcher {
     );
   }
 
-  /** Resolve this thread leg's evidence subfolder — lazily host-creating it (mirrors writeCompletionMd's
-   *  contextDirHost accessor) — and return the CONTAINER path emitted as ATLAS_EVIDENCE_DIR so the turn's
-   *  writers (worker + validate/prototype subagents) land their live-run proof in evidence/<leg>/. */
+  /** Resolve this thread leg's evidence subfolder and return the CONTAINER path emitted as
+   *  ATLAS_EVIDENCE_DIR so the turn's writers (worker + validate/prototype subagents) land their live-run
+   *  proof in evidence/<leg>/. Pre-creating the host dir is BEST-EFFORT (mirrors writeCompletionMd) — the
+   *  /context/evidence bind already exists and the in-sandbox writer creates the leg subfolder itself, so a
+   *  host mkdir failure (e.g. an unwritable path) must NEVER block the build turn. */
   private async evidenceDirForThread(job: Job, thread: DriverThread): Promise<string> {
     const leg = threadDirName(thread);
-    const hostDir = join(
-      this.threadLifecycle.contextDirHost(job.id, job.orgId),
-      'evidence',
-      leg,
-    );
-    await mkdir(hostDir, { recursive: true });
+    try {
+      const hostDir = join(
+        this.threadLifecycle.contextDirHost(job.id, job.orgId),
+        'evidence',
+        leg,
+      );
+      await mkdir(hostDir, { recursive: true });
+    } catch (err) {
+      this.logger.debug(
+        `evidence dir pre-create for thread ${thread.ordinal} failed (continuing): ${String(err)}`,
+      );
+    }
     return `${CONTAINER_CONTEXT}/evidence/${leg}`;
   }
 
