@@ -5,6 +5,7 @@
  * the build thread's type, and user/org-specific settings. A fragment's `condition(ctx)` reads this to decide
  * whether it belongs in THIS assembly (e.g. onboarding-only fragments gate `c => c.jobKind === 'onboarding'`).
  */
+import type { AutoApproveMode } from '@workspace/shared';
 import type { JobKind } from '../../domain';
 
 export interface PromptCtx {
@@ -33,7 +34,7 @@ export interface PromptCtx {
      * Absent/empty on a repo with nothing provisioned yet → the group prints "nothing recorded yet".
      */
     workspaceProfile?: string | null;
-    /** Per-job AUTO-APPROVE is ON — the brain runs autonomously (plan & ship gates auto-advance, no human). */
-    autoApprove?: boolean;
+    /** Per-job AUTO-APPROVE mode — which gates (plan / ship / both) auto-advance with no human. */
+    autoApproveMode?: AutoApproveMode;
   };
 }
