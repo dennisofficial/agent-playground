@@ -63,9 +63,6 @@ export const ROUTES = {
     const qs = p.toString();
     return qs ? `/new?${qs}` : "/new";
   },
-  /** The tickets board/backlog. No args → the picker (first repo); with ids → a specific repo's board. */
-  tickets: (orgId?: string, repoId?: string) =>
-    orgId && repoId ? `/tickets/${orgId}/${repoId}` : "/tickets",
   /** Org settings (General / Credentials / Members / Repos). Each section is its own route segment. */
   orgSettings: (orgId: string, section?: SettingsSection) =>
     section

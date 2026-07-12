@@ -23,7 +23,6 @@ import { WorkspaceProfileModule } from './workspace-profile';
 import { OnboardingModule } from './onboarding';
 import { OrgModule } from './org';
 import { RealtimeModule } from './realtime';
-import { TicketsModule } from './tickets';
 import { JobDependencyModule } from './job-deps';
 import { TitlingModule } from './titling';
 import { TestBridgeModule } from './test-bridge';
@@ -69,7 +68,6 @@ import { ThreadKindModule } from './thread-kind';
     WorkspaceProfileModule,
     OrgModule,
     TitlingModule,
-    TicketsModule,
     JobDependencyModule,
     SandboxModule,
     HostStatsModule,

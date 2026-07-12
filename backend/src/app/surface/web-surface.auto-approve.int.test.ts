@@ -491,3 +491,42 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     expect(missing.status).toBe(400);
   });
 });
+
+describe('auto-approve — POST .../jobs armed at creation (live Postgres, real HTTP)', () => {
+  const createUrl = `/web/orgs/${ORG}/repos/${REPO}/jobs`;
+
+  async function createJob(body: Record<string, unknown>): Promise<string> {
+    const res = await request(server).post(createUrl).set('Cookie', ownerCookie).send(body);
+    expect(res.status).toBe(201);
+    expect(typeof res.body.jobId).toBe('string');
+    return res.body.jobId as string;
+  }
+
+  it("CREATE 1 — autoApproveMode='plan' at creation: the new job row is stamped auto_approve_mode='plan' + auto_approve_by=<caller>", async () => {
+    const jobId = await createJob({ firstMessage: 'Add a health endpoint.', autoApproveMode: 'plan' });
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({ auto_approve_mode: 'plan', auto_approve_by: ownerId });
+    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
+    console.log('OBSERVED CREATE 1 DB row (created with mode=plan):', JSON.stringify(row));
+  });
+
+  it("CREATE 2 — no autoApproveMode: the new job falls back to the DB default 'off' with no auto_approve_by", async () => {
+    const jobId = await createJob({ firstMessage: 'Plain job, no auto-approve.' });
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+    // eslint-disable-next-line no-console
+    console.log('OBSERVED CREATE 2 DB row (created with no mode):', JSON.stringify(row));
+  });
+
+  it("CREATE 3 — autoApproveMode='off' explicitly: same as omitting it (off, no auto_approve_by)", async () => {
+    const jobId = await createJob({ firstMessage: 'Explicit off.', autoApproveMode: 'off' });
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+  });
+
+  it("CREATE 4 — an invalid autoApproveMode is ignored (guarded by isAutoApproveMode), leaving the default 'off'", async () => {
+    const jobId = await createJob({ firstMessage: 'Bogus mode.', autoApproveMode: 'bogus' });
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+  });
+});

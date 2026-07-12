@@ -55,7 +55,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   block_thread: { reason: 'question', detail: 'Need operator input to continue.', gaps: ['Missing creds.'] },
   record_leg_handoff: { handoff: 'Finished the migration; next leg wires the API.' },
   record_deviation: { note: 'Renamed a var for clarity.' },
-  capture_ticket: { title: 'Add pagination', body: 'Follow-up: paginate the list endpoint.' },
   task_create: {
     subject: 'Wire the endpoint',
     description: 'Add the route and controller.',
@@ -141,27 +140,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     decisions: [decisionItemPayload],
   },
   create_job: { firstMessage: 'Please fix the flaky test.', title: 'Fix flaky test' },
-  create_ticket: {
-    title: 'Add pagination',
-    status: 'open',
-    priority: 'p2',
-    kind: 'feature',
-    body: 'Paginate the list endpoint.',
-    confirm: true,
-    dependsOn: ['T-1'],
-  },
-  list_tickets: { status: 'open' },
-  update_ticket: {
-    ticketId: 't1',
-    status: 'open',
-    priority: 'p2',
-    kind: 'feature',
-    title: 'Add pagination',
-    body: 'Paginate the list endpoint.',
-  },
-  link_ticket_dependency: { ticketId: 't1', dependsOnTicketId: 't2' },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
-  promote_ticket: { ticketId: 't1' },
   propose_convention_profile_change: {
     slug: 'backend-style',
     body: '# House style\n...',
@@ -262,15 +241,6 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
     const res = await client.callTool({ name, arguments: payload });
     expect(res.isError, `${name} call must not error`).toBeFalsy();
     expect(captured[name]).toEqual(payload);
-  });
-
-  it('update_ticket: an explicit null body round-trips as null (nullable, not stripped)', async () => {
-    const payload = { ticketId: 'x', body: null };
-    captured['update_ticket'] = '(not called)';
-    const res = await client.callTool({ name: 'update_ticket', arguments: payload });
-    expect(res.isError).toBeFalsy();
-    expect(captured['update_ticket']).toEqual(payload);
-    expect((captured['update_ticket'] as { body: unknown }).body).toBeNull();
   });
 
   it('rejects a wrong-typed REQUIRED field before the handler ever sees it', async () => {

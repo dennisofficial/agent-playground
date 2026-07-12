@@ -58,7 +58,6 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { TicketService } from '../tickets';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import {
   DRIVER_REPO,
@@ -230,7 +229,6 @@ class FakeSandboxProvider {
 
 let mod: TestingModule;
 let threadLifecycle: JobLifecycleService;
-let ticketStub: { revertForDeletedThread: ReturnType<typeof vi.fn> };
 let sandboxes: Repository<JobSandboxEntity>;
 let jobs: Repository<JobEntity>;
 let ds: DataSource;
@@ -335,12 +333,6 @@ beforeEach(async () => {
         },
       },
       {
-        provide: TicketService,
-        useValue: {
-          revertForDeletedThread: vi.fn().mockResolvedValue(undefined),
-        },
-      },
-      {
         provide: JobDependencyService,
         useValue: {
           onBlockerResolved: vi.fn().mockResolvedValue(undefined),
@@ -361,7 +353,6 @@ beforeEach(async () => {
   }).compile();
 
   threadLifecycle = mod.get(JobLifecycleService);
-  ticketStub = mod.get(TicketService) as unknown as typeof ticketStub;
   sandboxes = mod.get(getRepositoryToken(JobSandboxEntity, DB_CONNECTION));
   jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
@@ -553,12 +544,6 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     );
 
     await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
-
-    // The linked ticket (if any) is handed back to the board BEFORE the thread row is swept.
-    expect(ticketStub.revertForDeletedThread).toHaveBeenCalledWith({
-      orgId: FAKE_TEAM_ID,
-      jobId,
-    });
 
     const count = async (table: string, col = 'job_id') =>
       Number(
@@ -855,12 +840,6 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
               sandbox: await hygieneProvider.attach({ sandbox, orgId, jobId }),
               hydrationSig: 'int-sig',
             }),
-          },
-        },
-        {
-          provide: TicketService,
-          useValue: {
-            revertForDeletedThread: vi.fn().mockResolvedValue(undefined),
           },
         },
         {

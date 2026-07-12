@@ -8,9 +8,9 @@ import {
 
 /**
  * The single, shared way to turn ANY source text (a thread's first message, a plan goal, a build summary,
- * a ticket title, an event headline) into a short, scannable thread title via the title model. Lives in
+ * an event headline) into a short, scannable thread title via the title model. Lives in
  * the `@Global` titling module so every write path — the web surface, the brain store, the brain session,
- * the ticket service, the event intake — produces ONE consistent title style instead of dumping raw
+ * the event intake — produces ONE consistent title style instead of dumping raw
  * full-sentence text into `threads.title`.
  *
  * Fully fail-soft: no per-org key, an LLM error, or empty model output all degrade to the deterministic

@@ -28,7 +28,6 @@ import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";
 import { McpProposalCard } from "./mcp-proposal-card";
 import { SkillProposalCard } from "./skill-proposal-card";
-import { TicketCardView } from "./ticket-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
 import { AttachmentsCardView } from "./attachments-card";
@@ -588,7 +587,6 @@ const ROW_ESTIMATE: Record<string, number> = {
   secret: 184,
   mcp_proposal: 200,
   skill_proposal: 200,
-  ticket: 160,
   file: 152,
   review_comments: 184,
   attachments: 132,
@@ -983,11 +981,6 @@ function buildLogItems(
       case "skill_proposal":
         pushCard(
           <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
-        break;
-      case "ticket":
-        pushCard(
-          <TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />,
         );
         break;
       case "file":

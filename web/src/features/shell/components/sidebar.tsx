@@ -9,7 +9,7 @@ import { env } from "@/lib/env";
 import { ROUTES, threadHref } from "@/lib/routes";
 import { useOrgs, type OrgSummary } from "@/lib/api/me";
 import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
-import { useAllRepos } from "@/lib/api/tickets-queries";
+import { useAllRepos } from "@/lib/api/job-queries";
 import {
   groupThreadsBySection,
   SECTION_LABEL,

@@ -314,22 +314,6 @@ export interface WebMcpProposalCard {
 }
 
 /**
- * A ticket-captured callout — posted when the brain raises a ticket mid-job via `create_ticket`. Purely
- * informational (no approve/answer lifecycle); the operator clicks through to the ticket on the board.
- * Mirrors the backend `WebTicketCard`.
- */
-export interface WebTicketCard {
-  type: "ticket_card";
-  ticketId: string;
-  number: number;
-  title: string;
-  kind: string | null;
-  priority: string | null;
-  status: string;
-  originDecisionSummary: string | null;
-}
-
-/**
  * An owner-approvable SKILL proposal the brain posts. `install` = reuse a maintained skill from a git
  * marketplace (`installPreview` shows the exact resolved skill + any overwrite); `create` = a skill the brain
  * AUTHORED as real files (`preview` shows SKILL.md + the file tree); `remove` = delete a registered skill.
@@ -368,8 +352,7 @@ export type WebCard =
   | WebReviewCommentsCard
   | WebAttachmentsCard
   | WebMcpProposalCard
-  | WebSkillProposalCard
-  | WebTicketCard;
+  | WebSkillProposalCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */

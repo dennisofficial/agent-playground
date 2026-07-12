@@ -588,6 +588,8 @@ export interface CreateThreadBody {
   kind?: OperatorJobKind;
   /** For `kind: "review"` — the PR number to review (seeds a <review> block on the brain's first turn). */
   prNumber?: string;
+  /** Arm auto-approve at creation; omit (or "off") to leave the job's gates waiting for a human. */
+  autoApproveMode?: AutoApproveMode;
 }
 
 export function createJob(
@@ -614,6 +616,7 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
+  if (body.autoApproveMode) form.append("autoApproveMode", body.autoApproveMode);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

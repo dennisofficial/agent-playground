@@ -49,7 +49,6 @@ import {
   ServiceLogView,
   serviceHeaderSubtitle,
 } from "./service-log-view";
-import { TicketsRaisedPane } from "./tickets-raised-pane";
 import { CreatedJobsPane } from "./created-jobs-pane";
 import { BlockedByPane } from "./blocked-by-pane";
 import { useCommentableRef } from "./use-text-selection";
@@ -220,10 +219,6 @@ export function PhaseView({
     title = "Diff";
     subtitle = "the accumulated change across all threads";
     body = <DiffView />;
-  } else if (selectedNode === "tickets") {
-    title = "Tickets raised";
-    subtitle = "out-of-scope work Atlas captured from this job";
-    body = <TicketsRaisedPane jobRef={jobRef} />;
   } else if (selectedNode === "created") {
     title = "Created jobs";
     subtitle = "jobs this job spawned";

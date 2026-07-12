@@ -287,6 +287,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       jobRef={ref}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
+      previewRequestedAt={shipCard?.previewRequestedAt ?? null}
       directBuild={isDirectApproval}
       onConversation={onConversation}
       onSelectNode={onSelectNode}
@@ -532,7 +533,6 @@ function baseCrumbLabel(node: string): string {
   if (node === "diff") return "Diff";
   if (node === "plan") return "Plan";
   if (node === "decision") return "Decision record";
-  if (node === "tickets") return "Tickets raised";
   if (node === "created") return "Created jobs";
   if (node === "blocked-by") return "Blocked by";
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);

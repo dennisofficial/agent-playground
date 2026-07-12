@@ -16,7 +16,6 @@ import type {
 // Direct leaf import (not the '../surface' barrel): brain-store otherwise only TYPE-imports from surface,
 // and a runtime value import of the whole barrel would add a surface→brain→brain-store→surface cycle.
 import { JobDependencyService } from '../job-deps';
-import { webTicketCard } from '../surface/web-ticket-card';
 import { nextQuestionId } from '../surface/web-question-card';
 import { nextFileRequestId } from '../surface/web-file-request-card';
 import { renderPlan } from '../prompt-kit/messages/render-plan';
@@ -33,7 +32,6 @@ import {
   ThreadEntity,
   StimulusEntity,
   JobEntity,
-  TicketEntity,
 } from '../persistence/entities';
 import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
@@ -353,29 +351,6 @@ export class BrainStoreService {
         card: input.card,
       }),
     );
-  }
-
-  /**
-   * Relay a ticket the brain just captured (`create_ticket`) as a durable callout card on the job's
-   * conversation — so the operator SEES out-of-scope work being raised, live, instead of it being silent
-   * (the tool otherwise only writes the row + a board-refresh event). Insert-once on the stable `ts`
-   * (`ticket:<id>`): a resumed brain turn that re-drives the tool must not double-post the same card
-   * (`appendCardMessage` does not dedup, unlike `recordSystemChunk`). Best-effort — the caller swallows
-   * failures so a transcript-write hiccup never fails the tool.
-   */
-  async appendTicketCard(jobId: string, ticket: TicketEntity): Promise<void> {
-    const ts = `ticket:${ticket.id}`;
-    const dup = await this.messages.count({
-      where: { job_id: jobId, ts, kind: 'card' },
-    });
-    if (dup > 0) return;
-    await this.appendCardMessage(jobId, {
-      ts,
-      text: `Raised ticket #${ticket.number}: ${ticket.title}`,
-      // A named-interface card has no index signature; the store's card is `Record<string, unknown>` — the
-      // house-style cast (mirrors the approval-card persist path in agent-session-manager).
-      card: webTicketCard(ticket) as unknown as Record<string, unknown>,
-    });
   }
 
   /**
@@ -1846,12 +1821,6 @@ export class BrainStoreService {
       .catch((err) => this.logger.warn(`cancel: wake funnel failed for blocker ${jobId}: ${err}`));
   }
 
-  /** The ticket a thread was promoted from / works (`threads.ticket_id`), or null. */
-  async threadTicketId(jobId: string): Promise<string | null> {
-    const row = await this.jobs.findOne({ where: { id: jobId } });
-    return row?.ticket_id ?? null;
-  }
-
   /** Load a thread row as the domain `Thread` shape. */
   async loadJob(jobId: string): Promise<Job> {
     const row = await this.jobs.findOneOrFail({ where: { id: jobId } });
@@ -1861,16 +1830,14 @@ export class BrainStoreService {
   // ── create_job tool ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Create a follow-up thread (the brain's `create_job` / `promote_ticket` tools) — a plain `open`
-   * thread on the repo that provisions its sandbox lazily on the first turn. Optionally links the ticket
-   * it was promoted from (`ticketId`).
+   * Create a follow-up thread (the brain's `create_job` tool) — a plain `open` thread on the repo that
+   * provisions its sandbox lazily on the first turn.
    */
   async createFollowUpJob(input: {
     orgId: string;
     repoId: string;
     title: string | null;
     baseBranch: string | null;
-    ticketId?: string | null;
     /** Born-with kind — e.g. `'onboarding'` for an Atlas-run repo init thread. Default null. */
     kind?: JobKind | null;
     /** The job whose brain spawned this follow-up (closure-derived, never tool args). */
@@ -1893,7 +1860,6 @@ export class BrainStoreService {
         surface_thread_ref: null,
         title,
         base_branch: input.baseBranch,
-        ticket_id: input.ticketId ?? null,
         ...(input.kind ? { kind: input.kind } : {}),
         created_by_job_id: input.createdByJobId ?? null,
         created_by: input.createdByJobId

@@ -27,8 +27,8 @@ import {
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
 
-// Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread, record_deviation,
-// and capture_ticket are actually registered. On commit turns those tools aren't in the model's per-turn
+// Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread and
+// record_deviation are actually registered. On commit turns those tools aren't in the model's per-turn
 // list, so instructing them there would contradict its real tool set. Absent turnPhase ⇒ batch (back-compat).
 const batchOnly = (c: PromptCtx) => (c.turnPhase ?? 'batch') === 'batch';
 
@@ -62,20 +62,17 @@ const COMPLETE_THREAD_NOTE =
   '`request_operator_input` keeps the turn alive for a quick answer; `block_thread` gives up the turn.';
 
 // Orchestrator note — ROUTING out-of-scope surprises by cost, so a builder is neither timid nor reckless.
-// Fix the obvious, ticket the expensive-but-known, block the genuinely-undecided. Names the two new bridge
-// tools (`record_deviation`, `capture_ticket`) that only the WORKER orchestrator holds, plus `block_thread`.
+// Fix the obvious, block the genuinely-undecided. Names the bridge tool (`record_deviation`) that only the
+// WORKER orchestrator holds, plus `block_thread`.
 const MID_BUILD_ROUTING_NOTE =
   ' WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
-  'absorb it and do NOT rabbit-hole. Route it by cost and certainty: (1) a CHEAP, LOCAL, clearly-correct ' +
-  'fix (a dead link, a wrong import, an obvious one-liner) with no interface/contract change and no cascade ' +
-  '— FIX IT INLINE and call `record_deviation({note})`; do not open a card or block. (2) A clearly-correct ' +
-  'but EXPENSIVE or wide-reaching change — do NOT fix it and do NOT block: first spawn a SYNCHRONOUS ' +
-  '`explore` subagent to gauge the blast radius, then call `capture_ticket({title, body})` to file it as a ' +
-  'bug on the board and KEEP BUILDING your assigned scope. (3) A genuine OPEN design or product question you ' +
-  'CANNOT resolve from the spec, the decision record, or a documented convention — do NOT guess an answer: ' +
-  '`block_thread({reason:"question"|"decision", detail, gaps})` and hand it to Atlas. Rule of thumb: fix the ' +
-  'obvious, ticket the expensive-but-known, block the genuinely-undecided. NOTE: a locked, approved plan that ' +
-  'explicitly scopes something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
+  'absorb it and do NOT rabbit-hole. Route it by certainty: (1) a CHEAP, LOCAL, clearly-correct fix (a dead ' +
+  'link, a wrong import, an obvious one-liner) with no interface/contract change and no cascade — FIX IT ' +
+  'INLINE and call `record_deviation({note})`; do not block. (2) A genuine OPEN design or product question ' +
+  'you CANNOT resolve from the spec, the decision record, or a documented convention — do NOT guess an ' +
+  'answer: `block_thread({reason:"question"|"decision", detail, gaps})` and hand it to Atlas. Rule of thumb: ' +
+  'fix the obvious, block the genuinely-undecided. NOTE: a locked, approved plan that explicitly scopes ' +
+  'something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
 
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
@@ -123,14 +120,14 @@ export class WorkerGroup {
   }
 
   /** The typed terminal assertion + mid-build routing — instructs `complete_thread`, `record_deviation`,
-   *  `capture_ticket`, `request_operator_input`, `block_thread`. Only the BATCH turn registers these host
-   *  tools, so this is gated to the batch phase (gate/commit turns get a different, accurate tool set). */
+   *  `request_operator_input`, `block_thread`. Only the BATCH turn registers these host tools, so this is
+   *  gated to the batch phase (gate/commit turns get a different, accurate tool set). */
   @Fragment({ usedBy: [Agent.WORKER], order: 105, condition: batchOnly })
   batchToolContract(): string {
     return COMPLETE_THREAD_NOTE + MID_BUILD_ROUTING_NOTE;
   }
 
-  /** DEVIATION flagging — leans on `record_deviation`/`capture_ticket`, batch-only host tools. Gated so the
+  /** DEVIATION flagging — leans on `record_deviation`, a batch-only host tool. Gated so the
    *  gate/commit prompts don't instruct tools they can't call. */
   @Fragment({ usedBy: [Agent.WORKER], order: 112, condition: batchOnly })
   deviationFlagging(): string {
