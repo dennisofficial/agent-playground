@@ -55,6 +55,7 @@ import {
   type ReviewCommentItemBody,
 } from "./job-api";
 import type { AutoApproveMode } from "@workspace/shared";
+import { MERGE_ACTION_ID } from "./types";
 import type {
   JobBlocker,
   WebAttachmentsCard,
@@ -408,13 +409,20 @@ export function useSendReviewComments(ref: JobRef) {
  * The MERGE action is different: the backend now AWAITS the merge before responding, so this request's
  * promise doesn't resolve until the merge has fully succeeded or failed — the status flip has already
  * happened server-side by the time we get a response. An `onSettled` invalidate is therefore safe (it
- * can't race the flip) and desired: it lets the Merge PR card unmount promptly on either outcome.
+ * can't race the flip) and desired: it lets the Merge PR card unmount promptly on either outcome. This
+ * invalidate is scoped to the MERGE action only — for every other verdict (plan/ship/amend/retract/
+ * db-write) an unconditional invalidate here would race the async status flip and re-cache stale state,
+ * which is exactly what the WAL-driven realtime refetch above is there to avoid.
  */
 export function useApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ApproveBody) => approveThread(ref, body),
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+    onSettled: (_data, _err, variables) => {
+      if (variables.actionId === MERGE_ACTION_ID) {
+        void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      }
+    },
   });
 }
 
