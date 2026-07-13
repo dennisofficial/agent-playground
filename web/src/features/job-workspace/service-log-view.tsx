@@ -6,6 +6,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useServiceLogStream } from "@/lib/api/service-log-store";
 import type { JobRef } from "@/lib/api/job-api";
 import type { ServiceInfo } from "@/lib/api/types";
+import { compensateAboveViewportResize } from "./scroll-compensation";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 
 /** The service pane's header subtitle — live status + cmd + pid/start/log-update facts, or why there's
@@ -63,6 +64,11 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
     overscan: 20,
   });
 
+  // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
+  // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
+  // directly here rather than inside the options object above.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
+
   pinRef.current = () => {
     const el = tail.scrollRef.current;
     if (!el) return;
@@ -83,7 +89,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
         onScroll={tail.onScroll}
         onPointerOver={tail.onPointerOver}
         onPointerLeave={tail.onPointerLeave}
-        className="h-full overflow-y-auto px-4 py-3"
+        className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none] px-4 py-3"
         style={{ background: "var(--term)" }}
       >
         {log === undefined ? (
@@ -147,6 +153,9 @@ export function LogFileView({ content }: { content: string }) {
     estimateSize: () => LINE_HEIGHT_PX,
     overscan: 20,
   });
+  // Same Cause B fix as the other virtualizers in this file: compensate above-viewport
+  // re-measures during an upward scroll so content doesn't slide down (see note above).
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   const virtualItems = virtualizer.getVirtualItems();
 

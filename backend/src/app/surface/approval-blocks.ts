@@ -28,6 +28,11 @@ export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
 /** The "Merge PR" gate — a human clicking it (or auto-merge auto-clicking it) merges the open PR into its
  *  base. A THIRD gate alongside Approve (plan) and Ship it. Button value carries only `{ jobId }`. */
 export const MERGE_ACTION_ID = 'atlas_approval:merge';
+/** The `atlas-prod` gated-write approval card's buttons (Thread 2) — `Execute write` runs the operator's
+ *  approved single SQL statement on the DML-only `mcp_writer` role; `Deny` marks it rejected. Its button
+ *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id), not a decision record. */
+export const DB_WRITE_APPROVE_ACTION_ID = 'atlas_approval:db_write_approve';
+export const DB_WRITE_DENY_ACTION_ID = 'atlas_approval:db_write_deny';
 
 /** What rides in a button `value` / a verdict payload — the ids needed to resolve the gate. */
 export interface ApprovalActionMeta {

@@ -54,3 +54,6 @@ export const hasAutoMerge = (c: PromptCtx): boolean => c.settings?.autoMerge ===
 /** The repo has an attached house-style profile (the conditional conventions fragment). */
 export const hasRepoConventions = (c: PromptCtx): boolean =>
   !!c.settings?.repoConventions && c.settings.repoConventions.body.trim().length > 0;
+
+/** This job runs on the Atlas repo itself (slug === ATLAS_REPO_SLUG) — gates the atlas-prod host-tool fragment. */
+export const isAtlasRepo = (c: PromptCtx): boolean => c.job?.isAtlasRepo === true;

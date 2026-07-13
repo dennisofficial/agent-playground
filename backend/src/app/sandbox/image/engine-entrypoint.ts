@@ -22,6 +22,11 @@ import {
   partitionWorkspaceProfileTools,
   qualifyWorkspaceProfileToolNames,
 } from './workspace-profile-bridge-options';
+import {
+  ATLAS_PROD_BRIDGE_NAME,
+  partitionAtlasProdTools,
+  qualifyAtlasProdToolNames,
+} from './atlas-prod-bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 import { ToolBridgeReader } from './tool-bridge-reader';
@@ -91,6 +96,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
     let workspaceProfileBridge: BridgeClaudeOptions | undefined;
+    let atlasProdBridge: BridgeClaudeOptions | undefined;
     if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
       // The shared reader owns its own blocking connection (a blocking read can't share the main
       // client) and swaps it internally on a stall-reset; `makeSub` also assigns the outer `sub` so the
@@ -147,14 +153,18 @@ async function runOverRedis(turnId: string): Promise<void> {
       const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(
         spec.toolBridgeTools,
       );
+      // Further split the remaining general tools into the dedicated atlas-prod bridge (only
+      // ever non-empty on the Atlas repo — `buildTools` omits these tools everywhere else).
+      const { rest: generalToolNames, atlasProd: atlasProdToolNames } =
+        partitionAtlasProdTools(hostToolNames);
       const server = claudeSdk.createSdkMcpServer({
         name: BRIDGE_SERVER_NAME,
         version: '1.0.0',
         instructions: 'Atlas host tools. Call these to interact with the host harness.',
-        tools: hostToolNames.map(makeProxyTool),
+        tools: generalToolNames.map(makeProxyTool),
         alwaysLoad: true,
       });
-      bridge = buildBridgeClaudeOptions(server, hostToolNames);
+      bridge = buildBridgeClaudeOptions(server, generalToolNames);
       if (profileToolNames.length > 0) {
         const profileServer = claudeSdk.createSdkMcpServer({
           name: WORKSPACE_PROFILE_BRIDGE_NAME,
@@ -167,6 +177,20 @@ async function runOverRedis(turnId: string): Promise<void> {
         workspaceProfileBridge = {
           extraClaudeOptions: { mcpServers: { [WORKSPACE_PROFILE_BRIDGE_NAME]: profileServer } },
           bridgeToolNames: qualifyWorkspaceProfileToolNames(profileToolNames),
+        };
+      }
+      if (atlasProdToolNames.length > 0) {
+        const atlasProdServer = claudeSdk.createSdkMcpServer({
+          name: ATLAS_PROD_BRIDGE_NAME,
+          version: '1.0.0',
+          instructions:
+            'Atlas prod diagnostics — relocated prod-diagnostics reads plus a gated prod DB write: propose-only, operator-approved.',
+          tools: atlasProdToolNames.map(makeProxyTool),
+          alwaysLoad: true,
+        });
+        atlasProdBridge = {
+          extraClaudeOptions: { mcpServers: { [ATLAS_PROD_BRIDGE_NAME]: atlasProdServer } },
+          bridgeToolNames: qualifyAtlasProdToolNames(atlasProdToolNames),
         };
       }
     }
@@ -235,12 +259,14 @@ async function runOverRedis(turnId: string): Promise<void> {
     const mergedMcpServers = {
       ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(workspaceProfileBridge?.extraClaudeOptions.mcpServers ?? {}),
+      ...(atlasProdBridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
       ...(userMcp?.extraClaudeOptions.mcpServers ?? {}),
     };
     const mergedToolNames = [
       ...(bridge?.bridgeToolNames ?? []),
       ...(workspaceProfileBridge?.bridgeToolNames ?? []),
+      ...(atlasProdBridge?.bridgeToolNames ?? []),
       ...(lsp?.lspToolNames ?? []),
       ...(userMcp?.userMcpToolNames ?? []),
     ];

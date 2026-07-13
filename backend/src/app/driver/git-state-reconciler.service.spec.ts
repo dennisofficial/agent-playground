@@ -52,6 +52,7 @@ function make(over: {
   } as unknown as GithubPrService;
   const creds = {
     githubToken: vi.fn(async () => 'tok'),
+    hostGithubToken: vi.fn(async () => 'tok'),
   } as unknown as CredentialResolver;
   const intake = { intakeEvent } as unknown as StimulusIntake;
   // Fire-and-forget re-evaluation on every reconcile — never asserted here, just must not throw (which
@@ -273,6 +274,7 @@ describe('GitStateReconciler.tick', () => {
     // svc built with a token; override creds to none for this job.
     (svc as unknown as { creds: CredentialResolver }).creds = {
       githubToken: vi.fn(async () => null),
+      hostGithubToken: vi.fn(async () => null),
     } as unknown as CredentialResolver;
     await svc.tick();
     expect(nextPollWrite(update)).toEqual({

@@ -93,6 +93,19 @@ the locked decision record, and the plan across turns and host restarts. `submit
 persists the plan (threads) + requests an async Codex review; `finalize_plan` posts the approval card; the
 operator's approval is what dispatches the build.
 
+**`atlas-prod` — prod diagnostics + gated recovery writes (Atlas repo only).** ✅ A conditionally-registered
+host-bridge MCP (`app/prod-mcp/`), wired in ONLY when the repo slug === `ATLAS_REPO_SLUG` (`isAtlasRepo`) —
+fail-closed, so no non-Atlas job ever sees it. It serves the 7 read-only `atlas_*` diagnostics tools on a
+dedicated **SELECT-only** DB role (`mcp_reader`, its own DataSource — never the backend's `app` connection),
+plus a **structurally-gated** write tool `propose_prod_write`: the brain can only *propose* one single SQL
+statement; it is previewed (an `EXPLAIN` planner estimate on the read-only role — the `mcp_writer` credential
+is never touched pre-approval) and posted as an operator **approval card**. Only on approval does a *separate*
+code path execute the exact approved statement on a **DML-only** role (`mcp_writer`, INSERT/UPDATE/DELETE, no
+DDL) and write a durable audit row (`prod_maintenance_write`, which the writer role cannot itself mutate). The
+agent holds only *propose* — the recorded approval is what executes — so a confused/looping agent physically
+cannot mutate prod. This is the same human-approval-gate shape as the plan/ship gates above, applied to prod
+recovery.
+
 **`create_job`.** ✅ The brain spins off a **new, independent** job on the same repo (`create_job({ title,
 firstMessage })`) when work splits into its own unit. It inherits the base branch and starts scoping
 immediately (`createFollowUpJob` → `startFollowUpJob`). Intentionally *independent* — an earlier

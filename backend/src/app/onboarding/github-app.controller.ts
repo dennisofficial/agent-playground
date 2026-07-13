@@ -33,15 +33,12 @@ class SetGithubAuthModeDto {
   @IsIn(['pat', 'app']) mode!: 'pat' | 'app';
 }
 
-class SetGithubIdentityModeDto {
-  @IsIn(['pat', 'app']) identity!: 'pat' | 'app';
-}
-
 /**
  * `/web/orgs/:orgId/github-app` — connect/disconnect the Atlas GitHub App and switch the org's
  * `githubAuthMode` between `pat` and `app`. Membership-gated; every write is owner-only
  * (`OrgOwnerGuard`) — connecting/disconnecting the App is an Administer action, same tier as
- * `OrgCredentialsController`.
+ * `OrgCredentialsController`. Connecting the App (the callback below) does NOT change `githubAuthMode` —
+ * the owner switches modes explicitly via `PUT mode`.
  */
 @Controller('web/orgs/:orgId/github-app')
 @UseGuards(OrgMembershipGuard)
@@ -86,18 +83,6 @@ export class GithubAppController {
     return { ok: true, mode: body.mode };
   }
 
-  /** Set the org's identity-write preference (which credential AUTHORS commits/PRs/comments/reviews). Permissive — the value is inert unless the fallback chain lands on it; the UI only exposes it when both a PAT and an App installation exist. */
-  @Put('identity')
-  @UseGuards(OrgOwnerGuard)
-  async setIdentity(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Body() body: SetGithubIdentityModeDto,
-  ): Promise<{ ok: true; identity: 'pat' | 'app' }> {
-    await this.store.write(org.id, { githubIdentityMode: body.identity });
-    await this.onboarding.tryActivate(org.id);
-    return { ok: true, identity: body.identity };
-  }
-
   /** Disconnect the App: clear the installation + fall back to `pat` mode. */
   @Delete()
   @UseGuards(OrgOwnerGuard)
@@ -119,7 +104,6 @@ export class GithubAppController {
     mode: 'pat' | 'app';
     installationId: string | null;
     account: string | null;
-    identityMode: 'pat' | 'app' | null;
   }> {
     const [presence, creds] = await Promise.all([
       this.store.presence(org.id),
@@ -131,7 +115,6 @@ export class GithubAppController {
       mode: presence.githubAuthMode,
       installationId: creds?.githubAppInstallationId ?? null,
       account: creds?.githubAppInstallationAccount ?? null,
-      identityMode: presence.githubIdentityMode,
     };
   }
 }
@@ -199,7 +182,6 @@ export class GithubAppCallbackController {
     try {
       await this.store.write(orgId, {
         githubAppInstallationId: installationId,
-        githubAuthMode: 'app',
         githubAppInstallationAccount: installation.account.login,
       });
     } catch (err) {

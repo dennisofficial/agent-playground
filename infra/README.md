@@ -21,7 +21,7 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 │                       # substitution + pg-backup.sh; mode 600 (see infra/.env.compose.example)
 ├── secrets/
 │   ├── atlas.env       # plaintext secrets — mode 600, never committed (see .env.prod.example)
-│   └── mcp-reader.env  # scoped MCP_READER_* only — mode 600 (see .env.mcp-reader.example)
+│   └── mcp-writer.env  # scoped MCP_WRITER_PG_PASSWORD for the role-bootstrap step — mode 600
 ├── caddy/
 │   ├── data/           # Caddy certificate storage
 │   ├── config/         # Caddy runtime config
@@ -214,21 +214,23 @@ Replace `<tag>` with the `sha-<gitsha>` tag `ci.yml` published for the commit yo
 > migrations the normal way (`pnpm db:migration:generate`, never hand-written — see the repo CLAUDE.md);
 > the deploy applies them with `db:migrate:deploy`.
 
-### 7.5. Create the read-only MCP-reader role
+### 7.5. Create the dedicated `atlas-prod` MCP DB roles
 
-The `mcp-reader` service (standalone, read-only prod-diagnostics MCP server) connects with a dedicated
-**SELECT-only** Postgres role — this is what makes its production access read-only *structurally* (it
-physically cannot INSERT/UPDATE/DELETE or run DDL), not just by convention. Create it once, after the
-schema exists (step 7), with the idempotent `infra/mcp-reader-role.sql`:
+The `atlas-prod` MCP (the backend-hosted, Atlas-repo-only prod-diagnostics tools + the human-gated recovery
+write) connects **two dedicated, least-privilege Postgres roles — never the backend's own full-privilege
+`app` connection**. Both are provisioned once, after the schema exists (step 7), and their credentials live
+in the backend's `atlas.env` (the *atlas-prod MCP DB roles* block of `.env.prod.example`), so the backend can
+open each as its own DataSource.
+
+The **`mcp_reader`** role is **SELECT-only** — this is what makes the diagnostics reads (and the pre-approval
+`EXPLAIN` preview) read-only *structurally* (it physically cannot INSERT/UPDATE/DELETE or run DDL), not just
+by convention. Create it with the idempotent `infra/mcp-reader-role.sql`:
 
 ```bash
-# Set MCP_READER_API_KEY + MCP_READER_PG_PASSWORD + MCP_READER_PG_DB in /srv/atlas/secrets/mcp-reader.env
-# first — the reader's OWN scoped secret file (template: infra/.env.mcp-reader.example), NOT atlas.env, so
-# the untrusted-data-ingesting reader never sees the backend's full secret bundle. Create it once:
-#   cp infra/.env.mcp-reader.example /srv/atlas/secrets/mcp-reader.env  # then fill in + chmod 600
-# MCP_READER_PG_USER stays `mcp_reader`; MCP_READER_PG_DB == POSTGRES_DB.
+# Set MCP_READER_PG_USER (stays `mcp_reader`) + MCP_READER_PG_PASSWORD in /srv/atlas/secrets/atlas.env first
+# (the atlas-prod MCP DB-roles block — same file the backend reads). Then create/refresh the role:
 set -a; source /srv/atlas/.env; set +a   # POSTGRES_USER / POSTGRES_DB
-PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/mcp-reader.env | cut -d= -f2-)"
+PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/atlas.env | cut -d= -f2-)"
 docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
     -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
     -v mcp_reader_password="$PW" \
@@ -236,21 +238,42 @@ docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
 ```
 
 The script is re-runnable — running it again refreshes the grants and resets the password (so it doubles
-as the DB-credential rotation step). The `mcp-reader` service (step 8) picks up the role via the
-`MCP_READER_PG_*` secrets.
+as the DB-credential rotation step). The backend picks up the role via the `MCP_READER_PG_*` secrets and
+opens it as its dedicated SELECT-only pool at boot.
 
-**Register the server for the Atlas repo (operator, one-time, in the web UI).** The reader has **no public
-port and no Caddy route** — it's reachable only from Atlas-repo sandboxes over the internal `atlas-mcp`
-network. In the web console's MCP settings, for the **Atlas repo only**, add a server:
+#### The DML-only MCP-writer role (gated prod-recovery writes)
 
-- Transport: **Streamable HTTP**
-- URL: `http://mcp-reader:4100/` (internal Docker DNS — resolvable because Atlas-repo sandboxes are
-  attached to `atlas-mcp`; gated on `ATLAS_REPO_SLUG` matching the repo's slug)
-- Header: `X-Api-Key: <MCP_READER_API_KEY>` (the same value stored in `mcp-reader.env`)
+The `atlas-prod` MCP's human-gated write path executes an operator-**approved** recovery statement with a
+second dedicated role, `mcp_writer` — **DML-only** (INSERT/UPDATE/DELETE + SELECT, no CREATE/ALTER/DROP),
+so schema changes are physically impossible for it and it is REVOKEd all write on its own audit ledger
+(`prod_maintenance_write`). This is what makes the two-role split of decision d4 *structural* rather than
+app-code convention. Create it once with the idempotent `infra/mcp-writer-role.sql` — **after** the schema
+is migrated (step 7 plus the `AddProdMaintenanceWrite` migration), since the audit-ledger REVOKE needs the
+table to exist:
 
-Only Atlas-repo jobs then receive both the network route **and** the key. Rotating the key = change
-`MCP_READER_API_KEY` in `mcp-reader.env`, re-save the web-registry value, then `docker compose … up -d
-mcp-reader`.
+```bash
+# Set MCP_WRITER_PG_PASSWORD in the writer's OWN scoped secret file, /srv/atlas/secrets/mcp-writer.env
+# (mode 600). MCP_WRITER_PG_USER stays `mcp_writer`. The backend reads its runtime copy from the
+# atlas-prod block of atlas.env (see .env.prod.example) — keep the two in sync when you rotate.
+set -a; source /srv/atlas/.env; set +a   # POSTGRES_USER / POSTGRES_DB
+PW="$(grep -E '^MCP_WRITER_PG_PASSWORD=' /srv/atlas/secrets/mcp-writer.env | cut -d= -f2-)"
+docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -v mcp_writer_password="$PW" \
+    -f - < infra/mcp-writer-role.sql
+```
+
+Re-runnable (refreshes grants + rotates the password). The backend picks up both roles via the
+`MCP_READER_PG_*` / `MCP_WRITER_PG_*` secrets — the `atlas-prod` MCP connects them as dedicated pools,
+never the backend's full-privilege `app` connection.
+
+**No console registration needed.** The `atlas-prod` MCP is a **host-bridge** tool served in-process by the
+backend, not a separately-registered network server — so there is no web-console MCP entry, no dedicated
+container, no internal network, and no API key to manage. It is registered **automatically and only** for
+jobs whose repo slug matches `ATLAS_REPO_SLUG` (`isAtlasRepo`); any other repo simply never sees the tools
+(fail-closed — an unset slug in dev means nobody is treated as Atlas). Provisioning the two DB roles above
+(and setting their `MCP_READER_PG_*` / `MCP_WRITER_PG_*` secrets in `atlas.env`) is the entire operator
+setup; the tools appear for the Atlas repo on the next backend boot.
 
 ### 8. Start all services
 
@@ -337,6 +360,30 @@ sudo crontab -l 2>/dev/null | { cat; echo '30 3 * * * /srv/atlas/scripts/docker-
 
 Tune retention with `ATLAS_GC_KEEP` (default 5 newest sha tags per repo). To reclaim on
 demand: `sudo /srv/atlas/scripts/docker-gc.sh`.
+
+---
+
+## CPU governance — control plane guaranteed, sandboxes best-effort
+
+The box runs the control plane (backend blue/green, web, Caddy, **Postgres**, **Redis**) alongside every
+per-job **sandbox** container. Sandbox work is bursty best-effort compute — the agent SDKs shelling out to
+`pnpm install`, builds, typechecks, and test runs — which can peg the CPU and starve the control plane
+(dropped SSE/UI connections) if left uncontrolled.
+
+Isolation is by **relative CPU weight** (Docker `CpuShares` → cgroup v2 `cpu.weight`), not a hard cap:
+
+- **Sandboxes** are created with `SANDBOX_CPU_SHARES` (default `256`, set on the backend in
+  `docker-compose.prod.yml`; the backend stamps it on every sandbox container it creates). Because the
+  weight is proportional and only bites **under contention**, an idle box still lets a sandbox use 100%
+  of the CPU — there is no throughput cap. Unset ⇒ Docker default (no isolation).
+- **Control plane** keeps Docker's default weight (`1024`, ≈4:1 over sandboxes). **Postgres** and
+  **Redis** are pinned higher still (`cpu_shares: 2048`) since DB/cache starvation is the worst failure.
+
+Tuning: lower `SANDBOX_CPU_SHARES` (min `2`) to make sandboxes yield harder; raise it toward `1024` to
+give agents parity with the control plane. Memory is deliberately **not** limited (the box runs at ~12%).
+
+> The `cpu_shares:` keys are the **legacy top-level** Compose options, honored by `docker compose up`.
+> Do NOT switch them to a `deploy.resources` block — that is Swarm-only and silently ignored here.
 
 ---
 

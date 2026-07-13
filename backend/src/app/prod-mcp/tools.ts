@@ -12,8 +12,8 @@ import {
   JobEntity,
   JobSandboxEntity,
   ThreadEntity,
-} from '../app/persistence/entities';
-import type { ThreadTerminalRecord } from '../app/persistence/entities/thread.entity';
+} from '../persistence/entities';
+import type { ThreadTerminalRecord } from '../persistence/entities/thread.entity';
 import { QUERY_FORMATS, renderRows, type QueryFormat } from './format';
 import { resolveJailed } from './path-jail';
 import { introspectSchema, runReadOnlyQuery } from './query';

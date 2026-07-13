@@ -12,6 +12,8 @@ import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
@@ -119,6 +121,21 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
         return;
       }
 
+      // atlas-prod gated DB write: EXECUTE or DENY the operator-approved statement. Not a plan verdict — the
+      // `writeId` (the ledger row to act on) rides in the card `value` alongside `jobId`; `parseWebApprovalMeta`
+      // only surfaces `jobId`, so parse `writeId` from the raw value here. `executeApproved`/`denyWrite` are
+      // idempotent (act only on a `pending` row), so a stale/double click is a safe no-op.
+      if (actionId === DB_WRITE_APPROVE_ACTION_ID || actionId === DB_WRITE_DENY_ACTION_ID) {
+        const writeId = parseWriteId(value);
+        if (!writeId) return;
+        const approve = actionId === DB_WRITE_APPROVE_ACTION_ID;
+        // `meta.jobId` is the card's authorized job — the controller already validated it matches the route
+        // job and belongs to the caller's org. Pass it down so the ledger row is verified to belong to it
+        // (a foreign/stale `writeId` can't be executed/denied on the back of an unrelated job's approval).
+        void resolveDbWrite(this.moduleRef, writeId, meta.jobId, ruledBy, approve).catch(() => undefined);
+        return;
+      }
+
       const verdict = actionIdToVerdict(actionId);
       if (!verdict) return;
 
@@ -219,6 +236,39 @@ async function neutralizeAmendProposal(
   const { DriverStoreService } = await import('../driver/driver-store.service.js');
   const store = moduleRef.get(DriverStoreService, { strict: false });
   await store.neutralizeAmendProposal(jobId, verdictLine);
+}
+
+/**
+ * Extract the `writeId` (the `prod_maintenance_write` ledger row id) from a db-write card's action
+ * `value`. The card's value is `{ jobId, writeId }`; `parseWebApprovalMeta` only surfaces `jobId`, so the
+ * db-write branch parses the raw value directly. Returns undefined for a malformed/non-db-write payload.
+ */
+function parseWriteId(value: string): string | undefined {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return typeof parsed.writeId === 'string' ? parsed.writeId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * EXECUTE or DENY an operator-approved atlas-prod DB write. Lazily resolves {@link ProdDiagnosticsService}
+ * from the app-wide DI graph (a dynamic import keeps the surface⇄prod-mcp dependency out of module load,
+ * mirroring the ship/amend lazy-driver resolution). Both `executeApproved` and `denyWrite` are idempotent
+ * (act only on a `pending` ledger row), so a stale/double click is a safe no-op.
+ */
+async function resolveDbWrite(
+  moduleRef: ModuleRef,
+  writeId: string,
+  expectedJobId: string,
+  ruledBy: string,
+  approve: boolean,
+): Promise<void> {
+  const { ProdDiagnosticsService } = await import('../prod-mcp/prod-diagnostics.service.js');
+  const svc = moduleRef.get(ProdDiagnosticsService, { strict: false });
+  if (approve) await svc.executeApproved(writeId, ruledBy, expectedJobId);
+  else await svc.denyWrite(writeId, ruledBy, expectedJobId);
 }
 
 function actionIdToVerdict(actionId: string): ApprovalVerdict | undefined {

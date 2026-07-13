@@ -32,6 +32,7 @@ export * from './mcp-server.entity';
 export * from './convention-profile.entity';
 export * from './workspace-skill.entity';
 export * from './host-stats-sample.entity';
+export * from './prod-maintenance-write.entity';
 
 import { OrganizationEntity } from './organization.entity';
 import { OrganizationMemberEntity } from './organization-member.entity';
@@ -61,6 +62,7 @@ import { McpServerEntity } from './mcp-server.entity';
 import { ConventionProfileEntity } from './convention-profile.entity';
 import { WorkspaceSkillEntity } from './workspace-skill.entity';
 import { HostStatsSampleEntity } from './host-stats-sample.entity';
+import { ProdMaintenanceWriteEntity } from './prod-maintenance-write.entity';
 
 /** Every Atlas v2 entity — passed to the Atlas datasource's `entities` (NOT the shared `ENTITIES`). */
 export const ENTITIES = [
@@ -92,4 +94,5 @@ export const ENTITIES = [
   ConventionProfileEntity,
   WorkspaceSkillEntity,
   HostStatsSampleEntity,
+  ProdMaintenanceWriteEntity,
 ];

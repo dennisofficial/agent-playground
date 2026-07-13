@@ -13,6 +13,8 @@ import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   MERGE_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
@@ -45,10 +47,12 @@ export interface WebApprovalCard {
    *   gate stays parked until the operator approves. `threads`/`decisions` empty.
    * - `merge` — the merge-ready gate (`Merge PR`); posted once the PR is GitHub-mergeable, regardless of
    *   auto-merge. `threads`/`decisions` empty.
-   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`merge` card renders its actions
-   * generically.
+   * - `db_write` — the `atlas-prod` gated-write approval card (Thread 2): `Execute write` + `Deny`;
+   *   `threads`/`decisions` empty, the proposed statement rides `sql`/`estimatedRows`/`estimateLabel`.
+   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`merge`/`db_write` card renders its
+   * actions generically.
    */
-  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge';
+  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge' | 'db_write';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -57,6 +61,17 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `db_write` card only — the exact proposed single SQL statement. */
+  sql?: string;
+  /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
+  estimatedRows?: number;
+  /** `db_write` card only — whether `estimatedRows` is a real planner estimate, unavailable (the
+   *  SELECT-only role can't EXPLAIN this statement — expected/benign for DML), or the EXPLAIN itself
+   *  surfaced a genuine statement error (`error`). */
+  estimateLabel?: 'estimate' | 'unavailable' | 'error';
+  /** `db_write` card only — a genuine EXPLAIN-time failure (syntax/bad column) so the operator sees the
+   *  statement will fail BEFORE approving. Absent for a benign permission-denied preview. */
+  error?: string;
 }
 
 /** A web-rendered verdict card — replaces the approval card after a verdict lands. */
@@ -210,6 +225,57 @@ export function webAmendProposalCard(input: { jobId: string; reason: string }): 
       {
         actionId: AMEND_DISMISS_ACTION_ID,
         label: 'Dismiss',
+        style: 'default',
+        value,
+      },
+    ],
+  };
+}
+
+/**
+ * Build the `atlas-prod` gated-write approval card — posted by `ProdDiagnosticsService.proposeWrite` for
+ * the operator to rule on. Its action `value` carries `{ jobId, writeId }` (the `prod_maintenance_write`
+ * row id), NOT a decision record — `Execute write` runs the exact proposed statement on the DML-only
+ * `mcp_writer` role, `Deny` marks the row `rejected`. Reuses the `approval_card` payload (generic
+ * `actions` renderer), discriminated by `kind: 'db_write'`; the SQL + estimate also ride as first-class
+ * fields for the web's monospace `DbWriteCardView`.
+ */
+export function webDbWriteApprovalCard(input: {
+  jobId: string;
+  writeId: string;
+  sql: string;
+  estimatedRows?: number;
+  estimateLabel?: 'estimate' | 'unavailable' | 'error';
+  error?: string;
+}): WebApprovalCard {
+  const value = JSON.stringify({ jobId: input.jobId, writeId: input.writeId });
+  // A genuine EXPLAIN failure (syntax/bad column) is surfaced IN the rendered summary — not just a
+  // structured field — so the operator is warned the statement will fail before clicking Execute.
+  const estimateLine = input.error
+    ? `:warning: This statement failed its dry-run and will likely fail on execute:\n\n\`\`\`\n${input.error}\n\`\`\``
+    : `Estimated rows affected: ${input.estimatedRows ?? 'unavailable'}`;
+  return {
+    type: 'approval_card',
+    jobId: input.jobId,
+    kind: 'db_write',
+    title: 'Approve prod DB write',
+    summary: `\n\n\`\`\`sql\n${input.sql}\n\`\`\`\n\n${estimateLine}`,
+    decisions: [],
+    threads: [],
+    sql: input.sql,
+    ...(input.estimatedRows !== undefined ? { estimatedRows: input.estimatedRows } : {}),
+    ...(input.estimateLabel ? { estimateLabel: input.estimateLabel } : {}),
+    ...(input.error ? { error: input.error } : {}),
+    actions: [
+      {
+        actionId: DB_WRITE_APPROVE_ACTION_ID,
+        label: 'Execute write',
+        style: 'danger',
+        value,
+      },
+      {
+        actionId: DB_WRITE_DENY_ACTION_ID,
+        label: 'Deny',
         style: 'default',
         value,
       },

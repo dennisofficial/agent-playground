@@ -53,6 +53,8 @@ import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
@@ -160,6 +162,11 @@ const VALID_ACTION_IDS = new Set([
   // The "Merge PR" gate button — same endpoint, but the `approval$` bridge routes it to the driver's merge
   // resolution instead of a plan verdict (see WebSurfaceModule).
   MERGE_ACTION_ID,
+  // The atlas-prod gated DB-write card buttons — Execute runs the approved statement on the `mcp_writer`
+  // role; Deny rejects it. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule). These
+  // are NOT plan verdicts, so they skip the `awaiting_approval` + decisionRecordId invariant below.
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -1193,7 +1200,9 @@ export class WebSurfaceController {
       actionId !== RETRACT_SHIP_ACTION_ID &&
       actionId !== AMEND_APPROVE_ACTION_ID &&
       actionId !== AMEND_DISMISS_ACTION_ID &&
-      actionId !== MERGE_ACTION_ID
+      actionId !== MERGE_ACTION_ID &&
+      actionId !== DB_WRITE_APPROVE_ACTION_ID &&
+      actionId !== DB_WRITE_DENY_ACTION_ID
     ) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||

@@ -68,7 +68,7 @@ export class BaseMoveMergeabilitySync {
 
     const repo = await this.repos.findOne({ where: { id: repoId } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(orgId);
+    const token = await this.creds.hostGithubToken(orgId);
     if (!repo || !parsed || !token) return;
 
     const results = await this.pr.listOpenPullMergeability(token, {
