@@ -2,8 +2,8 @@
  * thread-kind / registry — the ONE list of `ThreadKindSpec`s + the boot validation over it.
  *
  * Mirrors prompt-kit's `assemble.ts`: a plain, explicit list (no runtime discovery needed) that is
- * boot-validated LOUD (`validateThreadKinds`, the twin of `validateFragments`). Every `threads.kind` row
- * resolves through `threadKindSpec(kind)`; the driver's executable-section partition reads
+ * boot-validated LOUD (`validateThreadKinds`, the twin of `validateFragments`). Every `threads.role` row
+ * resolves through `threadKindSpec(role)`; the driver's executable-section partition reads
  * `driverExecutableKinds` (kinds with `execution: 'top-level'`), and step 3 materializes children via
  * `spec.children`.
  */
@@ -11,7 +11,7 @@ import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
 import type { SessionEngine } from '../domain';
 import type { ReasoningEffort } from '../engine';
-import type { ThreadKindSpec, ThreadRowKind } from './spec';
+import type { ThreadKindSpec, ThreadRole } from './spec';
 
 /**
  * The composer-footer Claude model defaults, split by lane because the brain and the workers no longer
@@ -23,7 +23,7 @@ import type { ThreadKindSpec, ThreadRowKind } from './spec';
 const CLAUDE_BRAIN_MODEL = 'opus';
 const CLAUDE_WORKER_MODEL = 'claude-sonnet-5';
 
-/** Default fix-turn severity threshold for a builder's `post_review` child (matches AutoFixStage's default). */
+/** Default fix-turn severity threshold for a builder's `review_fix` child (matches AutoFixStage's default). */
 const POST_REVIEW_MIN_SEVERITY = 'medium';
 
 /**
@@ -34,7 +34,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
   {
     // The job brain / operator conversation. A first-class row for the tree, but its runtime is the
     // AgentSessionManager session (`job_sandboxes.session_id`) — the driver NEVER executes it.
-    kind: 'main',
+    kind: 'planning',
     agent: Agent.ATLAS_MAIN,
     engine: 'claude',
     mode: 'conversational',
@@ -43,7 +43,26 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     gates: { verification: false, liveVerification: false },
     laneKind: 'main',
     inputPolicy: 'operator',
+    operatorInput: true,
     taskScope: 'main',
+    runner: 'session-backed',
+  },
+  {
+    // The synchronous Codex plan review. A render/identity-only row — its runtime stays in the brain's
+    // `review_plan` tool; the driver NEVER executes it.
+    kind: 'plan_review',
+    agent: Agent.META_PLAN_REVIEW,
+    engine: 'codex',
+    mode: 'review',
+    // The plan reviewer reasons hard — the effort the `review_plan` turn actually runs at
+    // (`plan-review.service.ts` reads it from here, single source of truth).
+    reasoningEffort: 'xhigh',
+    execution: 'render-only',
+    gates: { verification: false, liveVerification: false },
+    laneKind: 'codex-review',
+    inputPolicy: 'agent',
+    operatorInput: false,
+    taskScope: 'none',
     runner: 'session-backed',
   },
   {
@@ -58,17 +77,49 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     gates: { verification: true, liveVerification: true },
     laneKind: 'builder',
     inputPolicy: 'none',
+    operatorInput: true,
     taskScope: 'thread',
     runner: 'execute-turn',
     // Lens SELECTION is owned by the driver (`reviewAgentsForThread`, type-routed) — this factory owns
-    // only the post_review child, materialized alongside the driver-computed `review_lens` rows.
+    // only the review_fix child, materialized alongside the driver-computed `review_agent` rows.
     children: () => [
       {
-        kind: 'post_review' as ThreadRowKind,
+        kind: 'review_fix' as ThreadRole,
         brief: 'Post-review fixes',
         config: { minSeverity: POST_REVIEW_MIN_SEVERITY },
       },
     ],
+  },
+  {
+    // One read-only review lens over its parent builder's diff. Driven as a CHILD; persists the FULL
+    // ReviewFinding[] on its own row (`review_findings`) for review_fix to read.
+    kind: 'review_agent',
+    agent: Agent.AUTOFIX_REVIEW,
+    engine: 'claude',
+    mode: 'review',
+    execution: 'child',
+    reasoningEffort: 'high',
+    gates: { verification: false, liveVerification: false },
+    laneKind: 'autofix-lens',
+    inputPolicy: 'none',
+    operatorInput: false,
+    taskScope: 'none',
+    runner: 'execute-turn',
+  },
+  {
+    // The fix pass: one execute turn fed the deduped, severity-filtered findings off its sibling lenses.
+    kind: 'review_fix',
+    agent: Agent.AUTOFIX_FIX,
+    engine: 'claude',
+    mode: 'execute',
+    execution: 'child',
+    reasoningEffort: 'high',
+    gates: { verification: false, liveVerification: false },
+    laneKind: 'autofix-fix',
+    inputPolicy: 'none',
+    operatorInput: false,
+    taskScope: 'none',
+    runner: 'execute-turn',
   },
   {
     // The ship-time whole-diff review: Codex, execute mode (reviews AND fixes), high reasoning effort, runs
@@ -82,53 +133,41 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     gates: { verification: false, liveVerification: false },
     laneKind: 'builder',
     inputPolicy: 'none',
+    operatorInput: false,
     taskScope: 'thread',
     runner: 'execute-turn',
   },
   {
-    // One read-only review lens over its parent builder's diff. Driven as a CHILD; persists the FULL
-    // ReviewFinding[] on its own row (`review_findings`) for post_review to read.
-    kind: 'review_lens',
-    agent: Agent.AUTOFIX_REVIEW,
+    // The ship/amend stage-thread (d11/d14): takes over `openPrAtShip` from Main once all build stages +
+    // master_review complete. Reuses the brain's prompting + a minimal "ship now" seed — no new per-stage
+    // prompt engineering in this job (d14).
+    kind: 'post_build',
+    agent: Agent.ATLAS_MAIN,
     engine: 'claude',
-    mode: 'review',
-    execution: 'child',
-    reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
-    laneKind: 'autofix-lens',
-    inputPolicy: 'none',
-    taskScope: 'none',
-    runner: 'execute-turn',
-  },
-  {
-    // The fix pass: one execute turn fed the deduped, severity-filtered findings off its sibling lenses.
-    kind: 'post_review',
-    agent: Agent.AUTOFIX_FIX,
-    engine: 'claude',
-    mode: 'execute',
-    execution: 'child',
-    reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
-    laneKind: 'autofix-fix',
-    inputPolicy: 'none',
-    taskScope: 'none',
-    runner: 'execute-turn',
-  },
-  {
-    // The synchronous Codex plan review. A render/identity-only row — its runtime stays in the brain's
-    // `review_plan` tool + the `codex_reviews` work-owed source; the driver NEVER executes it.
-    kind: 'plan_review',
-    agent: Agent.META_PLAN_REVIEW,
-    engine: 'codex',
-    mode: 'review',
-    // The plan reviewer reasons hard — the effort the `review_plan` turn actually runs at
-    // (`plan-review.service.ts` reads it from here, single source of truth).
-    reasoningEffort: 'xhigh',
+    mode: 'conversational',
     execution: 'render-only',
+    reasoningEffort: 'high',
     gates: { verification: false, liveVerification: false },
-    laneKind: 'codex-review',
-    inputPolicy: 'agent',
-    taskScope: 'none',
+    laneKind: 'main',
+    inputPolicy: 'operator',
+    operatorInput: false,
+    taskScope: 'thread',
+    runner: 'session-backed',
+  },
+  {
+    // The post-ship CI stage-thread (d14): takes over CI handling from Main, reusing the existing CI prompt
+    // surface (d14) — no new per-stage prompt engineering in this job.
+    kind: 'ci',
+    agent: Agent.ATLAS_MAIN,
+    engine: 'claude',
+    mode: 'conversational',
+    execution: 'render-only',
+    reasoningEffort: 'high',
+    gates: { verification: false, liveVerification: false },
+    laneKind: 'main',
+    inputPolicy: 'operator',
+    operatorInput: false,
+    taskScope: 'thread',
     runner: 'session-backed',
   },
 ];
@@ -136,8 +175,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
 const BY_KIND = new Map<string, ThreadKindSpec>(THREAD_KIND_SPECS.map((s) => [s.kind, s]));
 
 /** The kinds the DRIVER's top loop executes as build sections (`builder` + `master_review`). Everything
- *  else is a child (`review_lens`/`post_review`) or render-only (`main`/`plan_review`). */
-export const driverExecutableKinds: ReadonlySet<ThreadRowKind> = new Set(
+ *  else is a child (`review_agent`/`review_fix`) or render-only (`planning`/`plan_review`/`post_build`/`ci`). */
+export const driverExecutableKinds: ReadonlySet<ThreadRole> = new Set(
   THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map((s) => s.kind),
 );
 
@@ -150,7 +189,7 @@ export function threadKindSpec(kind: string): ThreadKindSpec {
 
 /** Is this kind driven by the driver's top loop (vs a child / render-only kind)? */
 export function isDriverExecutableKind(kind: string): boolean {
-  return driverExecutableKinds.has(kind as ThreadRowKind);
+  return driverExecutableKinds.has(kind as ThreadRole);
 }
 
 /** The static per-lane composer-footer default (`model · effort`), derived from the kind's spec. */

@@ -106,7 +106,7 @@ import {
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
-import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
+import { isDriverExecutableKind, threadKindSpec, type ThreadRole } from '../thread-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
@@ -2057,7 +2057,7 @@ export class ThreadDriver implements JobDispatcher {
     const lenses = reviewAgentsForThread(thread.type, frameworkSkillNames);
     const childSpecs = [
       ...lenses.map((l) => ({
-        kind: 'review_lens' as ThreadRowKind,
+        kind: 'review_lens' as ThreadRole,
         brief: l.label,
         config: l.id === 'framework' ? { lensId: l.id, skills: frameworkSkillNames } : { lensId: l.id },
       })),
