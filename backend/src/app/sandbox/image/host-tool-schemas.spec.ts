@@ -214,7 +214,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   atlas_query: {
     sql: 'SELECT id FROM jobs WHERE id = $1',
     params: ['j1'],
-    format: 'json',
+    format: 'jsonl',
     limit: 100,
   },
   atlas_schema: {},
