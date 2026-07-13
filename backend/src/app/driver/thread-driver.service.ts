@@ -2637,9 +2637,6 @@ export class ThreadDriver implements JobDispatcher {
     // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
     const servicesBlock =
       thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
-    const { task, seedIds: initialSeedIds } = await this.foldLegTaskWithSeeds(
-      job, thread, anchor.id, legSeed, baseTask, servicesBlock,
-    );
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2688,6 +2685,18 @@ export class ThreadDriver implements JobDispatcher {
         this.turn.canReattach() && anchor.sessionId
           ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge == null)
           : null;
+      // Compose the fresh-turn task — and DRAIN + LEASE the build lane's pending host seeds into it — ONLY when
+      // we're about to kick a fresh turn. `foldLegTaskWithSeeds` stamps `attempted_at` on the drained rows, but a
+      // live reattach reuses the already-running turn (this composed `task`/`seedIds` is discarded and never wired
+      // to a delivery stamp), so folding here would strand those seeds for a full CHAT_DELIVERY_LEASE_MS window —
+      // long enough for a halt/done to skip them and lose them. A null container means we fall through to a kick.
+      let task: AgentMessage = baseTask;
+      let initialSeedIds: string[] = [];
+      if (!reattachRow?.container_id) {
+        ({ task, seedIds: initialSeedIds } = await this.foldLegTaskWithSeeds(
+          job, thread, anchor.id, legSeed, baseTask, servicesBlock,
+        ));
+      }
       // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
       // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
       // onto) exactly ONCE. On a resume/reattach they already exist (durable), so re-emitting would duplicate.
