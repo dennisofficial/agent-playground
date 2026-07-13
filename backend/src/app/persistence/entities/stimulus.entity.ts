@@ -60,6 +60,12 @@ export class StimulusEntity extends TimestampedEntity {
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity | null;
 
+  /** Routing coordinate within `job_id`: `'main'` (brain) or `'thread:<threadId>'` (a build lane). Mirrors
+   *  `ActiveTurnEntity.lane`. Defaults `'main'` so pre-existing rows (and brain callers, which never set it)
+   *  route unchanged. */
+  @Column({ type: 'text', default: 'main' })
+  lane!: string;
+
   /** Chat author scope id; null for events. */
   @Column({ type: 'text', nullable: true })
   author_id!: string | null;

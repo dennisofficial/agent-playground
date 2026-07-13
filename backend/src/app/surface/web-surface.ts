@@ -195,8 +195,18 @@ export class WebSurface implements ChatSurface {
       deliveredSecretId?: string;
       /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
       seedRow?: SeedRow;
+      /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
+       *  lane is dispatched by the caller (`JitHostExecutor`), never here (see the port doc). */
+      lane?: string;
     } = {},
   ): string {
+    // FAIL LOUD on a misrouted build-lane seed: this surface only ever seeds `main` — a build lane must
+    // route through `JitHostExecutor`'s `LANE_SEEDER` (`BuildLaneDeliveryService.seedLane`), never here.
+    if (opts.lane && opts.lane !== 'main') {
+      throw new Error(
+        `WebSurface.seedSystemNotification: build-lane seeds must route via the LaneSeeder, not the surface (lane=${opts.lane})`,
+      );
+    }
     return this.receiveFromClient(channel, wrapSystemNotification(body), {
       threadTs: jobId,
       seed: true,

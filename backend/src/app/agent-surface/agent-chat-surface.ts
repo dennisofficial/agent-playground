@@ -133,8 +133,16 @@ export class AgentChatSurface implements ChatSurface {
       deliveredFileId?: string;
       deliveredSecretId?: string;
       seedRow?: SeedRow;
+      lane?: string;
     } = {},
   ): string {
+    // FAIL LOUD on a misrouted build-lane seed: this surface only ever seeds `main` — a build lane must
+    // route through `JitHostExecutor`'s `LANE_SEEDER` (`BuildLaneDeliveryService.seedLane`), never here.
+    if (opts.lane && opts.lane !== 'main') {
+      throw new Error(
+        `AgentChatSurface.seedSystemNotification: build-lane seeds must route via the LaneSeeder, not the surface (lane=${opts.lane})`,
+      );
+    }
     const ts = this.mintTs();
     this.inboundSubject.next({
       id: ts,

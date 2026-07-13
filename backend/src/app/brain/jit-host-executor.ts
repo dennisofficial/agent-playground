@@ -1,7 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { findLifecycleRule, operatorMessageRules, type JitFireCtx } from '../prompt-kit/jit';
 import type { TurnChunk } from '../prompt-kit/harness';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { descriptorForLane } from '../surface/thread-registry';
+// Direct file path (NOT the '../driver' barrel, which pulls the whole driver → a brain↔driver ES cycle) — only
+// the lane-seeder token + type are needed here.
+import { LANE_SEEDER, type LaneSeeder } from '../driver/build-lane-delivery.service';
 
 /** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant). */
 export type JitLifecycleEvent = 'preview-requested' | 'plan-approved';
@@ -24,6 +28,12 @@ export type JitLifecycleFireCtx = {
   baseBranch?: string;
   /** The approved decision record id (lifecycle:plan-approved) — seeds the once-per-approval dedup key. */
   decisionRecordId?: string;
+  /**
+   * The lane to seed onto — `'main'` (the brain, default) or a build lane (`'thread:<threadId>'`). d4 makes
+   * the seed MECHANISM lane-capable; the two existing lifecycle rules stay brain-only, so a build-lane target
+   * is dispatched through the injected {@link LaneSeeder} rather than the operator chat surface.
+   */
+  lane?: string;
   /** The repo's stored preview recipe (lifecycle:preview-requested) — spliced into the seed's managed block. */
   previewInstructions?: string | null;
 };
@@ -37,7 +47,12 @@ export type JitLifecycleFireCtx = {
  */
 @Injectable()
 export class JitHostExecutor {
-  constructor(@Inject(CHAT_SURFACE) private readonly surface: ChatSurface) {}
+  constructor(
+    @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
+    // The build-lane seed path (d4). @Optional so headless/test composition without the driver still
+    // constructs (undefined → a build-lane target no-ops); the @Global DriverModule binds it live.
+    @Optional() @Inject(LANE_SEEDER) private readonly laneSeeder?: LaneSeeder,
+  ) {}
 
   /**
    * Fire the enabled lifecycle rule for `event`, seeding its rendered payload into `ctx.jobId`'s thread (on
@@ -55,10 +70,27 @@ export class JitHostExecutor {
       ...(ctx.previewInstructions !== undefined ? { previewInstructions: ctx.previewInstructions } : {}),
     };
     const body = rule.render(fireCtx);
+
+    // LANE DISPATCH (d4, mechanism-only): a build-lane target routes through the read-only build-lane seed
+    // path (`seedLane`) — NEVER the operator chat surface. The two existing lifecycle rules stay brain-only,
+    // so this branch is unexercised today; it exists so the seed MECHANISM is lane-capable.
+    const buildLane = ctx.lane && ctx.lane !== 'main' ? descriptorForLane(ctx.lane) : null;
+    if (buildLane?.descriptor.kind === 'builder') {
+      const threadId = buildLane.ids[0];
+      if (this.laneSeeder && ctx.orgId && threadId) {
+        void this.laneSeeder.seedLane(
+          { jobId: ctx.jobId, orgId: ctx.orgId, repoId: ctx.repoId, threadId },
+          body,
+        );
+      }
+      return '';
+    }
+
     const surface = ctx.surface ?? this.surface;
     return (
       surface.seedSystemNotification?.(ctx.repoId, ctx.jobId, body, {
         ...(ctx.orgId !== undefined ? { orgId: ctx.orgId } : {}),
+        ...(ctx.lane !== undefined ? { lane: ctx.lane } : {}),
         seedRow: { label: rule.seed.label ?? rule.id, chunkKey: rule.seed.chunkKey(fireCtx) },
       }) ?? ''
     );

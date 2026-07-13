@@ -3,6 +3,7 @@ export * from './stimulus-intake.service';
 export * from './stimulus-consumer';
 export * from './event-filter.service';
 export * from './stimulus-store.service';
+export * from './delivery-pump.service';
 export * from './project-routing.service';
 export * from './surface-orchestration.service';
 export * from './chat-stimulus.bridge';

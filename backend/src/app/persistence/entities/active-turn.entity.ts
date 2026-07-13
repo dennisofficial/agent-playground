@@ -76,6 +76,13 @@ export class ActiveTurnEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'running' })
   status!: 'running' | 'done' | 'failed';
 
+  /** Whether this turn opened its `turn:{turn_id}:input` steering stream at start (`steerable:true` was
+   *  passed on the turn spec, so the in-container entrypoint subscribed). The authoritative "a host seed
+   *  will be consumed mid-turn" check — independent of `kind`. False for compaction + Codex/master-review
+   *  legs; true for a live Claude builder Leg (including the capped final Leg). */
+  @Column({ type: 'boolean', default: false })
+  steerable!: boolean;
+
   /** The id of the last `turn:{turn_id}:events` entry consumed — the resume cursor for re-attach. */
   @Column({ type: 'text', default: '0-0' })
   events_last_id!: string;
