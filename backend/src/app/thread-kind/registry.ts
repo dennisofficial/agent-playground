@@ -14,11 +14,14 @@ import type { ReasoningEffort } from '../engine';
 import type { ThreadKindSpec, ThreadRowKind } from './spec';
 
 /**
- * The shared Claude worker/brain model default — mirrors engine-core's `DEFAULT_WORKER_MODEL` and the
- * brain's `BRAIN_MODEL` (both the `'opus'` alias). Kept as a local literal because those live in
- * unexported engine internals; a divergence would only mislabel the pre-turn footer, never a real turn.
+ * The composer-footer Claude model defaults, split by lane because the brain and the workers no longer
+ * share a model. `CLAUDE_BRAIN_MODEL` mirrors AgentSessionManager's `BRAIN_MODEL` (the `'opus'` alias,
+ * the `main`/brain lane); `CLAUDE_WORKER_MODEL` mirrors engine-core's `DEFAULT_WORKER_MODEL` (Sonnet 5,
+ * every other Claude lane — builder + autofix). Kept as local literals because those live in unexported
+ * engine internals; a divergence would only mislabel the pre-turn footer, never a real turn.
  */
-const CLAUDE_DEFAULT_MODEL = 'opus';
+const CLAUDE_BRAIN_MODEL = 'opus';
+const CLAUDE_WORKER_MODEL = 'claude-sonnet-5';
 
 /** Default fix-turn severity threshold for a builder's `post_review` child (matches AutoFixStage's default). */
 const POST_REVIEW_MIN_SEVERITY = 'medium';
@@ -153,7 +156,7 @@ export function isDriverExecutableKind(kind: string): boolean {
 /** The static per-lane composer-footer default (`model · effort`), derived from the kind's spec. */
 export interface LaneDefaultFooter {
   engine: SessionEngine;
-  /** The Claude model id (`'opus'`) for claude kinds; omitted for codex (no pinned model). */
+  /** The Claude model id for claude kinds (`'opus'` for the brain, Sonnet 5 for workers); omitted for codex (no pinned model). */
   model?: string;
   /** Reasoning effort, when the kind runs at one. */
   effort?: ReasoningEffort;
@@ -161,15 +164,17 @@ export interface LaneDefaultFooter {
 
 /**
  * The config-driven composer-footer default for a lane — what the footer shows BEFORE the lane's first
- * turn completes (so a fresh Main reads "Opus 4.8", a Codex review reads "Codex · xHigh"). Registry is the
- * single source: `engine`/`effort` come straight off the spec; `model` is the shared Claude default for
- * claude kinds (codex has no pinned model). Once a real `turn_meta` exists the web prefers it over this.
+ * turn completes (so a fresh Main reads "Opus 4.8", a builder reads "Sonnet 5", a Codex review reads
+ * "Codex · xHigh"). Registry is the single source: `engine`/`effort` come straight off the spec; for
+ * claude kinds `model` is the brain default on the `main` lane and the worker default everywhere else
+ * (codex has no pinned model). Once a real `turn_meta` exists the web prefers it over this.
  */
 export function laneDefaultFooter(kind: string): LaneDefaultFooter {
   const spec = threadKindSpec(kind);
+  const claudeModel = spec.laneKind === 'main' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
   return {
     engine: spec.engine,
-    ...(spec.engine === 'claude' ? { model: CLAUDE_DEFAULT_MODEL } : {}),
+    ...(spec.engine === 'claude' ? { model: claudeModel } : {}),
     ...(spec.reasoningEffort ? { effort: spec.reasoningEffort } : {}),
   };
 }
