@@ -202,6 +202,7 @@ export class TenantCredentialStore {
     key: ClaudeUsageWindowKey,
     window: StoredUsageWindow,
     fetchedAt: number,
+    credentialId?: string,
     scope = '*',
   ): Promise<boolean> {
     return await this.dataSource.transaction(async (m) => {
@@ -210,13 +211,19 @@ export class TenantCredentialStore {
         lock: { mode: 'pessimistic_write' },
       });
       if (!row) return false;
-      const snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? { windows: {}, fetchedAt: 0 };
+      let snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? { windows: {}, fetchedAt: 0 };
+      // A harvest from a DIFFERENT credential than the stored snapshot must not merge into it —
+      // the snapshot represents ONE account. Start fresh, tagged to the incoming credential.
+      if (snapshot.credentialId !== credentialId) {
+        snapshot = { windows: {}, fetchedAt: 0, credentialId };
+      }
       const existing = snapshot.windows[key];
       if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
         return false; // unchanged — skip the write
       }
       snapshot.windows = { ...snapshot.windows, [key]: window };
       snapshot.fetchedAt = fetchedAt;
+      snapshot.credentialId = credentialId;
       row.claude_usage_snapshot = snapshot;
       await m.save(row);
       return true;

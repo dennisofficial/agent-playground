@@ -66,6 +66,8 @@ export interface AttachArgs {
   onEvent?: (e: EngineEvent) => void;
   toolBridge?: ToolBridgeOptions;
   signal?: AbortSignal;
+  /** Dispatch-time credential the turn runs on (host-only; stamped onto rate_limit events). */
+  credentialId?: string;
 }
 
 /**
@@ -217,7 +219,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
       const result = await this.runAttached(
         turnId,
         keys,
-        args,
+        {
+          onEvent: args.onEvent,
+          toolBridge: args.toolBridge,
+          signal: args.signal,
+          credentialId: auth?.refreshBack?.credentialId,
+        },
         target.containerId,
         target,
         onKicked,
@@ -563,7 +570,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         for (const entry of entries) {
           lastId = entry.id;
           const frame = entry.data as EventFrame;
-          if (frame.t === 'event') args.onEvent?.(frame.e);
+          if (frame.t === 'event') {
+            const e = frame.e;
+            args.onEvent?.(e.kind === 'rate_limit' ? { ...e, credentialId: args.credentialId } : e);
+          }
           else if (frame.t === 'final') result = frame.r;
           else if (frame.t === 'error') {
             errorMsg = frame.message;

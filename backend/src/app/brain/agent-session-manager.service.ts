@@ -2897,6 +2897,7 @@ export class AgentSessionManager
           rateLimitType: rlType,
           resetsAt: new Date(resumeClock).getTime(),
           utilization: 100,
+          credentialId: auth?.refreshBack?.credentialId,
         })
         .catch(() => undefined);
       const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';

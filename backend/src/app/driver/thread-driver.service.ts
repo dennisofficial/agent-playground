@@ -837,6 +837,7 @@ export class ThreadDriver implements JobDispatcher {
               rateLimitType: limit.rateLimitType,
               resetsAt: new Date(resumeClock).getTime(),
               utilization: 100,
+              credentialId: limit.credentialId,
             })
             .catch(() => undefined);
         // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the

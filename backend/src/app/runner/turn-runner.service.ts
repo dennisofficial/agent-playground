@@ -280,7 +280,9 @@ export class TurnRunnerService {
       }
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+      throw new EngineSessionLimitError(
+        message, resetAt, rateLimitType, result.sessionId, input.auth?.refreshBack?.credentialId,
+      );
     }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
