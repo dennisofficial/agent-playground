@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from "./idle-premeasure";
 import { compensateAboveViewportResize } from "./scroll-compensation";
 import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
@@ -178,6 +179,9 @@ export function TranscriptView({
   // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
+
+  // Touch capability is a stable device property — computed once per mount (not re-checked every render).
+  const [isTouch] = useState(() => isTouchCapableDevice());
 
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
@@ -395,6 +399,11 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — iOS/touch-only and
+  // only on transcripts long enough for the residual scroll-up shift to matter (see idle-premeasure.tsx).
+  const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
+  const premeasureLayer = useIdlePremeasure({ items, virtualizer, enabled: premeasureEnabled });
+
   // Scroll to the next unanswered question (cycles oldest→newest on repeated clicks) and flash its card.
   const jumpToOpenQuestion = () => {
     if (openQuestions.length === 0) return;
@@ -417,7 +426,8 @@ export function TranscriptView({
         onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] px-7 pt-5"
       >
-        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
+        <div className="relative mx-auto flex max-w-[880px] flex-col gap-[9px]">
+          {premeasureLayer}
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               Loading conversation…
