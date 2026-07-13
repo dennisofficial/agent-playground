@@ -15,13 +15,11 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
-  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
-import { resolveMergeApproval } from './resolve-merge-approval';
 import { WebSurfaceController } from './web-surface.controller';
 import { JobTitleService } from './job-title.service';
 import type { ApprovalVerdict } from '../brain/decision-approval.service';
@@ -84,15 +82,6 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
       // only acts while the job is `awaiting_ship_review`, so a stale/double click is a no-op.
       if (actionId === SHIP_ACTION_ID) {
         void resolveShipApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
-        return;
-      }
-
-      // MERGE gate: the "Merge PR" click — not a plan verdict, resolved through the driver's ONE merge
-      // path. Lazy `ThreadDriver` resolution mirrors the SHIP branch above; `resolveMergeApprovalDurably`
-      // delegates to `AutoMergeService.mergeNow`, which re-checks mergeability under its own guard, so a
-      // stale/double click is a safe no-op.
-      if (actionId === MERGE_ACTION_ID) {
-        void resolveMergeApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
         return;
       }
 
