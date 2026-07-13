@@ -702,6 +702,9 @@ export class RedisEngineRunner implements EngineRunnerPort {
         put('GIT_COMMITTER_EMAIL', id.email);
       }
     }
+    // Per-turn live-run evidence dir (thread leg → its subfolder, brain → root). `put` skips undefined, so
+    // turns without one leave it unset and the in-sandbox writers fall back to /context/evidence.
+    put('ATLAS_EVIDENCE_DIR', target?.evidenceDir);
     return e;
   }
 }

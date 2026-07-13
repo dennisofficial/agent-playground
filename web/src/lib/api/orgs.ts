@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -649,6 +649,70 @@ export function useStartMcpOAuth(orgId: string) {
         { method: "POST" },
       ),
   });
+}
+
+/**
+ * Owner-only: drive the interactive OAuth consent popup for an already-registered `authKind='oauth'`
+ * server — centralizes the popup open, the callback's postMessage/focus-close handling, and the server-list
+ * refetch, so the settings form and the job-workspace proposal card share one implementation. Does not
+ * persist the server itself; callers pass a scope+name that's already been saved.
+ */
+export function useMcpOAuthConnect(orgId: string) {
+  const qc = useQueryClient();
+  const startOAuth = useStartMcpOAuth(orgId);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const popupRef = useRef<Window | null>(null);
+
+  useEffect(() => {
+    if (!busy) return;
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { type?: string; ok?: boolean } | null;
+      if (!data || data.type !== "atlas-mcp-oauth") return;
+      setBusy(false);
+      setResult(
+        data.ok
+          ? { ok: true, text: "Connected." }
+          : { ok: false, text: "Authorization did not complete." },
+      );
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    };
+    const onFocus = () => {
+      if (popupRef.current && popupRef.current.closed) {
+        popupRef.current = null;
+        setBusy(false);
+      }
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    };
+    window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [busy, orgId, qc]);
+
+  const connect = useCallback(
+    async ({ scope, name }: { scope: string; name: string }) => {
+      setResult(null);
+      try {
+        const { authorizeUrl } = await startOAuth.mutateAsync({ scope, name });
+        setBusy(true);
+        const popup = window.open(authorizeUrl, "atlas-mcp-oauth", "width=520,height=680");
+        popupRef.current = popup;
+        if (!popup) {
+          setBusy(false);
+          setResult({ ok: false, text: "Popup blocked — allow popups and retry." });
+        }
+      } catch (e) {
+        setBusy(false);
+        setResult({ ok: false, text: (e as Error)?.message || "Could not start OAuth." });
+      }
+    },
+    [startOAuth],
+  );
+
+  return { connect, busy, result, reset: () => setResult(null) };
 }
 
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────

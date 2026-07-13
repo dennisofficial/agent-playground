@@ -98,6 +98,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       ...(msg.seed ? { seed: true } : {}),
       ...(msg.seedQuestionId ? { seedQuestionId: msg.seedQuestionId } : {}),
       ...(msg.seedFileId ? { seedFileId: msg.seedFileId } : {}),
+      ...(msg.seedSecretId ? { seedSecretId: msg.seedSecretId } : {}),
       ...(msg.seedRow ? { seedRow: msg.seedRow } : {}),
       ...(msg.priority ? { priority: msg.priority } : {}),
       ...(msg.card ? { card: msg.card } : {}),

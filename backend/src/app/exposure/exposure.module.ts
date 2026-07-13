@@ -1,4 +1,7 @@
 import { Global, Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { JobEntity } from '../persistence/entities';
+import { DB_CONNECTION } from '../persistence/database.module';
 import { ExposureService } from './exposure.service';
 
 /**
@@ -10,6 +13,7 @@ import { ExposureService } from './exposure.service';
  */
 @Global()
 @Module({
+  imports: [TypeOrmModule.forFeature([JobEntity], DB_CONNECTION)],
   providers: [ExposureService],
   exports: [ExposureService],
 })

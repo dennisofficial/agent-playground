@@ -5,6 +5,7 @@ import { WorkspaceProfileService } from './workspace-profile.service';
 function make(overrides?: {
   mounts?: { path: string; mode: string }[];
   setupScript?: string | null;
+  previewInstructions?: string | null;
   secretFiles?: { path: string; label?: string | null }[];
   mcpRows?: { name: string; scope: string; surfaces: string[]; enabled: boolean }[];
   skillRows?: { name: string; scope: string; description: string; enabled: boolean }[];
@@ -12,12 +13,14 @@ function make(overrides?: {
   conventionName?: string | null;
   unfilledSlots?: { name: string; scope: string; slots: string[] }[];
   authFailing?: { name: string; scope: string; authKind: 'static' | 'oauth'; reason: string }[];
+  needConnect?: { name: string; scope: string }[];
   seenManifests?: string[] | null;
 }): WorkspaceProfileService {
   const o = overrides ?? {};
   const workspaceConfig = {
     listMounts: async () => o.mounts ?? [],
     getSetupScript: async () => o.setupScript ?? null,
+    getPreviewInstructions: async () => o.previewInstructions ?? null,
     getSeenManifests: async () => o.seenManifests ?? null,
   };
   const secretFiles = { list: async () => o.secretFiles ?? [] };
@@ -25,6 +28,7 @@ function make(overrides?: {
     rowsForTurn: async () => o.mcpRows ?? [],
     unfilledSecretSlots: async () => o.unfilledSlots ?? [],
     authFailingServers: async () => o.authFailing ?? [],
+    needsOAuthConnect: async () => o.needConnect ?? [],
   };
   const skills = { rowsForTurn: async () => o.skillRows ?? [] };
   const conventions = {
@@ -45,6 +49,7 @@ describe('WorkspaceProfileService.describe', () => {
     const svc = make({
       mounts: [{ path: '.cache', mode: 'shared-rw' }],
       setupScript: 'pnpm install',
+      previewInstructions: 'docker compose up',
       secretFiles: [{ path: '.env', label: 'env' }],
       mcpRows: [{ name: 'github', scope: '*', surfaces: ['build'], enabled: true }],
       skillRows: [{ name: 'migrations', scope: 'repo-1', description: 'Use when …', enabled: true }],
@@ -54,6 +59,7 @@ describe('WorkspaceProfileService.describe', () => {
     const snap = await svc.describe('org1', 'repo-1');
     expect(snap.mounts).toEqual([{ path: '.cache', mode: 'shared-rw' }]);
     expect(snap.setupScript).toEqual({ present: true, length: 'pnpm install'.length });
+    expect(snap.previewRecipe).toEqual({ present: true, length: 'docker compose up'.length });
     expect(snap.secretFiles).toEqual([{ path: '.env', label: 'env' }]);
     expect(snap.mcpServers).toEqual([{ name: 'github', tier: 'org', surfaces: ['build'], enabled: true }]);
     expect(snap.skills).toEqual([
@@ -65,6 +71,7 @@ describe('WorkspaceProfileService.describe', () => {
   it('reports empties on an unprovisioned repo', async () => {
     const snap = await make().describe('org1', 'repo-1');
     expect(snap.setupScript).toEqual({ present: false, length: 0 });
+    expect(snap.previewRecipe).toEqual({ present: false, length: 0 });
     expect(snap.houseStyle).toBeNull();
     expect(snap.mounts).toEqual([]);
   });
@@ -85,7 +92,7 @@ describe('WorkspaceProfileService.render', () => {
     );
     // No 'Skills:' label (dropped) — the SDK's native skill listing now owns that surfacing; see render()'s
     // comment. `describe()` still aggregates `snap.skills` (covered above), just not re-rendered here.
-    for (const label of ['Mounts:', 'Setup script:', 'Secret files:', 'MCP servers:', 'House style:']) {
+    for (const label of ['Mounts:', 'Setup script:', 'Preview recipe:', 'Secret files:', 'MCP servers:', 'House style:']) {
       expect(out).toContain(label);
     }
     expect(out).not.toContain('Skills:');
@@ -167,5 +174,29 @@ describe('WorkspaceProfileService.computeGaps / renderGaps', () => {
     const gaps = await svc.computeGaps('org1', 'repo-1');
     expect(gaps).toHaveLength(1);
     expect(gaps[0].kind).toBe('unfilled_mcp_secret');
+  });
+
+  it('flags a registered-but-unconnected OAuth server as needs_oauth_connect (owner must Connect, names only)', async () => {
+    const svc = make({ needConnect: [{ name: 'jira', scope: 'org' }] });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('needs_oauth_connect');
+    const rendered = svc.renderGaps(gaps);
+    expect(rendered).toContain('PROFILE GAPS');
+    expect(rendered).toContain('jira');
+    expect(rendered).toContain('Connect');
+    expect(rendered).toContain('not yet connected');
+    // Owner-only, brain cannot consent — and never a token/secret value.
+    expect(rendered).toContain('cannot consent OAuth');
+  });
+
+  it('does not double-report a server as needs_oauth_connect when it is already unfilled/broken (dedup)', async () => {
+    const svc = make({
+      authFailing: [{ name: 'jira', scope: 'org', authKind: 'oauth', reason: 'needs re-auth' }],
+      needConnect: [{ name: 'jira', scope: 'org' }],
+    });
+    const gaps = await svc.computeGaps('org1', 'repo-1');
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].kind).toBe('broken_auth');
   });
 });

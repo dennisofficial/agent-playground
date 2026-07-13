@@ -51,6 +51,7 @@ import {
 } from "./service-log-view";
 import { CreatedJobsPane } from "./created-jobs-pane";
 import { BlockedByPane } from "./blocked-by-pane";
+import { DiffPane } from "./diff-pane";
 import { useCommentableRef } from "./use-text-selection";
 import { useReviewComments } from "./review-comments";
 import { makeResolveFileLink } from "./repo-file-links";
@@ -160,7 +161,9 @@ export function PhaseView({
       ? `generated/${selectedNode.slice("gen:".length)}`
       : selectedNode.startsWith("artifact:")
         ? `artifacts/${selectedNode.slice("artifact:".length)}`
-        : null;
+        : selectedNode.startsWith("evidence:")
+          ? `evidence/${selectedNode.slice("evidence:".length)}`
+          : null;
   const fileQuery = useContextFile(jobRef, filePath);
   // Cheap even when the node isn't a service — React Query dedupes against the navigator's own useServices
   // call (same query key), and gives ServiceLogView a real name/cmd for its header instead of the bare id.
@@ -218,7 +221,7 @@ export function PhaseView({
   } else if (selectedNode === "diff") {
     title = "Diff";
     subtitle = "the accumulated change across all threads";
-    body = <DiffView />;
+    body = <DiffView jobRef={jobRef} />;
   } else if (selectedNode === "created") {
     title = "Created jobs";
     subtitle = "jobs this job spawned";
@@ -807,18 +810,8 @@ function SectionPlanDoc() {
   );
 }
 
-function DiffView() {
-  const contentRef = useCommentableRef<HTMLDivElement>();
-  return (
-    <div className="h-full overflow-y-auto px-8 py-7">
-      <div ref={contentRef} className="max-w-[720px]">
-        <Placeholder
-          title="Diff"
-          body="The accumulated diff isn't exposed by the web surface yet — it lives in the feature branch and lands in the PR. Open the pull request from ARTIFACTS to review the change on GitHub."
-        />
-      </div>
-    </div>
-  );
+function DiffView({ jobRef }: { jobRef: JobRef }) {
+  return <DiffPane jobRef={jobRef} />;
 }
 
 // ── Context file viewer (specs / artifacts) ───────────────────────────────────────────────────────
@@ -906,7 +899,9 @@ function contextNodeForLink(fromPath: string, href: string): string | null {
         ? "gen:"
         : bucket === "artifacts"
           ? "artifact:"
-          : null;
+          : bucket === "evidence"
+            ? "evidence:"
+            : null;
   if (!prefix) return null;
   const stack = parts.slice(1, -1); // dir of the current file, within the bucket
   for (const seg of href.split(/[?#]/)[0].split("/")) {

@@ -11,7 +11,7 @@
  */
 import { agentMessage } from '../message';
 import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
-import { PREVIEW_PREP_SEED_BODY } from '../system/fragments';
+import { composePreviewPrepSeed } from '../system/fragments';
 import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
@@ -82,7 +82,7 @@ export const previewPrepRule: JitRule = {
   enabled: true,
   trigger: { kind: 'lifecycle', event: 'preview-requested' },
   delivery: 'host-seed-notice',
-  render: () => agentMessage(PREVIEW_PREP_SEED_BODY),
+  render: (ctx) => agentMessage(composePreviewPrepSeed(ctx.previewInstructions ?? null)),
   seed: { label: 'Spin up preview requested', chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? '') },
 };
 

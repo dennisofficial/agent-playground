@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { QueryFailedError } from 'typeorm';
 import type { DataSource, Repository } from 'typeorm';
+import type { SeedRow } from '../domain';
 import {
   MessageEntity,
   StimulusEntity,
   JobEntity,
 } from '../persistence/entities';
+import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
 import {
   DuplicateStimulusError,
   StimulusStoreService,
@@ -272,5 +274,212 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     // Neither row committed — the message was rolled back with the stimulus.
     expect(messages.rows).toHaveLength(0);
     expect(stimuli.rows).toHaveLength(0);
+  });
+});
+
+describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/gate pump)', () => {
+  /**
+   * A `MessageEntity` repo fake faithful enough to drive `writeSystemChunk`'s real dedup-by-`chunkKey`
+   * query (`createQueryBuilder('m').where('m.job_id = :jobId', …).andWhere("m.meta @> :key::jsonb", …)
+   * .getCount()`) against an in-memory `rows` array — so calling `recordChatStimulus` twice with the SAME
+   * `systemChunk.chunkKey` proves the pill is written only once, using the SAME writer production uses.
+   */
+  function fakeMessageRepoWithQueryBuilder(rows: MessageEntity[]) {
+    return {
+      create: (data: Partial<MessageEntity>) => ({ ...data }) as MessageEntity,
+      save: vi.fn(async (e: MessageEntity) => {
+        const saved = { ...e, id: `msg-${rows.length + 1}`, created_at: new Date() } as MessageEntity;
+        rows.push(saved);
+        return saved;
+      }),
+      createQueryBuilder: () => {
+        let jobId: string | undefined;
+        let chunkKey: string | undefined;
+        const qb = {
+          where(_expr: string, params: Record<string, unknown>) {
+            if (params.jobId !== undefined) jobId = params.jobId as string;
+            return qb;
+          },
+          andWhere(_expr: string, params: Record<string, unknown>) {
+            if (params.key !== undefined) {
+              chunkKey = (JSON.parse(params.key as string) as { chunkKey?: string }).chunkKey;
+            }
+            return qb;
+          },
+          getCount: async () =>
+            rows.filter(
+              (r) =>
+                r.job_id === jobId &&
+                (r.meta as { chunkKey?: string } | null)?.chunkKey === chunkKey,
+            ).length,
+        };
+        return qb;
+      },
+    } as unknown as Repository<MessageEntity>;
+  }
+
+  /** A `DataSource.transaction` fake whose manager exposes `getRepository(MessageEntity)` (for
+   *  `writeSystemChunk`) alongside the plain `create`/`save` the direct StimulusEntity write uses. */
+  function fakeDataSourceWithMessageRepo(messageRepo: Repository<MessageEntity>) {
+    let seq = 0;
+    const transaction = vi.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+      const manager = {
+        create: (Entity: unknown, data: Record<string, unknown>) => ({ ...data, __entity: Entity }),
+        save: async (e: Record<string, unknown>) => {
+          const { __entity, ...rest } = e as { __entity: unknown };
+          return { ...rest, id: `tx-${++seq}`, created_at: new Date() };
+        },
+        getRepository: (Entity: unknown) => {
+          if (Entity === MessageEntity) return messageRepo;
+          throw new Error(`fakeDataSourceWithMessageRepo: unexpected getRepository(${String(Entity)})`);
+        },
+      };
+      return cb(manager);
+    });
+    return { transaction } as unknown as DataSource;
+  }
+
+  it('with a systemChunk: writes the durable stimuli row + ONE curated pill via writeSystemChunk — NO raw operator bubble', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messageRows: MessageEntity[] = [];
+    const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
+    const ds = fakeDataSourceWithMessageRepo(messagesRepo);
+    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds);
+
+    const chunkKey = 'seed:q:job-9:q1';
+    const seedRow: SeedRow = { label: 'Question answered', chunkKey };
+    const rawBody = '<system_notice>Question answered: 42</system_notice>';
+
+    const chat = await store.recordChatStimulus({
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'job-9',
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      replyRoute: { surfaceId: 'web', jobRef: 'job-9' },
+      body: rawBody,
+      systemChunk: seedRow,
+      seedQuestionId: 'q1',
+    });
+
+    // ONE message row total — the curated pill — never a SECOND raw operator bubble carrying the raw body.
+    expect(messageRows).toHaveLength(1);
+    expect(messageRows[0]).toMatchObject({
+      job_id: 'job-9',
+      kind: 'chat',
+      author_id: 'U-SYSTEM',
+      meta: expect.objectContaining({ source: 'system_notice', chunkKey }),
+    });
+    // The curated pill carries the short curated label, not the raw engine body — the plain-bubble write
+    // path (skipped here) would have set `text` to the raw body and no `meta`/`kind` at all.
+    expect(messageRows[0].text).toBe(seedRow.label);
+    expect(messageRows[0].card).toBeUndefined();
+
+    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata.
+    expect(chat).toMatchObject({ jobId: 'job-9', seedQuestionId: 'q1', seed: true });
+  });
+
+  it('the curated pill is DEDUPED on chunkKey — a second seed with the same key writes NO additional message row', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messageRows: MessageEntity[] = [];
+    const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
+    const ds = fakeDataSourceWithMessageRepo(messagesRepo);
+    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds);
+
+    const chunkKey = 'seed:q:job-9:q1';
+    const seedRow: SeedRow = { label: 'Question answered', chunkKey };
+    const input = {
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'job-9',
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      replyRoute: { surfaceId: 'web', jobRef: 'job-9' },
+      body: '<system_notice>Question answered: 42</system_notice>',
+      systemChunk: seedRow,
+      seedQuestionId: 'q1',
+    };
+
+    const first = await store.recordChatStimulus(input);
+    // A redundant re-seed (e.g. a boot backfill retry) mints a SECOND durable stimuli row…
+    const second = await store.recordChatStimulus(input);
+
+    expect(first.id).not.toBe(second.id);
+    // …but the pill dedups: still exactly ONE visible message row.
+    expect(messageRows).toHaveLength(1);
+  });
+
+  it('rowToChatStimulus (via findChatStimulusById) round-trips seedQuestionId/seedSecretId/seedFileId/seed through reply_route', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const row = {
+      id: 'stim-42',
+      org_id: 'T1',
+      repo_id: 'web',
+      job_id: 'thread-9',
+      kind: 'chat',
+      trust: 'trusted',
+      body: '<system_notice>answered</system_notice>',
+      author_id: SYSTEM_SEED_AUTHOR.id,
+      author_name: SYSTEM_SEED_AUTHOR.name,
+      reply_route: {
+        surfaceId: 'web',
+        jobRef: 'thread-9',
+        seedQuestionId: 'q1',
+        seedSecretId: 's1',
+        seedFileId: 'f1',
+      },
+      created_at: new Date(),
+    } as unknown as StimulusEntity;
+    const stimuliRepo = { findOne: vi.fn().mockResolvedValue(row) } as unknown as Repository<StimulusEntity>;
+    const store = new StimulusStoreService(
+      threads.repo,
+      messages.repo,
+      stimuliRepo,
+      {} as unknown as DataSource,
+    );
+
+    const chat = await store.findChatStimulusById('stim-42');
+
+    expect(chat).toMatchObject({
+      id: 'stim-42',
+      jobId: 'thread-9',
+      seedQuestionId: 'q1',
+      seedSecretId: 's1',
+      seedFileId: 'f1',
+      seed: true,
+    });
+  });
+
+  it('rowToChatStimulus: an operator row (author_id != U-SYSTEM) round-trips NO seed metadata and seed:undefined', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const row = {
+      id: 'stim-43',
+      org_id: 'T1',
+      repo_id: 'web',
+      job_id: 'thread-9',
+      kind: 'chat',
+      trust: 'trusted',
+      body: 'a plain operator message',
+      author_id: 'U1',
+      author_name: 'Dennis',
+      reply_route: { surfaceId: 'web', jobRef: 'thread-9' },
+      created_at: new Date(),
+    } as unknown as StimulusEntity;
+    const stimuliRepo = { findOne: vi.fn().mockResolvedValue(row) } as unknown as Repository<StimulusEntity>;
+    const store = new StimulusStoreService(
+      threads.repo,
+      messages.repo,
+      stimuliRepo,
+      {} as unknown as DataSource,
+    );
+
+    const chat = await store.findChatStimulusById('stim-43');
+
+    expect(chat?.seed).toBeUndefined();
+    expect(chat?.seedQuestionId).toBeUndefined();
+    expect(chat?.seedSecretId).toBeUndefined();
+    expect(chat?.seedFileId).toBeUndefined();
   });
 });

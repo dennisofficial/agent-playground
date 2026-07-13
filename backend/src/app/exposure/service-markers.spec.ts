@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readServiceMarkers } from './service-markers';
+import type { ServiceLivenessProbe } from '../sandbox/sandbox-provider.port';
+import { derivePortState, readServiceMarkers, type ReadServiceMarker } from './service-markers';
 
 describe('readServiceMarkers', () => {
   let dir: string;
@@ -65,5 +66,56 @@ describe('readServiceMarkers', () => {
 
   it('returns [] when the dir does not exist', () => {
     expect(readServiceMarkers(join(dir, 'nope'))).toEqual([]);
+  });
+});
+
+describe('derivePortState', () => {
+  const CONTAINER_STARTED_AT = '2026-07-10T00:00:00Z';
+
+  const runningMarker = (
+    overrides: Partial<ReadServiceMarker> = {},
+  ): ReadServiceMarker => ({
+    id: 'web',
+    name: 'web',
+    cmd: 'pnpm dev',
+    pid: 10,
+    pgid: 10,
+    startedAt: CONTAINER_STARTED_AT,
+    port: 3000,
+    expose: true,
+    logBytes: 0,
+    logUpdatedAt: null,
+    ...overrides,
+  });
+
+  const upProbe = (...alivePgids: number[]): ServiceLivenessProbe => ({
+    status: 'up',
+    containerStartedAt: CONTAINER_STARTED_AT,
+    alive: alivePgids,
+  });
+
+  it('exposed running service with a public URL ⇒ exposed', () => {
+    const m = runningMarker();
+    expect(derivePortState([m], upProbe(10), () => true)).toBe('exposed');
+  });
+
+  it('running but expose:false ⇒ internal', () => {
+    const m = runningMarker({ expose: false });
+    expect(derivePortState([m], upProbe(10), () => true)).toBe('internal');
+  });
+
+  it('running but hasUrl ⇒ false (exposure disabled) ⇒ internal', () => {
+    const m = runningMarker();
+    expect(derivePortState([m], upProbe(10), () => false)).toBe('internal');
+  });
+
+  it('running with no port ⇒ internal', () => {
+    const m = runningMarker({ port: null });
+    expect(derivePortState([m], upProbe(10), () => true)).toBe('internal');
+  });
+
+  it('nothing running (probe down) ⇒ null', () => {
+    const m = runningMarker();
+    expect(derivePortState([m], { status: 'down' }, () => true)).toBeNull();
   });
 });

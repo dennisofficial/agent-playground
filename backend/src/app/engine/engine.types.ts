@@ -316,6 +316,12 @@ export interface ExecutionTarget {
    * `.git/config`. Absent → git remote ops fail closed (`GIT_TERMINAL_PROMPT=0`).
    */
   gitAuth?: GitAuth;
+  /**
+   * Container path the turn's writers send live-run evidence to: `/context/evidence/<threadDirName>` for a
+   * thread leg, or `/context/evidence` root for a brain/direct-build turn. Emitted as `ATLAS_EVIDENCE_DIR`
+   * in the exec env (per-turn — never baked at container-create, since the container is reused warm).
+   */
+  evidenceDir?: string;
 }
 
 // ── Tool-bridge frame protocol ────────────────────────────────────────────────────────────────────

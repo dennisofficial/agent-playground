@@ -35,7 +35,7 @@ describe('JitHostExecutor', () => {
     const [channel, jobId, body, opts] = surface.calls[0];
     expect(channel).toBe('R');
     expect(jobId).toBe('J');
-    expect(body).toBe(PREVIEW_PREP_SEED_BODY);
+    expect(body).toContain(PREVIEW_PREP_SEED_BODY);
     expect(opts?.orgId).toBe('O');
     expect(opts?.seedRow).toEqual({ label: 'Spin up preview requested', chunkKey: 'seed:preview:J' });
   });
