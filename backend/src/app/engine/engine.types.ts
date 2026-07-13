@@ -1008,6 +1008,12 @@ export function isRetryableTransientError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (msg.includes(UNRESUMABLE_SESSION_MARKER.toLowerCase())) return false;
   if (msg.includes('phase_timeout_ms')) return false;
+  // An escaped Claude-API 5xx (overloaded/bad-gateway) surfaces as a thrown Error whose stderr tail carries
+  // the CLI's `API Error: 5xx` text — Layer A that ALREADY exhausted the SDK's own CLAUDE_CODE_MAX_RETRIES
+  // backoff. Its literal '502'/'503' would otherwise match HOST_TRANSPORT_TRANSIENT_RE and trigger ANOTHER
+  // full host retry cycle (the double-retry the design forbids). Exclude these upstream-API messages so a
+  // spent Layer-A error surfaces promptly instead of silently re-running host-side.
+  if (msg.includes('api error')) return false;
   return HOST_TRANSPORT_TRANSIENT_RE.test(msg);
 }
 

@@ -2367,6 +2367,10 @@ export class AgentSessionManager
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
+    // A fresh turn supersedes any parked host-retry backstop for this job (mirrors the build lane's
+    // `ThreadDriver.drive()` guard): cancel the pending 10s timer + its durable retry clock so a stale timer
+    // can't later seed a spurious 'Please continue' nudge into this now-live turn.
+    this.clearPendingHostRetry(stimulus.jobId);
     // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
     // operator-driven resets never trip the guard (only unattended self-resets accumulate). Also disarm any
     // pending hard-reset confirm: the two `hard:true` calls must be consecutive within one autonomous stretch,
@@ -3146,6 +3150,9 @@ export class AgentSessionManager
     // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
     this.benignAbortRedrives.delete(stimulus.jobId);
     this.transientRetryRedrives.delete(stimulus.jobId);
+    // …and cancel any still-pending host-retry backstop (timer + durable retry clock): this clean turn IS the
+    // recovery, so a stale 10s timer must not fire a spurious 'Please continue' nudge on the now-healthy job.
+    this.clearPendingHostRetry(stimulus.jobId);
 
     // Live-branch backstop (universal floor): re-read HEAD once at the turn boundary in case the per-tool
     // listener missed a switch (a branch change not made via a matched `git` command, or a dropped event).
@@ -7916,6 +7923,30 @@ export class AgentSessionManager
    * clock and re-drives via the SAME silent resume nudge the benign-abort path uses. Per-job, so a
    * superseding schedule cancels a stale timer.
    */
+  /**
+   * Cancel any pending Main-lane host-retry backstop for this job (in-process 10s timer + its durable
+   * `kind:'retry'` resume clock), mirroring the build lane's `ThreadDriver.drive()` guard ('a fresh drive
+   * supersedes any parked host-retry timer'). Called at the top of a fresh `runChatTurnInner` and on the
+   * successful-turn tail: if the thread recovered through an unrelated path (an operator message, a pump/wake)
+   * the stale timer must not later seed a spurious 'Please continue' nudge into an already-healthy job, and the
+   * leftover retry clock must not keep `endTurnActivity` reporting `activity:'retrying'` or let the leader
+   * `SessionResumeSweep` re-fire the nudge. Presence of a timer entry means WE armed the retry park (a session
+   * limit never arms one), so clearing the clock alongside it can't clobber a session-limit park.
+   */
+  private clearPendingHostRetry(jobId: string): void {
+    const t = this.hostRetryTimers.get(jobId);
+    if (!t) return;
+    clearTimeout(t);
+    this.hostRetryTimers.delete(jobId);
+    void this.store
+      .setSessionResume(jobId, null, null)
+      .catch((e) =>
+        this.logger.warn(
+          `clearPendingHostRetry(${jobId}) clock clear failed: ${e}`,
+        ),
+      );
+  }
+
   private async scheduleHostRetry(
     stimulus: ChatStimulus,
     reason: string,
