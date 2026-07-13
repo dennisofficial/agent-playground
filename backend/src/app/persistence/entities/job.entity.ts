@@ -8,7 +8,6 @@ import type { LiveVerificationVerdict } from '../../driver/live-verification-jud
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
-import type { TaskItem } from './thread.entity';
 import { UserEntity } from './user.entity';
 
 /**
@@ -270,17 +269,6 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   session_resume_at!: Date | null;
-
-  /**
-   * The MAIN brain session's own LLM-authored task list (the navigator's Main-row checklist), folded from
-   * its `TaskCreate`/`TaskUpdate` calls on the `main` lane. LITERAL default — a function default loops
-   * `migration:generate` (see the jsonb-default-loop memory).
-   *
-   * NOTE: the old JOB-level PR-review columns (`review_agents`, `tasks`, `pr_review_status`) were dropped
-   * when master review became a normal build thread — its lenses/tasks now live on `ThreadEntity`.
-   */
-  @Column({ type: 'jsonb', default: [] })
-  main_tasks!: TaskItem[];
 
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the

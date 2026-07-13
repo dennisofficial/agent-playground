@@ -10,13 +10,13 @@ export * from './org-invite.entity';
 export * from './repo.entity';
 export * from './job.entity';
 export * from './message.entity';
-export * from './codex-review.entity';
 export * from './active-turn.entity';
 export * from './tool-execution.entity';
 export * from './stimulus.entity';
+export * from './stage.entity';
 export * from './thread.entity';
-export * from './step.entity';
-export * from './build-leg.entity';
+export * from './task.entity';
+export * from './subagent.entity';
 export * from './decision-record.entity';
 export * from './memory.entity';
 export * from './org-credentials.entity';
@@ -40,13 +40,13 @@ import { OrgInviteEntity } from './org-invite.entity';
 import { RepoEntity } from './repo.entity';
 import { JobEntity } from './job.entity';
 import { MessageEntity } from './message.entity';
-import { CodexReviewEntity } from './codex-review.entity';
 import { ActiveTurnEntity } from './active-turn.entity';
 import { ToolExecutionEntity } from './tool-execution.entity';
 import { StimulusEntity } from './stimulus.entity';
+import { StageEntity } from './stage.entity';
 import { ThreadEntity } from './thread.entity';
-import { StepEntity } from './step.entity';
-import { BuildLegEntity } from './build-leg.entity';
+import { TaskEntity } from './task.entity';
+import { SubagentEntity } from './subagent.entity';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { MemoryEntity } from './memory.entity';
 import { OrgCredentialsEntity } from './org-credentials.entity';
@@ -72,13 +72,13 @@ export const ENTITIES = [
   RepoEntity,
   JobEntity,
   MessageEntity,
-  CodexReviewEntity,
   ActiveTurnEntity,
   ToolExecutionEntity,
   StimulusEntity,
+  StageEntity,
   ThreadEntity,
-  StepEntity,
-  BuildLegEntity,
+  TaskEntity,
+  SubagentEntity,
   DecisionRecordEntity,
   MemoryEntity,
   OrgCredentialsEntity,
