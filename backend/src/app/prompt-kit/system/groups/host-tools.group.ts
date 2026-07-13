@@ -7,9 +7,10 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
+import { isAtlasRepo, isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../../sandbox/image/bridge-options';
 import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../sandbox/image/workspace-profile-bridge-options';
+import { ATLAS_PROD_BRIDGE_NAME } from '../../../sandbox/image/atlas-prod-bridge-options';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
@@ -55,6 +56,23 @@ export class HostToolsGroup {
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_preview_instructions — save the repo's PREVIEW RECIPE ({ instructions }) — how to stand up this repo's demo-ready preview stack (envs, ports, compose/migrate/seed, deep-link); injected into the "Spin up preview" seed for every job on this repo (no PR). It REPLACES the whole recipe — read_preview_instructions FIRST to see the current body`,
       `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_preview_instructions  — read the repo's CURRENT preview recipe (raw body) so you can edit it safely before write_preview_instructions (which overwrites the whole thing)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree`,
+    ].join('\n');
+  }
+
+  /** The atlas-prod host tools — ONLY present on the Atlas repo itself. The 7 read tools mirror the
+   *  prod-diagnostics reader; propose_prod_write is a STRUCTURALLY-GATED write (propose-only). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1044, condition: isAtlasRepo })
+  atlasProdTools(): string {
+    return [
+      `You are on the Atlas repo itself, so you ALSO have the atlas-prod tools — read-only production diagnostics plus a STRUCTURALLY-GATED prod DB write. Call the mcp__${ATLAS_PROD_BRIDGE_NAME}__ form:`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_query         — run ONE read-only SELECT/WITH against the prod DB`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_schema        — list prod tables + columns`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_job_overview  — a job's status + thread list`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_session_raw   — raw Claude session JSONL for a job`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_context_read  — a job's /context dir tree or a file`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_worktree_tree — a job's git worktree tree`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__atlas_worktree_file — one file from a job's worktree`,
+      `  - mcp__${ATLAS_PROD_BRIDGE_NAME}__propose_prod_write  — PROPOSE a single-statement prod DB write (INSERT/UPDATE/DELETE/WITH). You can only PROPOSE: the statement is previewed and an operator must approve it on a card before ANYTHING executes. Nothing you propose runs unapproved. Single statement only; no DDL/schema changes.`,
     ].join('\n');
   }
 

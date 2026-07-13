@@ -25,6 +25,8 @@ import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
@@ -63,6 +65,9 @@ export function ApprovalCardView({
   // drift from whatever the backend sends).
   if (card.kind === "ship" || card.kind === "amend") {
     return <ShipCardView card={card} jobRef={jobRef} />;
+  }
+  if (card.kind === "db_write") {
+    return <DbWriteCardView card={card} jobRef={jobRef} />;
   }
   return (
     <PlanApprovalCardView
@@ -303,7 +308,11 @@ function ShipActionButton({
         ? "Dismissing…"
         : action.actionId === RETRACT_SHIP_ACTION_ID
           ? "Retracting…"
-          : "Shipping…";
+          : action.actionId === DB_WRITE_APPROVE_ACTION_ID
+            ? "Executing…"
+            : action.actionId === DB_WRITE_DENY_ACTION_ID
+              ? "Denying…"
+              : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button
@@ -326,6 +335,95 @@ function ShipActionButton({
           Could not submit. Try again.
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The `atlas-prod` gated DB-write approval card — the SOLE human backstop on an arbitrary prod mutation
+ * (there is no app-layer allowlist). The operator must read the EXACT proposed statement before approving,
+ * so the SQL is rendered verbatim in a monospace block (never as prose), alongside the EXPLAIN row estimate
+ * (or a dry-run error warning). Buttons render generically off `card.actions` — the danger `Execute write`
+ * runs the exact stored statement on the DML-only `mcp_writer` role; `Deny` marks the ledger row rejected.
+ */
+function DbWriteCardView({
+  card,
+  jobRef,
+}: {
+  card: WebApprovalCard;
+  jobRef: JobRef;
+}) {
+  const dryRunFailed = card.estimateLabel === "error" || Boolean(card.error);
+  return (
+    <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
+      <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <ClipboardCheck size={15} className="text-accent" />
+        <span className="text-[13px] font-semibold text-text">
+          {card.title}
+        </span>
+        <div className="flex-1" />
+        <span
+          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-mono text-[9.5px]"
+          style={{
+            color: "var(--purple)",
+            borderColor: "color-mix(in srgb, var(--purple) 38%, transparent)",
+          }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: "var(--purple)" }}
+          />
+          awaiting approval
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-3 px-4 py-3">
+        {card.sql ? (
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-2 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-text">
+            {card.sql}
+          </pre>
+        ) : null}
+
+        {dryRunFailed ? (
+          <div
+            className="flex items-start gap-2 rounded-md border px-3 py-2.5 text-[11.5px] leading-relaxed"
+            style={{
+              color: "var(--red)",
+              borderColor: "color-mix(in srgb, var(--red) 35%, transparent)",
+              background: "color-mix(in srgb, var(--red) 8%, transparent)",
+            }}
+          >
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              This statement failed its dry-run and will likely fail on execute
+              {card.error ? (
+                <>
+                  {": "}
+                  <span className="font-mono">{card.error}</span>
+                </>
+              ) : (
+                "."
+              )}
+            </span>
+          </div>
+        ) : (
+          <p className="text-[12px] text-dim">
+            Estimated rows affected:{" "}
+            <span className="font-mono text-text">
+              {card.estimatedRows ?? "unavailable"}
+            </span>
+            {card.estimateLabel === "unavailable" ? (
+              <span className="text-faint"> (estimate unavailable)</span>
+            ) : null}
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
+        {card.actions.map((action) => (
+          <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
+        ))}
+      </div>
     </div>
   );
 }
