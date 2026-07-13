@@ -50,7 +50,19 @@ export class TaskEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   brief!: string | null;
 
+  /** Present-continuous label ("Resolving the router chain") shown while in_progress; falls back to
+   *  `title` when the authoring tool call didn't supply one (mirrors the old `TaskItem.activeForm`). */
+  @Column({ type: 'text', nullable: true })
+  active_form!: string | null;
+
   // 'pending' | 'in_progress' | 'completed' | 'dropped'
   @Column({ type: 'text', default: 'pending' })
   status!: string;
+
+  /** Dependency edges — ids of OTHER rows in this same stage's checklist that this task waits on
+   *  (mirrors the old `TaskItem.blockedBy`). A PENDING task with an incomplete blocker renders BLOCKED;
+   *  the block clears by derivation when every blocker completes/drops. LITERAL default (a
+   *  `() => '[]'::jsonb` function default makes `migration:generate` loop forever). */
+  @Column({ type: 'jsonb', default: [] })
+  blocked_by!: string[];
 }

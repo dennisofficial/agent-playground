@@ -13,6 +13,7 @@ import { SubagentEntity } from './subagent.entity';
 @Entity({ name: 'messages' })
 @Index(['job_id', 'created_at'])
 @Index(['thread_id', 'created_at'])
+@Index(['subagent_id'])
 @Index('ux_messages_idem_key', ['idem_key'], { unique: true, where: `"idem_key" IS NOT NULL` })
 export class MessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')

@@ -30,7 +30,7 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         await queryRunner.query(`ALTER TABLE "stages" ADD CONSTRAINT "fk_stages_org_id_organizations" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
         await queryRunner.query(`ALTER TABLE "stages" ADD CONSTRAINT "fk_stages_decision_record_id_decision_records" FOREIGN KEY ("decision_record_id") REFERENCES "decision_records"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
 
-        await queryRunner.query(`CREATE TABLE "tasks" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "stage_id" uuid NOT NULL, "org_id" uuid NOT NULL, "ordinal" integer NOT NULL, "title" text NOT NULL, "brief" text, "status" text NOT NULL DEFAULT 'pending', CONSTRAINT "pk_tasks" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "tasks" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "stage_id" uuid NOT NULL, "org_id" uuid NOT NULL, "ordinal" integer NOT NULL, "title" text NOT NULL, "brief" text, "active_form" text, "status" text NOT NULL DEFAULT 'pending', "blocked_by" jsonb NOT NULL DEFAULT '[]', CONSTRAINT "pk_tasks" PRIMARY KEY ("id"))`);
         await queryRunner.query(`CREATE INDEX "idx_tasks_stage_id" ON "tasks" ("stage_id") `);
         await queryRunner.query(`CREATE INDEX "idx_tasks_stage_id_ordinal" ON "tasks" ("stage_id", "ordinal") `);
         await queryRunner.query(`ALTER TABLE "tasks" ADD CONSTRAINT "fk_tasks_stage_id_stages" FOREIGN KEY ("stage_id") REFERENCES "stages"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
@@ -39,6 +39,7 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         await queryRunner.query(`CREATE TABLE "subagents" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "thread_id" uuid NOT NULL, "parent_message_id" uuid NOT NULL, "tool_use_id" text NOT NULL, "agent_type" text, "model" text, "status" text NOT NULL DEFAULT 'running', "session_ref" text, "input_tokens" bigint NOT NULL DEFAULT '0', "output_tokens" bigint NOT NULL DEFAULT '0', "cache_read_tokens" bigint NOT NULL DEFAULT '0', "cache_write_tokens" bigint NOT NULL DEFAULT '0', "cost_usd" numeric, "started_at" TIMESTAMP WITH TIME ZONE, "ended_at" TIMESTAMP WITH TIME ZONE, CONSTRAINT "pk_subagents" PRIMARY KEY ("id"))`);
         await queryRunner.query(`CREATE INDEX "idx_subagents_thread_id" ON "subagents" ("thread_id") `);
         await queryRunner.query(`CREATE INDEX "idx_subagents_tool_use_id" ON "subagents" ("tool_use_id") `);
+        await queryRunner.query(`CREATE INDEX "idx_subagents_parent_message_id" ON "subagents" ("parent_message_id") `);
         await queryRunner.query(`ALTER TABLE "subagents" ADD CONSTRAINT "fk_subagents_thread_id_threads" FOREIGN KEY ("thread_id") REFERENCES "threads"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
         await queryRunner.query(`ALTER TABLE "subagents" ADD CONSTRAINT "fk_subagents_parent_message_id_messages" FOREIGN KEY ("parent_message_id") REFERENCES "messages"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
 
@@ -53,6 +54,7 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         await queryRunner.query(`ALTER TABLE "messages" ADD "thread_id" uuid`);
         await queryRunner.query(`ALTER TABLE "messages" ADD "subagent_id" uuid`);
         await queryRunner.query(`CREATE INDEX "idx_messages_thread_id_created_at" ON "messages" ("thread_id", "created_at") `);
+        await queryRunner.query(`CREATE INDEX "idx_messages_subagent_id" ON "messages" ("subagent_id") `);
         await queryRunner.query(`ALTER TABLE "messages" ADD CONSTRAINT "fk_messages_thread_id_threads" FOREIGN KEY ("thread_id") REFERENCES "threads"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
         await queryRunner.query(`ALTER TABLE "messages" ADD CONSTRAINT "fk_messages_subagent_id_subagents" FOREIGN KEY ("subagent_id") REFERENCES "subagents"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
 
@@ -139,15 +141,19 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
             FROM builders b WHERE t."parent_thread_id" = b.builder_id
         `);
 
-        // 3d. A master_review stage per master_review thread.
+        // 3d. A master_review stage per master_review thread. Carries decision_record_id (+ config)
+        // from the source thread — the sole mechanism distinguishing one plan revision's completed
+        // work from another's (d7); threads.decision_record_id is dropped in step 11, so this is the
+        // only chance to relocate it onto the stage.
         await queryRunner.query(`
             WITH mr AS (
-                SELECT "id" AS thread_id, "job_id", "org_id", "ordinal", uuid_generate_v4() AS stage_id
+                SELECT "id" AS thread_id, "job_id", "org_id", "ordinal", "decision_record_id", "config",
+                       uuid_generate_v4() AS stage_id
                 FROM "threads" WHERE "role" = 'master_review'
             ),
             ins_stages AS (
-                INSERT INTO "stages" ("id", "job_id", "org_id", "ordinal", "kind", "status", "condition", "config")
-                SELECT stage_id, "job_id", "org_id", "ordinal", 'master_review', 'pending', 'none', '{}'
+                INSERT INTO "stages" ("id", "job_id", "org_id", "ordinal", "kind", "status", "condition", "decision_record_id", "config")
+                SELECT stage_id, "job_id", "org_id", "ordinal", 'master_review', 'pending', 'none', "decision_record_id", "config"
                 FROM mr
             )
             UPDATE "threads" t SET "stage_id" = mr.stage_id FROM mr WHERE t."id" = mr.thread_id
@@ -166,11 +172,32 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         `);
 
         // ── Step 5: backfill threads.session_id / commit_sha ─────────────────────────────────
-        // Build threads: from their anchor steps row.
+        // Build threads: from their anchor steps row. A builder thread commonly has MANY steps rows
+        // (one per plan step, further diverging across leg rotations) — `UPDATE ... FROM` with a
+        // multi-row match picks an unspecified one, so pick the anchor deterministically: the
+        // highest-ordinal row that actually carries a value, mirroring driver-store.service.ts's
+        // `resolveSessionAnchor` (walks steps in reverse ordinal order for the latest non-null hit).
+        // session_id and commit_sha are resolved independently since their most-recent-non-null rows
+        // can differ.
         await queryRunner.query(`
-            UPDATE "threads" t SET "session_id" = s."session_id", "commit_sha" = s."commit_sha"
-            FROM "steps" s
-            WHERE s."thread_id" = t."id" AND t."role" = 'builder'
+            UPDATE "threads" t SET "session_id" = anchor.session_id
+            FROM (
+                SELECT DISTINCT ON (s."thread_id") s."thread_id", s."session_id"
+                FROM "steps" s
+                WHERE s."session_id" IS NOT NULL
+                ORDER BY s."thread_id", s."ordinal" DESC
+            ) anchor
+            WHERE anchor."thread_id" = t."id" AND t."role" = 'builder'
+        `);
+        await queryRunner.query(`
+            UPDATE "threads" t SET "commit_sha" = anchor.commit_sha
+            FROM (
+                SELECT DISTINCT ON (s."thread_id") s."thread_id", s."commit_sha"
+                FROM "steps" s
+                WHERE s."commit_sha" IS NOT NULL
+                ORDER BY s."thread_id", s."ordinal" DESC
+            ) anchor
+            WHERE anchor."thread_id" = t."id" AND t."role" = 'builder'
         `);
         // Planning thread: resume session from the job sandbox.
         await queryRunner.query(`
@@ -189,29 +216,56 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         `);
 
         // ── Step 6: backfill tasks — explode both old task blobs into rows ───────────────────
-        // threads.tasks (TaskItem[]) → tasks keyed to the thread's stage.
+        // Both blobs are merged into ONE ranked source set so, when several independent source lists
+        // land on the SAME stage (a builder thread's own tasks + its review children's tasks, or a
+        // planning thread's tasks + the job's main_tasks), each source gets its own gap-numbered
+        // ordinal BLOCK instead of every list restarting at ordinal 10 and colliding. A temp mapping
+        // table also carries each element's OLD TaskItem id (scoped to its own source list) alongside
+        // the freshly generated row id, so `blockedBy` dependency edges can be rewritten from old ids
+        // to the new row ids in a second pass — they never point outside their own source list.
         await queryRunner.query(`
-            INSERT INTO "tasks" ("id", "stage_id", "org_id", "ordinal", "title", "brief", "status")
-            SELECT uuid_generate_v4(), t."stage_id", t."org_id", (elem.idx * 10)::int,
-                   COALESCE(elem.value->>'subject', ''),
-                   elem.value->>'description',
-                   COALESCE(elem.value->>'status', 'pending')
-            FROM "threads" t
-            CROSS JOIN LATERAL jsonb_array_elements(t."tasks") WITH ORDINALITY AS elem(value, idx)
-            WHERE jsonb_typeof(t."tasks") = 'array' AND jsonb_array_length(t."tasks") > 0
+            CREATE TEMP TABLE "_task_backfill_map" AS
+            WITH src AS (
+                SELECT t."stage_id" AS stage_id, t."org_id" AS org_id, t."id" AS source_id,
+                       t."ordinal" AS source_rank_key, elem.value AS value, elem.idx AS idx
+                FROM "threads" t
+                CROSS JOIN LATERAL jsonb_array_elements(t."tasks") WITH ORDINALITY AS elem(value, idx)
+                WHERE jsonb_typeof(t."tasks") = 'array' AND jsonb_array_length(t."tasks") > 0
+                UNION ALL
+                SELECT s."id" AS stage_id, j."org_id" AS org_id, j."id" AS source_id,
+                       -1 AS source_rank_key, elem.value AS value, elem.idx AS idx
+                FROM "jobs" j
+                JOIN "stages" s ON s."job_id" = j."id" AND s."kind" = 'planning'
+                CROSS JOIN LATERAL jsonb_array_elements(j."main_tasks") WITH ORDINALITY AS elem(value, idx)
+                WHERE jsonb_typeof(j."main_tasks") = 'array' AND jsonb_array_length(j."main_tasks") > 0
+            )
+            SELECT src.*, (src.value->>'id') AS old_id, uuid_generate_v4() AS new_id,
+                   DENSE_RANK() OVER (PARTITION BY stage_id ORDER BY source_rank_key, source_id) AS source_rank
+            FROM src
         `);
-        // jobs.main_tasks (TaskItem[]) → tasks keyed to that job's planning stage.
         await queryRunner.query(`
-            INSERT INTO "tasks" ("id", "stage_id", "org_id", "ordinal", "title", "brief", "status")
-            SELECT uuid_generate_v4(), s."id", j."org_id", (elem.idx * 10)::int,
-                   COALESCE(elem.value->>'subject', ''),
-                   elem.value->>'description',
-                   COALESCE(elem.value->>'status', 'pending')
-            FROM "jobs" j
-            JOIN "stages" s ON s."job_id" = j."id" AND s."kind" = 'planning'
-            CROSS JOIN LATERAL jsonb_array_elements(j."main_tasks") WITH ORDINALITY AS elem(value, idx)
-            WHERE jsonb_typeof(j."main_tasks") = 'array' AND jsonb_array_length(j."main_tasks") > 0
+            INSERT INTO "tasks" ("id", "stage_id", "org_id", "ordinal", "title", "brief", "active_form", "status")
+            SELECT new_id, stage_id, org_id, ((source_rank - 1) * 1000 + idx * 10)::int,
+                   COALESCE(value->>'subject', ''),
+                   value->>'description',
+                   value->>'activeForm',
+                   COALESCE(value->>'status', 'pending')
+            FROM "_task_backfill_map"
         `);
+        // blockedBy: rewrite each element's old (source-scoped) TaskItem id to the new task row id; an
+        // id that doesn't resolve within the same source list (unknown/dangling target) is dropped
+        // rather than left pointing at nothing.
+        await queryRunner.query(`
+            UPDATE "tasks" t SET "blocked_by" = COALESCE(remap.new_ids, '[]'::jsonb)
+            FROM "_task_backfill_map" m
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(m2."new_id") AS new_ids
+                FROM jsonb_array_elements_text(COALESCE(m."value"->'blockedBy', '[]'::jsonb)) AS old_ref(old_id)
+                JOIN "_task_backfill_map" m2 ON m2."source_id" = m."source_id" AND m2."old_id" = old_ref.old_id
+            ) remap ON true
+            WHERE t."id" = m."new_id"
+        `);
+        await queryRunner.query(`DROP TABLE "_task_backfill_map"`);
 
         // ── Step 7: backfill messages.thread_id ──────────────────────────────────────────────
         // Primary: a phase block carries the owning step's id in meta.phaseId. Compare against the
@@ -286,6 +340,7 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
         await queryRunner.query(`ALTER TABLE "messages" DROP CONSTRAINT "fk_messages_subagent_id_subagents"`);
         await queryRunner.query(`ALTER TABLE "messages" DROP CONSTRAINT "fk_messages_thread_id_threads"`);
         await queryRunner.query(`DROP INDEX "public"."idx_messages_thread_id_created_at"`);
+        await queryRunner.query(`DROP INDEX "public"."idx_messages_subagent_id"`);
         await queryRunner.query(`ALTER TABLE "messages" DROP COLUMN "subagent_id"`);
         await queryRunner.query(`ALTER TABLE "messages" DROP COLUMN "thread_id"`);
 

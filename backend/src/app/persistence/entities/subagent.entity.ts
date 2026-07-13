@@ -17,6 +17,7 @@ import { numberColumn } from './numeric.transformer';
 @Entity({ name: 'subagents' })
 @Index(['thread_id'])
 @Index(['tool_use_id'])
+@Index(['parent_message_id'])
 export class SubagentEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
