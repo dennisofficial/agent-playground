@@ -32,7 +32,6 @@ import type { ResolvedMcpServer } from '../engine/engine.types';
 import type { McpHubConfig } from './image/mcp-hub-config';
 import { CONTAINER_ENGINE, type ContainerEngine } from './container-engine.port';
 import { hostExecUser } from './host-exec-user';
-import { isAtlasRepo } from './atlas-repo';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import type { SandboxAttachInput, SandboxProvider, ServiceLivenessProbe, SetupScriptResult } from './sandbox-provider.port';
 // Narrow sub-path imports (NOT the '../exposure' barrel) so the sandbox layer takes no dependency on
@@ -502,12 +501,6 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
-  }
-
-  /** Whether a sandbox's repo is the Atlas repo itself, per the configured `ATLAS_REPO_SLUG`. Not
-   *  hardcoded — the prod slug is set in compose; unset (dev) means no repo is ever treated as Atlas. */
-  private isAtlasRepo(repoId: string): boolean {
-    return isAtlasRepo(repoId, this.env);
   }
 
   /** The deterministic container name of a thread's sandbox — the preview reverse-proxy upstream host. */
