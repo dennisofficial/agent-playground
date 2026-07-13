@@ -60,7 +60,11 @@ import {
   NavigatorMergeButton,
   NavigatorShipButton,
 } from "./spec-approval";
-import { pipelineAutoApproveMode, pipelineMainTasks } from "@/lib/api/types";
+import {
+  pipelineAutoApproveMode,
+  pipelineAutoMerge,
+  pipelineMainTasks,
+} from "@/lib/api/types";
 import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import { autoPillView } from "./auto-approve-mode";
 import { AutoApprovePopover } from "./auto-approve-popover";
@@ -299,9 +303,11 @@ export function Navigator({
   // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
   // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
   const autoApproveMode = pipelineAutoApproveMode(pipeline);
-  const autoMerge = job?.autoMerge ?? false;
-  const autoMergeMethod = job?.autoMergeMethod ?? "squash";
-  const autoMergeDeleteBranch = job?.autoMergeDeleteBranch ?? true;
+  // AUTO-MERGE settings + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
+  // as `autoApproveMode`, so an auto-merge-armed job still in the `no_job` (open/pre-plan) shape shows the
+  // Merge toggle correctly instead of reading stale/off (`pipelineJob()` is null there).
+  const { autoMerge, autoMergeMethod, autoMergeDeleteBranch, mergeReady, mergeValue } =
+    pipelineAutoMerge(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -653,9 +659,9 @@ export function Navigator({
           </div>
         ) : null}
         {/* Merge PR — the THIRD human gate, pinned once the PR is GitHub-mergeable. */}
-        {job?.mergeReady && job?.mergeValue ? (
+        {mergeReady && mergeValue ? (
           <div className="mt-2">
-            <NavigatorMergeButton jobRef={jobRef} value={job.mergeValue} />
+            <NavigatorMergeButton jobRef={jobRef} value={mergeValue} />
           </div>
         ) : null}
       </div>

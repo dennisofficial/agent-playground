@@ -618,6 +618,13 @@ export type PipelineState =
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
       autoApproveMode?: AutoApproveMode;
+      /** Carried on the open/pre-plan shape too (mirroring autoApproveMode), so the Merge toggle reflects an
+       *  auto-merge-armed job from creation onward — read via `pipelineAutoMerge()`. */
+      autoMerge?: boolean;
+      autoMergeMethod?: AutoMergeMethod;
+      autoMergeDeleteBranch?: boolean;
+      mergeReady?: boolean;
+      mergeValue?: string | null;
       blockedSeedMessage?: string | null;
     };
 
@@ -637,6 +644,29 @@ export function pipelineAutoApproveMode(
   const mode =
     "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
   return mode ?? "off";
+}
+
+/** The job's auto-merge settings + manual-merge gate, from either pipeline shape (`no_job` carries them too,
+ *  mirroring `pipelineAutoApproveMode`). Reading via this helper — instead of gating on `pipelineJob()`,
+ *  which is null for the open/pre-plan shape — keeps the Merge toggle in sync for an auto-merge-armed job
+ *  that hasn't approved its first plan yet. */
+export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+  mergeReady: boolean;
+  mergeValue: string | null;
+} {
+  const p = pipeline as
+    | { [K in keyof PipelineJob]?: PipelineJob[K] }
+    | undefined;
+  return {
+    autoMerge: p?.autoMerge ?? false,
+    autoMergeMethod: p?.autoMergeMethod ?? "squash",
+    autoMergeDeleteBranch: p?.autoMergeDeleteBranch ?? true,
+    mergeReady: p?.mergeReady ?? false,
+    mergeValue: p?.mergeValue ?? null,
+  };
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
