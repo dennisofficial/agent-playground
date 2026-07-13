@@ -68,6 +68,14 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
   return hunks.length ? hunks : undefined;
 }
 
+function containsStreamClosed(content: unknown): boolean {
+  if (typeof content === 'string') return content.toLowerCase().includes('stream closed');
+  if (Array.isArray(content)) return content.some((item) => containsStreamClosed(item));
+  if (!content || typeof content !== 'object') return false;
+  const block = content as { text?: unknown; content?: unknown };
+  return containsStreamClosed(block.text) || containsStreamClosed(block.content);
+}
+
 /**
  * Codex's `file_change` item reports only `{ path, kind }` — never the before/after content the SDK
  * would need to hand us a diff (unlike Claude's Edit tool, which carries `old_string`/`new_string` and a
@@ -1172,8 +1180,7 @@ export class EngineCore {
               is_error?: boolean;
             }>) {
               if (block.type === 'tool_result') {
-                const isStreamClosed = block.is_error === true &&
-                  typeof block.content === 'string' && block.content.includes('Stream closed');
+                const isStreamClosed = block.is_error === true && containsStreamClosed(block.content);
                 streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0;   // any healthy result resets the run
                 if (isStreamClosed) streamClosedTotal++;
                 onEvent?.({
@@ -1214,8 +1221,9 @@ export class EngineCore {
             if (streaming) {
               if (capping) {
                 // The advisory cap fired — the model's next natural result ends the turn via the NORMAL
-                // grace (stdin is never force-closed under it).
-                scheduleEnd();
+                // grace, unless a background subagent is now live and must remain uncapped.
+                if (liveSubagentTasks.size > 0) cancelEnd();
+                else scheduleEnd();
               } else if (
                 !isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })
               ) {

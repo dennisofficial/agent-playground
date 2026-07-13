@@ -17,7 +17,6 @@
  * turn (read back from Postgres — the retried run resumes the SAME persisted step/thread rows), and the job
  * reaches `done`, all readable from the live `jobs`/`threads`/`steps` tables.
  */
-import { randomUUID } from 'node:crypto';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';

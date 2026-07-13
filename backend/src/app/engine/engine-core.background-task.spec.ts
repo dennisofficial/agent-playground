@@ -238,6 +238,38 @@ describe('EngineCore — run_in_background hold + cap', () => {
     expect(cappedButOpen).toBe(true); // no code path calls input.end() as a direct cap reaction
   });
 
+  it('an advisory-capped Bash shell does not close the turn over a subsequently live subagent', async () => {
+    holdTrigger.holdMs = 30;
+    bgTaskCapRule.enabled = true;
+    let subagentStillOpenPastGrace = false;
+    const { sdk, pushed } = makeSteerFake(async function* (state) {
+      yield initMsg();
+      await tick();
+      yield assistantBash();
+      await tick();
+      yield taskStarted('X'); // bare Bash — this is what triggers the advisory cap
+      await tick();
+      yield resultMsg('first', 10, 5);
+      await sleep(120); // > holdMs: capping is now true, but stdin must still be open
+      yield taskStartedSubagent('S');
+      await tick();
+      yield resultMsg('subagent launched', 11, 5);
+      await sleep(450); // > STEER_IDLE_GRACE_MS: old capping branch would have closed stdin here
+      subagentStillOpenPastGrace = !state.inputEnded;
+      yield taskNotification('S', 'completed', 'validated');
+      await tick();
+      yield resultMsg('done', 20, 7);
+      await tick();
+      await tick();
+    });
+    const events: EngineEvent[] = [];
+    await runTurn(sdk, events);
+
+    expect(pushed).toContain(BG_TASK_CAP_NOTICE);
+    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(subagentStillOpenPastGrace).toBe(true);
+  });
+
   it('honors bg-task-cap.enabled=false by capping without injecting the notice, still never force-closing input', async () => {
     holdTrigger.holdMs = 30;
     bgTaskCapRule.enabled = false;

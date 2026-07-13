@@ -156,9 +156,9 @@ export type EngineEvent =
   /**
    * Diagnostic breadcrumb for a streaming turn's control channel — emitted on each success `result`
    * (carrying that result's `terminal_reason`/`stop_reason`) and once at teardown (carrying the per-turn
-   * `streamClosedCount`). Purely instrumentation: it lands in the transcript/logs so a control-channel
-   * wobble ("Stream closed" host-tool results) is diagnosable after the fact. Live-only, never persisted
-   * as a durable block.
+   * `streamClosedCount`). Instrumentation only: the turn harness folds the latest values into the durable
+   * `turn_meta` block so a control-channel wobble ("Stream closed" host-tool results) is diagnosable after
+   * the live Redis stream is gone.
    */
   | {
       kind: 'turn_debug';

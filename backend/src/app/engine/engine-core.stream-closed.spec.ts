@@ -165,7 +165,7 @@ type CircuitState = { abortController?: AbortController };
  * `options` so the test can prove the breaker aborted it.
  */
 function toolResultStreamSdk(
-  results: Array<{ isError: boolean; content: string }>,
+  results: Array<{ isError: boolean; content: unknown }>,
   emitFinalResult: boolean,
   state: CircuitState,
 ) {
@@ -255,7 +255,7 @@ describe('EngineCore — stream-closed circuit breaker (d1)', () => {
     const state: CircuitState = {};
     const sdk = toolResultStreamSdk(
       [
-        { isError: true, content: STREAM_CLOSED_TEXT },   // run: 1
+        { isError: true, content: [{ type: 'text', text: STREAM_CLOSED_TEXT.toLowerCase() }] },   // run: 1
         { isError: false, content: HEALTHY_TEXT },         // resets the run to 0
         { isError: true, content: STREAM_CLOSED_TEXT },   // run: 1
         { isError: true, content: STREAM_CLOSED_TEXT },   // run: 2 — never reaches the threshold of 3
