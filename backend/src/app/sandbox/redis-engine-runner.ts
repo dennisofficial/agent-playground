@@ -178,8 +178,15 @@ export class RedisEngineRunner implements EngineRunnerPort {
           lane: args.turnMeta.lane,
           kind: args.turnMeta.kind,
           containerId: target.containerId,
-          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
-          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
+          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach — plus the
+          // dispatch-time credential the turn runs on, so a boot re-attach can re-stamp its rate_limit events
+          // with the SAME credentialId a fresh dispatch does (keeps the credential-scoped usage snapshot wired).
+          ctx: {
+            ...(args.turnMeta.ctx ?? {}),
+            orgId: args.turnMeta.orgId,
+            jobId: args.turnMeta.jobId,
+            ...(auth?.refreshBack?.credentialId ? { credentialId: auth.refreshBack.credentialId } : {}),
+          },
         });
         registered = true;
       } catch (err) {
