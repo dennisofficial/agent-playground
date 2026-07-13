@@ -388,12 +388,20 @@ describe('AutoMergeService.mergeNow', () => {
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it('the in-flight guard makes a re-entrant call return false immediately without another merge attempt', async () => {
-    const { svc, job, mergePullRequest } = make();
-    (svc as any).inFlight.add(job.id);
-    const ok = await svc.mergeNow(job.id, 'user-1');
-    expect(ok).toBe(false);
-    expect(mergePullRequest).not.toHaveBeenCalled();
+  it('the in-flight guard shares the active merge result without another merge attempt', async () => {
+    let resolveMerge: (value: unknown) => void = () => undefined;
+    const mergeResult = new Promise((resolve) => {
+      resolveMerge = resolve;
+    });
+    const { svc, job, mergePullRequest } = make({ mergeResult });
+
+    const first = svc.mergeNow(job.id, 'auto-user');
+    const second = svc.mergeNow(job.id, 'manual-user');
+
+    resolveMerge({ ok: true, sha: 'merged-sha' });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(mergePullRequest).toHaveBeenCalledTimes(1);
   });
 });
 
