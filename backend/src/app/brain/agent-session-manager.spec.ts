@@ -174,6 +174,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     upsertMount: vi.fn().mockResolvedValue(undefined),
     getSetupScript: vi.fn().mockResolvedValue(null),
     setSetupScript: vi.fn().mockResolvedValue(undefined),
+    getPreviewInstructions: vi.fn().mockResolvedValue(null),
+    setPreviewInstructions: vi.fn().mockResolvedValue(undefined),
   } as unknown as WorkspaceConfigStore;
 
   const mockGit = {
@@ -1221,6 +1223,40 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const tools = manager.buildTools(fakeStimulus, kind);
       expect(typeof tools['read_setup_script'], `kind=${kind}`).toBe('function');
     }
+  });
+
+  it('write_preview_instructions saves the recipe; read_preview_instructions reads it back (read-before-edit round-trip)', async () => {
+    const getPreviewInstructions = mockConfigStore.getPreviewInstructions as ReturnType<typeof vi.fn>;
+    const setPreviewInstructions = mockConfigStore.setPreviewInstructions as ReturnType<typeof vi.fn>;
+    getPreviewInstructions.mockResolvedValueOnce(null);
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Unset → present:false, instructions:null.
+    const empty = await tools['read_preview_instructions']({});
+    expect(empty).toEqual({ ok: true, present: false, instructions: null });
+    expect(getPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
+
+    // Write a recipe.
+    const recipe = 'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
+    const written = await tools['write_preview_instructions']({ instructions: recipe });
+    expect(written).toEqual({ ok: true, saved: true });
+    expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, recipe);
+    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
+
+    // Read it back — the raw body is surfaced verbatim.
+    getPreviewInstructions.mockResolvedValueOnce(recipe);
+    const present = await tools['read_preview_instructions']({});
+    expect(present).toEqual({ ok: true, present: true, instructions: recipe });
+
+    // Clear it (blank instructions).
+    const cleared = await tools['write_preview_instructions']({ instructions: '' });
+    expect(cleared).toEqual({ ok: true, saved: false });
+    expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, null);
+
+    // Read null after clearing.
+    getPreviewInstructions.mockResolvedValueOnce(null);
+    const afterClear = await tools['read_preview_instructions']({});
+    expect(afterClear).toEqual({ ok: true, present: false, instructions: null });
   });
 
   it('finish_onboarding refuses without a substantive `verified` (green-gate)', async () => {

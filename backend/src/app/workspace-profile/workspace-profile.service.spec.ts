@@ -5,6 +5,7 @@ import { WorkspaceProfileService } from './workspace-profile.service';
 function make(overrides?: {
   mounts?: { path: string; mode: string }[];
   setupScript?: string | null;
+  previewInstructions?: string | null;
   secretFiles?: { path: string; label?: string | null }[];
   mcpRows?: { name: string; scope: string; surfaces: string[]; enabled: boolean }[];
   skillRows?: { name: string; scope: string; description: string; enabled: boolean }[];
@@ -19,6 +20,7 @@ function make(overrides?: {
   const workspaceConfig = {
     listMounts: async () => o.mounts ?? [],
     getSetupScript: async () => o.setupScript ?? null,
+    getPreviewInstructions: async () => o.previewInstructions ?? null,
     getSeenManifests: async () => o.seenManifests ?? null,
   };
   const secretFiles = { list: async () => o.secretFiles ?? [] };
@@ -47,6 +49,7 @@ describe('WorkspaceProfileService.describe', () => {
     const svc = make({
       mounts: [{ path: '.cache', mode: 'shared-rw' }],
       setupScript: 'pnpm install',
+      previewInstructions: 'docker compose up',
       secretFiles: [{ path: '.env', label: 'env' }],
       mcpRows: [{ name: 'github', scope: '*', surfaces: ['build'], enabled: true }],
       skillRows: [{ name: 'migrations', scope: 'repo-1', description: 'Use when …', enabled: true }],
@@ -56,6 +59,7 @@ describe('WorkspaceProfileService.describe', () => {
     const snap = await svc.describe('org1', 'repo-1');
     expect(snap.mounts).toEqual([{ path: '.cache', mode: 'shared-rw' }]);
     expect(snap.setupScript).toEqual({ present: true, length: 'pnpm install'.length });
+    expect(snap.previewRecipe).toEqual({ present: true, length: 'docker compose up'.length });
     expect(snap.secretFiles).toEqual([{ path: '.env', label: 'env' }]);
     expect(snap.mcpServers).toEqual([{ name: 'github', tier: 'org', surfaces: ['build'], enabled: true }]);
     expect(snap.skills).toEqual([
@@ -67,6 +71,7 @@ describe('WorkspaceProfileService.describe', () => {
   it('reports empties on an unprovisioned repo', async () => {
     const snap = await make().describe('org1', 'repo-1');
     expect(snap.setupScript).toEqual({ present: false, length: 0 });
+    expect(snap.previewRecipe).toEqual({ present: false, length: 0 });
     expect(snap.houseStyle).toBeNull();
     expect(snap.mounts).toEqual([]);
   });
@@ -87,7 +92,7 @@ describe('WorkspaceProfileService.render', () => {
     );
     // No 'Skills:' label (dropped) — the SDK's native skill listing now owns that surfacing; see render()'s
     // comment. `describe()` still aggregates `snap.skills` (covered above), just not re-rendered here.
-    for (const label of ['Mounts:', 'Setup script:', 'Secret files:', 'MCP servers:', 'House style:']) {
+    for (const label of ['Mounts:', 'Setup script:', 'Preview recipe:', 'Secret files:', 'MCP servers:', 'House style:']) {
       expect(out).toContain(label);
     }
     expect(out).not.toContain('Skills:');

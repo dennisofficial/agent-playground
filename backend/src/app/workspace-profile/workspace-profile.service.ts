@@ -15,6 +15,8 @@ export interface WorkspaceProfileSnapshot {
   mounts: { path: string; mode: string }[];
   /** The cold-boot setup script — `write_setup_script`. Presence + size only (the body can be long). */
   setupScript: { present: boolean; length: number };
+  /** The demo-ready preview recipe — `write_preview_instructions`. Presence + size only. */
+  previewRecipe: { present: boolean; length: number };
   /** Secret FILE refs the hydrator renders in — `request_secret`/`request_file`. Path + label ONLY. */
   secretFiles: { path: string; label: string | null }[];
   /** MCP servers effective for this repo — `propose_mcp_servers`. Name/tier/surfaces/enabled, no secrets. */
@@ -60,10 +62,11 @@ export class WorkspaceProfileService {
 
   /** Aggregate the current state across all seven dimensions (~5 cheap queries). */
   async describe(orgId: string, repoId: string): Promise<WorkspaceProfileSnapshot> {
-    const [mounts, setupScript, secretFiles, mcpRows, skillRows, houseStyleSlug, houseStyle] =
+    const [mounts, setupScript, previewInstructions, secretFiles, mcpRows, skillRows, houseStyleSlug, houseStyle] =
       await Promise.all([
         this.workspaceConfig.listMounts(orgId, repoId),
         this.workspaceConfig.getSetupScript(orgId, repoId),
+        this.workspaceConfig.getPreviewInstructions(orgId, repoId),
         this.secretFiles.list(orgId, repoId),
         this.mcp.rowsForTurn(orgId, repoId),
         this.skills.rowsForTurn(orgId, repoId),
@@ -74,6 +77,7 @@ export class WorkspaceProfileService {
     return {
       mounts: mounts.map((m) => ({ path: m.path, mode: m.mode })),
       setupScript: { present: !!setupScript, length: setupScript?.length ?? 0 },
+      previewRecipe: { present: !!previewInstructions, length: previewInstructions?.length ?? 0 },
       secretFiles: secretFiles.map((f) => ({ path: f.path, label: f.label ?? null })),
       mcpServers: mcpRows.map((r) => ({
         name: r.name,
@@ -188,6 +192,11 @@ export class WorkspaceProfileService {
       s.setupScript.present
         ? `- Setup script: recorded (${s.setupScript.length} chars)`
         : '- Setup script: none',
+    );
+    lines.push(
+      s.previewRecipe.present
+        ? `- Preview recipe: recorded (${s.previewRecipe.length} chars)`
+        : '- Preview recipe: none',
     );
     lines.push(
       s.secretFiles.length

@@ -256,6 +256,10 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     script: z.string().optional(),
   },
   read_setup_script: {},
+  write_preview_instructions: {
+    instructions: z.string().optional(),
+  },
+  read_preview_instructions: {},
   derive_secret: {
     name: z.string(),
     path: z.string(),
@@ -426,6 +430,13 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   read_setup_script:
     'Read the repo\'s current cold-boot setup script (the raw body, not just its length) so you can edit it ' +
     'safely before calling write_setup_script — which REPLACES the whole script. Returns { ok, present, script }.',
+  write_preview_instructions:
+    'Save the repo\'s PREVIEW RECIPE ({ instructions }) — how to stand up this repo\'s demo-ready preview ' +
+    'stack (envs, ports, compose/migrate/seed, deep-link). Injected into the "Spin up preview" seed for every ' +
+    'job on this repo (no PR). REPLACES the whole recipe — read_preview_instructions FIRST to amend. Blank clears it.',
+  read_preview_instructions:
+    'Read the repo\'s current PREVIEW RECIPE (raw body) so you can edit it safely before write_preview_instructions ' +
+    '(which overwrites the whole thing). Returns { ok, present, instructions }.',
   derive_secret: 'Derive and store a secret file at a path from a computed value.',
   reset_sandbox:
     'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +

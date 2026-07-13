@@ -168,6 +168,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
   read_setup_script: {},
+  write_preview_instructions: { instructions: 'docker compose up -d && pnpm migrate && pnpm seed' },
+  read_preview_instructions: {},
   derive_secret: {
     name: 'DERIVED_KEY',
     path: '.derived/key',

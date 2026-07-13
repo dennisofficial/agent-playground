@@ -68,6 +68,16 @@ export class RepoEntity extends TimestampedEntity {
   setup_script!: string | null;
 
   /**
+   * Per-repo PREVIEW RECIPE — the Atlas-managed instructions for standing up THIS repo's
+   * demo-ready preview stack (envs to set, ports, docker-compose/migrate/seed commands, deep-link).
+   * Spliced into the "Spin up preview" seed (see `previewPrepRule` / `composePreviewPrepSeed`) so Atlas
+   * does not re-discover the stack each time; authored by the brain via `write_preview_instructions`
+   * (DB-backed, live for every future job on the repo, no PR). Null → no recipe saved yet.
+   */
+  @Column({ type: 'text', nullable: true })
+  preview_instructions!: string | null;
+
+  /**
    * The dependency-manifest filenames the Workspace Profile has ACKNOWLEDGED for this repo (e.g.
    * `["package.json","go.mod"]`) — seeded at `finish_onboarding` (the bulk pass looked at the whole
    * stack) and refreshed when the brain records a setup script. `WorkspaceProfileService.computeGaps`

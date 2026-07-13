@@ -502,6 +502,30 @@ export const PREVIEW_PREP_SEED_BODY = [
   'WHEN DONE (or if declined), free the RAM: `atlas-svc stop-all`.',
 ].join('\n');
 
+const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
+
+/** Compose the Spin-up-preview seed: the standing procedure, then the Atlas-managed recipe as a
+ *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
+ *  stale one — the "stop re-discovering" memory loop (d4). */
+export function composePreviewPrepSeed(instructions: string | null): string {
+  const recipe = instructions?.trim() ? instructions : null;
+  const recipeBody = recipe ?? PREVIEW_RECIPE_NONE;
+  const block =
+    'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):\n' +
+    '```md\n' +
+    recipeBody +
+    (recipeBody.endsWith('\n') ? '' : '\n') +
+    '```';
+  const footer = recipe
+    ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
+      'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
+      '`read_preview_instructions` first to amend). To edit it any time, use those two tools.'
+    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable steps (envs to set, ' +
+      'ports, docker compose / migrate / seed commands, the deep-link) with `write_preview_instructions` so the ' +
+      'NEXT Spin up preview is instant instead of re-discovered.';
+  return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
+}
+
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
 // Spliced in by the brain's `behavioral.group` tail and by the worker group.
 
