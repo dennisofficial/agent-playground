@@ -4,6 +4,7 @@ import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
 import type { DecisionApprovalService } from './decision-approval.service';
 import type { DriverStoreService } from '../driver/driver-store.service';
+import type { AutoMergeService } from '../driver/auto-merge.service';
 import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
@@ -168,6 +169,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     supersedeDoneWakeMessages: vi.fn().mockResolvedValue(undefined),
     markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
+
+  const mockAutoMerge = {
+    maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as AutoMergeService;
 
   const mockMemory = {
     recall: vi.fn(),
@@ -535,6 +540,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     manager = new AgentSessionManager(
       mockStore,
       mockDriverStore,
+      mockAutoMerge,
       mockMemory,
       mockApprovals,
       mockLifecycle,
@@ -3791,9 +3797,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       findChatStimulusById: vi.fn().mockResolvedValue(opts.stimulusRow ?? null),
     };
 
+    const autoMerge = {
+      maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AutoMergeService;
+
     const manager = new AgentSessionManager(
       store,
       driverStore,
+      autoMerge,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -5203,6 +5214,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
+      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       {} as unknown as JobLifecycleService,
@@ -5414,6 +5426,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
+      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -5596,37 +5609,23 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     const getState = vi.fn().mockReturnValue('leader');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      inert,
-      inert,
-      inert,
-      inert,
-      inert, // store, driverStore, memory, approvals, lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert,
-      inert,
-      inert, // planReview, dispatcher, surface (10)
-      inert, // sandboxRows (11)
-      stimulusRows as never, // stimulusRows (12)
-      stimulusStore as never, // stimulusStore (13)
-      inert,
-      inert,
-      inert,
-      inert,
-      inert,
-      inert,
-      inert, // turnHarness…creds (20)
-      inert, // mcp (McpResolver, 21)
-      election, // election (22)
-      inert,
-      inert,
-      inert,
-      inert, // turnRecovery, secretStore, configStore, git (26)
-      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
-      { register: () => undefined } as never, // threadInput (28, ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (29, LIVE_VERIFICATION_JUDGE)
-      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30, OauthUsageService)
+      inert, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert, // sandboxRows (12)
+      stimulusRows as never, // stimulusRows (13)
+      stimulusStore as never, // stimulusStore (14)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      inert, // mcp (McpResolver, 22)
+      election, // election (23)
+      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
+      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
+      { register: () => undefined } as never, // threadInput (29, ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
     );
     return {
       manager,
@@ -5861,34 +5860,20 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const getState = vi.fn().mockReturnValue('follower');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      store as never,
-      inert,
-      inert,
-      inert,
-      inert, // store, driverStore, memory, approvals, lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert,
-      inert,
-      inert, // planReview, dispatcher, surface (10)
-      inert, // sandboxRows (11)
-      stimulusRows as never, // stimulusRows (12)
-      stimulusStore as never, // stimulusStore (13)
-      inert,
-      inert,
-      inert,
-      inert,
-      inert,
-      inert,
-      inert, // turnHarness…creds (20)
-      inert, // mcp (McpResolver, 21)
-      election, // election (22)
-      inert,
-      inert,
-      inert,
-      inert, // turnRecovery…git (26)
-      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
+      store as never, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert, // sandboxRows (12)
+      stimulusRows as never, // stimulusRows (13)
+      stimulusStore as never, // stimulusStore (14)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      inert, // mcp (McpResolver, 22)
+      election, // election (23)
+      inert, inert, inert, inert, // turnRecovery…git (27)
+      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
@@ -6161,36 +6146,21 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       const election = { getState } as unknown as LeaderElectionService;
       const inert = {} as never;
       const manager = new AgentSessionManager(
-        store as never,
-        inert,
-        inert,
-        inert,
-        inert, // store, driverStore, memory, approvals, lifecycle (5)
-        inert, // engineRunner (6)
-        turnRegistry, // turnRegistry (7)
-        planReview as never,
-        inert,
-        inert, // planReview, dispatcher, surface (10)
-        inert, // sandboxRows (11)
-        inert, // stimulusRows (12)
-        stimulusStore as never, // stimulusStore (13)
-        inert,
-        inert,
-        inert,
-        inert,
-        inert,
-        inert,
-        inert, // turnHarness…creds (20)
-        inert, // mcp (McpResolver, 21)
-        election, // election (22)
-        inert,
-        inert,
-        inert,
-        inert, // turnRecovery…git (26)
-        { generate: () => 'SYSTEM' } as never, // prompts (27)
-        { register: () => undefined } as never, // threadInput (28)
-        { judge: async () => undefined }, // liveVerificationJudge (29)
-        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30)
+        store as never, inert, inert, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+        inert, // engineRunner (7)
+        turnRegistry, // turnRegistry (8)
+        planReview as never, inert, inert, // planReview, dispatcher, surface (11)
+        inert, // sandboxRows (12)
+        inert, // stimulusRows (13)
+        stimulusStore as never, // stimulusStore (14)
+        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+        inert, // mcp (McpResolver, 22)
+        election, // election (23)
+        inert, inert, inert, inert, // turnRecovery…git (27)
+        { generate: () => 'SYSTEM' } as never, // prompts (28)
+        { register: () => undefined } as never, // threadInput (29)
+        { judge: async () => undefined } as never, // liveVerificationJudge (30)
+        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi
@@ -6324,6 +6294,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
     const manager = new AgentSessionManager(
       {} as unknown as BrainStoreService,
       {} as unknown as DriverStoreService,
+      {} as unknown as AutoMergeService,
       memory,
       {} as unknown as DecisionApprovalService,
       {} as unknown as JobLifecycleService,

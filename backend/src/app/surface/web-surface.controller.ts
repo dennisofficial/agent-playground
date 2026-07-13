@@ -41,7 +41,9 @@ import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import {
   type AutoApproveMode,
+  type AutoMergeMethod,
   isAutoApproveMode,
+  isAutoMergeMethod,
   modeApprovesPlan,
   modeApprovesShip,
 } from '@workspace/shared';
@@ -54,6 +56,7 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -80,6 +83,7 @@ import type { McpProposalServer } from './web-mcp-proposal-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { parseGitDiff, type JobDiff } from './job-diff';
@@ -155,6 +159,9 @@ const VALID_ACTION_IDS = new Set([
   // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
+  // The "Merge PR" gate button — same endpoint, but the `approval$` bridge routes it to the driver's merge
+  // resolution instead of a plan verdict (see WebSurfaceModule).
+  MERGE_ACTION_ID,
   // The atlas-prod gated DB-write card buttons — Execute runs the approved statement on the `mcp_writer`
   // role; Deny rejects it. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule). These
   // are NOT plan verdicts, so they skip the `awaiting_approval` + decisionRecordId invariant below.
@@ -337,6 +344,10 @@ interface CreateThreadDto {
   prNumber?: string | number;
   /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
   autoApproveMode?: string;
+  /** Operator-chosen auto-merge toggle + settings to arm at creation; absent/false leaves the DB defaults. */
+  autoMerge?: boolean;
+  autoMergeMethod?: AutoMergeMethod;
+  autoMergeDeleteBranch?: boolean;
 }
 
 /**
@@ -383,6 +394,16 @@ interface RenameThreadDto {
 }
 interface SetAutoApproveDto {
   mode: AutoApproveMode;
+}
+interface SetAutoMergeDto {
+  autoMerge: boolean;
+  method?: AutoMergeMethod;
+  deleteBranch?: boolean;
+}
+function coerceBoolean(raw: unknown): boolean | undefined {
+  if (raw === true || raw === 'true') return true;
+  if (raw === false || raw === 'false') return false;
+  return undefined;
 }
 interface ApproveDto {
   actionId: string;
@@ -577,6 +598,8 @@ export class WebSurfaceController {
     private readonly liveTurns: LiveTurnStore,
     private readonly driverStore: DriverStoreService,
     private readonly threadLifecycle: JobLifecycleService,
+    // The ONE merge resolution path — `setAutoMerge` immediately evaluates an already-ready PR on enable.
+    private readonly autoMerge: AutoMergeService,
     private readonly orgService: OrganizationService,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -808,6 +831,8 @@ export class WebSurfaceController {
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
     // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
     const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
+    const autoMerge = coerceBoolean(body.autoMerge) === true;
+    const autoMergeDeleteBranch = coerceBoolean(body.autoMergeDeleteBranch);
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -819,6 +844,16 @@ export class WebSurfaceController {
         ...(kind ? { kind } : {}),
         ...(autoApproveMode && autoApproveMode !== 'off'
           ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
+          : {}),
+        // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
+        // also records who armed it; an unknown/absent method defaults to 'squash', deleteBranch to true.
+        ...(autoMerge
+          ? {
+              auto_merge: true,
+              auto_merge_method: isAutoMergeMethod(body.autoMergeMethod) ? body.autoMergeMethod : 'squash',
+              auto_merge_delete_branch: autoMergeDeleteBranch ?? true,
+              auto_merge_by: user.id,
+            }
           : {}),
       }),
     );
@@ -1166,6 +1201,7 @@ export class WebSurfaceController {
       actionId !== RETRACT_SHIP_ACTION_ID &&
       actionId !== AMEND_APPROVE_ACTION_ID &&
       actionId !== AMEND_DISMISS_ACTION_ID &&
+      actionId !== MERGE_ACTION_ID &&
       actionId !== DB_WRITE_APPROVE_ACTION_ID &&
       actionId !== DB_WRITE_DENY_ACTION_ID
     ) {
@@ -2505,6 +2541,44 @@ export class WebSurfaceController {
       this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
     return { ok: true, autoApproveMode: body.mode };
+  }
+
+  /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle (+ method/delete-branch). On
+   *  enable, immediately evaluates an already-ready PR through the exact same evaluator every trigger uses
+   *  (`AutoMergeService.maybeAutoMerge`) rather than blocking the request on the merge itself. */
+  @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId/auto-merge')
+  @UseGuards(OrgMembershipGuard)
+  async setAutoMerge(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Body() body: SetAutoMergeDto,
+  ): Promise<{ ok: boolean; autoMerge: boolean; autoMergeMethod: AutoMergeMethod; autoMergeDeleteBranch: boolean }> {
+    // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
+    await this.requireThread(jobId, org.id);
+    const enable = coerceBoolean(body.autoMerge) === true;
+    const method = isAutoMergeMethod(body.method) ? body.method : undefined;
+    const deleteBranch = coerceBoolean(body.deleteBranch);
+    const result = await this.jobs.update(
+      { id: jobId, org_id: org.id },
+      {
+        auto_merge: enable,
+        ...(method ? { auto_merge_method: method } : {}),
+        ...(deleteBranch != null ? { auto_merge_delete_branch: deleteBranch } : {}),
+        // Stamp who enabled it; never clear on disable — the audit trail of the last arm stands.
+        ...(enable ? { auto_merge_by: user.id } : {}),
+      },
+    );
+    if (!result.affected) throw new NotFoundException('thread not found');
+    this.logger.log(`web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`);
+    if (enable) void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
+    const fresh = await this.jobs.findOneBy({ id: jobId });
+    return {
+      ok: true,
+      autoMerge: fresh?.auto_merge ?? enable,
+      autoMergeMethod: fresh?.auto_merge_method ?? 'squash',
+      autoMergeDeleteBranch: fresh?.auto_merge_delete_branch ?? true,
+    };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

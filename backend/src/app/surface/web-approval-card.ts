@@ -16,6 +16,7 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
   VIEW_PLAN_ACTION_ID,
@@ -44,12 +45,14 @@ export interface WebApprovalCard {
    * - `ship` — the ship-review gate (`Ship it` + `Amend build`; `threads`/`decisions` empty).
    * - `amend` — the brain's "Amend build?" PROPOSAL at the ship gate (`Approve amend` + `Dismiss`); the
    *   gate stays parked until the operator approves. `threads`/`decisions` empty.
+   * - `merge` — the merge-ready gate (`Merge PR`); posted once the PR is GitHub-mergeable, regardless of
+   *   auto-merge. `threads`/`decisions` empty.
    * - `db_write` — the `atlas-prod` gated-write approval card (Thread 2): `Execute write` + `Deny`;
    *   `threads`/`decisions` empty, the proposed statement rides `sql`/`estimatedRows`/`estimateLabel`.
-   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`db_write` card renders its actions
-   * generically.
+   * The web labels the list "Sections" vs "Changes"; a `ship`/`amend`/`merge`/`db_write` card renders its
+   * actions generically.
    */
-  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'db_write';
+  kind?: 'plan' | 'direct' | 'ship' | 'amend' | 'merge' | 'db_write';
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -163,6 +166,32 @@ export function webShipReviewCard(input: {
         actionId: RETRACT_SHIP_ACTION_ID,
         label: 'Amend build',
         style: 'default',
+        value,
+      },
+    ],
+  };
+}
+
+/**
+ * Build the MERGE-READY gate card — posted once a PR is GitHub-mergeable (see `prMergeReady`), regardless
+ * of the job's `auto_merge` toggle: a human can always click `Merge PR`. A single primary action, so
+ * unlike `webShipReviewCard` there's no secondary button. Discriminated by `kind: 'merge'`.
+ */
+export function webMergeReadyCard(jobId: string): WebApprovalCard {
+  const value = JSON.stringify({ jobId });
+  return {
+    type: 'approval_card',
+    jobId,
+    kind: 'merge',
+    title: 'Merge PR',
+    summary: 'This PR is ready to merge.',
+    decisions: [],
+    threads: [],
+    actions: [
+      {
+        actionId: MERGE_ACTION_ID,
+        label: 'Merge PR',
+        style: 'primary',
         value,
       },
     ],

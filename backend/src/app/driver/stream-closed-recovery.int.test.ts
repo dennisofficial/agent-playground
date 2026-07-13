@@ -368,6 +368,10 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         } as unknown as import('./job-lifecycle.service').JobLifecycleService,
         new BuildShipService(git, pr, store, brainGateway),
         {
+          maybeAutoMerge: async () => undefined,
+          mergeNow: async () => false,
+        } as unknown as import('./auto-merge.service').AutoMergeService,
+        {
           appendMarker: async () => undefined,
           drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
         } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,

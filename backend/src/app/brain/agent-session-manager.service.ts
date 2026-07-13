@@ -72,6 +72,7 @@ import {
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
+import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
@@ -365,6 +366,8 @@ export class AgentSessionManager
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
+    // The ONE merge resolution path — re-evaluated at every turn end (a settled brain is a merge trigger).
+    private readonly autoMerge: AutoMergeService,
     private readonly memory: MemoryStore,
     private readonly approvals: DecisionApprovalService,
     private readonly lifecycle: JobLifecycleService,
@@ -2325,6 +2328,9 @@ export class AgentSessionManager
       ).catch((err) =>
         this.logger.debug(`turn-end re-pump failed (sweep will retry): ${err}`),
       );
+      // A turn just ended — the brain-settled half of auto-merge's guard may now hold. Fire-and-forget;
+      // errors never affect turn completion.
+      void this.autoMerge.maybeAutoMerge(stimulus.jobId).catch(() => undefined);
     }
   }
 
@@ -2832,6 +2838,7 @@ export class AgentSessionManager
           repoConventions,
           workspaceProfile,
           autoApproveMode: brainJob?.autoApproveMode ?? 'off',
+          autoMerge: brainJob?.autoMerge ?? false,
         },
       }),
       sandboxKey,

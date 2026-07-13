@@ -48,6 +48,9 @@ export const hasOrgInstructions = (c: PromptCtx): boolean =>
 /** Per-job auto-approve is ON (any mode but 'off') — inject the autonomous-mode fragment. */
 export const hasAutoApprove = (c: PromptCtx): boolean => (c.settings?.autoApproveMode ?? 'off') !== 'off';
 
+/** Per-job auto-merge is ON — inject the auto-merge fragment. */
+export const hasAutoMerge = (c: PromptCtx): boolean => c.settings?.autoMerge === true;
+
 /** The repo has an attached house-style profile (the conditional conventions fragment). */
 export const hasRepoConventions = (c: PromptCtx): boolean =>
   !!c.settings?.repoConventions && c.settings.repoConventions.body.trim().length > 0;

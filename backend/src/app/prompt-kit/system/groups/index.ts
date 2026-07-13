@@ -13,6 +13,7 @@ import { ConversationGroup } from './conversation.group';
 import { ContextGroup } from './context.group';
 import { PlanningGroup } from './planning.group';
 import { AutonomyGroup } from './autonomy.group';
+import { AutoMergeGroup } from './auto-merge.group';
 import { TaskListGroup } from './task-list.group';
 import { WorkspaceProfileGroup } from './workspace-profile.group';
 import { SafetyGroup } from './safety.group';
@@ -39,6 +40,7 @@ export const FRAGMENT_GROUPS = [
   ContextGroup,
   PlanningGroup,
   AutonomyGroup,
+  AutoMergeGroup,
   TaskListGroup,
   WorkspaceProfileGroup,
   SafetyGroup,
@@ -65,6 +67,7 @@ export {
   ContextGroup,
   PlanningGroup,
   AutonomyGroup,
+  AutoMergeGroup,
   TaskListGroup,
   WorkspaceProfileGroup,
   SafetyGroup,

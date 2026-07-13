@@ -388,6 +388,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           supervisorDirHost: () => null,
         } as unknown as import('./job-lifecycle.service').JobLifecycleService,
         new BuildShipService(git, pr, store, brainGateway),
+        { mergeNow: async () => false } as unknown as import('./auto-merge.service').AutoMergeService,
         {
           appendMarker: async () => undefined,
           drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
