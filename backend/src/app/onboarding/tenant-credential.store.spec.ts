@@ -149,38 +149,8 @@ describe('TenantCredentialStore', () => {
       hasGithub: false,
       hasGithubApp: false,
       githubAuthMode: 'pat',
-      githubIdentityMode: null,
       engineAuthSet: false, // no Claude subscription token → harness auth not satisfied
       hasCodex: false,
-    });
-  });
-
-  describe('githubIdentityMode round-trip', () => {
-    it('defaults to null when never set', async () => {
-      const store = makeStore();
-      await store.write('T1', { githubPat: 'ghp_1' });
-      expect((await store.read('T1'))?.githubIdentityMode).toBeNull();
-      expect((await store.presence('T1')).githubIdentityMode).toBeNull();
-    });
-
-    it('persists a "pat" / "app" preference', async () => {
-      const store = makeStore();
-      await store.write('T1', { githubIdentityMode: 'app' });
-      expect((await store.read('T1'))?.githubIdentityMode).toBe('app');
-      expect((await store.presence('T1')).githubIdentityMode).toBe('app');
-      await store.write('T1', { githubIdentityMode: 'pat' });
-      expect((await store.read('T1'))?.githubIdentityMode).toBe('pat');
-    });
-
-    it('explicit null clears the preference; undefined leaves it unchanged', async () => {
-      const store = makeStore();
-      await store.write('T1', { githubIdentityMode: 'app', githubPat: 'ghp_1' });
-      // undefined patch field must not touch the stored preference
-      await store.write('T1', { anthropicApiKey: 'a1' });
-      expect((await store.read('T1'))?.githubIdentityMode).toBe('app');
-      // explicit null clears it back to default
-      await store.write('T1', { githubIdentityMode: null });
-      expect((await store.read('T1'))?.githubIdentityMode).toBeNull();
     });
   });
 

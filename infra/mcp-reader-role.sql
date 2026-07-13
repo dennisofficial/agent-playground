@@ -1,18 +1,19 @@
 -- infra/mcp-reader-role.sql
 --
--- Idempotent bootstrap of the SELECT-only `mcp_reader` Postgres role used by the standalone read-only
--- diagnostics MCP server (mcp-reader). Run ONCE on the box, against the Atlas app database, after the
+-- Idempotent bootstrap of the SELECT-only `mcp_reader` Postgres role used by the backend-hosted
+-- `atlas-prod` diagnostics MCP (its dedicated read-only DataSource). Run ONCE on the box, against the
+-- Atlas app database, after the
 -- schema has been migrated (the SELECT grant covers existing tables; ALTER DEFAULT PRIVILEGES covers
 -- future ones). Re-runnable at any time — it creates the role only if missing and always re-applies the
 -- grants and refreshes the password.
 --
--- This is what makes decision d1 (read-only prod access) STRUCTURAL rather than a matter of app code:
--- the role handed to the reader can ONLY SELECT — never INSERT/UPDATE/DELETE or run DDL — so even a fully
--- compromised reader process cannot mutate production. There is no write role in the reader at all.
+-- This is what makes read-only prod access STRUCTURAL rather than a matter of app code: the role handed to
+-- the atlas-prod MCP's read pool can ONLY SELECT — never INSERT/UPDATE/DELETE or run DDL — so it cannot
+-- mutate production. Approved recovery writes use the separate DML-only `mcp_writer` role instead.
 --
--- Usage (run from the box; the password comes from the reader's scoped env file, never hard-coded here):
+-- Usage (run from the box; the password comes from the atlas-prod block of atlas.env, never hard-coded here):
 --
---   PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/mcp-reader.env | cut -d= -f2-)"
+--   PW="$(grep -E '^MCP_READER_PG_PASSWORD=' /srv/atlas/secrets/atlas.env | cut -d= -f2-)"
 --   docker exec -i atlas-postgres psql -v ON_ERROR_STOP=1 \
 --     -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 --     -v mcp_reader_password="$PW" \

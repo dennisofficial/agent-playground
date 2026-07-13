@@ -15,7 +15,7 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
 
@@ -146,5 +146,126 @@ describe('EngineCore — streaming input-close gated on a genuinely-completed re
     expect(state.inputClosedAtAttempt).toBe(true);
     expect(state.inputClosedAt).toBeDefined();
     expect(state.inputClosedAt!).toBeLessThan(state.toolAttemptedAt!);
+  });
+});
+
+// ── Circuit breaker on a SEVERED control channel (d1) ────────────────────────────────────────────────
+//
+// Once stdin is gone, every pending/queued host-tool call the CLI still attempts comes back as a
+// `tool_result` with `is_error:true` and a "Stream closed" body — that's the control-channel client's own
+// failure text, not something the engine invents. Rather than let those pile up forever, the engine counts
+// CONSECUTIVE stream-closed results (any healthy result resets the run) and — at STREAM_CLOSED_THRESHOLD —
+// aborts the orphaned CLI child and rejects the turn instead of hanging.
+
+type CircuitState = { abortController?: AbortController };
+
+/**
+ * A fake SDK that yields an init + assistant frame, then one `user` message per scripted tool_result, then
+ * (optionally) a genuinely-completed final result. Captures the `AbortController` the engine passed into
+ * `options` so the test can prove the breaker aborted it.
+ */
+function toolResultStreamSdk(
+  results: Array<{ isError: boolean; content: unknown }>,
+  emitFinalResult: boolean,
+  state: CircuitState,
+) {
+  return {
+    query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+      state.abortController = options.abortController as AbortController;
+      return (async function* () {
+        // Drain the engine's manual input stream in the background so pushes never block.
+        const it = prompt[Symbol.asyncIterator]();
+        void (async () => {
+          while (true) {
+            const r = await it.next();
+            if (r.done) break;
+          }
+        })();
+
+        yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+        await sleep(5);
+        yield {
+          type: 'assistant',
+          message: { model: 'claude-opus-4-8', content: [{ type: 'text', text: 'working on it' }] },
+        };
+        await sleep(5);
+        for (const r of results) {
+          yield {
+            type: 'user',
+            message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_x', is_error: r.isError, content: r.content }] },
+          };
+          await sleep(5);
+        }
+        if (emitFinalResult) {
+          yield {
+            type: 'result', subtype: 'success', session_id: 'sess-1', result: 'final',
+            terminal_reason: 'completed', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        }
+      })();
+    },
+  } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+}
+
+const STREAM_CLOSED_TEXT = 'Tool permission request failed: Error: Stream closed';
+const HEALTHY_TEXT = 'ok';
+
+function runCircuitTurn(sdk: typeof import('@anthropic-ai/claude-agent-sdk')): ReturnType<EngineCore['run']> {
+  const core = new EngineCore(sdk, {} as never, { homeRoot: HOME_ROOT });
+  return core.run({
+    engine: 'claude',
+    task: 'post the scope card',
+    cwd: '/tmp/wt',
+    systemPrompt: 'persona',
+    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
+    mode: 'execute',
+    richStream: true,
+    auth: { secret: 'oauth-tok' },
+    steerInput: idleSteerInput,
+    onEvent: () => {},
+  } as never);
+}
+
+describe('EngineCore — stream-closed circuit breaker (d1)', () => {
+  const ORIG_THRESHOLD = process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
+  afterEach(() => {
+    if (ORIG_THRESHOLD === undefined) delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
+    else process.env.ENGINE_STREAM_CLOSED_THRESHOLD = ORIG_THRESHOLD;
+  });
+
+  it('trips at the threshold: rejects the run and aborts the CLI child', async () => {
+    process.env.ENGINE_STREAM_CLOSED_THRESHOLD = '3';
+    const state: CircuitState = {};
+    const sdk = toolResultStreamSdk(
+      [
+        { isError: true, content: STREAM_CLOSED_TEXT },
+        { isError: true, content: STREAM_CLOSED_TEXT },
+        { isError: true, content: STREAM_CLOSED_TEXT },
+      ],
+      false,
+      state,
+    );
+
+    await expect(runCircuitTurn(sdk)).rejects.toThrow(/stream closed/i);
+    expect(state.abortController?.signal.aborted).toBe(true);
+  });
+
+  it('a healthy result resets the consecutive run: an isolated blip never trips the breaker', async () => {
+    process.env.ENGINE_STREAM_CLOSED_THRESHOLD = '3';
+    const state: CircuitState = {};
+    const sdk = toolResultStreamSdk(
+      [
+        { isError: true, content: [{ type: 'text', text: STREAM_CLOSED_TEXT.toLowerCase() }] },   // run: 1
+        { isError: false, content: HEALTHY_TEXT },         // resets the run to 0
+        { isError: true, content: STREAM_CLOSED_TEXT },   // run: 1
+        { isError: true, content: STREAM_CLOSED_TEXT },   // run: 2 — never reaches the threshold of 3
+      ],
+      true,
+      state,
+    );
+
+    const res = await runCircuitTurn(sdk);
+    // Total across the whole turn (not the consecutive run), surfaced only because it's > 0.
+    expect(res.streamClosedCount).toBe(3);
   });
 });

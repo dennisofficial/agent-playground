@@ -24,8 +24,6 @@ export interface TenantCredentials {
   githubAppInstallationAccount?: string | null;
   /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
   githubAuthMode?: 'pat' | 'app';
-  /** Per-org preference for which credential AUTHORS identity-bearing writes: 'pat' (PAT owner) or 'app' (App bot). null = unset = resolves as 'pat'. */
-  githubIdentityMode?: 'pat' | 'app' | null;
 }
 
 /** A partial update — only provided fields are (re-)encrypted and written. */
@@ -39,8 +37,6 @@ export interface TenantCredentialPatch {
   githubAppInstallationId?: string | null;
   githubAppInstallationAccount?: string | null;
   githubAuthMode?: 'pat' | 'app';
-  /** Plaintext — set/read directly on the row. Explicit `null` clears (back to default); `undefined` leaves unchanged. */
-  githubIdentityMode?: 'pat' | 'app' | null;
 }
 
 /** Cheap existence flags for the onboarding checklist — NO decryption, NO secret values. */
@@ -56,8 +52,6 @@ export interface CredentialPresence {
   hasGithubApp: boolean;
   /** Which GitHub credential the resolver returns: 'pat' (default) or 'app'. */
   githubAuthMode: 'pat' | 'app';
-  /** Per-org identity-write preference: 'pat' (PAT owner) or 'app' (App bot). null = unset = resolves as 'pat'. */
-  githubIdentityMode: 'pat' | 'app' | null;
 }
 
 /**
@@ -112,7 +106,6 @@ export class TenantCredentialStore {
       hasCodex: !!row?.codex_auth_secret_enc,
       hasGithubApp: !!row?.github_app_installation_id,
       githubAuthMode: row?.github_auth_mode ?? 'pat',
-      githubIdentityMode: row?.github_identity_mode ?? null,
     };
   }
 
@@ -144,7 +137,6 @@ export class TenantCredentialStore {
     if (patch.githubAppInstallationAccount !== undefined)
       row.github_app_installation_account = patch.githubAppInstallationAccount;
     if (patch.githubAuthMode !== undefined) row.github_auth_mode = patch.githubAuthMode;
-    if (patch.githubIdentityMode !== undefined) row.github_identity_mode = patch.githubIdentityMode;
     await this.repo.save(row);
     this.cache.delete(this.cacheKey(orgId, scope));
     this.logger.log(`wrote credentials for team=${orgId} scope=${scope} (${describePatch(patch)})`);
@@ -247,7 +239,6 @@ export class TenantCredentialStore {
       githubAppInstallationId: row.github_app_installation_id ?? null,
       githubAppInstallationAccount: row.github_app_installation_account ?? null,
       githubAuthMode: row.github_auth_mode ?? 'pat',
-      githubIdentityMode: row.github_identity_mode ?? null,
     };
   }
 }

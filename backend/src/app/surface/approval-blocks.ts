@@ -25,6 +25,11 @@ export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
  *  `RETRACT_SHIP_ACTION_ID`) so the plain ship-card "Amend build" click keeps its existing no-wake behavior. */
 export const AMEND_APPROVE_ACTION_ID = 'atlas_approval:amend_approve';
 export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
+/** The `atlas-prod` gated-write approval card's buttons (Thread 2) — `Execute write` runs the operator's
+ *  approved single SQL statement on the DML-only `mcp_writer` role; `Deny` marks it rejected. Its button
+ *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id), not a decision record. */
+export const DB_WRITE_APPROVE_ACTION_ID = 'atlas_approval:db_write_approve';
+export const DB_WRITE_DENY_ACTION_ID = 'atlas_approval:db_write_deny';
 
 /** What rides in a button `value` / a verdict payload — the ids needed to resolve the gate. */
 export interface ApprovalActionMeta {

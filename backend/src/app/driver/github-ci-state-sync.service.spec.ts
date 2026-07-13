@@ -59,6 +59,7 @@ function make(over: {
 
   const creds = {
     githubToken: vi.fn(async () => 'tok'),
+    hostGithubToken: vi.fn(async () => 'tok'),
   } as unknown as CredentialResolver;
 
   const findOpenPullByHead = vi.fn(async () => over.discovered ?? null);

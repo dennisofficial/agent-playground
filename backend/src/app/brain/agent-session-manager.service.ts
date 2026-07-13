@@ -59,7 +59,10 @@ import {
   JobSandboxEntity,
   CodexReviewEntity,
   MessageEntity,
+  RepoEntity,
 } from '../persistence/entities';
+import { ProdDiagnosticsService } from '../prod-mcp/prod-diagnostics.service';
+import { isAtlasRepo } from '../sandbox/atlas-repo';
 import type {
   McpAuthKind,
   McpOAuthTokenAuthMethod,
@@ -303,6 +306,10 @@ export class AgentSessionManager
    */
   private readonly skillEditGrantsByJob = new Map<string, Set<string>>();
 
+  // Cache of repoId (UUID) → repo slug for the atlas-prod tool gate. A slug is stable for a repo, so it's
+  // resolved once per repo and reused across turns; `null` caches a missing/failed lookup (fail-closed).
+  private readonly repoSlugCache = new Map<string, string | null>();
+
   // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's current live
   // SDK session, so a re-recalled fact is surfaced once but a fresh session can see it again. The first turn
   // has no session id yet; the set is rebound when the engine emits the session event.
@@ -429,6 +436,18 @@ export class AgentSessionManager
     // tests construct the manager without it (undefined → no rail, default render is empty anyway); the
     // @Global BrainModule supplies it live.
     @Optional() private readonly jit?: JitHostExecutor,
+    // The relocated prod-diagnostics reader + gated prod-write proposer, exposed as the atlas-prod toolset —
+    // ONLY on the Atlas repo itself. @Optional so unit tests construct the manager without it (undefined →
+    // the tools are simply absent); DI (@Global ProdMcpModule) supplies it live.
+    @Optional() private readonly prodDiagnostics?: ProdDiagnosticsService,
+    // Repo rows — a light id→slug lookup for the atlas-prod tool gate (the toolset keys on the repo SLUG
+    // === ATLAS_REPO_SLUG, never the repo UUID). RepoEntity is registered in brain.module's forFeature.
+    // @Optional matching this constructor's convention — always present in prod; unit tests that construct
+    // the manager positionally omit it (undefined → resolveRepoSlug returns null → the atlas-prod tools are
+    // simply absent, fail-closed).
+    @Optional()
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repoRows?: Repository<RepoEntity>,
   ) {}
 
   /**
@@ -1979,7 +1998,8 @@ export class AgentSessionManager
       // would reject those calls as "Unknown tool" (finish_onboarding at the end of a long run).
       const reattachKind =
         (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
-      const tools = this.buildTools(stimulus, reattachKind);
+      const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
+      const tools = this.buildTools(stimulus, reattachKind, repoSlug);
       // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
       // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
       // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
@@ -2469,8 +2489,10 @@ export class AgentSessionManager
     if (brainJob?.status === 'blocked') return;
 
     // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
-    // get build-free subsets — see buildTools).
-    const tools = this.buildTools(stimulus, brainJob?.kind ?? null);
+    // get build-free subsets — see buildTools). The repo SLUG (not the UUID) gates the atlas-prod toolset,
+    // resolved once here and reused for the jobContext.isAtlasRepo prompt flag below.
+    const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
+    const tools = this.buildTools(stimulus, brainJob?.kind ?? null, repoSlug);
 
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.engineRunner;
@@ -2580,6 +2602,7 @@ export class AgentSessionManager
       cwd: sandbox.worktreePath,
       ...(branch ? { branch } : {}),
       ...(baseBranch ? { baseBranch } : {}),
+      ...(this.env && isAtlasRepo(repoSlug ?? '', this.env) ? { isAtlasRepo: true } : {}),
     };
     const runArgs: RunEngineArgs = {
       engine: 'claude',
@@ -3037,6 +3060,17 @@ export class AgentSessionManager
     );
   }
 
+  /** Resolve a repo's SLUG from its id (cached). The atlas-prod toolset gates on the SLUG (=== ATLAS_REPO_SLUG),
+   *  NEVER the repoId UUID. A light RepoEntity lookup — NOT `repos.resolve()` (which does a network git GET). */
+  private async resolveRepoSlug(repoId: string): Promise<string | null> {
+    if (!this.repoRows) return null;
+    if (this.repoSlugCache.has(repoId)) return this.repoSlugCache.get(repoId) ?? null;
+    const row = await this.repoRows.findOne({ where: { id: repoId } }).catch(() => null);
+    const slug = row?.slug ?? null;
+    this.repoSlugCache.set(repoId, slug);
+    return slug;
+  }
+
   // ── Host-side tool impls ───────────────────────────────────────────────────────────────────────
 
   /**
@@ -3049,6 +3083,7 @@ export class AgentSessionManager
   buildTools(
     stimulus: ChatStimulus,
     kind: string | null = null,
+    repoSlug: string | null = null,
   ): Record<string, ToolImpl> {
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
@@ -4298,6 +4333,23 @@ export class AgentSessionManager
       propose_mcp_removal: this.buildProposeMcpRemovalTool(stimulus),
     };
 
+    // atlas-prod: relocated prod-diagnostics reads + the gated write. Registered ONLY when this repo is the
+    // Atlas repo (by SLUG === ATLAS_REPO_SLUG) and the prod-diagnostics service is wired — fail-closed
+    // everywhere else (the tools are simply absent). The structural approval gate lives in proposeWrite.
+    const atlasProd: Record<string, ToolImpl> =
+      this.env && this.prodDiagnostics && isAtlasRepo(repoSlug ?? '', this.env)
+        ? {
+            atlas_query: (a) => this.prodDiagnostics!.runRead('atlas_query', a),
+            atlas_schema: (a) => this.prodDiagnostics!.runRead('atlas_schema', a),
+            atlas_job_overview: (a) => this.prodDiagnostics!.runRead('atlas_job_overview', a),
+            atlas_session_raw: (a) => this.prodDiagnostics!.runRead('atlas_session_raw', a),
+            atlas_context_read: (a) => this.prodDiagnostics!.runRead('atlas_context_read', a),
+            atlas_worktree_tree: (a) => this.prodDiagnostics!.runRead('atlas_worktree_tree', a),
+            atlas_worktree_file: (a) => this.prodDiagnostics!.runRead('atlas_worktree_file', a),
+            propose_prod_write: (a) => this.prodDiagnostics!.proposeWrite(stimulus, String(a['sql'] ?? '')),
+          }
+        : {};
+
     // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
     // never plan/build/ship) — no propose_plan/start_direct_build/decisions. They DO get the job tools
     // (list_jobs/create_job/link_job_dependency): a review may legitimately spin up or relate sibling jobs
@@ -4314,13 +4366,14 @@ export class AgentSessionManager
         create_job: tools.create_job,
         link_job_dependency: tools.link_job_dependency,
         ...intake,
+        ...atlasProd,
       };
     }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
     // ceremony-only: it stamps `onboarded_at` and opens the ceremony's OWN dedicated config PR, which only
     // makes sense when there is no other in-flight build PR to fold the config change into.
-    if (!onboarding) return { ...tools, ...intake };
+    if (!onboarding) return { ...tools, ...intake, ...atlasProd };
     return {
       ask_question: tools.ask_question,
       withdraw_question: tools.withdraw_question,
@@ -4334,6 +4387,7 @@ export class AgentSessionManager
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
       propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
+      ...atlasProd,
     };
   }
 

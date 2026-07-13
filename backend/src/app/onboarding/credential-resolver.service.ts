@@ -3,7 +3,7 @@ import { GitHubAppTokenService } from '../git/github-app-token.service';
 import { GitIdentityService } from '../git/git-identity.service';
 import type { EngineAuth, SandboxGitIdentity } from '../engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
-import { TenantCredentialStore } from './tenant-credential.store';
+import { TenantCredentialStore, type TenantCredentials } from './tenant-credential.store';
 
 /**
  * THE credential seam. Every consumer (the LLM factories, the engine runner via the driver, the GitHub
@@ -37,10 +37,18 @@ export class CredentialResolver {
     return (await this.store.read(orgId))?.openaiApiKey;
   }
 
-  /** The org's GitHub auth mode ('pat' default). Drives whether in-sandbox git uses the file-backed credential helper (app) or a static extraheader (pat). */
+  /** Effective in-sandbox GitHub auth mode ('pat' default). Drives whether git uses the file-backed credential helper (app) or a static extraheader (pat). */
   async githubAuthMode(orgId?: string): Promise<'pat' | 'app'> {
     if (!orgId) return 'pat';
-    return (await this.store.read(orgId))?.githubAuthMode ?? 'pat';
+    const creds = await this.store.read(orgId);
+    return creds ? this.effectiveCredential(creds) : 'pat';
+  }
+
+  /** The single credential that governs ALL in-sandbox GitHub auth for this org: 'app' only when app-mode
+   *  AND an installation is connected, else 'pat'. Transport, commit identity, and GH_TOKEN all derive from
+   *  THIS one choice so the pusher, author, and PR-opener can never diverge. */
+  private effectiveCredential(creds: TenantCredentials): 'app' | 'pat' {
+    return creds.githubAuthMode === 'app' && creds.githubAppInstallationId ? 'app' : 'pat';
   }
 
   /** GitHub token for clone/push/PR: an installation token for app-mode orgs, else the org PAT, else undefined. NEVER throws — a mint blip yields undefined (same as an absent PAT). */
@@ -48,16 +56,10 @@ export class CredentialResolver {
     if (!orgId) return undefined;
     const creds = await this.store.read(orgId);
     if (!creds) return undefined;
-    if (creds.githubAuthMode === 'app') {
-      if (!creds.githubAppInstallationId) {
-        this.logger.warn(
-          `org ${orgId} is app-mode but has no installation id — falling back to PAT`,
-        );
-        return creds.githubPat;
-      }
+    if (this.effectiveCredential(creds) === 'app') {
       try {
         return await this.appTokens.getInstallationToken(
-          creds.githubAppInstallationId,
+          creds.githubAppInstallationId!,
         );
       } catch (e) {
         this.logger.error(
@@ -66,39 +68,62 @@ export class CredentialResolver {
         return undefined;
       }
     }
+    if (creds.githubAuthMode === 'app' && !creds.githubAppInstallationId) {
+      this.logger.warn(
+        `org ${orgId} is app-mode but has no installation id — falling back to PAT`,
+      );
+    }
     return creds.githubPat;
   }
 
-  /** Identity + matching API token for identity-bearing writes, resolved via the pref+fallback chain (d3). Best-effort/fail-open — never throws; {} means no usable credential (caller omits identity/apiToken). */
+  /** Identity + matching API token for identity-bearing writes. Identity follows `github_auth_mode` via the
+   *  shared `effectiveCredential` selector — no cross-credential fallback, so it can never diverge from
+   *  `githubToken`'s choice. Best-effort/fail-open — never throws; {} means no usable credential (caller
+   *  omits identity/apiToken). */
   async githubWriteIdentity(
     orgId?: string,
   ): Promise<{ identity?: SandboxGitIdentity; apiToken?: string }> {
     if (!orgId) return {};
     const creds = await this.store.read(orgId);
     if (!creds) return {};
-    const pref = creds.githubIdentityMode ?? 'pat'; // null → pat
-    const order = pref === 'pat' ? (['pat', 'app'] as const) : (['app', 'pat'] as const);
-    for (const cred of order) {
-      if (cred === 'pat' && creds.githubPat) {
-        const human = await this.identities.resolve(creds.githubPat); // memoized GET /user (also validity probe)
-        if (human) return { identity: human, apiToken: creds.githubPat };
-        // PAT present but invalid → try the next credential
-      }
-      if (cred === 'app' && creds.githubAppInstallationId) {
-        try {
-          const [identity, apiToken] = await Promise.all([
-            this.appTokens.appBotIdentity(),
-            this.appTokens.getInstallationToken(creds.githubAppInstallationId),
-          ]);
-          return { identity, apiToken };
-        } catch (e) {
-          this.logger.warn(
-            `app write-identity resolve failed for org ${orgId}: ${(e as Error).message}`,
-          );
-        }
+    const cred = this.effectiveCredential(creds);
+    if (cred === 'app') {
+      try {
+        const [identity, apiToken] = await Promise.all([
+          this.appTokens.appBotIdentity(),
+          this.appTokens.getInstallationToken(creds.githubAppInstallationId!), // present by effectiveCredential
+        ]);
+        return { identity, apiToken };
+      } catch (e) {
+        this.logger.warn(
+          `app write-identity resolve failed for org ${orgId}: ${(e as Error).message}`,
+        );
+        return {};
       }
     }
+    if (creds.githubPat) {
+      const human = await this.identities.resolve(creds.githubPat);
+      if (human) return { identity: human, apiToken: creds.githubPat };
+    }
     return {}; // no usable credential — fail-open (q6)
+  }
+
+  /** Host-side (outside-sandbox) GitHub token: ALWAYS the App installation token when the org has a
+   *  connected installation; falls back to the PAT ONLY when no App is connected (pre-App onboarding /
+   *  PAT-only orgs). NOT governed by github_auth_mode. NEVER throws — a mint blip yields undefined. */
+  async hostGithubToken(orgId?: string): Promise<string | undefined> {
+    if (!orgId) return undefined;
+    const creds = await this.store.read(orgId);
+    if (!creds) return undefined;
+    if (!creds.githubAppInstallationId) return creds.githubPat; // App absent → bootstrap/degraded PAT
+    try {
+      return await this.appTokens.getInstallationToken(creds.githubAppInstallationId);
+    } catch (e) {
+      this.logger.error(
+        `host installation-token mint failed for org ${orgId}: ${(e as Error).message}`,
+      );
+      return undefined; // App present but mint failed → do NOT leak to PAT
+    }
   }
 
   /**

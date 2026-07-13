@@ -146,7 +146,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         },
         {
           provide: CredentialResolver,
-          useValue: { githubToken: async () => 'tok' },
+          useValue: { githubToken: async () => 'tok', hostGithubToken: async () => 'tok' },
         },
       ],
     }).compile();

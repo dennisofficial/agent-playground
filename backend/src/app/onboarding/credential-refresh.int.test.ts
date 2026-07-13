@@ -53,6 +53,7 @@ const fakeCreds = {
   anthropicKey: () => Promise.resolve(undefined),
   openaiKey: () => Promise.resolve(undefined),
   githubToken: () => Promise.resolve(undefined),
+  hostGithubToken: () => Promise.resolve(undefined),
   engineAuth: () => Promise.resolve(undefined),
 };
 
