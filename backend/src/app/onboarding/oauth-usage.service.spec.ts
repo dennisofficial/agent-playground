@@ -821,6 +821,43 @@ describe('OauthUsageService.getForCredential', () => {
     expect(claudeStore.advanceCalls).toHaveLength(0);
   });
 
+  it('reports a fresh account (all fixed windows null, only a per-model row) as ok — not degraded', async () => {
+    // A brand-new account has used nothing yet: the endpoint responds 200 with every fixed window absent
+    // and (often) only a per-model weekly cap. That is a fresh, not-started account — NOT an outage — so it
+    // must surface as ok:true/source:'usage_api' (which the UI reads as "Waiting for next turn" rather than
+    // the "Usage unavailable" reserved for a real fetch failure).
+    const resetsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    const freshBody = {
+      limits: [
+        { kind: 'weekly_scoped', percent: 0, resets_at: resetsAt, scope: { model: { display_name: 'Fable' } } },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, freshBody)),
+    );
+    const claudeStore = new FakeClaudeStore([
+      {
+        id: 'cred1',
+        kind: 'personal',
+        secret: personalSecret({
+          accessToken: 'at-personal',
+          refreshToken: 'rt-personal',
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+      },
+    ]);
+    const { svc } = makeService({ claudeStore });
+
+    const usage = await svc.getForCredential('org1', 'cred1');
+
+    expect(usage.ok).toBe(true);
+    expect(usage.source).toBe('usage_api');
+    expect(usage.fiveHour).toBeNull();
+    expect(usage.sevenDay).toBeNull();
+    expect(usage.modelWindows).toEqual([{ label: 'Fable', utilization: 0, resetsAt }]);
+  });
+
   it('never routes the per-credential fetch through the org-level harvested snapshot', async () => {
     // A stale/absent harvest for the org must not short-circuit or otherwise influence the per-credential
     // path — it always live-fetches THIS credential's own token.

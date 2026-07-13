@@ -9,6 +9,15 @@ type UsageWindow = WireOrgUsage["fiveHour"];
 /** A panel row's window data — the fixed windows plus the per-model ones (whose `resetsAt` may be null). */
 type PanelWindow = { utilization: number; resetsAt: string | null };
 type RingVisualState = "active" | "pending" | "degraded";
+/**
+ * Why an always-on row (Session/Weekly) has no data: `waiting` = the endpoint responded but that window
+ * hasn't started this cycle (its 5h/7d clock only ticks once a message is sent); `unavailable` = the
+ * endpoint itself gave no usable response. The two read differently so a real outage isn't mistaken for
+ * an idle account. Dynamic rows (Opus/Sonnet/per-model) are simply omitted when absent, never "unknown".
+ */
+type UnknownReason = "waiting" | "unavailable";
+/** One panel row: a known window, or an always-on row with no data yet (Session/Weekly only). */
+type PanelRow = { label: string; window: PanelWindow | null; unknown: UnknownReason | null };
 
 const RING_R = 7;
 const RING_CIRC = 2 * Math.PI * RING_R;
@@ -239,6 +248,39 @@ function PanelHeader({ accountLabel, plan }: { accountLabel?: string; plan?: str
   );
 }
 
+/** An always-on row (Session/Weekly) with no window data — a muted "Waiting for next turn" (endpoint OK,
+ *  window not started) or amber "Usage unavailable" (endpoint gave no response). Same shape as a known
+ *  row so the panel never jumps: label + dot, a dashed/hollow bar instead of a fill, and the reason in
+ *  place of a reset line. */
+function UnknownRow({ label, reason }: { label: string; reason: UnknownReason }) {
+  const unavailable = reason === "unavailable";
+  const accent = unavailable ? "var(--accent-2)" : "var(--faint)";
+  const text = unavailable ? "Usage unavailable" : "Waiting for next turn";
+  return (
+    <div className="flex flex-col gap-1 opacity-80">
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5 text-[11px] text-dim">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-[2px]" style={{ background: accent }} />
+          {label}
+        </span>
+        <span className="font-mono text-[10px] tabular-nums" style={{ color: accent }}>
+          —
+        </span>
+      </div>
+      <div
+        className="h-[3px] w-full rounded-full"
+        style={{
+          backgroundImage: `repeating-linear-gradient(90deg, ${accent} 0 4px, transparent 4px 8px)`,
+          opacity: unavailable ? 0.8 : 0.45,
+        }}
+      />
+      <div className="text-[10px]" style={{ color: accent }}>
+        {text}
+      </div>
+    </div>
+  );
+}
+
 /** One window's row in the usage panel — a colored dot + label, a thin progress bar, and a reset line.
  *  Only rendered for windows we have data for; `dimmed` mutes a stale (not-fresh) snapshot's rows. */
 function WindowRow({
@@ -273,36 +315,10 @@ function WindowRow({
   );
 }
 
-/** Pending/empty panel body — no window has any data yet (a fresh token, nothing harvested). */
-function EmptyUsagePanel({ variant = "org" }: { variant?: "org" | "credential" }) {
-  const description =
-    variant === "credential"
-      ? "Usage unavailable right now."
-      : "Usage appears after your first agent turn.";
-  const footerText = variant === "credential" ? "No usage data" : "Waiting for first turn";
-  return (
-    <>
-      <div className="flex flex-col items-center gap-1.5 px-1 py-4 text-center">
-        <span
-          className="flex h-8 w-8 items-center justify-center rounded-full border"
-          style={{ borderColor: "var(--border)" }}
-        >
-          <Ring state="pending" sessionPct={0} weeklyPct={0} maxed={false} size={16} />
-        </span>
-        <div className="text-[11px] font-semibold text-dim">No usage yet</div>
-        <div className="max-w-[190px] text-[10px] text-faint">{description}</div>
-      </div>
-      <div className="mt-1 flex items-center gap-1.5 border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
-        <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--faint)" }} />
-        <span className="font-mono text-[10px] text-faint">{footerText}</span>
-      </div>
-    </>
-  );
-}
-
-/** Panel footer — a freshness dot (green when fresh, amber when stale) + the last-fetched relative time. */
-function PanelFooter({ fetchedAt }: { fetchedAt: string | undefined }) {
-  const fresh = isFresh(fetchedAt);
+/** Panel footer — a freshness dot + status. When the endpoint gave no response (`unavailable`) it says
+ *  so in amber; otherwise the last-fetched relative time (green when fresh, amber when stale). */
+function PanelFooter({ fetchedAt, unavailable }: { fetchedAt: string | undefined; unavailable: boolean }) {
+  const fresh = !unavailable && isFresh(fetchedAt);
   return (
     <div className="mt-2.5 flex items-center gap-1.5 border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
       <span
@@ -313,7 +329,7 @@ function PanelFooter({ fetchedAt }: { fetchedAt: string | undefined }) {
         className="font-mono text-[10px]"
         style={{ color: fresh ? "var(--faint)" : "var(--accent-2)" }}
       >
-        Updated {timeAgo(fetchedAt) ?? "recently"}
+        {unavailable ? "Usage unavailable" : `Updated ${timeAgo(fetchedAt) ?? "recently"}`}
       </span>
     </div>
   );
@@ -322,23 +338,22 @@ function PanelFooter({ fetchedAt }: { fetchedAt: string | undefined }) {
 /**
  * A subscription-usage ring (Claude Code `/usage` style) — the SESSION (5-hour) window as a small SVG arc
  * + %, with the WEEKLY (7-day) window as a second arc sharing the same groove behind it. CLICK it to open
- * a panel listing every window we have data for (session/weekly/Opus/Sonnet, rendered dynamically — absent
- * windows are omitted). The ring always stays visible, with dedicated "pending" (no data yet) and
- * "degraded" (unknown/stale) states — the usage endpoint is best-effort and must never block or error
- * its host surface (the composer footer, or a Settings credential card).
+ * a panel: Session and Weekly are ALWAYS listed (as an unknown row when they have no data yet), and
+ * Opus/Sonnet/per-model caps are listed dynamically when present. The ring always stays visible, with
+ * dedicated "pending" (responded, not started) and "degraded" (unavailable) states — the usage endpoint
+ * is best-effort and must never block or error its host surface (the composer footer, or a Settings
+ * credential card).
  */
 export function UsageRingView({
   data,
   isLoading,
   size = 17,
-  variant = "org",
   refetch,
   dataUpdatedAt,
 }: {
   data: WireOrgUsage | undefined;
   isLoading: boolean;
   size?: number;
-  variant?: "org" | "credential";
   /** Optional on-open refresh: the owning hook's `refetch` + `dataUpdatedAt` (throttled to 1/min). */
   refetch?: () => void;
   dataUpdatedAt?: number;
@@ -404,47 +419,81 @@ export function UsageRingView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const fixedRows: [string, PanelWindow][] = (
+  const session = data?.fiveHour ?? null;
+  const weekly = data?.sevenDay ?? null;
+  // The endpoint gave a usable response iff we have a snapshot that isn't the degraded (`ok:false`) shape.
+  // A fresh account returns `ok:true` with every fixed window null — that's "responded, not started yet",
+  // NOT an outage — so its empty Session/Weekly rows read "Waiting for next turn", while a real failure
+  // reads "Usage unavailable". A first load with no cache yet (no data, still fetching) is treated as
+  // pending too, so it doesn't flash "unavailable" before the response lands.
+  const responded = data ? data.ok !== false : isLoading;
+  const unknownReason: UnknownReason = responded ? "waiting" : "unavailable";
+
+  // Session (5h) and Weekly (7d) are ALWAYS shown; when their window is absent they render as an unknown
+  // row rather than being hidden. Opus/Sonnet and the per-model weekly caps (e.g. Fable) stay dynamic —
+  // present only when the endpoint reports them.
+  const alwaysOnRows: PanelRow[] = [
+    { label: "Session · 5h", window: session, unknown: session ? null : unknownReason },
+    { label: "Weekly · all models · 7d", window: weekly, unknown: weekly ? null : unknownReason },
+  ];
+  const dynamicRows: PanelRow[] = (
     [
-      ["Session · 5h", data?.fiveHour ?? null],
-      ["Weekly · all models · 7d", data?.sevenDay ?? null],
       ["Opus · 7d", data?.sevenDayOpus ?? null],
       ["Sonnet · 7d", data?.sevenDaySonnet ?? null],
     ] as [string, UsageWindow][]
-  ).filter((row): row is [string, NonNullable<UsageWindow>] => row[1] !== null);
-  // Per-model weekly caps (e.g. Fable) from the usage API `limits[]`, rendered after the fixed windows.
-  const modelRows: [string, PanelWindow][] = (data?.modelWindows ?? []).map((w) => [
-    `${w.label} · 7d`,
-    { utilization: w.utilization, resetsAt: w.resetsAt },
-  ]);
-  const rows: [string, PanelWindow][] = [...fixedRows, ...modelRows];
+  )
+    .filter((row): row is [string, NonNullable<UsageWindow>] => row[1] !== null)
+    .map(([label, w]) => ({ label, window: w, unknown: null }) satisfies PanelRow);
+  const modelRows: PanelRow[] = (data?.modelWindows ?? []).map((w) => ({
+    label: `${w.label} · 7d`,
+    window: { utilization: w.utilization, resetsAt: w.resetsAt },
+    unknown: null,
+  }));
+  const rows: PanelRow[] = [...alwaysOnRows, ...dynamicRows, ...modelRows];
 
-  const visualState: RingVisualState =
-    (isLoading && !data) || data?.ok === false
-      ? "degraded"
-      : rows.length === 0
-        ? "pending"
-        : "active";
+  const sessionPct = session ? clampPct(session.utilization / 100) : 0;
+  const weeklyPct = weekly ? clampPct(weekly.utilization / 100) : 0;
+  // The ring draws real arcs whenever session OR weekly has data; `pending` (fresh, not started) shows a
+  // clean outline; `degraded` (unavailable) shows a dashed one.
+  const visualState: RingVisualState = session || weekly ? "active" : responded ? "pending" : "degraded";
 
-  const sessionPct = data?.fiveHour ? clampPct(data.fiveHour.utilization / 100) : 0;
-  const weeklyPct = data?.sevenDay ? clampPct(data.sevenDay.utilization / 100) : 0;
-  // `critical` (≥90%) is the red WARNING colour on the arc + % label; `maxed` (100%) is the limit-hit dot.
-  const critical = visualState === "active" && sessionPct >= SESSION_LIMIT_THRESHOLD;
-  const maxed = visualState === "active" && sessionPct >= SESSION_MAXED_THRESHOLD;
+  // `maxed` (100%) lights the limit-hit dot for EITHER window — a capped weekly blocks you just as hard as
+  // a capped session. When maxed, the ring's label becomes a countdown to the soonest reset among the
+  // windows that are actually maxed (when you first get headroom back), instead of a bare "100%".
+  const sessionMaxed = sessionPct >= SESSION_MAXED_THRESHOLD;
+  const weeklyMaxed = weeklyPct >= SESSION_MAXED_THRESHOLD;
+  const maxed = sessionMaxed || weeklyMaxed;
+  const maxedResets = [
+    sessionMaxed ? session?.resetsAt : null,
+    weeklyMaxed ? weekly?.resetsAt : null,
+  ].filter((iso): iso is string => !!iso);
+  const soonestMaxedReset = maxedResets.length
+    ? maxedResets.reduce((a, b) => (new Date(a).getTime() <= new Date(b).getTime() ? a : b))
+    : undefined;
+  const maxedCountdown = maxed ? formatCountdown(soonestMaxedReset) : null;
 
-  const labelText =
-    visualState === "degraded" ? "–" : visualState === "pending" ? "·" : `${Math.round(sessionPct * 100)}%`;
-  const labelClassName = visualState === "active" && !critical ? "text-dim" : critical ? "" : "text-faint";
+  // `critical` is the red treatment on the label: a maxed window, or a session heading into its cap.
+  const critical = maxed || (!!session && sessionPct >= SESSION_LIMIT_THRESHOLD);
+
+  const labelText = maxedCountdown
+    ? maxedCountdown
+    : session
+      ? `${Math.round(sessionPct * 100)}%`
+      : responded
+        ? "·"
+        : "–";
+  const labelClassName = critical ? "" : session ? "text-dim" : "text-faint";
   const labelStyle = critical ? { color: "var(--red)" } : undefined;
 
-  const title =
-    visualState === "degraded"
-      ? "Claude usage · unknown right now — click for details"
-      : visualState === "pending"
-        ? "Claude usage · no data yet — click for details"
-        : `Session usage · ${Math.round(sessionPct * 100)}%${
-            data?.fiveHour ? ` (resets ${formatClockTime(data.fiveHour.resetsAt)})` : ""
-          } — click for details`;
+  const title = maxedCountdown
+    ? `Claude usage · limit reached — resets in ${maxedCountdown} — click for details`
+    : session
+      ? `Session usage · ${Math.round(sessionPct * 100)}% (resets ${formatClockTime(
+          session.resetsAt,
+        )}) — click for details`
+      : responded
+        ? "Claude usage · waiting for next turn — click for details"
+        : "Claude usage · unavailable right now — click for details";
 
   return (
     <div ref={rootRef} className="relative flex items-center">
@@ -472,18 +521,21 @@ export function UsageRingView({
           }}
         >
           <PanelHeader accountLabel={data?.accountLabel} plan={data?.plan} />
-          {rows.length === 0 ? (
-            <EmptyUsagePanel variant={variant} />
-          ) : (
-            <>
-              <div className="flex flex-col gap-2.5">
-                {rows.map(([label, window]) => (
-                  <WindowRow key={label} label={label} window={window} dimmed={!isFresh(data?.fetchedAt)} />
-                ))}
-              </div>
-              <PanelFooter fetchedAt={data?.fetchedAt} />
-            </>
-          )}
+          <div className="flex flex-col gap-2.5">
+            {rows.map((row) =>
+              row.window ? (
+                <WindowRow
+                  key={row.label}
+                  label={row.label}
+                  window={row.window}
+                  dimmed={!isFresh(data?.fetchedAt)}
+                />
+              ) : (
+                <UnknownRow key={row.label} label={row.label} reason={row.unknown ?? unknownReason} />
+              ),
+            )}
+          </div>
+          <PanelFooter fetchedAt={data?.fetchedAt} unavailable={!responded} />
         </div>
       ) : null}
     </div>
@@ -520,7 +572,6 @@ export function CredentialUsageRing({
       data={data}
       isLoading={isLoading}
       size={size}
-      variant="credential"
       refetch={refetch}
       dataUpdatedAt={dataUpdatedAt}
     />
