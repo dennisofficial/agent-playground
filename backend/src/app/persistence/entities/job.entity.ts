@@ -324,11 +324,18 @@ export class JobEntity extends TimestampedEntity {
    * Which lane is parked on {@link session_resume_at} + why, so the sweep dispatches to the right resume
    * rail (`main` re-drives via the seed path; `build` calls `ThreadDriver.resumePaused`). `resetSource`
    * records how the reset instant was determined (the live usage API vs. a best-effort parse of the CLI's
-   * "resets 5:20pm" string). Null when not parked. Nullable jsonb, no default — a `() => '...'::jsonb`
-   * default makes `migration:generate` loop forever (see {@link halt}).
+   * "resets 5:20pm" string). `kind` distinguishes a `session_limit` park (park-until-reset) from a `retry`
+   * park (the 10×/10s host backstop), so the resume sweep dispatches to the right rail. Null when not
+   * parked. Nullable jsonb, no default — a `() => '...'::jsonb` default makes `migration:generate` loop
+   * forever (see {@link halt}).
    */
   @Column({ type: 'jsonb', nullable: true })
-  session_resume!: { lane: 'main' | 'build'; reason: string; resetSource: 'usage_api' | 'parsed_string' } | null;
+  session_resume!: {
+    lane: 'main' | 'build';
+    reason: string;
+    resetSource: 'usage_api' | 'parsed_string';
+    kind?: 'session_limit' | 'retry';
+  } | null;
 
   /**
    * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned

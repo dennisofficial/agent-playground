@@ -146,7 +146,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         auth = { ...auth, secret: fresh };
       } catch (err) {
         if (err instanceof CredentialNeedsReauthError) {
-          throw new EngineAuthError('Claude login expired — reconnect it in Settings.');
+          throw new EngineAuthError('Claude login expired — reconnect it in Settings.', undefined, 'claude', true);
         }
         this.logger.warn(
           `pre-turn claude refresh failed (continuing with stored secret): ${err}`,

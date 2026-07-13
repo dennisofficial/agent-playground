@@ -167,6 +167,19 @@ export type EngineEvent =
       terminalReason?: string;
       stopReason?: string | null;
       streamClosedCount?: number;
+    }
+  /**
+   * The SDK is RETRYING a failed API request natively (overloaded/5xx/gateway/rate-limit) with its own
+   * backoff — surfaced (not host-retried) to drive the live "Reconnecting…" indicator mid-turn. `reason`
+   * is the SDK's `error` discriminator (e.g. 'overloaded'|'server_error'|'rate_limit'). Live-only.
+   */
+  | {
+      kind: 'api_retry';
+      attempt: number;
+      maxRetries: number;
+      retryDelayMs: number;
+      errorStatus: number | null;
+      reason: string;
     };
 
 /**
@@ -900,6 +913,11 @@ export class EngineAuthError extends Error {
     readonly sessionId?: string,
     /** Which engine's credential failed — so the operator halt copy names the RIGHT integration (Claude vs Codex). */
     readonly engine?: SessionEngine,
+    /**
+     * A DETERMINISTIC-fatal auth failure (no account / expired refresh) that must NOT be host-retried —
+     * it surfaces immediately instead of going through the bounded host auto-retry backstop.
+     */
+    readonly fatal?: boolean,
   ) {
     super(message);
     this.name = 'EngineAuthError';
@@ -924,6 +942,15 @@ export class EngineSessionLimitError extends Error {
     super(message);
     this.name = 'EngineSessionLimitError';
   }
+}
+
+/** Whether an EngineAuthError is a TRANSIENT hiccup the host should auto-retry (a "not logged in"/401 that
+ *  may self-heal on a token rotation) rather than a deterministic-fatal one (no account / expired refresh),
+ *  which surfaces immediately. Fatal = the `fatal` flag OR a NO_ENGINE_CREDENTIAL marker. */
+export function isTransientAuthError(err: EngineAuthError): boolean {
+  if (err.fatal) return false;
+  if (err.message.includes(NO_ENGINE_CREDENTIAL_MARKER)) return false;
+  return true;
 }
 
 export function isSessionLimitError(err: unknown): boolean {
@@ -953,6 +980,35 @@ export class EngineDetachedError extends Error {
 /** Whether this error is the host losing its tail mid-turn (see {@link EngineDetachedError}). */
 export function isEngineDetachedError(err: unknown): boolean {
   return err instanceof EngineDetachedError || (err as { isDetachedError?: boolean })?.isDetachedError === true;
+}
+
+/** Host-side auto-retry budget (d1-B): re-run a transient auth/transport error this many times. */
+export const MAX_HOST_RETRIES = 10;
+/** Fixed backoff between host-side auto-retries (d1-B). NOT the SDK's native API backoff (that stays the
+ *  SDK's own exponential schedule via CLAUDE_CODE_MAX_RETRIES). */
+export const HOST_RETRY_BACKOFF_MS = 10_000;
+
+/** Host↔container transport / infra blip signatures a bounded host retry papers over. Deliberately does
+ *  NOT match `overloaded`/`529`/5xx API errors — those are the SDK's OWN configured retry
+ *  (CLAUDE_CODE_MAX_RETRIES); re-running them host-side would double-retry. Moved here from the build lane's
+ *  former TRANSIENT_ERROR_RE (content unchanged) so both host lanes share ONE allowlist. */
+export const HOST_TRANSPORT_TRANSIENT_RE =
+  /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
+
+/**
+ * Whether the HOST should auto-retry this error on the SAME session (d2 bucket 2): a transient
+ * EngineAuthError, OR a host-transport/infra blip matching {@link HOST_TRANSPORT_TRANSIENT_RE}. Returns
+ * FALSE (surface as today) for: a deterministic-fatal/NO_ENGINE_CREDENTIAL auth error, a session limit, a
+ * detached turn, an unresumable session, a phase-timeout, and ANY unrecognized error (d3 — never silently
+ * retry a genuine bug). NOTE: overloaded/5xx are the SDK's own retry, NOT matched here.
+ */
+export function isRetryableTransientError(err: unknown): boolean {
+  if (err instanceof EngineAuthError) return isTransientAuthError(err);
+  if (isSessionLimitError(err) || isEngineDetachedError(err)) return false;
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (msg.includes(UNRESUMABLE_SESSION_MARKER.toLowerCase())) return false;
+  if (msg.includes('phase_timeout_ms')) return false;
+  return HOST_TRANSPORT_TRANSIENT_RE.test(msg);
 }
 
 /**
