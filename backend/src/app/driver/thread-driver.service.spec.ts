@@ -2176,13 +2176,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const { turn, calls } = makeTurn({ transientFailures: 1 });
     const h = assemble(state, { turn });
 
-    vi.useFakeTimers();
-    try {
+    await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntilFake(() => state.job.status === 'done');
-    } finally {
-      vi.useRealTimers();
-    }
+      await flushUntil(() => state.job.status === 'done');
+    });
 
     expect(state.job.status).toBe('done'); // recovered
     expect(
@@ -2217,13 +2214,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
     const h = assemble(state, { turn });
 
-    vi.useFakeTimers();
-    try {
+    await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntilFake(() => state.job.status === 'done');
-    } finally {
-      vi.useRealTimers();
-    }
+      await flushUntil(() => state.job.status === 'done');
+    });
 
     expect(state.job.status).toBe('done'); // the lane self-healed on a fresh turn
     expect(
@@ -2250,13 +2244,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const { turn, calls } = makeTurn({ transientFailures: MAX_HOST_RETRIES });
     const h = assemble(state, { turn });
 
-    vi.useFakeTimers();
-    try {
+    await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntilFake(() => state.job.status === 'done');
-    } finally {
-      vi.useRealTimers();
-    }
+      await flushUntil(() => state.job.status === 'done');
+    });
 
     expect(state.job.status).toBe('done'); // recovered on the LAST retry within budget
     expect(
@@ -5007,20 +4998,31 @@ async function flush(): Promise<void> {
   }
 }
 
-/** Like `flushUntil`, but for a test under `vi.useFakeTimers()`: also advances the fake clock past the
- *  fixed `HOST_RETRY_BACKOFF_MS` host-retry backoff each iteration, so a driver-side `setTimeout` retry
- *  wait settles without the test burning 10s of real wall-clock time. */
-async function flushUntilFake(pred: () => boolean, cap = 50): Promise<void> {
-  for (let i = 0; i < cap; i++) {
-    if (pred()) return;
-    // Drain EVERY pending timer (the host-retry backoff + any zero-delay follow-ups the re-executed turn
-    // queues), awaiting the async work each unlocks. `runAllTimersAsync` recursively runs timers queued
-    // *during* execution and settles their promises in one call — deterministic under parallel-worker load,
-    // unlike a manual `advanceTimersByTime` that can race the turn's multi-microtask settle. There is no
-    // recurring timer in these retry paths, so it always terminates.
-    await vi.runAllTimersAsync();
-    if (pred()) return;
-    await Promise.resolve();
+/** Run `fn` with ONLY the fixed `HOST_RETRY_BACKOFF_MS` host-retry backoff collapsed to 0ms, on REAL timers.
+ *  A host retry loop of 10×10s would otherwise burn ~100s of wall-clock; clamping just that one delay lets the
+ *  loop settle instantly via the real event loop (deterministic under parallel-worker load — no fake-timer
+ *  drain race). Every OTHER timer keeps its true duration, so the phase deadline's HARD wall-clock bound is
+ *  untouched and never fires during the fast test. */
+async function withInstantHostRetryBackoff(
+  fn: () => Promise<void>,
+): Promise<void> {
+  const realSetTimeout = globalThis.setTimeout;
+  const spy = vi
+    .spyOn(globalThis, 'setTimeout')
+    .mockImplementation(((
+      cb: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) =>
+      realSetTimeout(
+        cb,
+        delay === HOST_RETRY_BACKOFF_MS ? 0 : delay,
+        ...args,
+      )) as unknown as typeof setTimeout);
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
   }
 }
 
@@ -5342,15 +5344,10 @@ describe('ThreadDriver — 401 auth recovery', () => {
       claudeCreds: { getSelectedRefreshMeta, markNeedsReauth },
     });
 
-    vi.useFakeTimers();
-    try {
+    await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntilFake(
-        () => state.job.halt?.kind === 'blocked_credentials',
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+      await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+    });
 
     // Surfaced only once the retry budget is spent — flips the credential to needs_reauth.
     expect(state.job.halt?.kind).toBe('blocked_credentials');
