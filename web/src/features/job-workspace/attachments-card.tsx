@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { FileText } from "lucide-react";
 import { MessageTime, UserBubble } from "./bubbles";
+import { PremeasureContext } from "./idle-premeasure";
 import { fetchAttachmentUrl, type JobRef } from "@/lib/api/job-api";
 import type { WebAttachmentItem, WebAttachmentsCard } from "@/lib/api/types";
 
@@ -27,9 +28,12 @@ function ImageThumb({
   item: WebAttachmentItem;
 }) {
   const [url, setUrl] = useState<string | null>(item.localUrl ?? null);
+  // The idle off-screen pre-measurement pass mounts this same component to read its (fixed) box height —
+  // it never needs the real image, so skip the network fetch there entirely.
+  const measureOnly = useContext(PremeasureContext);
 
   useEffect(() => {
-    if (item.localUrl || !item.path) return;
+    if (measureOnly || item.localUrl || !item.path) return;
     let revoke: string | null = null;
     let alive = true;
     fetchAttachmentUrl(jobRef, item.path)
@@ -46,7 +50,7 @@ function ImageThumb({
       alive = false;
       if (revoke) URL.revokeObjectURL(revoke);
     };
-  }, [jobRef, item.localUrl, item.path]);
+  }, [measureOnly, jobRef, item.localUrl, item.path]);
 
   return (
     <div

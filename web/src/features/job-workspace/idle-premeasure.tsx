@@ -1,7 +1,13 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { createContext, useLayoutEffect, useRef, useState } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
+
+/** True inside the hidden off-screen pre-measurement layer below — rows rendered there are read for
+ *  `offsetHeight` only and never actually seen, so components with mount-time side effects (attachment
+ *  thumbnail fetches, etc.) should consult this and skip them there. Defaults to `false` for every normal,
+ *  real (visible) render. */
+export const PremeasureContext = createContext(false);
 
 /** Row-count threshold below which the idle pre-measurement pass is skipped (decision: gate the pass on
  *  touch + transcript length — short transcripts have negligible residual shift). */
@@ -72,8 +78,13 @@ export function useIdlePremeasure(opts: {
 }): React.ReactNode {
   const { items, virtualizer, enabled, chunkSize = DEFAULT_CHUNK_SIZE } = opts;
 
-  // Rows already processed from the tail up, and whether the whole backlog has been covered.
-  const [measuredFromBottom, setMeasuredFromBottom] = useState(0);
+  // Absolute index boundary: rows at index >= measuredLo have already been processed/seeded. `null` means
+  // the pass hasn't advanced past its first chunk yet, so the boundary tracks the live tail (items.length)
+  // — this must be an ABSOLUTE index, not a count-from-tail, because a tail-only append (new durable message
+  // landing mid-pass) grows items.length without invalidating work already done further up; recomputing the
+  // boundary as `items.length - <stale count>` would silently shift it past not-yet-measured appended rows
+  // and skip them for the rest of the pass.
+  const [measuredLo, setMeasuredLo] = useState<number | null>(null);
   const [done, setDone] = useState(false);
 
   // Re-arm guard: a genuine prepend (older history loaded) changes items[0]'s key — restart the pass from
@@ -83,21 +94,21 @@ export function useIdlePremeasure(opts: {
     const firstKey = items[0]?.key;
     if (firstKey !== firstKeyRef.current) {
       firstKeyRef.current = firstKey;
-      setMeasuredFromBottom(0);
+      setMeasuredLo(null);
       setDone(false);
     }
   }, [items]);
 
-  const hi = items.length - measuredFromBottom;
+  const hi = measuredLo ?? items.length;
   const lo = Math.max(0, hi - chunkSize);
   const active = enabled && !done && items.length > 0;
 
   const layerRef = useRef<HTMLDivElement>(null);
   const touchingRef = useRef(false);
 
-  // Keyed on [active, measuredFromBottom] (NOT measuredFromBottom alone): the transcript mounts with
-  // `messages = []`, so `active` starts false; when hydration flips it true, `measuredFromBottom` is still
-  // 0, so a dep list without `active` would never fire the first chunk.
+  // Keyed on [active, measuredLo] (NOT measuredLo alone): the transcript mounts with `messages = []`, so
+  // `active` starts false; when hydration flips it true, `measuredLo` is still `null`, so a dep list without
+  // `active` would never fire the first chunk.
   useLayoutEffect(() => {
     if (!active) return;
 
@@ -134,7 +145,7 @@ export function useIdlePremeasure(opts: {
     scrollEl?.addEventListener("touchend", onTouchEnd, { passive: true });
     scrollEl?.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    const advance = () => setMeasuredFromBottom((n) => n + (hi - lo));
+    const advance = () => setMeasuredLo(lo);
 
     // Only advance to the next chunk once the container is at rest — mid-gesture, hold and poll instead of
     // scheduling, so a seed's adjustment always applies immediately/invisibly rather than getting deferred.
@@ -156,7 +167,7 @@ export function useIdlePremeasure(opts: {
       scrollEl?.removeEventListener("touchend", onTouchEnd);
       scrollEl?.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [active, measuredFromBottom]);
+  }, [active, measuredLo]);
 
   if (!active) return null;
 
@@ -165,16 +176,18 @@ export function useIdlePremeasure(opts: {
       ref={layerRef}
       style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: "100%" }}
     >
-      {items.slice(lo, hi).map((item, i) => (
-        <div
-          key={item.key}
-          data-pindex={lo + i}
-          className="w-full"
-          style={{ paddingBottom: ROW_PADDING_BOTTOM }}
-        >
-          {item.node}
-        </div>
-      ))}
+      <PremeasureContext.Provider value={true}>
+        {items.slice(lo, hi).map((item, i) => (
+          <div
+            key={item.key}
+            data-pindex={lo + i}
+            className="w-full"
+            style={{ paddingBottom: ROW_PADDING_BOTTOM }}
+          >
+            {item.node}
+          </div>
+        ))}
+      </PremeasureContext.Provider>
     </div>
   );
 }
