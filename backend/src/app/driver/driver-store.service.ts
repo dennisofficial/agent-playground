@@ -154,11 +154,13 @@ export class DriverStoreService {
       options: [],
       allowOther: true,
     };
+    const threadId = await this.planningThreadId(jobId);
     await this.dataSource.transaction(async (m) => {
       const messages = m.getRepository(MessageEntity);
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: threadId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -357,6 +359,7 @@ export class DriverStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -481,6 +484,7 @@ export class DriverStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -531,6 +535,7 @@ export class DriverStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1644,6 +1649,27 @@ export class DriverStoreService {
   /** Set a task's status (`pending | in_progress | completed | dropped`). */
   async updateTaskStatus(taskId: string, status: string): Promise<void> {
     await this.tasks.update({ id: taskId }, { status });
+  }
+
+  /**
+   * The job's planning-stage thread id — the anchor for JOB-LEVEL card messages (question/ship/amend/merge
+   * cards) that have no build-lane thread of their own. Mirrors d3's backfill fallback ("orphans default to
+   * the job's planning thread") now that `messages.thread_id` is NOT NULL. Every job gets exactly one
+   * planning stage with one thread at job start (d7), so this should always resolve for a job already past
+   * `open`; throws loudly rather than inserting a message with a null/bogus thread_id if it somehow doesn't.
+   */
+  private async planningThreadId(jobId: string): Promise<string> {
+    const stage = await this.stages.findOne({
+      where: { job_id: jobId, kind: 'planning' },
+      order: { ordinal: 'ASC' },
+    });
+    const thread = stage
+      ? await this.threads.findOne({ where: { stage_id: stage.id }, order: { ordinal: 'ASC' } })
+      : null;
+    if (!thread) {
+      throw new Error(`driver-store: job ${jobId} has no planning-stage thread to anchor a card message`);
+    }
+    return thread.id;
   }
 
   private async maxStageOrdinal(jobId: string): Promise<number> {
