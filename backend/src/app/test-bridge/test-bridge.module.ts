@@ -6,6 +6,9 @@ import {
   RepoEntity,
   JobEntity,
   OrganizationEntity,
+  ThreadEntity,
+  ActiveTurnEntity,
+  StimulusEntity,
 } from '../persistence/entities';
 import { TestBridgeController } from './test-bridge.controller';
 
@@ -22,7 +25,15 @@ import { TestBridgeController } from './test-bridge.controller';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [OrganizationEntity, RepoEntity, JobEntity, MessageEntity],
+      [
+        OrganizationEntity,
+        RepoEntity,
+        JobEntity,
+        MessageEntity,
+        ThreadEntity,
+        ActiveTurnEntity,
+        StimulusEntity,
+      ],
       DB_CONNECTION,
     ),
   ],

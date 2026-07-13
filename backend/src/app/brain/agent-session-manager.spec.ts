@@ -434,6 +434,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       {
         eligiblePendingChat: async () => [],
+        undeliveredChatForLane: async () => [],
         leaseChatStimuli: async () => undefined,
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
@@ -2536,6 +2537,48 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       spy.mockRestore();
     });
 
+    it('notifyThreadHalted re-keys all undelivered build-lane host seeds onto the main lane, including leased ones', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
+        status: 'blocked',
+        summary: 'response format undecided',
+        blocked: { reason: 'decision', detail: 'JSON vs plain text' },
+      });
+      // A still-undelivered host seed on the halting thread's build lane (`thread:th-x`) must be re-keyed
+      // onto `main` — NOT stamped delivered, NOT appended to the wake body — so a dropped wake (draining /
+      // blocked job) can't lose it: the brain's main pump/sweep re-drives it at-least-once.
+      const store = (manager as unknown as {
+        stimulusStore: {
+          undeliveredChatForLane: (j: string, lane: string) => Promise<Array<{ id: string; body: string }>>;
+          rekeyLaneToMain: (id: string, labeledBody: string) => Promise<void>;
+          markChatDelivered: (id: string) => Promise<void>;
+        };
+      }).stimulusStore;
+      const rekeyed: Array<{ id: string; labeledBody: string }> = [];
+      const stamped: string[] = [];
+      store.undeliveredChatForLane = async (_j, lane) =>
+        lane === 'thread:th-x' ? [{ id: 'seed-1', body: 'leftover host seed body' }] : [];
+      store.rekeyLaneToMain = async (id, labeledBody) => {
+        rekeyed.push({ id, labeledBody });
+      };
+      store.markChatDelivered = async (id) => {
+        stamped.push(id);
+      };
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
+
+      expect(rekeyed).toHaveLength(1);
+      expect(rekeyed[0].id).toBe('seed-1');
+      expect(rekeyed[0].labeledBody).toContain('Undelivered host seed from build thread th-x'); // origin label
+      expect(rekeyed[0].labeledBody).toContain('leftover host seed body'); // original body preserved
+      expect(stamped).toHaveLength(0); // never speculatively stamped delivered
+
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.body).not.toContain('leftover host seed body'); // wake body stays untouched
+      spy.mockRestore();
+    });
+
     it('notifyThreadHalted carries the transcript anchor (atlas-tx line + Leg) resolved from steps/legs', async () => {
       fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
       fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
@@ -2858,6 +2901,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatThreads: vi.fn().mockResolvedValue([]),
+      undeliveredChatForLane: vi.fn().mockResolvedValue([]),
+      rekeyLaneToMain: vi.fn().mockResolvedValue(undefined),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
       findChatStimulusById: vi.fn().mockResolvedValue(opts.stimulusRow ?? null),
     };
@@ -3754,6 +3799,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       {
         eligiblePendingChat: async () => [],
+        undeliveredChatForLane: async () => [],
         leaseChatStimuli: async () => undefined,
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
@@ -3913,6 +3959,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
       {
         eligiblePendingChat: async () => [],
+        undeliveredChatForLane: async () => [],
         leaseChatStimuli: async () => undefined,
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
@@ -4241,6 +4288,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     };
     const stimulusStore = {
       eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
+      undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
@@ -4475,6 +4523,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
       const stimulusStore = {
         eligiblePendingChat: vi.fn().mockResolvedValue(opts.pendingChat ?? []),
+        undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       };
       const getState = vi.fn().mockReturnValue(opts.leader === false ? 'follower' : 'leader');
       const election = { getState } as unknown as LeaderElectionService;

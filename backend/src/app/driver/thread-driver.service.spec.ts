@@ -5000,6 +5000,56 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(h.store.completeLegRotation).not.toHaveBeenCalled();
     expect(state.job.status).toBe('done');
   });
+
+  it('arms steerable on the CAPPED final Leg too (rotation null) — every Claude builder Leg is host-steerable', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const steerableFlags: Array<boolean | undefined> = [];
+    let buildLeg = 0;
+    let cappedLegSteerable: boolean | undefined;
+    const runTurn = vi.fn(
+      async (input: {
+        mode: string; stepId?: string | null; jobId: string; task: string;
+        steerable?: boolean; toolBridge?: ToolBridgeOptions;
+        onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
+      }) => {
+        buildLeg += 1;
+        steerableFlags.push(input.steerable);
+        // The `toolBridge` (and its `record_leg_handoff` tool) is built ONCE outside the rotation loop and
+        // reused across every Leg of this batch — so its mere presence can't distinguish the capped final
+        // Leg. Instead, gate on the Leg count directly: self-author a handoff on every one of the first
+        // MAX_LEGS_PER_BATCH (8) Legs so the loop rotates until it hits the cap; the 9th kick IS the capped
+        // final Leg (rotation disarmed) — finish it via `complete_thread` and capture its `steerable` flag.
+        if (buildLeg <= 8) {
+          input.onEvent?.({ kind: 'usage', contextTokens: 210_000, contextLimit: 1_000_000 });
+          await input.toolBridge!.tools!['record_leg_handoff']!({
+            handoff: `Leg ${buildLeg}: WIP.\nNext: keep going.`,
+          });
+          return mkResult(input, `leg ${buildLeg} handed off`);
+        }
+        cappedLegSteerable = input.steerable;
+        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished on the capped Leg' });
+        return mkResult(input, `leg ${buildLeg} done (capped)`);
+      },
+    );
+    const turn = { runTurn, canReattach: () => false, canSteer: () => false } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+    wireRotationStore(h);
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+    // The capped final Leg ran with rotation disarmed but was STILL steerable.
+    expect(cappedLegSteerable).toBe(true);
+    // Every Claude builder Leg (armed AND capped) forwarded steerable:true.
+    expect(steerableFlags.every((f) => f === true)).toBe(true);
+    expect(buildLeg).toBe(9); // 8 rotating Legs + the capped final Leg
+    expect(state.job.status).toBe('done');
+  });
 });
 
 describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', () => {

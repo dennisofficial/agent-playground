@@ -89,8 +89,14 @@ import {
   RECORD_LEG_HANDOFF_STOP,
   renderCommitTurnTask,
 } from '../prompt-kit';
-import { chunkKey } from '../prompt-kit/harness';
+import { chunkKey, composeTurn } from '../prompt-kit/harness';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
+import {
+  StimulusStoreService,
+  userChunkFor,
+  CHAT_DELIVERY_LEASE_MS,
+} from '../stimulus';
+import { JitHostExecutor } from '../brain/jit-host-executor';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -302,6 +308,15 @@ export class ThreadDriver implements JobDispatcher {
     // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
     @Optional() private readonly claudeCreds?: ClaudeCredentialStore,
+    // The durable inbound ledger — stamps a build-lane host seed `delivered_at` at the engine `input_ack`
+    // (live steer) and at the Leg-kick hand-off (fresh-turn drain). StimulusModule is plain-imported into
+    // DriverModule.imports (not @Global). @Optional so the direct-construction unit test constructs without
+    // it (undefined → no host-seed drain, byte-identical).
+    @Optional() private readonly stimulusStore?: StimulusStoreService,
+    // The host-side JIT turn-prefix rail — a build-lane fresh-turn drain composes host seeds through the SAME
+    // `composeTurn` + `collectOperatorPrepends` rail the brain uses (d4). @Global BrainModule. @Optional so the
+    // unit test constructs without it (undefined → the inert empty memory rail, byte-identical framing).
+    @Optional() private readonly jit?: JitHostExecutor,
   ) {}
 
   /**
@@ -2781,7 +2796,6 @@ export class ThreadDriver implements JobDispatcher {
     // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
     const servicesBlock =
       thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
-    const task = foldLegTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2830,6 +2844,18 @@ export class ThreadDriver implements JobDispatcher {
         this.turn.canReattach() && anchor.sessionId
           ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge == null)
           : null;
+      // Compose the fresh-turn task — and DRAIN + LEASE the build lane's pending host seeds into it — ONLY when
+      // we're about to kick a fresh turn. `foldLegTaskWithSeeds` stamps `attempted_at` on the drained rows, but a
+      // live reattach reuses the already-running turn (this composed `task`/`seedIds` is discarded and never wired
+      // to a delivery stamp), so folding here would strand those seeds for a full CHAT_DELIVERY_LEASE_MS window —
+      // long enough for a halt/done to skip them and lose them. A null container means we fall through to a kick.
+      let task: AgentMessage = baseTask;
+      let initialSeedIds: string[] = [];
+      if (!reattachRow?.container_id) {
+        ({ task, seedIds: initialSeedIds } = await this.foldLegTaskWithSeeds(
+          job, thread, anchor.id, legSeed, baseTask, servicesBlock,
+        ));
+      }
       // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
       // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
       // onto) exactly ONCE. On a resume/reattach they already exist (durable), so re-emitting would duplicate.
@@ -2871,6 +2897,9 @@ export class ThreadDriver implements JobDispatcher {
       // that seed and kick a FRESH Leg. Loops until a turn completes WITHOUT rotating (the normal case: one
       // Leg, no rotation). Bounded so a pathological rotate-every-turn thread can't spin forever.
       let legTask = task;
+      // The host seeds folded into THIS Leg's task — stamped delivered on the Leg turn's durable registration
+      // (crash re-drives, never double-runs). Re-collected at each rotation so newly-arrived seeds join.
+      let legSeedIds = initialSeedIds;
       for (let leg = 0; ; leg++) {
         if (!result) {
           // Fresh per-Leg run state (the prior Leg's handoff/latch/peak must not leak into this one).
@@ -2880,6 +2909,7 @@ export class ThreadDriver implements JobDispatcher {
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
             rotationArmed ? { state: rotationState, thresholds: rotationThresholds } : null,
+            legSeedIds,
           );
         }
         // After the turn ends, rotate ONLY if the builder self-authored a handoff via `record_leg_handoff`.
@@ -2898,7 +2928,9 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+          ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
+            job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
+          ));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2906,13 +2938,16 @@ export class ThreadDriver implements JobDispatcher {
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
             null, // disarm rotation for the capped final Leg
+            legSeedIds,
           );
           break;
         }
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+        ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
+          job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
+        ));
       }
       report = result!.report;
 
@@ -3218,6 +3253,47 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
+   * Fold the next Leg's task, DRAINING the build lane's eligible pending HOST SEEDS into it (spec step 4/4a).
+   * A build lane rides the SAME `composeTurn` + turn-prefix rail the brain uses (d4): the pending rows compose
+   * as chronological `<user>` chunks behind the (inert) `collectOperatorPrepends` memory rail, and that
+   * composed block is combined with the rotation `legSeed` into one fold seed. Only a STEERABLE Claude builder
+   * drains (Codex master_review is non-steerable — skipped). The drained rows are LEASED so a crash between
+   * here and the durable Leg-turn registration re-drives them (never double-runs); the caller stamps each
+   * `delivered_at` via `onTurnRegistered` on the kick.
+   *
+   * PARITY: with nothing pending (the common case, and every existing golden test) the returned task is
+   * byte-identical to `foldLegTurn(legSeed, baseTask, servicesBlock)` and `seedIds` is empty.
+   */
+  private async foldLegTaskWithSeeds(
+    job: Job,
+    thread: DriverThread,
+    _anchorId: string,
+    legSeed: string | null,
+    baseTask: AgentMessage,
+    servicesBlock: string,
+  ): Promise<{ task: AgentMessage; seedIds: string[] }> {
+    const drainable = thread.kind === 'builder' && threadKindSpec(thread.kind).engine === 'claude';
+    if (!drainable || !this.stimulusStore) {
+      return { task: foldLegTurn(legSeed, baseTask, servicesBlock), seedIds: [] };
+    }
+    const lane = laneFor('builder', thread.id);
+    const pending = await this.stimulusStore
+      .eligiblePendingChat(job.id, CHAT_DELIVERY_LEASE_MS, lane)
+      .catch(() => []);
+    if (pending.length === 0) {
+      return { task: foldLegTurn(legSeed, baseTask, servicesBlock), seedIds: [] };
+    }
+    const seedIds = pending.map((p) => p.id);
+    await this.stimulusStore.leaseChatStimuli(seedIds).catch(() => undefined);
+    const composed = composeTurn({
+      prefixChunks: this.jit?.collectOperatorPrepends({ jobId: job.id }) ?? [],
+      userChunks: pending.map((p) => userChunkFor(p)),
+    });
+    const combinedSeed = [legSeed, String(composed)].filter(Boolean).join('\n\n---\n\n');
+    return { task: foldLegTurn(combinedSeed, baseTask, servicesBlock), seedIds };
+  }
+
+  /**
    * KICK a fresh engine turn for the batch — a first run, or a resume that reopens the persisted session on
    * the thread lane. Registers the turn (`turnMeta`) so a later restart can RE-ATTACH it (see `runBatch`), and
    * bounds it with the per-batch wall-clock circuit breaker. Owns its harness lifecycle.
@@ -3239,6 +3315,9 @@ export class ThreadDriver implements JobDispatcher {
     // thresholds to steer at. Null ⇒ rotation disarmed (Codex, review children, or the capped final Leg) —
     // the watch stays observe-only and the turn is not steerable.
     rotation: { state: LegRotationRunState; thresholds: LegRotationThresholds } | null,
+    // The build-lane host seeds folded into this Leg's `task` — each stamped `delivered_at` the instant the
+    // turn is durably registered (the restart-survivable hand-off, mirroring the brain). Empty ⇒ no drain.
+    seedIds: string[] = [],
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
@@ -3248,6 +3327,11 @@ export class ThreadDriver implements JobDispatcher {
     // ignored by MASTER_REVIEW's fragments, so passing it uniformly is byte-identical for both.
     const spec = threadKindSpec(thread.kind);
     const engine: SessionEngine = spec.engine;
+    // Mid-turn steering is armed for EVERY Claude builder Leg — INCLUDING the capped final Leg (where
+    // `rotation` is null: a capped Leg is still a live steerable Claude session, it just won't rotate again).
+    // Decoupled from `rotation` so a host seed can steer any live builder Leg; `rotationNudge` stays gated on
+    // `rotation`. Codex builder / master-review turns stay non-steerable (no streaming-input steer).
+    const steerable = engine === 'claude' && thread.kind === 'builder';
     // The repo's house-style, folded into the builder's system prompt AND forwarded on the run args so the
     // FAN_OUT writer subagents this turn spawns in-container render the same envelope (Layer B).
     const repoConventions = await this.repoConventionsFor(job);
@@ -3320,13 +3404,15 @@ export class ThreadDriver implements JobDispatcher {
             repo.projectRepo.gitUrl,
           ),
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
-          // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
-          // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
-          // streaming-input steering there). `rotationNudge` gives the engine the threshold + seed prompts so
-          // it injects the nudge itself the instant its own occupancy crosses — race-free vs the input close.
+          // Mid-turn steering — armed for every Claude builder Leg (including the capped final Leg) so
+          // operator steers AND the engine-local Leg-rotation SOFT/REMINDER nudges land in the LIVE turn
+          // (`priority:'now'`). Never for Codex (no streaming-input steering there). `rotationNudge` gives
+          // the engine the threshold + seed prompts so it injects the nudge itself the instant its own
+          // occupancy crosses — race-free vs the input close; it stays gated on `rotation` (disarmed on the
+          // capped final Leg, which won't rotate again).
+          ...(steerable ? { steerable: true } : {}),
           ...(rotation
             ? {
-                steerable: true,
                 rotationNudge: {
                   softTokens: rotation.thresholds.softTokens,
                   reminderDeltaTokens: rotation.thresholds.reminderDeltaTokens,
@@ -3354,6 +3440,19 @@ export class ThreadDriver implements JobDispatcher {
               batchOrdinal: anchor.batchOrdinal ?? null,
             },
           },
+          // Stamp each folded host seed delivered the instant the Leg turn is durably registered (the
+          // restart-survivable hand-off — a later crash resumes THIS turn rather than re-draining the seeds).
+          ...(seedIds.length
+            ? {
+                onTurnRegistered: () => {
+                  for (const id of seedIds) {
+                    void this.stimulusStore?.markChatDelivered(id).catch((err) =>
+                      this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
+                    );
+                  }
+                },
+              }
+            : {}),
           onEvent: (e) => {
             if (e.kind === 'usage') {
               rotationWatch.observe(e);
@@ -3361,6 +3460,14 @@ export class ThreadDriver implements JobDispatcher {
               if (rotation && e.contextTokens != null) {
                 rotation.state.peakTokens = Math.max(rotation.state.peakTokens ?? 0, e.contextTokens);
               }
+            }
+            // A `now` host seed steered mid-turn into this live Leg is consumed at the engine `input_ack` — the
+            // shared `steerPending` only LEASES, so stamp delivered HERE (idempotent) or it re-drains at lease
+            // expiry. A rotation-nudge steer carries a throwaway id (no matching row) → a harmless no-op stamp.
+            if (e.kind === 'input_ack' && e.id) {
+              void this.stimulusStore?.markChatDelivered(e.id).catch((err) =>
+                this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
+              );
             }
             if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
             harness.onEvent(e);
