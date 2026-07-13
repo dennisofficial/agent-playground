@@ -30,7 +30,7 @@ describe('mcp-reader tool argument validation', () => {
         sql: 'SELECT 1',
         format: 'xml',
       }),
-    ).rejects.toThrow('format must be one of: json, jsonl, csv, tsv');
+    ).rejects.toThrow('format must be one of: jsonl, csv, tsv');
     expect(createQueryRunner).not.toHaveBeenCalled();
   });
 
