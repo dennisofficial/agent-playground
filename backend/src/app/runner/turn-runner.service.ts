@@ -263,6 +263,16 @@ export class TurnRunnerService {
       throw err;
     }
 
+    // Instrumentation: a control-channel "Stream closed" blip that did NOT trip the engine circuit-breaker
+    // still leaves a durable trace here — so a near-miss (or a recurrence of the mid-turn stdin-severance
+    // incident) is diagnosable after the fact even when no live turn subscriber was attached to observe the
+    // in-memory `turn_debug` events. See engine-core's stream-closed circuit-breaker.
+    if (result.streamClosedCount) {
+      this.logger.warn(
+        `turn saw ${result.streamClosedCount} "Stream closed" tool-result(s) job=${jobId} step=${stepId ?? '-'} session=${result.sessionId ?? '-'}`,
+      );
+    }
+
     // Session/usage limit — the turn ended CLEANLY on a Claude subscription limit (not a crash). Persist the
     // step session id first (so a resume continues the SAME session, exactly like the auth-error path above),
     // then THROW so the driver's halt-classification chokepoint parks the lane on a resume clock instead of

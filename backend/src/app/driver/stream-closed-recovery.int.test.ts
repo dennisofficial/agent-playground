@@ -36,8 +36,9 @@ import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
 import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
 import type { TurnRunnerService } from '../runner';
-import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink, ToolBridgeOptions } from '../surface';
+import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
+import type { ToolBridgeOptions } from '../engine';
 import type { CredentialResolver } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
@@ -286,17 +287,17 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         notifyThreadHalted: vi.fn(async () => undefined),
         notifyThreadDone: vi.fn(async () => undefined),
       } as unknown as import('../brain-gateway').BrainGateway;
+      let judgeCalls = 0;
       const judge = {
-        calls: 0,
         async judge() {
-          this.calls++;
+          judgeCalls++;
           return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'test verdict' };
         },
       } as unknown as LiveVerificationJudge;
+      let staticJudgeCalls = 0;
       const staticJudge = {
-        calls: 0,
         async judge() {
-          this.calls++;
+          staticJudgeCalls++;
           return { staticChecksAdequate: true, reason: 'test verdict' };
         },
       } as unknown as StaticVerificationJudge;
@@ -382,9 +383,10 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         undefined,
       );
 
-      // Spy on the REAL store's setJobStatus so we can assert `failed` was NEVER stamped, while the real
-      // Postgres write still goes through (no mockImplementation override — call-through).
-      const setJobStatusSpy = vi.spyOn(store, 'setJobStatus');
+      // Spy on the REAL store's setJobHalt so we can assert a `failed` halt was NEVER stamped, while the
+      // real Postgres write still goes through (no mockImplementation override — call-through). Job failure
+      // is signaled via `JobHalt.kind === 'failed'`, not the `JobStatus` phase.
+      const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
 
       // ── drive it ─────────────────────────────────────────────────────────────────────────────────────
       const domainJob = await store.loadJob(job.id);
@@ -412,9 +414,9 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       const execCalls = calls.filter((c) => c.mode === 'execute');
       expect(execCalls.length).toBeGreaterThanOrEqual(2); // turn 1 (stream-closed throw) + turn 2 (fresh, completed)
 
-      // Never stamped `failed` at any point in the drive.
+      // Never stamped a `failed` halt at any point in the drive.
       expect(
-        setJobStatusSpy.mock.calls.some((c) => c[1] === 'failed'),
+        setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
       ).toBe(false);
 
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });
