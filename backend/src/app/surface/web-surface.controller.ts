@@ -656,6 +656,8 @@ export class WebSurfaceController {
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
         ciCounts: t.ci_counts,
+        // Tri-state sidebar port badge, precomputed by ExposureService.reconcile ('exposed'|'internal'|null).
+        portState: t.port_state,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -2213,9 +2215,10 @@ export class WebSurfaceController {
       s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;
     }
 
-    // Fire-and-forget: converge Caddy to the freshly-observed live set on every poll (immediacy), never
-    // blocking the response. No-op when exposure is disabled.
-    if (exposure?.enabled) {
+    // Fire-and-forget: persist the sidebar port_state and converge Caddy to the freshly-observed live set
+    // on every poll (immediacy), never blocking the response. Caddy route mutation remains a no-op when
+    // exposure is disabled.
+    if (exposure) {
       void exposure.reconcile(jobId).catch(() => undefined);
     }
 
