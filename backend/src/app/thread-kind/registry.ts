@@ -174,6 +174,18 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
 
 const BY_KIND = new Map<string, ThreadKindSpec>(THREAD_KIND_SPECS.map((s) => [s.kind, s]));
 
+const THREAD_ROLE_SET = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
+
+/** Coerce any raw value to a valid ThreadRole, or throw — mirrors `coerceStageKind`'s strict shape: a
+ *  role is a closed, code-controlled vocabulary (registry-backed), never open user data like `ThreadType`. */
+export function coerceThreadRole(raw: unknown): ThreadRole {
+  const value = String(raw ?? '').trim();
+  if (!THREAD_ROLE_SET.has(value)) {
+    throw new Error(`thread-kind: "${value}" is not a valid ThreadRole.`);
+  }
+  return value as ThreadRole;
+}
+
 /** The kinds the DRIVER's top loop executes as build sections (`builder` + `master_review`). Everything
  *  else is a child (`review_agent`/`review_fix`) or render-only (`planning`/`plan_review`/`post_build`/`ci`). */
 export const driverExecutableKinds: ReadonlySet<ThreadRole> = new Set(
