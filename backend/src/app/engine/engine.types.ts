@@ -818,6 +818,8 @@ export interface EngineRunnerPort {
       onEvent?: (e: EngineEvent) => void;
       toolBridge?: ToolBridgeOptions;
       signal?: AbortSignal;
+      /** Dispatch-time Claude credential id, host-only; used to stamp replayed rate-limit events. */
+      credentialId?: string;
     },
   ): Promise<EngineRunResult>;
   /**
