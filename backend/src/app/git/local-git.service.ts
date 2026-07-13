@@ -17,6 +17,24 @@ const execFileAsync = promisify(execFile);
  *  Node process. A short retry is the standard remedy — the lock is almost always released within seconds. */
 const INDEX_LOCK_RE = /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
 
+/**
+ * `git diff --numstat` renders a rename either as `old => new` or, for a shared path prefix, the brace
+ * form `dir/{old => new}/file`. Normalize both to the POST-rename path so it matches parsePatch's
+ * `newFileName` (the join key `diffNumstatFromMergeBase` and `parseGitDiff` share).
+ */
+function normalizeNumstatRenamePath(rawPath: string): string {
+  const braceMatch = rawPath.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  if (braceMatch) {
+    const [, prefix, , after, suffix] = braceMatch;
+    return `${prefix}${after}${suffix}`.trim();
+  }
+  if (rawPath.includes(' => ')) {
+    const parts = rawPath.split(' => ');
+    return parts[parts.length - 1].trim();
+  }
+  return rawPath.trim();
+}
+
 /** A located project repo on disk + the auth context for its remote. */
 export interface ProjectRepo {
   /** Stable id used for the on-disk clone dir + the worktree sandbox key. */
@@ -104,7 +122,7 @@ export class LocalGitService {
    */
   private async git(
     args: string[],
-    opts: { cwd?: string; gitUrl?: string; token?: string } = {},
+    opts: { cwd?: string; gitUrl?: string; token?: string; trim?: boolean } = {},
   ): Promise<string> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -130,7 +148,7 @@ export class LocalGitService {
           env,
           maxBuffer: 64 * 1024 * 1024,
         });
-        return stdout.trim();
+        return opts.trim === false ? stdout : stdout.trim();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (attempt >= maxAttempts || !INDEX_LOCK_RE.test(msg)) throw err;
@@ -372,6 +390,51 @@ export class LocalGitService {
     try {
       const out = await this.git(['ls-files'], { cwd: worktreePath });
       return out ? out.split('\n').filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Unified diff (no color, renames detected) from merge-base(baseRef, HEAD) to the CURRENT worktree —
+   * the accumulated change vs base including uncommitted edits (GitHub-PR-like but live). Empty string
+   * when nothing differs or the base ref is unknown. `trim:false` keeps the raw patch byte-exact for parsePatch.
+   */
+  async diffFromMergeBase(worktreePath: string, baseRef: string): Promise<string> {
+    try {
+      return await this.git(
+        ['diff', '--no-color', '--find-renames', '--merge-base', baseRef],
+        { cwd: worktreePath, trim: false },
+      );
+    } catch (err) {
+      this.logger.warn(`diffFromMergeBase(${baseRef}) in ${worktreePath} failed: ${String(err)}`);
+      return '';
+    }
+  }
+
+  /** Per-file `git diff --numstat` from the merge-base: [{ path, additions, deletions, binary }]. Empty on error. */
+  async diffNumstatFromMergeBase(
+    worktreePath: string,
+    baseRef: string,
+  ): Promise<Array<{ path: string; additions: number; deletions: number; binary: boolean }>> {
+    try {
+      const out = await this.git(
+        ['diff', '--numstat', '--find-renames', '--merge-base', baseRef],
+        { cwd: worktreePath },
+      );
+      if (!out) return [];
+      return out
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [additions, deletions, rawPath] = line.split('\t');
+          const path = normalizeNumstatRenamePath(rawPath ?? '');
+          if (additions === '-' && deletions === '-') {
+            return { path, additions: 0, deletions: 0, binary: true };
+          }
+          return { path, additions: parseInt(additions, 10), deletions: parseInt(deletions, 10), binary: false };
+        });
     } catch {
       return [];
     }

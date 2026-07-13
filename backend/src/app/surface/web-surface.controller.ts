@@ -80,6 +80,7 @@ import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
+import { parseGitDiff, type JobDiff } from './job-diff';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -188,6 +189,9 @@ export interface ContextFileContent {
 
 /** Preview cap — text is tiny, screenshots a few hundred KB; refuse anything pathological. */
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Diff size cap — beyond this a raw patch is parsed for headers/counts only (hunks dropped, truncated:true). */
+const MAX_DIFF_BYTES = 2_000_000;
 
 /**
  * One supervised process, its durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`) joined with
@@ -350,6 +354,17 @@ interface ReviewCommentItemDto {
   /** The selected/quoted text. */
   quote: string;
   note?: string;
+  /** Optional GitHub-style line anchor into a diff file (omitted for markdown/plan/decision comments):
+   *  the old-file and/or new-file spans the selection covered (both when it straddles deletions and
+   *  additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 interface ReviewCommentsDto {
   items: ReviewCommentItemDto[];
@@ -488,30 +503,54 @@ export function mapMessageSource(
  * markdown Atlas reads as the operator's chat turn. Companion to the `review_comments_card` payload
  * persisted alongside it — that card is render-only; this text is what actually drives the brain.
  */
+/** Escape the five XML-significant characters for safe use in element text / attribute values. */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Render a batch of inline review comments into the XML the brain reads as the operator's chat turn.
+ * One <comment> element per item (clear, unambiguous boundaries); a diff line-comment carries the
+ * old-file/new-file line spans it covers as attributes AND the signed diff fragment the operator selected
+ * inside a ```diff fence — so Atlas sees exactly what was highlighted (old + new) with no extra file Read.
+ * A free-text (markdown/plan/decision) comment carries the quoted selection instead. The operator's typed
+ * message rides in a trailing <message>. Companion to the render-only `review_comments_card`.
+ */
 export function formatReviewComments(
   items: ReviewCommentItemDto[],
   message?: string,
 ): string {
-  const byFile = new Map<string, ReviewCommentItemDto[]>();
+  const out: string[] = [`<review-comments count="${items.length}">`];
+  const span = (s?: number, e?: number): string | null =>
+    s == null ? null : e != null && e !== s ? `${s}-${e}` : `${s}`;
   for (const item of items) {
-    const group = byFile.get(item.file) ?? [];
-    group.push(item);
-    byFile.set(item.file, group);
-  }
-  const lines: string[] = [
-    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'} on the plan:`,
-  ];
-  for (const [file, group] of byFile) {
-    lines.push('', `**${file}**`);
-    for (const item of group) {
-      lines.push(`> "${item.quote}"`);
-      if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
+    if (item.lines) {
+      const attrs = [`file="${xmlEscape(item.lines.path)}"`];
+      const oldSpan = span(item.lines.oldStart, item.lines.oldEnd);
+      const newSpan = span(item.lines.newStart, item.lines.newEnd);
+      if (oldSpan) attrs.push(`old-lines="${oldSpan}"`);
+      if (newSpan) attrs.push(`new-lines="${newSpan}"`);
+      out.push(`  <comment ${attrs.join(' ')}>`);
+      out.push('    ```diff');
+      for (const line of item.lines.fragment.split('\n')) out.push(`    ${line}`);
+      out.push('    ```');
+      if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+      out.push('  </comment>');
+      continue;
     }
+    out.push(`  <comment file="${xmlEscape(item.file)}">`);
+    out.push(`    <quote>${xmlEscape(item.quote)}</quote>`);
+    if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+    out.push('  </comment>');
   }
-  if (message?.trim()) {
-    lines.push('', message.trim());
-  }
-  return lines.join('\n');
+  if (message?.trim()) out.push(`  <message>${xmlEscape(message.trim())}</message>`);
+  out.push('</review-comments>');
+  return out.join('\n');
 }
 
 /**
@@ -2083,6 +2122,30 @@ export class WebSurfaceController {
       mime,
       content: binary ? buf.toString('base64') : buf.toString('utf8'),
     };
+  }
+
+  /**
+   * `GET …/jobs/:jobId/diff` — the job's ACCUMULATED diff vs its base branch: `merge-base(baseRef, HEAD)`
+   * → the CURRENT worktree, so it includes both every commit made across the thread's turns AND any
+   * uncommitted edits from the turn in progress (GitHub-PR-like, but live). Empty result when the
+   * worktree is gone (closed/reset) or nothing differs.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff')
+  @UseGuards(OrgMembershipGuard)
+  async jobDiff(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<JobDiff> {
+    await this.requireThread(jobId, org.id);
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) return { files: [], truncated: false };
+    const baseRef = `origin/${await this.threadLifecycle.resolveBaseBranch(jobId, org.id)}`;
+    const [raw, numstat] = await Promise.all([
+      this.git.diffFromMergeBase(sandbox.worktreePath, baseRef),
+      this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef),
+    ]);
+    if (!raw) return { files: [], truncated: false };
+    return parseGitDiff(raw, numstat, { maxBytes: MAX_DIFF_BYTES });
   }
 
   /**

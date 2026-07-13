@@ -35,6 +35,9 @@ export const qk = {
     ref: { orgId: string; repoId: string; jobId: string },
     path: string,
   ) => ["thread-context-file", ref.orgId, ref.repoId, ref.jobId, path] as const,
+  /** One job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane. */
+  jobDiff: (ref: { orgId: string; repoId: string; jobId: string }) =>
+    ["job-diff", ref.orgId, ref.repoId, ref.jobId] as const,
   /** The job worktree's tracked-file manifest (repo/tree). */
   repoTree: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["repo-tree", ref.orgId, ref.repoId, ref.jobId] as const,

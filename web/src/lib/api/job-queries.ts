@@ -22,6 +22,7 @@ import {
   deleteThread,
   fetchContextFile,
   fetchCreatedJobs,
+  fetchJobDiff,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -135,6 +136,16 @@ export function useContextFile(ref: JobRef, path: string | null) {
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
+  });
+}
+
+/** The job's accumulated multi-file diff. Lazy — only fetched while the Changes pane is open (`enabled`).
+ *  SSE invalidates it on repo-file writes + turn end (`useJobEvents`), so it refreshes live as the build edits. */
+export function useJobDiff(ref: JobRef, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.jobDiff(ref),
+    queryFn: () => fetchJobDiff(ref),
+    enabled: enabled && hasRef(ref),
   });
 }
 

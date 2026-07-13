@@ -22,7 +22,11 @@ interface SseFrame {
   /** Which turn lane this stream frame belongs to: `'main'` (the brain) or `'phase:<stepId>'` (a build). */
   lane?: string;
   seq?: number;
-  event?: { kind?: string; name?: string; input?: { file_path?: string } };
+  event?: {
+    kind?: string;
+    name?: string;
+    input?: { file_path?: string; path?: string; notebook_path?: string };
+  };
   /** `thread_meta` frame: the new thread title (e.g. an auto-generated one). */
   title?: string;
   /** `usage` frame: the org whose subscription usage snapshot changed. */
@@ -102,6 +106,7 @@ export function useJobEvents(ref: JobRef): void {
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(r) });
         void qc.invalidateQueries({ queryKey: qk.threadContext(r) });
         void qc.invalidateQueries({ queryKey: contextFilesKey(r) });
+        void qc.invalidateQueries({ queryKey: qk.jobDiff(r) });
       }, 250);
     };
 
@@ -122,6 +127,7 @@ export function useJobEvents(ref: JobRef): void {
         qc.invalidateQueries({ queryKey: qk.threadPipeline(r) }),
         qc.invalidateQueries({ queryKey: qk.threadContext(r) }),
         qc.invalidateQueries({ queryKey: contextFilesKey(r) }),
+        qc.invalidateQueries({ queryKey: qk.jobDiff(r) }),
       ]);
 
     const onFrame = (data: string) => {
@@ -166,15 +172,21 @@ export function useJobEvents(ref: JobRef): void {
           // In-turn freshness for the OPEN thread only: the brain just wrote a `/context` file via Write/Edit
           // → refresh the SPECS/GENERATED/ARTIFACTS listing now, instead of waiting for the durable reconcile.
           const ev = frame.event;
+          const writePath =
+            ev?.input?.file_path ?? ev?.input?.path ?? ev?.input?.notebook_path;
           if (
             fThread === openThreadRef.current &&
             ev?.kind === "tool_use" &&
             ev.name != null &&
             FILE_WRITE_TOOLS.has(ev.name) &&
-            ev.input?.file_path != null &&
-            CONTEXT_WRITE_RE.test(ev.input.file_path)
+            writePath != null
           ) {
-            refetchContext();
+            // ANY repo-file write changes the accumulated diff — invalidate it (cheap: the query is
+            // disabled while the Changes pane is closed, so nothing refetches until it's opened).
+            void qc.invalidateQueries({
+              queryKey: qk.jobDiff({ orgId, repoId, jobId: fThread }),
+            });
+            if (CONTEXT_WRITE_RE.test(writePath)) refetchContext();
           }
         }
         return;

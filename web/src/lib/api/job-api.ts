@@ -8,6 +8,7 @@ import type {
   ContextFileContent,
   InboxPr,
   JobBlocker,
+  JobDiff,
   JobProvenance,
   PipelineJob,
   PipelineState,
@@ -233,6 +234,16 @@ export interface ReviewCommentItemBody {
   file: string;
   quote: string;
   note?: string;
+  /** Line-range anchor for a diff-gutter comment (absent for a free-text selection comment): the old/new
+   *  spans covered plus the signed diff fragment the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**
@@ -441,6 +452,12 @@ export function fetchContextFile(
   return webJson<ContextFileContent>(
     threadPath(ref, `/context/file?path=${encodeURIComponent(path)}`),
   );
+}
+
+// ── Job diff (accumulated worktree change across all threads) ─────────────────────────────────────
+/** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
+export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
+  return webJson<JobDiff>(threadPath(ref, "/diff"));
 }
 
 // ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
