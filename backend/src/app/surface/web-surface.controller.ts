@@ -1486,6 +1486,7 @@ export class WebSurfaceController {
       const notice = secretEphemeralDelivered(payload.name);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
+        deliveredSecretId: body.requestId,
         seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
       });
       return { ok: true, ts };
@@ -1544,6 +1545,7 @@ export class WebSurfaceController {
       const notice = mcpSecretStored(key, server, slot);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
+        deliveredSecretId: body.requestId,
         seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key) },
       });
       return { ok: true, ts };
@@ -1571,6 +1573,7 @@ export class WebSurfaceController {
     const notice = secretStored(payload.name, payload.path);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
+      deliveredSecretId: body.requestId,
       seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
     });
     return { ok: true, ts };

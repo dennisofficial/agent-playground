@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { ChatStimulus, ParsedEvent } from '../domain';
+import type { ChatStimulus, ParsedEvent, SeedRow } from '../domain';
 import { EventFilterService } from './event-filter.service';
 import {
   BRAIN_SINK,
@@ -131,13 +131,10 @@ export class StimulusIntake {
    * filter). The caller (the chat bridge) has already resolved the thread + reply route.
    */
   async intakeChat(stimulus: ChatStimulus): Promise<void> {
-    // SYSTEM SEED: a system-injected context turn (e.g. an `ask_question` answer framed as
-    // `<system_notification>`) runs the brain but is NOT persisted as a `messages` row, so it never
-    // renders as an operator chat bubble. Consume it directly with a synthetic id.
-    if (stimulus.seed) {
-      await this.sink.handleChat({ ...stimulus, id: stimulus.id || randomUUID() });
-      return;
-    }
+    // A SYSTEM SEED (e.g. an `ask_question` answer framed as `<system_notification>`) now rides the SAME
+    // durable pump as ordinary chat: `recordChatStimulus` decides how it renders (a curated pill, or no
+    // row at all) from `stimulus.seedRow`, and `author.id === SYSTEM_SEED_AUTHOR.id` is what reload uses
+    // to reconstruct `seed: true`. No more in-memory fast path — every chat stimulus is persisted first.
     const recorded = await this.store.recordChatStimulus({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
@@ -147,10 +144,26 @@ export class StimulusIntake {
       body: stimulus.body,
       card: stimulus.card,
       priority: stimulus.priority,
+      systemChunk: stimulus.seed
+        ? (stimulus.seedRow ?? genericSeedRow(stimulus))
+        : undefined,
+      seedQuestionId: stimulus.seedQuestionId,
+      seedSecretId: stimulus.seedSecretId,
+      seedFileId: stimulus.seedFileId,
     });
     // Durable hand-off: the row is persisted; the pump owns steer-vs-turn + the delivered/sweep guarantee.
     // NOT the old `await handleChat` (a fire-and-forget turn that could be steered into a dead engine and
     // silently lost). `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
     await this.sink.enqueueChat(recorded);
   }
+}
+
+function genericSeedRow(stimulus: ChatStimulus): Exclude<SeedRow, 'skip'> {
+  return {
+    label: 'A harness system notification was delivered to Atlas.',
+    chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1')
+      .update(stimulus.body)
+      .digest('hex')
+      .slice(0, 16)}`,
+  };
 }

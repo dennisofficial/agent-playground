@@ -58,6 +58,12 @@ export interface InboundChatMessage {
    * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
    */
   seedFileId?: string;
+  /**
+   * DELIVERY SEED (secret variant): when this seed delivers a confirmation that the operator provided a
+   * `request_secret` value, the secret card's id (`requestId`). The delivery turn stamps THIS card
+   * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
+   */
+  seedSecretId?: string;
   /** SEED RENDER COMMAND — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
@@ -160,6 +166,7 @@ export interface ChatSurface {
       orgId?: string;
       deliveredQuestionId?: string;
       deliveredFileId?: string;
+      deliveredSecretId?: string;
       seedRow?: SeedRow;
     },
   ): string;
