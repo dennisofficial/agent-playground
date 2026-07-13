@@ -250,6 +250,14 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     // The job was notified of the outcome.
     expect(surface.seedSystemNotification).toHaveBeenCalledTimes(1);
 
+    // The durable operator card was neutralized/replaced with a verdict, so the transcript no longer shows
+    // an actionable "Execute write" button after execution.
+    const card = await messages.findOne({
+      where: { job_id: jobId, ts: `db-write:${jobId}:${writeId}`, kind: 'card' },
+    });
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('approve');
+
     // Idempotent: a duplicate approval click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
     await svc.executeApproved(writeId, APPROVER_ID, jobId);
@@ -268,6 +276,16 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(row?.approved_by).toBe(APPROVER_ID);
     const after = await threads.findOne({ where: { id: threadId } });
     expect(after?.halt_fix_attempts).toBe(3); // untouched
+    const card = await messages.findOne({
+      where: { job_id: jobId, ts: `db-write:${jobId}:${writeId}`, kind: 'card' },
+    });
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('deny');
+
+    // Idempotent: a duplicate deny click is a no-op (row is no longer `pending`).
+    surface.seedSystemNotification.mockClear();
+    await svc.denyWrite(writeId, APPROVER_ID, jobId);
+    expect(surface.seedSystemNotification).not.toHaveBeenCalled();
   });
 
   it('executeApproved rejects DDL at the ROLE level (mcp_writer has no DDL) → failed, table intact', async () => {

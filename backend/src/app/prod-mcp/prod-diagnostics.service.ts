@@ -17,7 +17,7 @@ import {
 } from '../persistence/entities';
 import { agentMessage, type AgentMessage } from '../prompt-kit/message';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
-import { webDbWriteApprovalCard } from '../surface/web-approval-card';
+import { webDbWriteApprovalCard, webVerdictCard } from '../surface/web-approval-card';
 import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
 import { redactSecrets } from './redact';
 import { audit } from './audit';
@@ -231,6 +231,12 @@ export class ProdDiagnosticsService {
         result: { error: 'prod writer DataSource not configured' },
         executed_at: new Date(),
       });
+      await this.settleApprovalCard(
+        row,
+        'Prod DB write failed',
+        'deny',
+        'Failed: prod writer DataSource not configured.',
+      );
       await this.notify(row, agentMessage('<prod DB write> FAILED: prod writer DataSource not configured.'));
       return;
     }
@@ -252,10 +258,18 @@ export class ProdDiagnosticsService {
       executed_at: new Date(),
     });
 
-    const notice =
+    const line =
       status === 'executed'
-        ? agentMessage(`<prod DB write> executed — ${result.affectedRows} row(s) changed.`)
-        : agentMessage(`<prod DB write> FAILED: ${result.error}`);
+        ? `Executed — ${result.affectedRows} row(s) changed.`
+        : `Failed: ${result.error}`;
+    await this.settleApprovalCard(
+      row,
+      status === 'executed' ? 'Prod DB write executed' : 'Prod DB write failed',
+      status === 'executed' ? 'approve' : 'deny',
+      line,
+    );
+
+    const notice = agentMessage(`<prod DB write> ${line}`);
     await this.notify(row, notice);
   }
 
@@ -285,12 +299,39 @@ export class ProdDiagnosticsService {
     if (!row || row.status !== 'pending') return;
     if (row.job_id !== expectedJobId) return;
 
-    await this.ledger.update(writeId, {
-      status: 'rejected',
-      approved_by: approverUserId,
-      approved_at: new Date(),
-    });
+    const claim = await this.ledger.update(
+      { id: writeId, status: 'pending' },
+      {
+        status: 'rejected',
+        approved_by: approverUserId,
+        approved_at: new Date(),
+      },
+    );
+    if (!claim.affected) return;
+    await this.settleApprovalCard(row, 'Prod DB write declined', 'deny', 'Declined by operator.');
     await this.notify(row, agentMessage('<prod DB write> declined.'));
+  }
+
+  private async settleApprovalCard(
+    row: ProdMaintenanceWriteEntity,
+    title: string,
+    verdict: 'approve' | 'deny',
+    verdictLine: string,
+  ): Promise<void> {
+    const ts = `db-write:${row.job_id}:${row.id}`;
+    const card = webVerdictCard(row.job_id, title, verdict, verdictLine);
+    const message = await this.messages.findOne({
+      where: { job_id: row.job_id, ts, kind: 'card' },
+    });
+    if (message) {
+      message.text = verdictLine;
+      message.card = card as unknown as Record<string, unknown>;
+      await this.messages.save(message);
+    }
+    await this.surface.post(row.repo_id, verdictLine, {
+      threadTs: row.job_id,
+      orgId: row.org_id,
+    });
   }
 
   private async notify(row: ProdMaintenanceWriteEntity, body: AgentMessage): Promise<void> {

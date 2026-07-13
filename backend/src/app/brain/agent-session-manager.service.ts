@@ -4172,6 +4172,7 @@ export class AgentSessionManager
         recall: tools.recall,
         remember: tools.remember,
         ...intake,
+        ...atlasProd,
       };
     }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
@@ -4189,6 +4190,7 @@ export class AgentSessionManager
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
       propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
+      ...atlasProd,
     };
   }
 
