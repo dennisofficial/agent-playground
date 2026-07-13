@@ -153,8 +153,11 @@ export function useJobEvents(ref: JobRef): void {
           // A Stop produces a graceful `turn_end` (there's no separate abort frame), so the same path clears
           // the indicator after a stop. For a non-open thread the invalidations just mark its (unobserved)
           // queries stale — no fetch.
+          const endSeq = frame.seq ?? 0;
           void reconcileNow({ orgId, repoId, jobId: fThread }).then(() => {
-            endLiveTurn(fThread, lane);
+            // Pass the turn_end's seq: if a later turn_retry (higher seq) re-activated the lane while this
+            // async reconcile was in flight, endLiveTurn skips the delete so the retry indicator survives.
+            endLiveTurn(fThread, lane, endSeq);
           });
         } else {
           // Snapshot (catch-up on connect) or a live delta — both deduped by seq in the store, per lane.

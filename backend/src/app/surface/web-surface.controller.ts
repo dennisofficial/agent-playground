@@ -1130,6 +1130,7 @@ export class WebSurfaceController {
               blocks: s.blocks,
               active: s.active,
               startedAt: s.startedAt,
+              retrying: s.retrying,
             },
           },
         }),

@@ -49,6 +49,9 @@ export interface LiveTurnSnapshot {
   seq: number;
   /** Epoch ms when this turn's live state was first created — the "working since" clock for the elapsed timer. */
   startedAt: number;
+  /** Set while a retry is in flight (SDK native `api_retry` mid-turn, or a host backstop between turns) so a
+   *  reconnect snapshot replays the "Reconnecting…" indicator. Cleared by any real event / turn_start / end(). */
+  retrying?: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string };
 }
 
 /** A frame fanned to SSE: an engine delta, a `{kind:'snapshot'}`, or a `{kind:'turn_end'}` — all seq'd. */
@@ -73,6 +76,9 @@ interface TurnState {
   active: boolean;
   lastSeq: number;
   startedAt: number;
+  /** Set while a retry is in flight (SDK native `api_retry` mid-turn, or a host backstop between turns) so a
+   *  reconnect snapshot replays the "Reconnecting…" indicator. Cleared by any real event / turn_start / end(). */
+  retrying?: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string };
 }
 
 /** The default lane — the thread brain's conversational turn. */
@@ -141,6 +147,35 @@ export class LiveTurnStore {
         event: { kind: 'turn_start', startedAt: state.startedAt },
       });
     }
+    if (event.kind === 'api_retry') {
+      // The SDK is retrying natively (mid-turn) — no block is produced, just mark the lane retrying and fan
+      // a `turn_retry` frame so the live indicator can show the SDK's own countdown.
+      state.retrying = {
+        attempt: Number(event['attempt']),
+        max: Number(event['maxRetries']),
+        retryDelayMs: Number(event['retryDelayMs']),
+        reason: typeof event['reason'] === 'string' ? (event['reason'] as string) : undefined,
+      };
+      const seq = ++this.seq;
+      state.lastSeq = seq;
+      this.subject.next({
+        channel,
+        jobId,
+        lane,
+        seq,
+        event: {
+          kind: 'turn_retry',
+          attempt: state.retrying.attempt,
+          max: state.retrying.max,
+          retryDelayMs: state.retrying.retryDelayMs,
+          reason: state.retrying.reason,
+        },
+      });
+      return;
+    }
+    // A real content event resolves any in-flight retry (the SDK's retry succeeded, or a fresh event
+    // otherwise supersedes it) — clear it so the indicator drops.
+    state.retrying = undefined;
     const emittedAt = this.applyToState(state, event);
     const seq = ++this.seq;
     state.lastSeq = seq;
@@ -159,6 +194,40 @@ export class LiveTurnStore {
     const seq = ++this.seq;
     this.subject.next({ channel, jobId, lane, seq, event: { kind: 'turn_end' } });
     this.turns.get(channel)?.delete(this.key(jobId, lane));
+  }
+
+  /**
+   * Fan a host-backstop `turn_retry` frame (the 10×/10s auth/transport backstop) and mark the lane retrying.
+   * Re-`ensure()`s the turn state because a preceding `end()` (finish() → turn_end) may have dropped it — a
+   * between-turns backstop wait must re-activate the lane so the indicator stays mounted. Uses a FRESH
+   * monotonic seq (HIGHER than that preceding turn_end) so the client's seq-guarded endLiveTurn won't delete
+   * the re-activated turn (finding-1). `nextAttemptAt` is an absolute epoch-ms instant for the countdown.
+   */
+  retry(
+    channel: string,
+    jobId: string,
+    lane: string = MAIN_LANE,
+    info: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string },
+  ): void {
+    const state = this.ensure(channel, jobId, lane);
+    state.active = true;
+    state.retrying = { ...info };
+    const seq = ++this.seq;
+    state.lastSeq = seq;
+    this.subject.next({
+      channel,
+      jobId,
+      lane,
+      seq,
+      event: {
+        kind: 'turn_retry',
+        attempt: info.attempt,
+        max: info.max,
+        ...(info.retryDelayMs != null ? { retryDelayMs: info.retryDelayMs } : {}),
+        ...(info.nextAttemptAt != null ? { nextAttemptAt: info.nextAttemptAt } : {}),
+        ...(info.reason != null ? { reason: info.reason } : {}),
+      },
+    });
   }
 
   /**
@@ -183,6 +252,7 @@ export class LiveTurnStore {
       active: state.active,
       seq: state.lastSeq,
       startedAt: state.startedAt,
+      retrying: state.retrying,
     };
   }
 
@@ -197,6 +267,7 @@ export class LiveTurnStore {
       active: s.active,
       seq: s.lastSeq,
       startedAt: s.startedAt,
+      retrying: s.retrying,
     }));
   }
 

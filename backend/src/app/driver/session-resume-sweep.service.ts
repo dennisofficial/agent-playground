@@ -5,7 +5,10 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
-import { sessionLimitResetNudge } from '../prompt-kit/harness';
+import {
+  sessionLimitResetNudge,
+  retryResumeNudge,
+} from '../prompt-kit/harness';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
 
@@ -41,7 +44,9 @@ export class SessionResumeSweep {
   async tick(): Promise<number> {
     const due = await this.jobs.find({
       where: {
-        session_resume_at: Raw((alias) => `${alias} IS NOT NULL AND ${alias} <= now()`),
+        session_resume_at: Raw(
+          (alias) => `${alias} IS NOT NULL AND ${alias} <= now()`,
+        ),
       },
     });
     let resumed = 0;
@@ -58,18 +63,32 @@ export class SessionResumeSweep {
 
   private async resumeOne(job: JobEntity): Promise<void> {
     const lane = job.session_resume?.lane;
+    const isRetry = job.session_resume?.kind === 'retry';
     if (lane === 'build') {
-      // resumePaused clears the session_limit halt AND the resume clock, then re-drives the preserved phase.
-      await this.driver.resumePaused(job.id);
+      // A host-backstop retry park has NO halt (a retrying job isn't "paused"), so it takes the no-halt
+      // re-drive; a session-limit / blocked-credentials park uses resumePaused (clears the halt AND the clock,
+      // then re-drives the preserved phase). This is the restart-only backstop — the in-process 10s timer is
+      // the primary re-drive; whichever fires first clears the clock, so no double re-drive.
+      if (isRetry) {
+        await this.driver.resumeRetry(job.id);
+      } else {
+        await this.driver.resumePaused(job.id);
+      }
       return;
     }
     if (lane === 'main') {
-      const resumeNudge = sessionLimitResetNudge(job.title ?? undefined);
+      const resumeNudge = isRetry
+        ? retryResumeNudge(job.title ?? undefined)
+        : sessionLimitResetNudge(job.title ?? undefined);
       this.surface.seedSystemNotification?.(job.repo_id, job.id, resumeNudge, {
         orgId: job.org_id,
         seedRow: {
-          label: 'Auto-resuming after the session limit reset.',
-          chunkKey: `seed:sessionlimit:${job.id}:${Date.now()}`,
+          label: isRetry
+            ? 'Reconnecting to Claude…'
+            : 'Auto-resuming after the session limit reset.',
+          chunkKey: isRetry
+            ? `seed:retry:${job.id}:${Date.now()}`
+            : `seed:sessionlimit:${job.id}:${Date.now()}`,
         },
       });
       // The Main lane has no halt — the clock is the only park marker, so clear it here (unlike the build lane,

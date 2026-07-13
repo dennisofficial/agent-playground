@@ -806,6 +806,10 @@ export class EngineCore {
     const subprocessEnv: Record<string, string | undefined> = {
       ...process.env,
       CLAUDE_CONFIG_DIR: claudeConfigDir,
+      // Let the SDK ride out retryable API errors (overloaded/5xx/gateway/rate-limit) natively with its own
+      // exponential backoff instead of failing the turn on the first occurrence; its `api_retry` frames are
+      // surfaced below to drive the live "Reconnecting…" indicator. Env-overridable for tuning/tests.
+      CLAUDE_CODE_MAX_RETRIES: process.env.CLAUDE_CODE_MAX_RETRIES ?? '10',
     };
     getEngineAuthAdapter('claude').materialize({
       homeRoot: this.homeRoot(),
@@ -1022,6 +1026,18 @@ export class EngineCore {
               : {}),
           });
           resetHoldTimer();
+        } else if (message.type === 'system' && message.subtype === 'api_retry') {
+          // The SDK hit a retryable API error (overloaded/5xx/gateway/rate-limit) and is retrying NATIVELY
+          // with its own backoff — surface it (we do NOT host-retry these) so the live indicator can show the
+          // SDK's own countdown. Mid-turn: no turn end, the turn continues once a retry succeeds.
+          onEvent?.({
+            kind: 'api_retry',
+            attempt: message.attempt,
+            maxRetries: message.max_retries,
+            retryDelayMs: message.retry_delay_ms,
+            errorStatus: message.error_status ?? null,
+            reason: String(message.error),
+          });
         } else if (message.type === 'rate_limit_event') {
           // Harvest the subscription window state ALWAYS (the host updates its per-org usage snapshot from
           // every frame, not just the wall). A `rejected` frame is the HARD limit — latch it so the result
