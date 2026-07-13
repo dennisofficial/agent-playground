@@ -228,6 +228,11 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
   };
 }
 
+/** Rendered SVGs by TRIMMED diagram source — mermaid render is pure in source + theme (theme is fixed at
+ *  module init), so a diagram already seen elsewhere in the transcript can reuse its parsed result instead
+ *  of replaying the async render and the placeholder→SVG size jump it causes. */
+const mermaidCache = new Map<string, { svg: string; w: number; h: number }>();
+
 /** A header-bar action button shared by the diagram frame (copy / expand / fix). */
 function FrameBtn({
   onClick,
@@ -300,7 +305,7 @@ function Mermaid({ chart }: { chart: string }) {
     svg: string;
     w: number;
     h: number;
-  } | null>(null);
+  } | null>(() => mermaidCache.get(chart.trim()) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [sent, setSent] = useState(false);
@@ -309,6 +314,15 @@ function Mermaid({ chart }: { chart: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // Mermaid render is pure in its source (theme is fixed at module init), so a previously-rendered
+    // diagram can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
+    // makes a diagram seen once elsewhere in the transcript mount at its FINAL size immediately.
+    const cached = mermaidCache.get(chart.trim());
+    if (cached) {
+      setResult(cached);
+      setError(null);
+      return;
+    }
     setResult(null);
     setError(null);
     loadMermaid()
@@ -320,7 +334,11 @@ function Mermaid({ chart }: { chart: string }) {
         return mermaid.render(renderId, chart);
       })
       .then(({ svg }) => {
-        if (!cancelled) setResult(parseSvg(svg));
+        if (!cancelled) {
+          const parsed = parseSvg(svg);
+          mermaidCache.set(chart.trim(), parsed);
+          setResult(parsed);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled)
@@ -417,7 +435,14 @@ function Mermaid({ chart }: { chart: string }) {
         <div
           onClick={() => setZoomed(true)}
           className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined }}
+          style={{
+            maxWidth: result.w || undefined,
+            // Lock the box's aspect ratio so its height is a synchronous function of column width the
+            // instant `result` is known — one deterministic swap instead of waiting for the SVG (forced to
+            // width:100%/height:auto above) to reflow internally.
+            aspectRatio:
+              result.w > 0 && result.h > 0 ? `${result.w} / ${result.h}` : undefined,
+          }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />
