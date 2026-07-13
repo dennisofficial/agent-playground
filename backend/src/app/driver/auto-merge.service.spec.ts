@@ -35,8 +35,6 @@ function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
     pr_mergeable: 'clean',
     ci_status: 'success',
     auto_merge: false,
-    auto_merge_method: 'squash',
-    auto_merge_delete_branch: true,
     auto_merge_by: null,
     feature_branch: 'atlas/feature',
     ...over,
@@ -46,6 +44,7 @@ function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
 function make(
   over: {
     job?: JobEntity;
+    repo?: Partial<RepoEntity>;
     mergeResult?: unknown;
     existingMethodNote?: Partial<MessageEntity> | null;
   } = {},
@@ -55,10 +54,14 @@ function make(
   const findOneBy = vi.fn(async () => job);
   const jobs = { findOneBy } as unknown as Repository<JobEntity>;
 
-  const repoFindOne = vi.fn(async () => ({
+  const repo = {
     id: 'repo-1',
     git_url: 'https://github.com/acme/app.git',
-  }));
+    default_auto_merge_method: 'squash',
+    default_auto_merge_delete_branch: true,
+    ...over.repo,
+  } as RepoEntity;
+  const repoFindOne = vi.fn(async () => repo);
   const repos = { findOne: repoFindOne } as unknown as Repository<RepoEntity>;
 
   const messagesFindOne = vi.fn(async () => over.existingMethodNote ?? null);
@@ -126,6 +129,7 @@ function make(
   return {
     svc,
     job,
+    repo,
     findOneBy,
     repoFindOne,
     messagesFindOne,
@@ -272,9 +276,9 @@ describe('AutoMergeService.mergeNow', () => {
     expect(neutralizeMergeCard).toHaveBeenCalledWith(job.id);
   });
 
-  it('does NOT delete the branch when auto_merge_delete_branch is false', async () => {
+  it('does NOT delete the branch when the repo default_auto_merge_delete_branch is false', async () => {
     const { svc, job, deleteBranch } = make({
-      job: makeJobEntity({ auto_merge_delete_branch: false }),
+      repo: { default_auto_merge_delete_branch: false },
     });
     await svc.mergeNow(job.id, 'user-1');
     expect(deleteBranch).not.toHaveBeenCalled();

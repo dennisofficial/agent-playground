@@ -892,8 +892,6 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     autoApproveMode: 'off',
     autoApproveBy: null,
     autoMerge: false,
-    autoMergeMethod: 'squash',
-    autoMergeDeleteBranch: true,
     autoMergeBy: null,
     createdBy: null,
     createdAt: new Date(),

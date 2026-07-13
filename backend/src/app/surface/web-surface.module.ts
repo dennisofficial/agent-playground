@@ -21,6 +21,7 @@ import {
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { parseWebApprovalMeta } from './web-approval-card';
+import { resolveMergeApproval } from './resolve-merge-approval';
 import { WebSurfaceController } from './web-surface.controller';
 import { JobTitleService } from './job-title.service';
 import type { ApprovalVerdict } from '../brain/decision-approval.service';
@@ -171,22 +172,6 @@ async function resolveShipApproval(
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.resolveShipApprovalDurably(jobId, ruledBy);
-}
-
-/**
- * Resume a "Merge PR" gate click. Lazily imports {@link ThreadDriver} (same dynamic-import pattern as
- * {@link resolveShipApproval}) and resolves it from the app-wide DI graph. `resolveMergeApprovalDurably`
- * delegates to `AutoMergeService.mergeNow`, which is itself idempotent (re-checks mergeability + guards
- * against a concurrent merge), so a stale/double click is a safe no-op.
- */
-async function resolveMergeApproval(
-  moduleRef: ModuleRef,
-  jobId: string,
-  ruledBy: string,
-): Promise<void> {
-  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
-  const driver = moduleRef.get(ThreadDriver, { strict: false });
-  await driver.resolveMergeApprovalDurably(jobId, ruledBy);
 }
 
 /**
