@@ -282,7 +282,6 @@ export class SandboxManager implements SandboxProvider {
           this.logger.log(`reusing stopped sandbox ${name} — starting (cold)`);
           await this.engine.start(existing.id);
           await this.attachRedisBus(existing.id); // idempotent — re-ensure the redis bus after a restart
-          await this.attachMcpNetwork(existing.id, sandbox.repoId); // idempotent — re-ensure the atlas-mcp route too
           await this.waitReady(existing.id);
         } else {
           this.logger.log(`reusing running sandbox ${name}`);
@@ -391,17 +390,19 @@ export class SandboxManager implements SandboxProvider {
     mkdirSync(managedGitSkillsDir, { recursive: true });
     binds.push(`${managedGitSkillsDir}:${CONTAINER_SKILLS_MANAGED_GIT}:ro`);
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
-    // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
+    // jobId so it survives container recreate; the host reads it via contextDirHost()). FOUR buckets,
     // pre-created so all always list cleanly:
     //   • specs/     — hand-authored by the brain (plan.md, diagrams). Read/write.
     //   • generated/ — SYSTEM-owned (decision-record.md, …), written ONLY by host tool calls. Mounted
     //                  READ-ONLY here (a nested :ro bind over the rw /context parent — Docker honors the
     //                  more-specific child mount) so no in-sandbox agent can edit a generated file.
     //   • artifacts/ — outputs for the human.
+    //   • evidence/  — live-run PROOF (logs, screenshots, RESULTS.md), agent-written per-thread subfolders. Read/write.
     const contextDir = this.contextDirHost(orgId, jobId, name);
     mkdirSync(join(contextDir, 'specs'), { recursive: true });
     mkdirSync(join(contextDir, 'generated'), { recursive: true });
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
+    mkdirSync(join(contextDir, 'evidence'), { recursive: true }); // read-write like artifacts (no nested :ro bind; inherits the /context rw parent)
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
     binds.push(`${join(contextDir, 'generated')}:${CONTAINER_CONTEXT}/generated:ro`);
 
@@ -462,6 +463,10 @@ export class SandboxManager implements SandboxProvider {
       image,
       network,
       privileged: true,
+      // Best-effort CPU: a low relative weight so agent compute bursts (builds/tests) yield to the host
+      // control plane under contention, while still using the whole box when it's idle. Undefined when
+      // SANDBOX_CPU_SHARES is unset ⇒ Docker default (no de-prioritization).
+      cpuShares: this.env.get('SANDBOX_CPU_SHARES'),
       binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
       // Bake the preview identity so `atlas-svc` can advertise a service's public URL from inside the
@@ -486,7 +491,6 @@ export class SandboxManager implements SandboxProvider {
     });
     await this.engine.start(id);
     await this.attachRedisBus(id);
-    await this.attachMcpNetwork(id, sandbox.repoId);
     await this.waitReady(id);
     // Freshly created → cold: run the repo's setup script (if any) before handing the sandbox back.
     return this.applySetupScript(this.augment(sandbox, id, false), id, input.setupScript);
@@ -503,27 +507,6 @@ export class SandboxManager implements SandboxProvider {
     if (!bus) return;
     await this.engine.ensureNetwork(bus);
     await this.engine.connectNetwork(containerId, bus);
-  }
-
-  /**
-   * Attach the sandbox to the internal MCP-reader network (`SANDBOX_MCP_NETWORK`) — but ONLY for the Atlas
-   * repo itself (repo slug === `ATLAS_REPO_SLUG`). This is the network half of the read-only diagnostics
-   * MCP's repo-scope: only Atlas-repo sandboxes can even route to the reader (the credential half is the
-   * per-repo web MCP registry). The net is `internal: true`, so an attached sandbox reaches ONLY the reader
-   * off it, never the host or internet. Fail-closed: unset network or slug (dev) → no-op. Idempotent.
-   */
-  private async attachMcpNetwork(containerId: string, repoId: string): Promise<void> {
-    const mcpNet = this.env.get('SANDBOX_MCP_NETWORK');
-    if (!mcpNet || !this.isAtlasRepo(repoId)) return;
-    await this.engine.ensureNetwork(mcpNet);
-    await this.engine.connectNetwork(containerId, mcpNet);
-  }
-
-  /** Whether a sandbox's repo is the Atlas repo itself, per the configured `ATLAS_REPO_SLUG`. Not
-   *  hardcoded — the prod slug is set in compose; unset (dev) means no repo is ever treated as Atlas. */
-  private isAtlasRepo(repoId: string): boolean {
-    const atlasSlug = this.env.get('ATLAS_REPO_SLUG');
-    return !!atlasSlug && repoId === atlasSlug;
   }
 
   /** The deterministic container name of a thread's sandbox — the preview reverse-proxy upstream host. */

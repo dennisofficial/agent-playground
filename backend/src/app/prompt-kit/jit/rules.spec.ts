@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
-import { PREVIEW_PREP_SEED_BODY } from '../system/fragments';
+import { PREVIEW_PREP_SEED_BODY, composePreviewPrepSeed } from '../system/fragments';
 import {
   JIT_RULES,
   bgTaskCapRule,
@@ -82,12 +82,17 @@ describe('previewPrepRule', () => {
   it('is a lifecycle preview-requested rule delivered as a host seed notice', () => {
     expect(previewPrepRule.trigger).toEqual({ kind: 'lifecycle', event: 'preview-requested' });
     expect(previewPrepRule.delivery).toBe('host-seed-notice');
-    expect(previewPrepRule.render({})).toBe(PREVIEW_PREP_SEED_BODY);
+    expect(previewPrepRule.render({})).toContain(PREVIEW_PREP_SEED_BODY);
   });
 
   it('carries the shipped seed label + chunkKey', () => {
     expect(previewPrepRule.seed?.label).toBe('Spin up preview requested');
     expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:preview:J');
+  });
+
+  it('splices the saved preview recipe body verbatim inside the managed fence', () => {
+    const recipe = '  export WEB_PORT=3000\npnpm seed\nOpen /dashboard\n';
+    expect(composePreviewPrepSeed(recipe)).toContain('```md\n' + recipe + '```');
   });
 });
 

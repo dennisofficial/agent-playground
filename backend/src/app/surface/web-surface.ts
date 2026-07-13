@@ -39,6 +39,8 @@ export interface WebInboundOptions {
   seedQuestionId?: string;
   /** Delivery seed — the `request_file` card id whose uploaded file this seed confirms (see `InboundChatMessage.seedFileId`). */
   seedFileId?: string;
+  /** Delivery seed — the `request_secret` card id whose provided value this seed confirms (see `InboundChatMessage.seedSecretId`). */
+  seedSecretId?: string;
   /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
@@ -164,6 +166,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.seed ? { seed: true } : {}),
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
+      ...(opts.seedSecretId ? { seedSecretId: opts.seedSecretId } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
       ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
@@ -189,6 +192,7 @@ export class WebSurface implements ChatSurface {
       orgId?: string;
       deliveredQuestionId?: string;
       deliveredFileId?: string;
+      deliveredSecretId?: string;
       /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
       seedRow?: SeedRow;
       /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
@@ -211,6 +215,7 @@ export class WebSurface implements ChatSurface {
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
+      ...(opts.deliveredSecretId ? { seedSecretId: opts.deliveredSecretId } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
   }

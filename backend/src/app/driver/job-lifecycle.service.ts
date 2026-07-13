@@ -1,5 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
@@ -21,8 +21,8 @@ import {
   type ServiceLivenessProbe,
 } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { TicketService } from '../tickets';
 import { computeFeatureBranchName } from './branch-naming';
+import { DriverStoreService } from './driver-store.service';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -125,7 +125,6 @@ export class JobLifecycleService {
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
     private readonly provisioner: WorktreeProvisioner,
-    private readonly tickets: TicketService,
     private readonly jobDeps: JobDependencyService,
     private readonly turnRegistry: TurnRegistry,
     // Kept for the lazy `OnboardingService` lookup (revalidateRepo) that would otherwise close a load
@@ -136,6 +135,11 @@ export class JobLifecycleService {
     // `useExisting: AgentSessionManager` port (the brain constructs this service → DI deadlock).
     private readonly brainGateway: BrainGateway,
     private readonly skillUpdater: SkillUpdaterService,
+    // Neutralize any live "Merge PR" card on a terminal PR state — this is the single shared entry point
+    // for every terminal path (webhook fast path + poll backstop), so it also catches a PR merged/closed
+    // outside `AutoMergeService.mergeNow`. No DI cycle: DriverStoreService doesn't depend on this service.
+    @Optional()
+    private readonly driverStore?: DriverStoreService,
   ) {}
 
   /**
@@ -340,6 +344,13 @@ export class JobLifecycleService {
     return this.rowToSandbox(row);
   }
 
+  /** Resolve the job's base branch (base_branch ?? repo default_branch ?? 'main') — for diffing vs base. */
+  async resolveBaseBranch(jobId: string, orgId: string): Promise<string> {
+    const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
+    const project = thread ? await this.projects.findOne({ where: { id: thread.repo_id } }) : null;
+    return thread?.base_branch ?? project?.default_branch ?? 'main';
+  }
+
   /**
    * Force an immediate re-hydration of a thread's RUNNING sandbox — called right after the operator
    * provides a secret/file, so the newly-granted value is on disk BEFORE the masked-confirmation turn
@@ -526,7 +537,7 @@ export class JobLifecycleService {
     }
     const repo = await this.projects.findOne({ where: { id: job.repo_id, org_id: job.org_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(job.org_id);
+    const token = await this.creds.hostGithubToken(job.org_id);
     if (!parsed || !token) {
       throw new Error(`cannot resolve GitHub repo/token to close PR for job ${job.id}`);
     }
@@ -545,20 +556,13 @@ export class JobLifecycleService {
     //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them.
     this.removeJobScratchDirs(orgId, jobId);
 
-    // 2. Hand any linked ticket back to the board BEFORE the thread row vanishes (its `ticket_id` is the
-    //    only way to resolve the ticket). The board's in_progress/in_review lanes are thread-driven, so a
-    //    deleted thread would otherwise strand its ticket with no driver. Best-effort — never block teardown.
-    await this.tickets.revertForDeletedThread({ orgId, jobId }).catch((err) => {
-      this.logger.warn(`deleteJobDeep: ticket revert failed for thread ${jobId}: ${err}`);
-    });
-
-    // 2b. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
-    //     (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
+    // 2. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
+    //    (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
     await this.projects
       .update({ org_id: orgId, onboarding_job_id: jobId }, { onboarding_job_id: null })
       .catch(() => undefined);
 
-    // 2c. Wake any job blocked on this one BEFORE the delete cascades its dependency edges away.
+    // 2b. Wake any job blocked on this one BEFORE the delete cascades its dependency edges away.
     await this.jobDeps
       .onBlockerResolved(jobId, 'deleted')
       .catch((err) => this.logger.warn(`deleteJobDeep: wake funnel failed for blocker ${jobId}: ${err}`));
@@ -606,6 +610,13 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
+    // Retire any live "Merge PR" card now the PR is terminal — the shared point every terminal path funnels
+    // through, so a PR merged/closed by any means (github.com, a click, a poll) can't leave a stale button.
+    if (this.driverStore) {
+      await this.driverStore
+        .neutralizeMergeCard(job.id, prState === 'merged' ? 'merged' : 'not-ready')
+        .catch(() => undefined);
+    }
     await this.jobDeps
       .onBlockerResolved(job.id, prState === 'merged' ? 'merged' : 'closed_unmerged')
       .catch((err) => this.logger.warn(`applyGithubPrState: wake funnel failed for blocker ${job.id}: ${err}`));
@@ -639,7 +650,7 @@ export class JobLifecycleService {
           continue;
         const project = await this.projects.findOne({ where: { id: thread.repo_id } });
         const parsed = project ? parseGithubRepoUrl(project.git_url) : null;
-        const token = await this.creds.githubToken(thread.org_id);
+        const token = await this.creds.hostGithubToken(thread.org_id);
         if (!parsed || !token || thread.pr_number == null) continue;
         const state = await this.pr.getPullState(token, {
           owner: parsed.owner,
@@ -830,7 +841,7 @@ export class JobLifecycleService {
     );
 
     try {
-      const token = await this.creds.githubToken(thread.org_id);
+      const token = await this.creds.hostGithubToken(thread.org_id);
       // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.
       const projectRepo = await this.git.ensureRepo({
         repoId: project.slug,
@@ -929,7 +940,7 @@ export class JobLifecycleService {
   private async repoForRow(row: JobSandboxEntity): Promise<ProjectRepo> {
     const project = await this.projects.findOne({ where: { id: row.repo_id } });
     if (!project) throw new Error(`No repos row for id=${row.repo_id} (org=${row.org_id})`);
-    const token = await this.creds.githubToken(row.org_id);
+    const token = await this.creds.hostGithubToken(row.org_id);
     return this.git.ensureRepo({
       repoId: project.slug,
       gitUrl: project.git_url,

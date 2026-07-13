@@ -4,7 +4,6 @@
 # Usage:
 #   docker build -f infra/backend.Dockerfile .                     # runtime image
 #   docker build -f infra/backend.Dockerfile --target migrator .   # migration-runner image
-#   docker build -f infra/backend.Dockerfile --target mcp-reader . # read-only diagnostics MCP server
 #
 # Prerequisites: git submodules must be present in the build context.
 #   git submodule update --init --recursive
@@ -60,25 +59,6 @@ RUN pnpm --filter backend run build           # `nest build app` → backend/dis
 FROM build AS migrator
 WORKDIR /srv/atlas/app/backend
 CMD ["node_modules/.bin/dotenvx", "run", "-f", ".env.production.enc", "--", "pnpm", "db:migrate:deploy"]
-
-# ─── mcp-reader (standalone read-only prod-diagnostics MCP server) ─────────────────
-# Its own image, NOT wired into the backend process (decision d7). esbuild bundles
-# src/mcp-reader/main.ts into ONE self-contained CJS file with no externals (see
-# backend/scripts/build-mcp-reader.mjs), so the runtime image needs only node + that file —
-# no node_modules, no source tree, no toolchain.
-FROM build AS mcp-reader-build
-RUN pnpm --filter backend run build:mcp-reader   # → backend/dist/mcp-reader.js
-
-FROM ${NODE_IMAGE} AS mcp-reader
-# tini via compose `init: true`; ca-certificates for any TLS Postgres connection.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-ENV NODE_ENV=production
-WORKDIR /srv/atlas/app/backend
-COPY --from=mcp-reader-build /srv/atlas/app/backend/dist/mcp-reader.js ./dist/mcp-reader.js
-EXPOSE 4100
-CMD ["node", "dist/mcp-reader.js"]
 
 # ─── prod-deps ───────────────────────────────────────────────────────────────────
 # Prune to production deps. FROM build so the workspace dists exist — pnpm re-injects the built

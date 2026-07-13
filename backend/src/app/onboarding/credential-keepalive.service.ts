@@ -11,17 +11,18 @@ import { LeaderElectionService } from '../cluster';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialRefreshService } from './credential-refresh.service';
 
-/** How often the leader sweeps for selected credentials nearing expiry. */
+/** How often the leader sweeps for personal credentials nearing expiry. */
 const KEEPALIVE_INTERVAL_MS = 5 * 60 * 1000; // 5 min
-/** Refresh selected credentials whose access token expires within this window. */
+/** Refresh personal credentials whose access token expires within this window. */
 const KEEPALIVE_EXPIRY_WINDOW_MS = 35 * 60 * 1000; // 35 min
 /** SchedulerRegistry interval name (process-unique) for the leader-gated keep-alive sweep. */
 const KEEPALIVE_INTERVAL_NAME = 'onboarding:credential-keepalive';
 
 /**
- * LEADER-ONLY proactive refresh sweep for `personal` Claude OAuth credentials that are currently SELECTED
- * by their org (the ones actively in use for turns). Keeps the access token from ever going stale between
- * turns, so a turn never blocks on — or races — an inline refresh. Own leader-gated timer, mirroring
+ * LEADER-ONLY proactive refresh sweep for EVERY `personal` Claude OAuth credential (selected or not) that
+ * still has a refresh token. Keeps every connected account's access token from ever going stale between
+ * turns, so a turn never blocks on — or races — an inline refresh, and emits a structured heartbeat +
+ * health warning every tick so the sweep's operation stays visible. Own leader-gated timer, mirroring
  * `SkillUpdaterService`: an `@Global` module has no reason to route through another domain's reap timer.
  */
 @Injectable()
@@ -75,28 +76,45 @@ export class CredentialKeepAliveService
     }
   }
 
-  /** Refresh every org's selected credential expiring within the sweep window. Fail-soft per row. */
+  /**
+   * Refresh every active personal credential (selected or not) expiring within the sweep window,
+   * fail-soft per row, then emit a structured heartbeat + health warning every tick — the heartbeat's
+   * mere presence in the logs is the leader-gap detection signal.
+   */
   async tick(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      const due = await this.store.listSelectedExpiring(
+      const due = await this.store.listExpiringPersonal(
         KEEPALIVE_EXPIRY_WINDOW_MS,
       );
-      if (due.length === 0) return;
-      this.logger.log(
-        `keep-alive: refreshing ${due.length} expiring selected credential(s)`,
-      );
+      let refreshed = 0;
+      let failed = 0;
       for (const { orgId, credentialId } of due) {
         // Swallow per-credential errors: a hard failure already flipped the row to needs_reauth inside
         // ensureFresh's core; a transient failure just retries next tick. One bad row must not abort the sweep.
         await this.refresh
           .ensureFresh(orgId, credentialId)
-          .catch((err) =>
+          .then(() => {
+            refreshed += 1;
+          })
+          .catch((err) => {
+            failed += 1;
             this.logger.warn(
               `keep-alive refresh failed org=${orgId} id=${credentialId}: ${err}`,
-            ),
-          );
+            );
+          });
+      }
+      const health = await this.store.credentialHealthSnapshot();
+      this.logger.log(
+        `keep-alive tick: due=${due.length} refreshed=${refreshed} failed=${failed} ` +
+          `expiredActivePersonal=${health.expiredActivePersonal} needsReauth=${health.needsReauth}`,
+      );
+      if (health.expiredActivePersonal > 0) {
+        this.logger.warn(
+          `keep-alive: ${health.expiredActivePersonal} active personal credential(s) already PAST expiry — ` +
+            `the sweep is not keeping up (leader down/behind, or refresh failing)`,
+        );
       }
     } catch (err) {
       this.logger.warn(`keep-alive tick failed: ${err}`);

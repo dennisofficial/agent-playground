@@ -39,13 +39,24 @@ import {
 } from 'rxjs';
 import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
+import {
+  type AutoApproveMode,
+  type AutoMergeMethod,
+  isAutoApproveMode,
+  isAutoMergeMethod,
+  modeApprovesPlan,
+  modeApprovesShip,
+} from '@workspace/shared';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -72,8 +83,10 @@ import type { McpProposalServer } from './web-mcp-proposal-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
+import { parseGitDiff, type JobDiff } from './job-diff';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -105,7 +118,6 @@ import {
   realtimeDisabledStream,
   subscriptionToObservable,
 } from '../realtime';
-import { TicketEventBus } from '../tickets';
 import {
   renderReviewSeedXml,
   renderUploadedFilesXml,
@@ -131,6 +143,7 @@ import {
   skillEditGone,
 } from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 
 const VALID_ACTION_IDS = new Set([
   APPROVE_ACTION_ID,
@@ -146,6 +159,14 @@ const VALID_ACTION_IDS = new Set([
   // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
+  // The "Merge PR" gate button — same endpoint, but the `approval$` bridge routes it to the driver's merge
+  // resolution instead of a plan verdict (see WebSurfaceModule).
+  MERGE_ACTION_ID,
+  // The atlas-prod gated DB-write card buttons — Execute runs the approved statement on the `mcp_writer`
+  // role; Deny rejects it. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule). These
+  // are NOT plan verdicts, so they skip the `awaiting_approval` + decisionRecordId invariant below.
+  DB_WRITE_APPROVE_ACTION_ID,
+  DB_WRITE_DENY_ACTION_ID,
 ]);
 /** Author fields for an operator-authored web message — the REAL signed-in user (display name falls back
  *  to email), so the brain's `<user name=…>` attribution names the actual person, not a generic "Operator".
@@ -157,7 +178,7 @@ function operatorAuthor(user: UserEntity): {
   return { authorId: user.id, authorName: user.name?.trim() || user.email };
 }
 
-/** One file in a `/context` bucket (specs or artifacts). */
+/** One file in a `/context` bucket (specs, generated, artifacts, or evidence). */
 export interface ContextFile {
   name: string;
   size: number;
@@ -182,6 +203,9 @@ export interface ContextFileContent {
 
 /** Preview cap — text is tiny, screenshots a few hundred KB; refuse anything pathological. */
 const MAX_CONTEXT_FILE_BYTES = 2 * 1024 * 1024;
+
+/** Diff size cap — beyond this a raw patch is parsed for headers/counts only (hunks dropped, truncated:true). */
+const MAX_DIFF_BYTES = 2_000_000;
 
 /**
  * One supervised process, its durable `atlas-svc` marker (see `backend/sandbox/atlas-svc`) joined with
@@ -254,8 +278,9 @@ const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
 
 /**
  * Resolve a caller-supplied relative path WITHIN the thread's `/context` root, restricted to the
- * exposed buckets (specs/ + generated/ + artifacts/). Rejects absolute paths and any `..` traversal that
- * escapes the root — the only files readable are the ones the listing endpoint already exposes.
+ * exposed buckets (specs/ + generated/ + artifacts/ + evidence/). Rejects absolute paths and any `..`
+ * traversal that escapes the root — the only files readable are the ones the listing endpoint already
+ * exposes.
  */
 function resolveContextFilePath(root: string, relPath: string): string {
   const cleaned = relPath.replace(/^[/\\]+/, '');
@@ -265,9 +290,14 @@ function resolveContextFilePath(root: string, relPath: string): string {
     throw new BadRequestException('path escapes the context directory');
   }
   const bucket = relative(root, abs).split(sep)[0];
-  if (bucket !== 'specs' && bucket !== 'generated' && bucket !== 'artifacts') {
+  if (
+    bucket !== 'specs' &&
+    bucket !== 'generated' &&
+    bucket !== 'artifacts' &&
+    bucket !== 'evidence'
+  ) {
     throw new BadRequestException(
-      'path must be inside specs/, generated/, or artifacts/',
+      'path must be inside specs/, generated/, artifacts/, or evidence/',
     );
   }
   return abs;
@@ -312,6 +342,12 @@ interface CreateThreadDto {
   kind?: string;
   /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
   prNumber?: string | number;
+  /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
+  autoApproveMode?: string;
+  /** Operator-chosen auto-merge toggle + settings to arm at creation; absent/false leaves the DB defaults. */
+  autoMerge?: boolean;
+  autoMergeMethod?: AutoMergeMethod;
+  autoMergeDeleteBranch?: boolean;
 }
 
 /**
@@ -336,6 +372,17 @@ interface ReviewCommentItemDto {
   /** The selected/quoted text. */
   quote: string;
   note?: string;
+  /** Optional GitHub-style line anchor into a diff file (omitted for markdown/plan/decision comments):
+   *  the old-file and/or new-file spans the selection covered (both when it straddles deletions and
+   *  additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 interface ReviewCommentsDto {
   items: ReviewCommentItemDto[];
@@ -346,7 +393,17 @@ interface RenameThreadDto {
   title: string;
 }
 interface SetAutoApproveDto {
-  enabled: boolean;
+  mode: AutoApproveMode;
+}
+interface SetAutoMergeDto {
+  autoMerge: boolean;
+  method?: AutoMergeMethod;
+  deleteBranch?: boolean;
+}
+function coerceBoolean(raw: unknown): boolean | undefined {
+  if (raw === true || raw === 'true') return true;
+  if (raw === false || raw === 'false') return false;
+  return undefined;
 }
 interface ApproveDto {
   actionId: string;
@@ -474,30 +531,54 @@ export function mapMessageSource(
  * markdown Atlas reads as the operator's chat turn. Companion to the `review_comments_card` payload
  * persisted alongside it — that card is render-only; this text is what actually drives the brain.
  */
+/** Escape the five XML-significant characters for safe use in element text / attribute values. */
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Render a batch of inline review comments into the XML the brain reads as the operator's chat turn.
+ * One <comment> element per item (clear, unambiguous boundaries); a diff line-comment carries the
+ * old-file/new-file line spans it covers as attributes AND the signed diff fragment the operator selected
+ * inside a ```diff fence — so Atlas sees exactly what was highlighted (old + new) with no extra file Read.
+ * A free-text (markdown/plan/decision) comment carries the quoted selection instead. The operator's typed
+ * message rides in a trailing <message>. Companion to the render-only `review_comments_card`.
+ */
 export function formatReviewComments(
   items: ReviewCommentItemDto[],
   message?: string,
 ): string {
-  const byFile = new Map<string, ReviewCommentItemDto[]>();
+  const out: string[] = [`<review-comments count="${items.length}">`];
+  const span = (s?: number, e?: number): string | null =>
+    s == null ? null : e != null && e !== s ? `${s}-${e}` : `${s}`;
   for (const item of items) {
-    const group = byFile.get(item.file) ?? [];
-    group.push(item);
-    byFile.set(item.file, group);
-  }
-  const lines: string[] = [
-    `The operator left ${items.length} review comment${items.length === 1 ? '' : 's'} on the plan:`,
-  ];
-  for (const [file, group] of byFile) {
-    lines.push('', `**${file}**`);
-    for (const item of group) {
-      lines.push(`> "${item.quote}"`);
-      if (item.note?.trim()) lines.push(`— ${item.note.trim()}`);
+    if (item.lines) {
+      const attrs = [`file="${xmlEscape(item.lines.path)}"`];
+      const oldSpan = span(item.lines.oldStart, item.lines.oldEnd);
+      const newSpan = span(item.lines.newStart, item.lines.newEnd);
+      if (oldSpan) attrs.push(`old-lines="${oldSpan}"`);
+      if (newSpan) attrs.push(`new-lines="${newSpan}"`);
+      out.push(`  <comment ${attrs.join(' ')}>`);
+      out.push('    ```diff');
+      for (const line of item.lines.fragment.split('\n')) out.push(`    ${line}`);
+      out.push('    ```');
+      if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+      out.push('  </comment>');
+      continue;
     }
+    out.push(`  <comment file="${xmlEscape(item.file)}">`);
+    out.push(`    <quote>${xmlEscape(item.quote)}</quote>`);
+    if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+    out.push('  </comment>');
   }
-  if (message?.trim()) {
-    lines.push('', message.trim());
-  }
-  return lines.join('\n');
+  if (message?.trim()) out.push(`  <message>${xmlEscape(message.trim())}</message>`);
+  out.push('</review-comments>');
+  return out.join('\n');
 }
 
 /**
@@ -517,6 +598,8 @@ export class WebSurfaceController {
     private readonly liveTurns: LiveTurnStore,
     private readonly driverStore: DriverStoreService,
     private readonly threadLifecycle: JobLifecycleService,
+    // The ONE merge resolution path — `setAutoMerge` immediately evaluates an already-ready PR on enable.
+    private readonly autoMerge: AutoMergeService,
     private readonly orgService: OrganizationService,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -525,7 +608,6 @@ export class WebSurfaceController {
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,
-    private readonly ticketEvents: TicketEventBus,
     private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
     private readonly election: LeaderElectionService,
@@ -567,6 +649,10 @@ export class WebSurfaceController {
     // The host-side JIT executor — fires the catalog's lifecycle rules (e.g. `spinUpPreview`'s preview-prep
     // seed). Also from the @Global BrainModule. @Optional (trailing), same reason as `exposure` above.
     @Optional() private readonly jit?: JitHostExecutor,
+    // DB-backed workspace config (setup script, preview recipe) — `spinUpPreview` reads the repo's stored
+    // preview recipe to splice into the seed. From the @Global OnboardingModule. @Optional (trailing),
+    // same reason as `exposure`/`jit` above.
+    @Optional() private readonly configStore?: WorkspaceConfigStore,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -639,6 +725,8 @@ export class WebSurfaceController {
         // dot on first paint / when realtime is disabled (realtime carries it independently).
         ciStatus: t.ci_status,
         ciCounts: t.ci_counts,
+        // Tri-state sidebar port badge, precomputed by ExposureService.reconcile ('exposed'|'internal'|null).
+        portState: t.port_state,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
@@ -740,6 +828,11 @@ export class WebSurfaceController {
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
     const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
+    // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
+    // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
+    const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
+    const autoMerge = coerceBoolean(body.autoMerge) === true;
+    const autoMergeDeleteBranch = coerceBoolean(body.autoMergeDeleteBranch);
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -749,6 +842,19 @@ export class WebSurfaceController {
         title: placeholder,
         base_branch: body.baseBranch ?? null,
         ...(kind ? { kind } : {}),
+        ...(autoApproveMode && autoApproveMode !== 'off'
+          ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
+          : {}),
+        // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
+        // also records who armed it; an unknown/absent method defaults to 'squash', deleteBranch to true.
+        ...(autoMerge
+          ? {
+              auto_merge: true,
+              auto_merge_method: isAutoMergeMethod(body.autoMergeMethod) ? body.autoMergeMethod : 'squash',
+              auto_merge_delete_branch: autoMergeDeleteBranch ?? true,
+              auto_merge_by: user.id,
+            }
+          : {}),
       }),
     );
     const operatorText = text ?? '';
@@ -1052,24 +1158,13 @@ export class WebSurfaceController {
         }),
       ),
     );
-    // Board mutations for this repo → a live `ticket_event`; the client invalidates its ticket queries.
-    // Carries no payload beyond the ids (the client refetches the authoritative ticket), matching the
-    // `message`-frame refetch model — and reaches the board even when the brain mutates tickets.
-    const tickets$ = this.ticketEvents.stream$.pipe(
-      filter((e) => e.repoId === repoId),
-      map(
-        (e): MessageEvent => ({
-          data: { type: 'ticket_event', ticketId: e.ticketId, kind: e.kind },
-        }),
-      ),
-    );
     // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
       filter((e) => e.orgId === orgId),
       map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
     );
-    return merge(snapshot$, live$, messages$, meta$, tickets$, usage$);
+    return merge(snapshot$, live$, messages$, meta$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
@@ -1104,7 +1199,10 @@ export class WebSurfaceController {
       actionId !== SHIP_ACTION_ID &&
       actionId !== RETRACT_SHIP_ACTION_ID &&
       actionId !== AMEND_APPROVE_ACTION_ID &&
-      actionId !== AMEND_DISMISS_ACTION_ID
+      actionId !== AMEND_DISMISS_ACTION_ID &&
+      actionId !== MERGE_ACTION_ID &&
+      actionId !== DB_WRITE_APPROVE_ACTION_ID &&
+      actionId !== DB_WRITE_DENY_ACTION_ID
     ) {
       const mismatch =
         thread.status !== 'awaiting_approval' ||
@@ -1167,6 +1265,38 @@ export class WebSurfaceController {
     }
     await this.dispatcher.retry(jobId);
     return { ok: true, status: 'running' };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/threads/:threadId/retry-verification` — the "Retry now" lever on a thread held on a
+   * verification-judge outage (`judge_unavailable`). Re-arms the judge-cap re-drive budget and re-drives.
+   * Scoped to the caller's org via the membership guard + `requireThread` (job ownership).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification')
+  @UseGuards(OrgMembershipGuard)
+  async retryVerification(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('threadId') threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    await this.requireThread(jobId, org.id);
+    return this.dispatcher.operatorRetryStuckThread(jobId, threadId);
+  }
+
+  /**
+   * `POST …/jobs/:jobId/threads/:threadId/accept` — the "Skip & accept" lever on a thread held on a
+   * verification-judge outage. Sets a durable accept marker and re-enters the drive, which finalizes the
+   * thread `done` with the live sandbox. Safety-gated server-side (judge_unavailable + static checks passed).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/accept')
+  @UseGuards(OrgMembershipGuard)
+  async acceptThread(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Param('threadId') threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    await this.requireThread(jobId, org.id);
+    return this.dispatcher.operatorAcceptStuckThread(jobId, threadId);
   }
 
   /**
@@ -1301,6 +1431,14 @@ export class WebSurfaceController {
     if (thread.status !== 'awaiting_ship_review') return { ok: false, ts: '' };
     const firstRequest = await this.driverStore.markPreviewRequested(jobId);
     if (!firstRequest) return { ok: true, ts: '' }; // idempotent double-click — already seeded.
+    // Best-effort recipe read — a transient DB failure here must NOT lose the seed: `markPreviewRequested`
+    // already stamped the card irreversibly, so degrade to 'no recipe' rather than throwing post-stamp.
+    let previewInstructions: string | null | undefined;
+    try {
+      previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
+    } catch {
+      previewInstructions = null;
+    }
     const ts =
       this.jit?.fireLifecycle('preview-requested', {
         repoId: thread.repo_id,
@@ -1309,6 +1447,7 @@ export class WebSurfaceController {
         // Same concrete surface the hand-rolled call used — NOT the ambient `CHAT_SURFACE` (which the
         // 'agent' test surface can rebind to something else entirely).
         surface: this.surface,
+        previewInstructions,
       }) ?? '';
     return { ok: true, ts };
   }
@@ -1392,6 +1531,7 @@ export class WebSurfaceController {
       const notice = secretEphemeralDelivered(payload.name);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
+        deliveredSecretId: body.requestId,
         seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
       });
       return { ok: true, ts };
@@ -1450,6 +1590,7 @@ export class WebSurfaceController {
       const notice = mcpSecretStored(key, server, slot);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
+        deliveredSecretId: body.requestId,
         seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key) },
       });
       return { ok: true, ts };
@@ -1477,6 +1618,7 @@ export class WebSurfaceController {
     const notice = secretStored(payload.name, payload.path);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,
+      deliveredSecretId: body.requestId,
       seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
     });
     return { ok: true, ts };
@@ -1882,7 +2024,8 @@ export class WebSurfaceController {
 
   /**
    * `GET …/threads/:jobId/context` — list the thread's `/context` files, grouped into `specs` (the
-   * plan: plan.md, decision-record.md, diagrams) and `artifacts` (outputs: preview HTML, screenshots).
+   * plan: plan.md, decision-record.md, diagrams), `artifacts` (human-facing deliverables: preview HTML,
+   * mockups, reports), and `evidence` (live-run proof: logs, screenshots, RESULTS.md).
    * V1 MVP: just names + size + mtime. The UI's Artifacts panel composes this with the diff/PR (which
    * are not files — they come from `pipeline`/the thread row).
    */
@@ -1895,6 +2038,7 @@ export class WebSurfaceController {
     specs: ContextFile[];
     generated: ContextFile[];
     artifacts: ContextFile[];
+    evidence: ContextFile[];
   }> {
     await this.requireThread(jobId, org.id);
     const root = this.threadLifecycle.contextDirHost(jobId, org.id);
@@ -1902,13 +2046,15 @@ export class WebSurfaceController {
       specs: listContextBucket(join(root, 'specs')),
       generated: listContextBucket(join(root, 'generated')),
       artifacts: listContextBucket(join(root, 'artifacts')),
+      evidence: listContextBucket(join(root, 'evidence')),
     };
   }
 
   /**
    * `GET …/threads/:jobId/context/file?path=specs/plan.md` — read ONE `/context` file for the viewer.
    * Text files (.md, .json, …) come back utf-8; images come back base64. Capped at 2 MB; the path is
-   * guarded to the thread's own specs/ + artifacts/ buckets (no traversal, no cross-thread reads).
+   * guarded to the thread's own specs/ + generated/ + artifacts/ + evidence/ buckets (no traversal, no
+   * cross-thread reads).
    */
   @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/context/file')
   @UseGuards(OrgMembershipGuard)
@@ -2027,6 +2173,30 @@ export class WebSurfaceController {
   }
 
   /**
+   * `GET …/jobs/:jobId/diff` — the job's ACCUMULATED diff vs its base branch: `merge-base(baseRef, HEAD)`
+   * → the CURRENT worktree, so it includes both every commit made across the thread's turns AND any
+   * uncommitted edits from the turn in progress (GitHub-PR-like, but live). Empty result when the
+   * worktree is gone (closed/reset) or nothing differs.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff')
+  @UseGuards(OrgMembershipGuard)
+  async jobDiff(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<JobDiff> {
+    await this.requireThread(jobId, org.id);
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) return { files: [], truncated: false };
+    const baseRef = `origin/${await this.threadLifecycle.resolveBaseBranch(jobId, org.id)}`;
+    const [raw, numstat] = await Promise.all([
+      this.git.diffFromMergeBase(sandbox.worktreePath, baseRef),
+      this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef),
+    ]);
+    if (!raw) return { files: [], truncated: false };
+    return parseGitDiff(raw, numstat, { maxBytes: MAX_DIFF_BYTES });
+  }
+
+  /**
    * `GET …/threads/:jobId/context/file/raw?path=uploads/xx.png` — STREAM one composer attachment as raw
    * binary (correct `Content-Type`), for `<img>` thumbnails and file downloads in the transcript.
    * Deliberately NOT the base64 `contextFile` endpoint above: a large image would block the host event
@@ -2062,7 +2232,7 @@ export class WebSurfaceController {
 
   /**
    * `GET …/jobs/:jobId/context/raw/<bucket-relative-path>` — STREAM one `/context` file (specs/ +
-   * generated/ + artifacts/) as raw bytes with the correct `Content-Type`, so a browser can render it
+   * generated/ + artifacts/ + evidence/) as raw bytes with the correct `Content-Type`, so a browser can render it
    * directly — e.g. an `<iframe>` HTML preview of an artifact. Deliberately PATH-based (the file path lives
    * in the URL path, not a `?path=` query) so an HTML document's own RELATIVE sub-resource URLs
    * (`style.css`, `chart.png`) resolve against the document URL and get fetched here too. Same bucket +
@@ -2156,9 +2326,10 @@ export class WebSurfaceController {
       s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;
     }
 
-    // Fire-and-forget: converge Caddy to the freshly-observed live set on every poll (immediacy), never
-    // blocking the response. No-op when exposure is disabled.
-    if (exposure?.enabled) {
+    // Fire-and-forget: persist the sidebar port_state and converge Caddy to the freshly-observed live set
+    // on every poll (immediacy), never blocking the response. Caddy route mutation remains a no-op when
+    // exposure is disabled.
+    if (exposure) {
       void exposure.reconcile(jobId).catch(() => undefined);
     }
 
@@ -2343,34 +2514,70 @@ export class WebSurfaceController {
     @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
     @Body() body: SetAutoApproveDto,
-  ): Promise<{ ok: boolean; autoApprove: boolean }> {
-    if (typeof body?.enabled !== 'boolean') {
-      throw new BadRequestException('enabled is required');
+  ): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
+    if (!isAutoApproveMode(body?.mode)) {
+      throw new BadRequestException('mode is required');
     }
     // Resolve scoped to the org first (defense in depth beyond the guard) — capture the pre-update status so we
     // know whether a gate is already parked.
     const job = await this.requireThread(jobId, org.id);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
-      body.enabled ? { auto_approve: true, auto_approve_by: user.id } : { auto_approve: false },
+      { auto_approve_mode: body.mode, ...(body.mode !== 'off' ? { auto_approve_by: user.id } : {}) },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web set auto-approve=${body.enabled} on thread ${jobId} (org ${org.id})`);
-    // d2 — enabling while a gate is ALREADY parked immediately approves it, through the exact seam a real
+    this.logger.log(`web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`);
+    // d2 — enabling a gate the job is ALREADY parked on immediately approves it, through the exact seam a real
     // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
-    // the durable-restart fallback). Disable only affects future gates and never un-approves anything.
-    if (body.enabled) {
-      if (job.status === 'awaiting_approval') {
-        const value = JSON.stringify({
-          jobId,
-          ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
-        });
-        this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
-      } else if (job.status === 'awaiting_ship_review') {
-        this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
-      }
+    // the durable-restart fallback). Disabling a gate only affects future gates and never un-approves anything.
+    if (job.status === 'awaiting_approval' && modeApprovesPlan(body.mode)) {
+      const value = JSON.stringify({
+        jobId,
+        ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
+      });
+      this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
+    } else if (job.status === 'awaiting_ship_review' && modeApprovesShip(body.mode)) {
+      this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
-    return { ok: true, autoApprove: body.enabled };
+    return { ok: true, autoApproveMode: body.mode };
+  }
+
+  /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle (+ method/delete-branch). On
+   *  enable, immediately evaluates an already-ready PR through the exact same evaluator every trigger uses
+   *  (`AutoMergeService.maybeAutoMerge`) rather than blocking the request on the merge itself. */
+  @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId/auto-merge')
+  @UseGuards(OrgMembershipGuard)
+  async setAutoMerge(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Body() body: SetAutoMergeDto,
+  ): Promise<{ ok: boolean; autoMerge: boolean; autoMergeMethod: AutoMergeMethod; autoMergeDeleteBranch: boolean }> {
+    // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
+    await this.requireThread(jobId, org.id);
+    const enable = coerceBoolean(body.autoMerge) === true;
+    const method = isAutoMergeMethod(body.method) ? body.method : undefined;
+    const deleteBranch = coerceBoolean(body.deleteBranch);
+    const result = await this.jobs.update(
+      { id: jobId, org_id: org.id },
+      {
+        auto_merge: enable,
+        ...(method ? { auto_merge_method: method } : {}),
+        ...(deleteBranch != null ? { auto_merge_delete_branch: deleteBranch } : {}),
+        // Stamp who enabled it; never clear on disable — the audit trail of the last arm stands.
+        ...(enable ? { auto_merge_by: user.id } : {}),
+      },
+    );
+    if (!result.affected) throw new NotFoundException('thread not found');
+    this.logger.log(`web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`);
+    if (enable) void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
+    const fresh = await this.jobs.findOneBy({ id: jobId });
+    return {
+      ok: true,
+      autoMerge: fresh?.auto_merge ?? enable,
+      autoMergeMethod: fresh?.auto_merge_method ?? 'squash',
+      autoMergeDeleteBranch: fresh?.auto_merge_delete_branch ?? true,
+    };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

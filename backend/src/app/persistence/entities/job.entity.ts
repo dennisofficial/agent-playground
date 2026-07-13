@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { JobActivity, JobHalt } from '@workspace/shared';
+import type { AutoApproveMode, AutoMergeMethod, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { JobProvenance } from '../../domain/job';
@@ -9,7 +9,6 @@ import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 import type { TaskItem } from './thread.entity';
-import { TicketEntity } from './ticket.entity';
 import { UserEntity } from './user.entity';
 
 /**
@@ -50,7 +49,6 @@ export interface ThreadPipelineAwareness {
  */
 @Entity({ name: 'jobs' })
 @Index(['org_id', 'repo_id'])
-@Index('uq_threads_ticket_id', ['ticket_id'], { unique: true, where: '"ticket_id" IS NOT NULL' })
 export class JobEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -92,20 +90,6 @@ export class JobEntity extends TimestampedEntity {
    *  existing session on wake, no replay). */
   @Column({ type: 'text', nullable: true })
   blocked_seed_message!: string | null;
-
-  /**
-   * The ticket this thread was promoted from / works (FK → tickets.id); null for a thread not tied to a
-   * ticket. A thread works AT MOST one ticket — enforced 1:1 by a partial unique index
-   * (`uq_threads_ticket_id` WHERE ticket_id IS NOT NULL), modeled on this entity via
-   * `@Index('uq_threads_ticket_id', …)`. SET NULL if the ticket is deleted (the thread/PR outlives the
-   * board entry).
-   */
-  @Column({ type: 'uuid', nullable: true })
-  ticket_id!: string | null;
-
-  @ManyToOne(() => TicketEntity, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({ name: 'ticket_id' })
-  ticket?: TicketEntity | null;
 
   /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
    *  operator/system top-level jobs. Powers the "Created jobs" children query. */
@@ -215,6 +199,11 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   current_branch!: string | null;
+
+  /** Tri-state sidebar port badge, written change-gated by ExposureService.reconcile:
+   *  'exposed' (≥1 running service with a public URL) | 'internal' (running, none exposed) | null. */
+  @Column({ type: 'text', nullable: true })
+  port_state!: 'exposed' | 'internal' | null;
 
   /** The opened PR url; null until the PR-tail stage opens one. */
   @Column({ type: 'text', nullable: true })
@@ -376,10 +365,10 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   build_path!: 'direct' | 'plan' | null;
 
-  /** Per-job AUTO-APPROVE: when true, plan-approval and ship-review gates on this job auto-advance with
-   *  no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
-  @Column({ type: 'boolean', default: false })
-  auto_approve!: boolean;
+  /** Per-job AUTO-APPROVE MODE: which of the plan-approval / ship-review gates on this job auto-advance
+   *  with no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
+  @Column({ type: 'text', default: 'off' })
+  auto_approve_mode!: AutoApproveMode;
 
   /** Who most recently ENABLED auto-approve (FK → users.id, SET NULL) — used as the approver id when a
    *  gate auto-resolves. Null when never enabled / the enabling user was deleted (gate falls back to the
@@ -390,4 +379,29 @@ export class JobEntity extends TimestampedEntity {
   @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'auto_approve_by' })
   autoApproveByUser?: UserEntity | null;
+
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the
+   *  Merge gate). Orthogonal to auto_approve_mode — a human may still gate plan/ship while Atlas babysits
+   *  the PR to green and merges it. Strictly per-job (no repo/org default). */
+  @Column({ type: 'boolean', default: false })
+  auto_merge!: boolean;
+
+  /** The GitHub merge strategy used when auto-merge (or a manual Merge-PR click) merges — passed to
+   *  PUT /pulls/:n/merge as `merge_method`. Text-union per repo convention (no PG enum). */
+  @Column({ type: 'text', default: 'squash' })
+  auto_merge_method!: AutoMergeMethod;
+
+  /** Delete the head branch after a successful merge (a second host-side ref delete). */
+  @Column({ type: 'boolean', default: true })
+  auto_merge_delete_branch!: boolean;
+
+  /** Who most recently ENABLED auto-merge (FK → users.id, SET NULL) — the approver id stamped on an
+   *  auto-clicked merge. Null when never enabled / the user was deleted (falls back to org owner). Not
+   *  cleared on disable (kept for audit). */
+  @Column({ type: 'uuid', nullable: true })
+  auto_merge_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'auto_merge_by' })
+  autoMergeByUser?: UserEntity | null;
 }

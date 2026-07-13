@@ -7,6 +7,7 @@ import {
   type StimulusStoreService,
 } from './stimulus-store.service';
 import { StimulusIntake } from './stimulus-intake.service';
+import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
 
 function fakeFilter(verdict: FilterVerdict): EventFilterService {
   return { admit: () => verdict } as unknown as EventFilterService;
@@ -216,7 +217,7 @@ describe('StimulusIntake.intakeChat', () => {
     expect(handleChatCalls).toHaveLength(0);
   });
 
-  it('SYSTEM SEED: runs the brain turn WITHOUT persisting a chat row (no operator bubble)', async () => {
+  it('SYSTEM SEED: persists a durable stimulus row and routes through the chat pump', async () => {
     const seed: ChatStimulus = {
       id: '',
       orgId: 'T1',
@@ -225,23 +226,61 @@ describe('StimulusIntake.intakeChat', () => {
       trust: 'trusted',
       body: '<system_notice>The operator answered your question "X": A</system_notice>',
       jobId: 'thread-9',
-      author: { id: 'U-OPERATOR', displayName: 'Operator' },
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
       replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },
       receivedAt: new Date(),
       seed: true,
+      seedQuestionId: 'q1',
+      seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-9:q1' },
     };
-    const store = { recordChatStimulus: vi.fn() } as unknown as StimulusStoreService;
+    const recorded: ChatStimulus = { ...seed, id: 'chat-seed-1' };
+    const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
     const { sink, chats, handleChatCalls, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
 
     await intake.intakeChat(seed);
-    expect(store.recordChatStimulus).not.toHaveBeenCalled(); // NOT persisted as a chat message
-    expect(chats[0]).toMatchObject({ kind: 'chat', seed: true }); // but the brain turn still runs
-    expect(chats[0].id).toBeTruthy(); // a synthetic id was minted
-    // A system seed is IN-MEMORY only (never a durable `stimuli` row — see `seedQuestionId`/`card` etc.,
-    // which a re-drive from the DB row couldn't reconstruct), so it runs directly via `handleChat`, NOT
-    // the durable pump. The opposite routing from the plain-message test above.
-    expect(handleChatCalls).toHaveLength(1);
-    expect(enqueueChatCalls).toHaveLength(0);
+    expect(store.recordChatStimulus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemChunk: seed.seedRow,
+        seedQuestionId: 'q1',
+      }),
+    );
+    expect(chats[0]).toMatchObject({ kind: 'chat', seed: true, id: 'chat-seed-1' });
+    // Design B: seeds are durable and ride the SAME delivery pump as operator chat, never the old direct branch.
+    expect(enqueueChatCalls).toHaveLength(1);
+    expect(enqueueChatCalls[0]).toMatchObject({ id: 'chat-seed-1', seedQuestionId: 'q1' });
+    expect(handleChatCalls).toHaveLength(0);
+  });
+
+  it('SYSTEM SEED without a seedRow gets the generic visible system pill, not a raw chat bubble', async () => {
+    const seed: ChatStimulus = {
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      kind: 'chat',
+      trust: 'trusted',
+      body: '<system_notice>Retry the interrupted turn.</system_notice>',
+      jobId: 'thread-9',
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },
+      receivedAt: new Date(),
+      seed: true,
+    };
+    const recorded: ChatStimulus = { ...seed, id: 'chat-seed-2' };
+    const store = { recordChatStimulus: vi.fn(async () => recorded) } as unknown as StimulusStoreService;
+    const { sink, enqueueChatCalls } = collectSink();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
+
+    await intake.intakeChat(seed);
+
+    expect(store.recordChatStimulus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemChunk: expect.objectContaining({
+          label: 'A harness system notification was delivered to Atlas.',
+          chunkKey: expect.stringMatching(/^seed:generic:thread-9:/),
+        }),
+      }),
+    );
+    expect(enqueueChatCalls).toHaveLength(1);
   });
 });

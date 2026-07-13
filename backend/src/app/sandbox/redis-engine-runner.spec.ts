@@ -96,6 +96,72 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(reg.finalize).toHaveBeenCalledWith(expect.any(String), 'done');
   });
 
+  it('stamps rate-limit events with the dispatch credential on a fresh run', async () => {
+    const redis = new InMemoryRedisStream();
+    const events: EngineEvent[] = [];
+    const frames = [
+      {
+        t: 'event',
+        e: { kind: 'rate_limit', status: 'rejected', resetsAt: Date.now(), rateLimitType: 'five_hour' },
+      },
+      { t: 'final', r: { result: 'DONE', sessionId: 'sess-1' } },
+    ];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(
+      fakeContainers(redis, frames),
+      redis,
+      fakeEnv,
+      fakeActivity,
+      reg,
+    );
+
+    await runner.run({
+      ...baseArgs((e) => events.push(e)),
+      auth: {
+        secret: 'oauth-json',
+        kind: 'personal',
+        refreshBack: { orgId: 'org1', engine: 'claude', credentialId: 'cred-1' },
+      },
+      turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'step' },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({ kind: 'rate_limit', credentialId: 'cred-1' }),
+    ]);
+    expect(reg.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({ credentialId: 'cred-1' }),
+      }),
+    );
+  });
+
+  it('stamps replayed rate-limit events with the supplied credential on reattach', async () => {
+    const redis = new InMemoryRedisStream();
+    const turnId = 'turn-reattach';
+    await redis.xadd(turnKeys(turnId).events, {
+      t: 'event',
+      e: { kind: 'rate_limit', status: 'rejected', resetsAt: Date.now(), rateLimitType: 'five_hour' },
+    });
+    await redis.xadd(turnKeys(turnId).events, { t: 'final', r: { result: 'DONE', sessionId: 'sess-1' } });
+    const events: EngineEvent[] = [];
+    const runner = new RedisEngineRunner(
+      fakeContainers(redis, []),
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+    );
+
+    await runner.reattach(turnId, 'c1', {
+      onEvent: (e) => events.push(e),
+      credentialId: 'cred-reattach',
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({ kind: 'rate_limit', credentialId: 'cred-reattach' }),
+    ]);
+  });
+
   it('publishes a spec whose writableRoots include the durable /context and /playground mounts', async () => {
     const redis = new InMemoryRedisStream();
     const xadd = vi.spyOn(redis, 'xadd');
@@ -545,6 +611,35 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       .calls[0][2] as { env: Record<string, string> };
     expect(env.env.GITHUB_TOKEN).toBeUndefined();
     expect(env.env.GIT_CONFIG_COUNT).toBeUndefined();
+  });
+
+  it('emits ATLAS_EVIDENCE_DIR in the exec env when target.evidenceDir is set', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: { containerId: 'c1', worktreeHost: '/wt', evidenceDir: '/context/evidence/010-backend' },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.ATLAS_EVIDENCE_DIR).toBe('/context/evidence/010-backend');
+  });
+
+  it('does NOT emit ATLAS_EVIDENCE_DIR when target.evidenceDir is absent', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run(baseArgs(() => {})); // baseArgs.target has no evidenceDir
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.ATLAS_EVIDENCE_DIR).toBeUndefined();
   });
 
   it('steer() XADDs the operator message onto the turn input stream (mid-turn steering)', async () => {

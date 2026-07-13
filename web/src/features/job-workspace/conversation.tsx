@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { compensateAboveViewportResize } from "./scroll-compensation";
 import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
@@ -28,7 +29,6 @@ import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";
 import { McpProposalCard } from "./mcp-proposal-card";
 import { SkillProposalCard } from "./skill-proposal-card";
-import { TicketCardView } from "./ticket-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
 import { AttachmentsCardView } from "./attachments-card";
@@ -365,6 +365,11 @@ export function TranscriptView({
     getItemKey: (index) => items[index].key,
   });
 
+  // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
+  // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
+  // directly here rather than inside the options object above.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
+
   pinRef.current = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -410,7 +415,7 @@ export function TranscriptView({
         onScroll={onScroll}
         onPointerOver={onPointerOver}
         onPointerLeave={onPointerLeave}
-        className="h-full overflow-y-auto px-7 pt-5"
+        className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] px-7 pt-5"
       >
         <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
           {isLoading && messages.length === 0 ? (
@@ -588,7 +593,6 @@ const ROW_ESTIMATE: Record<string, number> = {
   secret: 184,
   mcp_proposal: 200,
   skill_proposal: 200,
-  ticket: 160,
   file: 152,
   review_comments: 184,
   attachments: 132,
@@ -983,11 +987,6 @@ function buildLogItems(
       case "skill_proposal":
         pushCard(
           <SkillProposalCard key={message.ts} card={c.card} jobRef={jobRef} />,
-        );
-        break;
-      case "ticket":
-        pushCard(
-          <TicketCardView key={message.ts} card={c.card} jobRef={jobRef} />,
         );
         break;
       case "file":

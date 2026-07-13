@@ -4,6 +4,7 @@ import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
 import type { DecisionApprovalService } from './decision-approval.service';
 import type { DriverStoreService } from '../driver/driver-store.service';
+import type { AutoMergeService } from '../driver/auto-merge.service';
 import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '../engine/engine.types';
@@ -11,7 +12,6 @@ import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
-import type { TicketService } from '../tickets';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
@@ -45,6 +45,7 @@ import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
+import type { EnvService } from '@core/config/env/env.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
@@ -117,7 +118,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
-    threadTicketId: vi.fn().mockResolvedValue(null),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
@@ -145,6 +145,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     supersedeDoneWakeMessages: vi.fn().mockResolvedValue(undefined),
     markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
+
+  const mockAutoMerge = {
+    maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as AutoMergeService;
 
   const mockMemory = {
     recall: vi.fn(),
@@ -175,6 +179,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     upsertMount: vi.fn().mockResolvedValue(undefined),
     getSetupScript: vi.fn().mockResolvedValue(null),
     setSetupScript: vi.fn().mockResolvedValue(undefined),
+    getPreviewInstructions: vi.fn().mockResolvedValue(null),
+    setPreviewInstructions: vi.fn().mockResolvedValue(undefined),
   } as unknown as WorkspaceConfigStore;
 
   const mockGit = {
@@ -244,6 +250,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockJit = {
     fireLifecycle: vi.fn(),
     collectOperatorPrepends: vi.fn().mockReturnValue([]),
+    hasEnabledOperatorPrepends: vi.fn().mockReturnValue(true),
   } as unknown as JitHostExecutor;
 
   const mockSurface = {
@@ -367,7 +374,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
       findings: [],
@@ -415,6 +421,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     manager = new AgentSessionManager(
       mockStore,
       mockDriverStore,
+      mockAutoMerge,
       mockMemory,
       mockApprovals,
       mockLifecycle,
@@ -432,13 +439,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       mockClassifier,
       mockShip,
       mockRepos,
       mockAwareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -1226,6 +1233,40 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }
   });
 
+  it('write_preview_instructions saves the recipe; read_preview_instructions reads it back (read-before-edit round-trip)', async () => {
+    const getPreviewInstructions = mockConfigStore.getPreviewInstructions as ReturnType<typeof vi.fn>;
+    const setPreviewInstructions = mockConfigStore.setPreviewInstructions as ReturnType<typeof vi.fn>;
+    getPreviewInstructions.mockResolvedValueOnce(null);
+    const tools = manager.buildTools(fakeStimulus);
+
+    // Unset → present:false, instructions:null.
+    const empty = await tools['read_preview_instructions']({});
+    expect(empty).toEqual({ ok: true, present: false, instructions: null });
+    expect(getPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID);
+
+    // Write a recipe.
+    const recipe = 'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
+    const written = await tools['write_preview_instructions']({ instructions: recipe });
+    expect(written).toEqual({ ok: true, saved: true });
+    expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, recipe);
+    expect(mockStore.appendSystemEvent).toHaveBeenCalledOnce();
+
+    // Read it back — the raw body is surfaced verbatim.
+    getPreviewInstructions.mockResolvedValueOnce(recipe);
+    const present = await tools['read_preview_instructions']({});
+    expect(present).toEqual({ ok: true, present: true, instructions: recipe });
+
+    // Clear it (blank instructions).
+    const cleared = await tools['write_preview_instructions']({ instructions: '' });
+    expect(cleared).toEqual({ ok: true, saved: false });
+    expect(setPreviewInstructions).toHaveBeenCalledWith(TEAM_ID, PROJECT_ID, null);
+
+    // Read null after clearing.
+    getPreviewInstructions.mockResolvedValueOnce(null);
+    const afterClear = await tools['read_preview_instructions']({});
+    expect(afterClear).toEqual({ ok: true, present: false, instructions: null });
+  });
+
   it('finish_onboarding refuses without a substantive `verified` (green-gate)', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['finish_onboarding']({ summary: 'done', verified: 'too short' });
@@ -1281,6 +1322,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // …and every contract entry is really registered (no stale name like the old `log_decision`).
     for (const name of contract) {
       expect(registered.has(name), `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`).toBe(true);
+    }
+  });
+
+  // The job-orchestration tools (list_jobs + create_job + link_job_dependency) are available in EVERY
+  // session kind, not just normal build brains — a review/onboarding session may legitimately spin up or
+  // relate sibling jobs. list_jobs is also present in the base (normal) set.
+  it('list_jobs / create_job / link_job_dependency are registered in every session kind', () => {
+    for (const kind of [null, 'review', 'onboarding'] as const) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of ['list_jobs', 'create_job', 'link_job_dependency']) {
+        expect(typeof tools[name], `"${name}" must be registered for kind=${kind}`).toBe('function');
+      }
     }
   });
 
@@ -1402,7 +1455,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('propose_mcp_servers rejects a reserved system name', async () => {
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
     const result = await tools['propose_mcp_servers']({
-      servers: [{ name: 'context7', transport: 'http', url: 'https://x' }],
+      servers: [{ name: 'atlas-lsp-ts', transport: 'http', url: 'https://x' }],
     });
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain('reserved');
@@ -2210,8 +2263,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     );
   });
 
-  // ── plan-gate auto-resolve (per-job opt-in): a job with autoApprove ON drives the SAME resolution an
-  //    operator's approve click would, the instant the card is posted — no human ever clicks it.
+  // ── plan-gate auto-resolve (per-job opt-in): a job whose autoApproveMode APPROVES the plan gate
+  //    ('plan' or 'both') drives the SAME resolution an operator's approve click would, the instant the
+  //    card is posted — no human ever clicks it.
   describe('(auto-approve) requestApprovalAndAct — per-job auto-approve resolves the plan gate', () => {
     type ActOnApprovalVerdict = {
       actOnApprovalVerdict(...args: unknown[]): Promise<void>;
@@ -2226,33 +2280,36 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       threads: [],
     } as never;
 
-    it('resolves via the approvals seam with job.autoApproveBy as the approver', async () => {
-      const job = {
-        id: FAKE_JOB_ID,
-        kind: 'feature',
-        title: 'rate limiting',
-        orgId: TEAM_ID,
-        repoId: PROJECT_ID,
-        autoApprove: true,
-        autoApproveBy: 'user-77',
-      };
-      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
-      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
-        jobId: FAKE_JOB_ID,
-        verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-77' }),
-      });
-      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+    it.each(['plan', 'both'] as const)(
+      'resolves via the approvals seam with job.autoApproveBy as the approver (mode: %s)',
+      async (mode) => {
+        const job = {
+          id: FAKE_JOB_ID,
+          kind: 'feature',
+          title: 'rate limiting',
+          orgId: TEAM_ID,
+          repoId: PROJECT_ID,
+          autoApproveMode: mode,
+          autoApproveBy: 'user-77',
+        };
+        (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+        (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+          jobId: FAKE_JOB_ID,
+          verdict: Promise.resolve({ verdict: 'approve', ruledBy: 'user-77' }),
+        });
+        vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
 
-      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+        await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
 
-      expect(mockApprovals.resolve).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        'approve',
-        'user-77',
-        undefined,
-        FAKE_RECORD_ID,
-      );
-    });
+        expect(mockApprovals.resolve).toHaveBeenCalledWith(
+          FAKE_JOB_ID,
+          'approve',
+          'user-77',
+          undefined,
+          FAKE_RECORD_ID,
+        );
+      },
+    );
 
     it('falls back to store.ownerUserId when job.autoApproveBy is null', async () => {
       const job = {
@@ -2261,7 +2318,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: true,
+        autoApproveMode: 'plan',
         autoApproveBy: null,
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
@@ -2288,27 +2345,30 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       );
     });
 
-    it('does NOT auto-resolve when job.autoApprove is off', async () => {
-      const job = {
-        id: FAKE_JOB_ID,
-        kind: 'feature',
-        title: 'rate limiting',
-        orgId: TEAM_ID,
-        repoId: PROJECT_ID,
-        autoApprove: false,
-        autoApproveBy: null,
-      };
-      (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
-      (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
-        jobId: FAKE_JOB_ID,
-        verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
-      });
-      vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
+    it.each(['ship', 'off'] as const)(
+      'does NOT auto-resolve when job.autoApproveMode does not approve the plan gate (mode: %s)',
+      async (mode) => {
+        const job = {
+          id: FAKE_JOB_ID,
+          kind: 'feature',
+          title: 'rate limiting',
+          orgId: TEAM_ID,
+          repoId: PROJECT_ID,
+          autoApproveMode: mode,
+          autoApproveBy: null,
+        };
+        (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
+        (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
+          jobId: FAKE_JOB_ID,
+          verdict: Promise.resolve({ verdict: 'deny', ruledBy: 'U-OP' }),
+        });
+        vi.spyOn(manager as unknown as ActOnApprovalVerdict, 'actOnApprovalVerdict').mockResolvedValue(undefined);
 
-      await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
+        await manager.requestApprovalAndAct(fakeStimulus, job as never, FAKE_RECORD_ID, card);
 
-      expect(mockApprovals.resolve).not.toHaveBeenCalled();
-    });
+        expect(mockApprovals.resolve).not.toHaveBeenCalled();
+      },
+    );
 
     it('uses the fresh gate-time flag when auto-approve was enabled during the brain turn', async () => {
       const job = {
@@ -2317,13 +2377,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: false,
+        autoApproveMode: 'off',
         autoApproveBy: null,
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
       (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...job,
-        autoApprove: true,
+        autoApproveMode: 'plan',
         autoApproveBy: 'user-fresh',
       });
       (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -2350,13 +2410,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         title: 'rate limiting',
         orgId: TEAM_ID,
         repoId: PROJECT_ID,
-        autoApprove: true,
+        autoApproveMode: 'both',
         autoApproveBy: 'user-stale',
       };
       (mockStore.route as ReturnType<typeof vi.fn>).mockResolvedValue({ channel: 'C', threadTs: 'ts' });
       (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
         ...job,
-        autoApprove: false,
+        autoApproveMode: 'off',
       });
       (mockApprovals.request as ReturnType<typeof vi.fn>).mockResolvedValue({
         jobId: FAKE_JOB_ID,
@@ -2412,11 +2472,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const r = (await tools['retry_thread']({ threadId: 'th-x', guidance: 'return JSON' })) as {
         ok?: boolean;
         attempt?: number;
+        message?: string;
       };
       // The cap (HALT_FIX_ATTEMPT_CAP=2) is passed so the DRIVER claims budget only when it will re-drive.
+      // The judge-cap PROMOTION lives inside redriveThread (a judge_unavailable thread gets the higher cap
+      // there), so the brain still hands over the defect cap here — and its success message no longer hardcodes
+      // `/2`, which would misreport the budget for a judge hold.
       expect(mockDispatcher.redriveThread).toHaveBeenCalledWith(THREAD_ID, 'th-x', 'return JSON', 2);
       expect(r.ok).toBe(true);
       expect(r.attempt).toBe(1);
+      expect(r.message).toContain('attempt 1');
+      expect(r.message).not.toContain('/2');
     });
 
     it('retry_thread escalates when redriveThread refuses (budget exhausted / active / wrong job)', async () => {
@@ -2750,6 +2816,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     runningBrainTurn?: { turn_id: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
+    /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
+    stimulusRow?: ChatStimulus | null;
   }) {
     const store = {
       route: vi.fn().mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),
@@ -2828,10 +2896,25 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       drainAndAdvance:
         opts.drainAndAdvance ?? vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
     } as unknown as PipelineAwarenessStore;
+    const stimulusStore = {
+      eligiblePendingChat: vi.fn().mockResolvedValue([]),
+      leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      markChatDelivered: vi.fn().mockResolvedValue(undefined),
+      undeliveredChatThreads: vi.fn().mockResolvedValue([]),
+      undeliveredChatForLane: vi.fn().mockResolvedValue([]),
+      rekeyLaneToMain: vi.fn().mockResolvedValue(undefined),
+      resetChatLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(opts.stimulusRow ?? null),
+    };
+
+    const autoMerge = {
+      maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AutoMergeService;
 
     const manager = new AgentSessionManager(
       store,
       driverStore,
+      autoMerge,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -2845,20 +2928,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       surface,
       sandboxRows,
       { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
-      {
-        eligiblePendingChat: async () => [],
-        undeliveredChatForLane: async () => [],
-        leaseChatStimuli: async () => undefined,
-        markChatDelivered: async () => undefined,
-        undeliveredChatThreads: async () => [],
-        resetChatLeases: async () => undefined,
-      } as never, // stimulusStore
+      stimulusStore as never, // stimulusStore
       turnHarness,
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
       awareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -2885,7 +2960,20 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
     );
-    return { manager, store, lifecycle, git, surface, sandboxRows, dockerRunner, liveTurns, blockSink, awareness, turnHarness };
+    return {
+      manager,
+      store,
+      lifecycle,
+      git,
+      surface,
+      sandboxRows,
+      dockerRunner,
+      liveTurns,
+      blockSink,
+      awareness,
+      turnHarness,
+      stimulusStore,
+    };
   }
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
@@ -3142,18 +3230,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(maxActive).toBe(1); // never two concurrent engine turns resuming the same session
   });
 
-  it('steers a queued question-answer into a LIVE brain turn instead of spawning a second turn (+ stamps the card)', async () => {
+  it('steers a queued durable question-answer into a LIVE brain turn and stamps only on input_ack', async () => {
     const steer = vi.fn().mockResolvedValue(undefined);
     const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
-    const { manager, dockerRunner, store } = makeManager({
-      findSandbox: { worktreePath: '/wt' },
-      run,
-      steer,
-      runningBrainTurn: { turn_id: 'T-live' },
-      // the answered, not-yet-delivered card the seed carries
-      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
-    });
-
     const answerSeed: ChatStimulus = {
       ...stimulus,
       id: 'seed-ans-1',
@@ -3162,13 +3241,30 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       seed: true,
       seedQuestionId: 'q-1',
     };
+    const { manager, dockerRunner, store, stimulusStore } = makeManager({
+      findSandbox: { worktreePath: '/wt' },
+      run,
+      steer,
+      runningBrainTurn: { turn_id: 'T-live' },
+      stimulusRow: answerSeed,
+      // the answered, not-yet-delivered card the seed carries
+      pendingCard: { type: 'question_card', answer: 'napi-rs', deliveredAt: null },
+    });
+
     await manager.handleChatTurn(answerSeed);
 
     // Steered into the live turn; NO second engine turn kicked.
     expect(steer).toHaveBeenCalledWith('T-live', 'seed-ans-1', answerSeed.body);
     expect(dockerRunner.run).not.toHaveBeenCalled();
-    // The answered card is stamped delivered at steer time (stops it re-surfacing / re-seeding).
+    // A bare steer is not consumption; the durable row + card are stamped only on the engine input_ack.
+    expect(store.markQuestionDelivered).not.toHaveBeenCalled();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+
+    const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(manager);
+    stamp({ kind: 'input_ack', id: 'seed-ans-1' });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-1');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('seed-ans-1');
   });
 
   it('does NOT steer a reset-verify seed — it runs its own (guarded) turn even when a turn is live', async () => {
@@ -3327,14 +3423,21 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   it('a DELIVERY turn (seedQuestionId set) stamps exactly that card delivered on success', async () => {
     // The answer-delivery seed carries seedQuestionId; the success tail marks THAT card delivered (so the
     // boot sweep won't re-deliver it). An answered, not-yet-delivered card is the delivery target.
-    const { manager, store } = makeManager({
+    const deliveryStimulus: ChatStimulus = {
+      ...stimulus,
+      id: 'seed-deliver-row',
+      seed: true,
+      seedQuestionId: 'q-deliver',
+    };
+    const { manager, store, stimulusStore } = makeManager({
       pendingCard: { type: 'question_card', answer: 'dynamic', deliveredAt: null },
+      stimulusRow: deliveryStimulus,
     });
-    const deliveryStimulus: ChatStimulus = { ...stimulus, seed: true, seedQuestionId: 'q-deliver' };
 
     await manager.handleChatTurn(deliveryStimulus);
 
     expect(store.markQuestionDelivered).toHaveBeenCalledWith(THREAD_ID, 'q-deliver');
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('seed-deliver-row');
   });
 
   it('a normal operator turn (no seedQuestionId) never marks a card delivered', async () => {
@@ -3683,6 +3786,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
+      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       {} as unknown as JobLifecycleService,
@@ -3700,6 +3804,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
@@ -3709,7 +3814,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3842,6 +3946,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
+      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -3859,6 +3964,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         markChatDelivered: async () => undefined,
         undeliveredChatThreads: async () => [],
         resetChatLeases: async () => undefined,
+        findChatStimulusById: async () => null,
       } as never, // stimulusStore
       noopTurnHarness,
       {} as unknown as DecisionClassifier,
@@ -3868,7 +3974,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3981,6 +4086,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       eligiblePendingEvents: vi.fn().mockResolvedValue(opts.events ?? []),
       resetEventLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(eventStimulus),
     };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null), // not yet delivered
@@ -3994,15 +4100,16 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     const getState = vi.fn().mockReturnValue('leader');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      inert, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert, inert, inert, // planReview, dispatcher, surface (10)
-      inert, // sandboxRows (11)
-      stimulusRows as never, // stimulusRows (12)
-      stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      inert, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert, // sandboxRows (12)
+      stimulusRows as never, // stimulusRows (13)
+      stimulusStore as never, // stimulusStore (14)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
@@ -4060,7 +4167,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
     const stamp = (manager as never as { stampInputAck: (e: EngineEvent) => void }).stampInputAck.bind(manager);
     stamp({ kind: 'input_ack', id: 'stim-evt-001' });
-    await Promise.resolve();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
 
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('stim-evt-001');
   });
@@ -4186,6 +4293,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
+      findChatStimulusById: vi.fn().mockResolvedValue(null),
     };
     const stimulusRows = {
       findOne: vi.fn().mockResolvedValue(null),
@@ -4199,15 +4307,16 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const getState = vi.fn().mockReturnValue('follower');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      store as never, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert, inert, inert, // planReview, dispatcher, surface (10)
-      inert, // sandboxRows (11)
-      stimulusRows as never, // stimulusRows (12)
-      stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      store as never, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert, // sandboxRows (12)
+      stimulusRows as never, // stimulusRows (13)
+      stimulusStore as never, // stimulusStore (14)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
       inert, // mcp (McpResolver, 22)
       election, // election (23)
       inert, inert, inert, inert, // turnRecovery…git (27)
@@ -4345,7 +4454,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     );
 
     stamp({ kind: 'input_ack', id: 's1' });
-    await Promise.resolve();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
     expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('s1');
 
     stimulusStore.markChatDelivered.mockClear();
@@ -4420,14 +4529,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       const election = { getState } as unknown as LeaderElectionService;
       const inert = {} as never;
       const manager = new AgentSessionManager(
-        store as never, inert, inert, inert, inert, // store, driverStore, memory, approvals, lifecycle (5)
-        inert, // engineRunner (6)
-        turnRegistry, // turnRegistry (7)
-        planReview as never, inert, inert, // planReview, dispatcher, surface (10)
-        inert, // sandboxRows (11)
-        inert, // stimulusRows (12)
-        stimulusStore as never, // stimulusStore (13)
-        inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+        store as never, inert, inert, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+        inert, // engineRunner (7)
+        turnRegistry, // turnRegistry (8)
+        planReview as never, inert, inert, // planReview, dispatcher, surface (11)
+        inert, // sandboxRows (12)
+        inert, // stimulusRows (13)
+        stimulusStore as never, // stimulusStore (14)
+        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
         inert, // mcp (McpResolver, 22)
         election, // election (23)
         inert, inert, inert, inert, // turnRecovery…git (27)
@@ -4512,5 +4621,161 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(steer).not.toHaveBeenCalled();
     expect(stimulusStore.eligiblePendingChat).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval turn-prefix, d1/d2)', () => {
+  const TEAM_ID = 'T-MEMRECALL';
+  const PROJECT_ID = 'memrecall-proj';
+  const THREAD_ID = 'th-memrecall-001';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-memrecall-001',
+    receivedAt: new Date('2026-07-12T00:00:00Z'),
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
+    jobId: THREAD_ID,
+    body: 'what auth library does this project use',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', jobRef: 'ts-memrecall-001' },
+  };
+
+  /** Only `memory` + `env` matter here — every other dep is an unused stub (buildMemoryRecallPrefix
+   *  touches neither store, driver, nor surface). */
+  function makeManager(opts: { recall?: ReturnType<typeof vi.fn>; envGet?: ReturnType<typeof vi.fn> }) {
+    const memory = {
+      recall: opts.recall ?? vi.fn().mockResolvedValue([]),
+      remember: vi.fn(),
+    } as unknown as MemoryStore;
+    const env = { get: opts.envGet ?? vi.fn().mockReturnValue(undefined) } as unknown as EnvService;
+
+    const manager = new AgentSessionManager(
+      {} as unknown as BrainStoreService,
+      {} as unknown as DriverStoreService,
+      {} as unknown as AutoMergeService,
+      memory,
+      {} as unknown as DecisionApprovalService,
+      {} as unknown as JobLifecycleService,
+      {} as unknown as EngineRunnerPort,
+      { listRunning: async () => [] } as never, // turnRegistry
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      {} as unknown as ChatSurface,
+      {} as unknown as Repository<JobSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
+      noopTurnHarness,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
+      {} as unknown as PipelineAwarenessStore,
+      {} as unknown as JobDependencyService,
+      {} as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {} as unknown as WorkspaceSecretFileStore,
+      {} as unknown as WorkspaceConfigStore,
+      {} as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
+      {} as unknown as LiveVerificationJudge,
+      { getResetAt: () => undefined } as unknown as OauthUsageService,
+      undefined, // usageProjector
+      env,
+    );
+    return manager as unknown as {
+      buildMemoryRecallPrefix(s: ChatStimulus, sessionId?: string): Promise<string | null>;
+      bindInjectedMemorySession(jobId: string, sessionId: string): void;
+    };
+  }
+
+  it('a recall hit renders the fact into the memory-block body', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toContain('uses pnpm for package management');
+    expect(recall).toHaveBeenCalledWith(
+      stimulus.body,
+      expect.objectContaining({
+        scopes: [`project:${PROJECT_ID}`, `team:${TEAM_ID}`],
+        orgId: TEAM_ID,
+      }),
+    );
+  });
+
+  it('per-session dedup: a fact id already injected for this job is suppressed on a later call', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    const second = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(second).toBeNull();
+  });
+
+  it('per-session dedup rebinds the first turn to its emitted session id and resets for a fresh session', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    manager.bindInjectedMemorySession(THREAD_ID, 'session-1');
+    const sameSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-1');
+    const freshSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-2');
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(sameSession).toBeNull();
+    expect(freshSession).toContain('uses pnpm for package management');
+  });
+
+  it('a trivial operator body skips recall entirely (no embedding call)', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix({ ...stimulus, body: 'ok' });
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+  });
+
+  it('the MEMORY_AUTORECALL_DISABLED kill-switch short-circuits before recall is ever called', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const envGet = vi.fn().mockReturnValue('on');
+    const manager = makeManager({ recall, envGet });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+    expect(envGet).toHaveBeenCalledWith('MEMORY_AUTORECALL_DISABLED');
+  });
+
+  it('a rejecting recall resolves to null rather than throwing (best-effort, mirrors the recall tool)', async () => {
+    const recall = vi.fn().mockRejectedValue(new Error('embedding provider down'));
+    const manager = makeManager({ recall });
+
+    await expect(manager.buildMemoryRecallPrefix(stimulus)).resolves.toBeNull();
   });
 });

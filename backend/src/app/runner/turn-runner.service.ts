@@ -74,6 +74,12 @@ export interface RunTurnInput {
    */
   gitAuth?: GitAuth;
   /**
+   * Container path this turn's writers send live-run evidence to (thread leg → its per-thread subfolder,
+   * brain/direct-build → the evidence root). A DERIVED → target field like `gitAuth`; the runner puts it
+   * on the docker `target` as `ATLAS_EVIDENCE_DIR`. Absent → writers fall back to `/context/evidence`.
+   */
+  evidenceDir?: string;
+  /**
    * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
    */
@@ -129,7 +135,7 @@ export interface RunTurnInput {
 // TURN_INPUT_FORWARD_KEYS — the exhaustiveness check below fails the build if a new optional field is added
 // to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
 type TurnInputDerivedOrRequiredKey =
-  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target / sandboxKey) / host-only
+  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' | 'evidenceDir' // derived (→ target / sandboxKey) / host-only
   | 'onEvent' | 'signal' | 'onTurnRegistered' // host-wrapped, set explicitly
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
@@ -256,6 +262,7 @@ export class TurnRunnerService {
                 worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
                 ...(input.gitAuth ? { gitAuth: input.gitAuth } : {}),
+                ...(input.evidenceDir ? { evidenceDir: input.evidenceDir } : {}),
               },
             }
           : {}),
@@ -276,6 +283,16 @@ export class TurnRunnerService {
       throw err;
     }
 
+    // Instrumentation: a control-channel "Stream closed" blip that did NOT trip the engine circuit-breaker
+    // still leaves a durable trace here — so a near-miss (or a recurrence of the mid-turn stdin-severance
+    // incident) is diagnosable after the fact even when no live turn subscriber was attached to observe the
+    // in-memory `turn_debug` events. See engine-core's stream-closed circuit-breaker.
+    if (result.streamClosedCount) {
+      this.logger.warn(
+        `turn saw ${result.streamClosedCount} "Stream closed" tool-result(s) job=${jobId} step=${stepId ?? '-'} session=${result.sessionId ?? '-'}`,
+      );
+    }
+
     // Session/usage limit — the turn ended CLEANLY on a Claude subscription limit (not a crash). Persist the
     // step session id first (so a resume continues the SAME session, exactly like the auth-error path above),
     // then THROW so the driver's halt-classification chokepoint parks the lane on a resume clock instead of
@@ -286,7 +303,9 @@ export class TurnRunnerService {
       }
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+      throw new EngineSessionLimitError(
+        message, resetAt, rateLimitType, result.sessionId, input.auth?.refreshBack?.credentialId,
+      );
     }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
@@ -418,6 +437,8 @@ export class TurnRunnerService {
     onEvent?: (e: EngineEvent) => void;
     toolBridge?: ToolBridgeOptions;
     signal?: AbortSignal;
+    /** Dispatch-time credential the turn ran on — re-stamped onto rate_limit events (parity with runTurn). */
+    credentialId?: string;
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
       throw new Error('bound ENGINE_RUNNER has no reattach() — cannot re-attach turn');
@@ -434,6 +455,7 @@ export class TurnRunnerService {
       onEvent,
       ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.credentialId ? { credentialId: input.credentialId } : {}),
     });
     if (stepId && result.sessionId) {
       await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
@@ -441,7 +463,9 @@ export class TurnRunnerService {
     if (result.sessionLimit) {
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+      throw new EngineSessionLimitError(
+        message, resetAt, rateLimitType, result.sessionId, input.credentialId,
+      );
     }
     return {
       report: result.result,

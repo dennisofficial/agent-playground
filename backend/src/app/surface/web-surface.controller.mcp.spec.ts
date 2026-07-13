@@ -58,12 +58,12 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // liveTurns
     {} as never, // driverStore
     { rehydrateThread: m.rehydrateThread } as never, // threadLifecycle
+    {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
     m.messages as never,
     {} as never, // repos
     {} as never, // threadTitle
-    {} as never, // ticketEvents
     {} as never, // usageBus
     { available: false } as never, // realtime
     {} as never, // election
@@ -210,7 +210,7 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const card = {
       type: 'mcp_proposal_card',
       servers: [
-        { name: 'context7', transport: 'http', url: 'https://x' },
+        { name: 'atlas-lsp-ts', transport: 'http', url: 'https://x' },
         { name: 'deepwiki', transport: 'http', url: 'https://y' },
       ],
     };

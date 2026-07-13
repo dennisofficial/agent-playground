@@ -26,6 +26,8 @@ export interface TurnContext {
   orgId?: string;
   repoId?: string;
   jobId?: string;
+  /** Dispatch-time credential the turn runs on — re-stamped onto rate_limit events on boot re-attach. */
+  credentialId?: string;
   /** Free-form per-kind params (author, prompt body, route, session id, timeouts, …). */
   [k: string]: unknown;
 }

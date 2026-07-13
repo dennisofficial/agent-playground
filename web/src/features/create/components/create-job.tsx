@@ -11,6 +11,15 @@ import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
 import type { OperatorJobKind } from "@/lib/api/job-api";
+import {
+  AUTO_MERGE_METHODS,
+  type AutoApproveMode,
+  type AutoMergeMethod,
+  modeApprovesPlan,
+  modeApprovesShip,
+} from "@workspace/shared";
+import { composeMode } from "@/features/job-workspace/auto-approve-mode";
+import { SwitchRow } from "@/features/job-workspace/auto-approve-popover";
 import { useAttachments } from "@/features/job-workspace/use-attachments";
 import { useFileDrop } from "@/features/job-workspace/use-file-drop";
 import { AttachmentTray } from "@/features/job-workspace/attachment-tray";
@@ -46,6 +55,15 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   // Job kind — "" = auto (brain scopes it, the default). "review" reveals a PR-number field.
   const [kind, setKind] = useState<OperatorJobKind | "">("");
   const [prNumber, setPrNumber] = useState("");
+  // Per-job auto-approve armed at creation — two independent gates (Plan / Ship) composing one mode.
+  // Default "off": both gates wait for a human, unchanged from before this control existed.
+  const [autoApproveMode, setAutoApproveMode] =
+    useState<AutoApproveMode>("off");
+  // Per-job auto-merge armed at creation — a separate boolean, orthogonal to autoApproveMode.
+  const [autoMerge, setAutoMerge] = useState(false);
+  const [autoMergeMethod, setAutoMergeMethod] =
+    useState<AutoMergeMethod>("squash");
+  const [autoMergeDeleteBranch, setAutoMergeDeleteBranch] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -112,7 +130,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     // first message so the brain has an instruction and the backend's "firstMessage or attachment" gate passes.
     if (isReview && !text) text = `Review PR #${pr}.`;
     if (!text && attachments.length === 0) {
-      return setError("Add a first message or an attachment — it starts the job.");
+      return setError(
+        "Add a first message or an attachment — it starts the job.",
+      );
     }
     setError(null);
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
@@ -125,6 +145,10 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         baseBranch: branch.trim() || undefined,
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
+        ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
+        ...(autoMerge
+          ? { autoMerge: true, autoMergeMethod, autoMergeDeleteBranch }
+          : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -251,10 +275,113 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <p className="mt-1 text-[11px] text-faint">
-                Atlas fetches this PR and reviews the diff — no build, no PR of its own.
+                Atlas fetches this PR and reviews the diff — no build, no PR of
+                its own.
               </p>
             </div>
           ) : null}
+        </div>
+      ) : null}
+
+      {repos.length > 0 ? (
+        <div>
+          <p className="text-[12px] font-medium text-dim">Automation</p>
+          <div className="mt-1.5 rounded-md border border-border-2 px-3 pt-1.5 pb-1">
+            <p className="mb-1 text-[11px] leading-relaxed text-faint">
+              Choose which gates this job clears without you.
+            </p>
+            <SwitchRow
+              title="Plan"
+              description="Approve the plan / direct-build gate automatically"
+              checked={modeApprovesPlan(autoApproveMode)}
+              first
+              testId="create-auto-approve-plan"
+              onChange={(next) =>
+                setAutoApproveMode(
+                  composeMode(next, modeApprovesShip(autoApproveMode)),
+                )
+              }
+            />
+            <SwitchRow
+              title="Ship"
+              description="Approve the ship-review gate automatically"
+              checked={modeApprovesShip(autoApproveMode)}
+              testId="create-auto-approve-ship"
+              onChange={(next) =>
+                setAutoApproveMode(
+                  composeMode(modeApprovesPlan(autoApproveMode), next),
+                )
+              }
+            />
+            <SwitchRow
+              title="Merge"
+              description="Merge the PR automatically once it's green & mergeable"
+              checked={autoMerge}
+              testId="create-auto-merge"
+              onChange={setAutoMerge}
+            />
+            {autoMerge ? (
+              <div className="border-t border-border py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="create-auto-merge-method"
+                    className="font-mono text-[9.5px] uppercase tracking-[0.04em] text-faint"
+                  >
+                    Method
+                  </label>
+                  <select
+                    id="create-auto-merge-method"
+                    data-testid="create-auto-merge-method"
+                    value={autoMergeMethod}
+                    onChange={(e) =>
+                      setAutoMergeMethod(e.target.value as AutoMergeMethod)
+                    }
+                    className="rounded-md border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[11px] text-text outline-none focus:border-accent"
+                  >
+                    {AUTO_MERGE_METHODS.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-[10.5px] leading-snug text-faint">
+                    Delete branch after merge
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoMergeDeleteBranch}
+                    aria-label="Delete branch after merge"
+                    data-testid="create-auto-merge-delete-branch"
+                    onClick={() =>
+                      setAutoMergeDeleteBranch((current) => !current)
+                    }
+                    className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
+                    style={{
+                      background: autoMergeDeleteBranch
+                        ? "var(--green)"
+                        : "var(--surface-3)",
+                      borderColor: autoMergeDeleteBranch
+                        ? "var(--green)"
+                        : "var(--border-2)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
+                      style={{
+                        transform: autoMergeDeleteBranch
+                          ? "translateX(13px)"
+                          : "translateX(0)",
+                        boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+                      }}
+                    />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -262,7 +389,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         <p className="text-[12px] font-medium text-dim">
           First message
           {kind === "review" ? (
-            <span className="ml-1 font-normal text-faint">(optional — the PR is already set)</span>
+            <span className="ml-1 font-normal text-faint">
+              (optional — the PR is already set)
+            </span>
           ) : null}
         </p>
         <textarea

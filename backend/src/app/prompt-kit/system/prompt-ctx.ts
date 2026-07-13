@@ -5,6 +5,7 @@
  * the build thread's type, and user/org-specific settings. A fragment's `condition(ctx)` reads this to decide
  * whether it belongs in THIS assembly (e.g. onboarding-only fragments gate `c => c.jobKind === 'onboarding'`).
  */
+import type { AutoApproveMode } from '@workspace/shared';
 import type { JobKind } from '../../domain';
 
 export interface PromptCtx {
@@ -15,6 +16,25 @@ export interface PromptCtx {
   /** Which WORKER turn this prompt is for. Selects whether batch-only host-tool instructions render.
    *  Absent ⇒ treated as 'batch' (backward-compatible with bare renderAgentPrompt calls). */
   turnPhase?: 'batch' | 'commit';
+  /**
+   * Per-job ORIENTATION facts, rendered as the `CURRENT JOB` block by `identity.group`. Supplied only on
+   * the brain turn (`agent-session-manager`); absent everywhere else (subagents, smoke tests) → the block
+   * is omitted entirely, so the prompt stays byte-identical when this is unset. Each field is independently
+   * optional (a line drops when its value is absent — e.g. `branch` before a feature branch is cut).
+   */
+  job?: {
+    /** "owner/repo", parsed from the git url (via the resolved repo). */
+    repoName?: string;
+    /** The sandbox worktree path — the working directory this turn runs in (normally `/workspace`). */
+    cwd?: string;
+    /** The feature branch this job stacks on (or the observed live HEAD); omitted until a branch is cut. */
+    branch?: string;
+    /** The base branch the build cuts from (`job.baseBranch` ?? the repo default). */
+    baseBranch?: string;
+    /** True when this repo is the Atlas repo itself (slug === ATLAS_REPO_SLUG). Gates the atlas-prod host-tool
+     *  fragment so its tools are only DESCRIBED where they're actually registered. Absent everywhere else. */
+    isAtlasRepo?: boolean;
+  } | null;
   /** User/org-specific settings woven into the prompt. */
   settings?: {
     /** Standing operator/org instructions appended to the assembled prompt when present. */
@@ -33,7 +53,9 @@ export interface PromptCtx {
      * Absent/empty on a repo with nothing provisioned yet → the group prints "nothing recorded yet".
      */
     workspaceProfile?: string | null;
-    /** Per-job AUTO-APPROVE is ON — the brain runs autonomously (plan & ship gates auto-advance, no human). */
-    autoApprove?: boolean;
+    /** Per-job AUTO-APPROVE mode — which gates (plan / ship / both) auto-advance with no human. */
+    autoApproveMode?: AutoApproveMode;
+    /** Per-job AUTO-MERGE toggle — a green, mergeable PR merges itself with no human at the final gate. */
+    autoMerge?: boolean;
   };
 }

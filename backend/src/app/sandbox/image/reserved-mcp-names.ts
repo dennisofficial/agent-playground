@@ -12,9 +12,9 @@
 export const RESERVED_MCP_SERVER_NAMES: readonly string[] = [
   'atlas-host-bridge', // the general host tool bridge (Claude)
   'workspace-profile', // the dedicated Workspace Profile bridge (Claude)
+  'atlas-prod', // the dedicated atlas-prod diagnostics + gated-write bridge (Claude)
   'atlasbridge', // the Codex tool bridge
   'atlas-lsp-ts', // TS LSP bridge
-  'context7', // remote docs bridge
 ];
 
 /** Case-insensitive membership set for validation (`name.toLowerCase()`). */

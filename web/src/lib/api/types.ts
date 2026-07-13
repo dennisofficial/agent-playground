@@ -8,10 +8,13 @@
  */
 
 import type {
+  AutoApproveMode,
+  AutoMergeMethod,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
+  ThreadBlockReason,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -86,6 +89,15 @@ export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
  *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
 export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
 export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
+/** The MERGE gate's "Merge PR" button — the THIRD human gate (after Approve/Ship). Auto-merge auto-clicks
+ *  the same gate. POSTs to the SAME `/approve` endpoint with a `value` of just `{ jobId }`. */
+export const MERGE_ACTION_ID = "atlas_approval:merge";
+/** The `atlas-prod` gated-write approval card's buttons — `Execute write` runs the operator's approved
+ *  single SQL statement on the DML-only `mcp_writer` role; `Deny` marks the ledger row rejected. Its button
+ *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id). Must match the backend
+ *  strings in `approval-blocks.ts` exactly. */
+export const DB_WRITE_APPROVE_ACTION_ID = "atlas_approval:db_write_approve";
+export const DB_WRITE_DENY_ACTION_ID = "atlas_approval:db_write_deny";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -94,7 +106,10 @@ export type ApprovalActionId =
   | typeof SHIP_ACTION_ID
   | typeof RETRACT_SHIP_ACTION_ID
   | typeof AMEND_APPROVE_ACTION_ID
-  | typeof AMEND_DISMISS_ACTION_ID;
+  | typeof AMEND_DISMISS_ACTION_ID
+  | typeof MERGE_ACTION_ID
+  | typeof DB_WRITE_APPROVE_ACTION_ID
+  | typeof DB_WRITE_DENY_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -122,9 +137,12 @@ export interface WebApprovalCard {
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
    * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
-   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `merge` — the merge gate
+   * (`Merge PR`), posted once the PR is GitHub-mergeable; `threads`/`decisions` empty. `db_write` — the
+   * `atlas-prod` gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the
+   * proposed statement rides `sql`/`estimatedRows`/`estimateLabel`/`error`.
    */
-  kind?: "plan" | "direct" | "ship" | "amend";
+  kind?: "plan" | "direct" | "ship" | "amend" | "merge" | "db_write";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -133,6 +151,17 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `db_write` card only — the exact proposed single SQL statement (the approved artifact). */
+  sql?: string;
+  /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
+  estimatedRows?: number;
+  /** `db_write` card only — whether {@link estimatedRows} is a real planner `estimate`, `unavailable`
+   *  (the SELECT-only role can't EXPLAIN this statement — expected/benign for DML), or the EXPLAIN
+   *  surfaced a genuine statement `error`. Kept in sync with backend `webDbWriteApprovalCard`. */
+  estimateLabel?: "estimate" | "unavailable" | "error";
+  /** `db_write` card only — a genuine EXPLAIN-time failure (syntax/bad column) so the operator sees the
+   *  statement will fail BEFORE approving. Absent for a benign permission-denied preview. */
+  error?: string;
 }
 
 export interface WebVerdictCard {
@@ -227,6 +256,17 @@ export interface WebReviewCommentItem {
   file: string;
   quote: string;
   note?: string;
+  /** Present when the comment anchors to a diff line range (the GitHub-style gutter flow) rather than a
+   *  free-text selection. Carries the old-file and/or new-file spans covered (both when the selection
+   *  straddles deletions and additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**
@@ -280,11 +320,14 @@ export interface WebMcpProposalServer {
   env?: { name: string; secret?: boolean; value?: string }[];
   /**
    * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
-   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   * owner completes after approving by clicking Connect on the proposal card or in MCP settings (no secret slot to fill).
    */
   authKind?: "static" | "oauth";
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
-  oauth?: { scope?: string; tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic" };
+  oauth?: {
+    scope?: string;
+    tokenAuthMethod?: "none" | "client_secret_post" | "client_secret_basic";
+  };
   /** The brain's one-line rationale for why this server suits the repo. */
   reason?: string;
 }
@@ -300,25 +343,13 @@ export interface WebMcpProposalCard {
   jobId: string;
   requestId: string;
   repoId: string;
+  /** Registration scope: `'org'` (every repo) or `'repo'` (this repo only). Absent on legacy cards ⇒ `'repo'`. */
+  scope?: "org" | "repo";
+  /** `register` new servers (default) or `remove` existing ones. Absent on legacy cards ⇒ `register`. */
+  mode?: "register" | "remove";
   servers: WebMcpProposalServer[];
   approved_at?: string;
   committed?: string[];
-}
-
-/**
- * A ticket-captured callout — posted when the brain raises a ticket mid-job via `create_ticket`. Purely
- * informational (no approve/answer lifecycle); the operator clicks through to the ticket on the board.
- * Mirrors the backend `WebTicketCard`.
- */
-export interface WebTicketCard {
-  type: "ticket_card";
-  ticketId: string;
-  number: number;
-  title: string;
-  kind: string | null;
-  priority: string | null;
-  status: string;
-  originDecisionSummary: string | null;
 }
 
 /**
@@ -360,8 +391,7 @@ export type WebCard =
   | WebReviewCommentsCard
   | WebAttachmentsCard
   | WebMcpProposalCard
-  | WebSkillProposalCard
-  | WebTicketCard;
+  | WebSkillProposalCard;
 
 // ── Pipeline (`…/threads/:jobId/pipeline`) ────────────────────────────────────────────────────
 /** One step of a thread's locked plan — the execute folder's leaf (a Claude Code session). */
@@ -467,6 +497,18 @@ export interface PipelineThread {
   status: ThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
   condition: ThreadCondition;
+  /**
+   * Why this lane is held on its `blocked` terminal record (`condition==='paused'`); `null` otherwise.
+   * Mirrors backend `terminal_record.blocked.reason`. `'judge_unavailable'` drives the operator
+   * escape-hatch banner ("Retry now" / "Skip & accept").
+   */
+  blockReason?: ThreadBlockReason | null;
+  /**
+   * True only when the LIVE judge was the outage AND the static build+tests already passed — gates the
+   * "Skip & accept" button (mirrors the backend accept guard, so the UI never offers an unsafe accept).
+   * "Retry now" shows for ANY `judge_unavailable` hold; accept only when this is true.
+   */
+  acceptableOnJudgeOutage?: boolean;
   /** The thread KIND (`builder` | `master_review`) — the single differentiator. */
   kind?: string;
   /** True for the whole-diff Codex master-review thread (derived from `kind`) — rendered "Master review"
@@ -495,7 +537,12 @@ export interface PipelineThread {
 export type JobProvenance = { jobId: string; title: string | null };
 
 /** A live blocker of a `blocked` job — one row per job it depends on. */
-export type JobBlocker = { jobId: string; title: string | null; prState: string | null; status: string };
+export type JobBlocker = {
+  jobId: string;
+  title: string | null;
+  prState: string | null;
+  status: string;
+};
 
 export interface PipelineJob {
   /** The thread id — the backend keys the pipeline on the thread (thread = the build unit). */
@@ -519,10 +566,20 @@ export interface PipelineJob {
    * `plan.md`, generated docs) for a direct build, where they never apply. Absent on very old payloads.
    */
   buildPath?: "direct" | "plan" | null;
-  /** Per-job AUTO-APPROVE: when true, this job's plan-approval and ship-review gates auto-advance with no
-   *  operator click (the card is still posted for audit, then immediately resolved). Settable any time
-   *  from job creation onward — so the `no_job` (open) shape carries it too. */
-  autoApprove: boolean;
+  /** Per-job AUTO-APPROVE MODE: which gates auto-advance with no operator click (`off`/`plan`/`ship`/`both`;
+   *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
+   *  onward — so the `no_job` (open) shape carries it too. */
+  autoApproveMode: AutoApproveMode;
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the Merge gate). Orthogonal to autoApproveMode. */
+  autoMerge: boolean;
+  /** GitHub merge strategy used when merging (auto or manual click). */
+  autoMergeMethod: AutoMergeMethod;
+  /** Delete the head branch after a successful merge. */
+  autoMergeDeleteBranch: boolean;
+  /** True when the PR is GitHub-mergeable right now (open + clean + CI not failing/pending) — gates the manual "Merge PR" button/card. */
+  mergeReady: boolean;
+  /** The Merge gate's verbatim `{ jobId }` value when mergeReady, else null. */
+  mergeValue: string | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -581,7 +638,14 @@ export type PipelineState =
       mainTasks?: TaskItem[];
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
-      autoApprove?: boolean;
+      autoApproveMode?: AutoApproveMode;
+      /** Carried on the open/pre-plan shape too (mirroring autoApproveMode), so the Merge toggle reflects an
+       *  auto-merge-armed job from creation onward — read via `pipelineAutoMerge()`. */
+      autoMerge?: boolean;
+      autoMergeMethod?: AutoMergeMethod;
+      autoMergeDeleteBranch?: boolean;
+      mergeReady?: boolean;
+      mergeValue?: string | null;
       blockedSeedMessage?: string | null;
     };
 
@@ -593,12 +657,37 @@ export function pipelineMainTasks(
   return ("mainTasks" in pipeline ? pipeline.mainTasks : undefined) ?? [];
 }
 
-/** The per-job auto-approve flag, from either pipeline shape (`no_job` carries it too). */
-export function pipelineAutoApprove(
+/** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
+export function pipelineAutoApproveMode(
   pipeline: PipelineState | undefined,
-): boolean {
-  if (!pipeline) return false;
-  return ("autoApprove" in pipeline ? pipeline.autoApprove : undefined) ?? false;
+): AutoApproveMode {
+  if (!pipeline) return "off";
+  const mode =
+    "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
+  return mode ?? "off";
+}
+
+/** The job's auto-merge settings + manual-merge gate, from either pipeline shape (`no_job` carries them too,
+ *  mirroring `pipelineAutoApproveMode`). Reading via this helper — instead of gating on `pipelineJob()`,
+ *  which is null for the open/pre-plan shape — keeps the Merge toggle in sync for an auto-merge-armed job
+ *  that hasn't approved its first plan yet. */
+export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+  mergeReady: boolean;
+  mergeValue: string | null;
+} {
+  const p = pipeline as
+    | { [K in keyof PipelineJob]?: PipelineJob[K] }
+    | undefined;
+  return {
+    autoMerge: p?.autoMerge ?? false,
+    autoMergeMethod: p?.autoMergeMethod ?? "squash",
+    autoMergeDeleteBranch: p?.autoMergeDeleteBranch ?? true,
+    mergeReady: p?.mergeReady ?? false,
+    mergeValue: p?.mergeValue ?? null,
+  };
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────
@@ -611,14 +700,16 @@ export interface ContextFile {
 }
 
 /**
- * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
- * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
+ * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams),
+ * `artifacts` (human-facing deliverables — preview HTML, mockups, reports), and `evidence` (live-run proof —
+ * logs, screenshots, RESULTS.md). A bucket is `[]` before the agent writes anything.
  */
 export interface JobContext {
   specs: ContextFile[];
   /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
   generated: ContextFile[];
   artifacts: ContextFile[];
+  evidence: ContextFile[];
 }
 
 /** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */
@@ -633,6 +724,36 @@ export interface ContextFileContent {
   /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
   mime: string;
   content: string;
+}
+
+// ── Job diff (`…/jobs/:jobId/diff`) ───────────────────────────────────────────────────────────────
+/** One hunk of a file's unified diff — mirrors the backend `JobDiffHunk` (`app/surface/job-diff.ts`).
+ *  `lines` are sign-prefixed (`' '` context / `'+'` add / `'-'` del), offsets are 1-based file lines. */
+export interface JobDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+/** One file's change in the accumulated job diff — mirrors the backend `JobDiffFile`. */
+export interface JobDiffFile {
+  path: string;
+  /** Prior path for a rename; absent otherwise. */
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: JobDiffHunk[];
+}
+
+/** The accumulated multi-file diff for a job — mirrors the backend `JobDiff`. `truncated` when the diff
+ *  exceeded the surface's size cap and some files/hunks were dropped. */
+export interface JobDiff {
+  files: JobDiffFile[];
+  truncated: boolean;
 }
 
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────

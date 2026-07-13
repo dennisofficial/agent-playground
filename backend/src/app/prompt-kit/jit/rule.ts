@@ -53,6 +53,9 @@ export type JitFireCtx = {
   phase?: 'soft' | 'reminder';
   /** The job this fire targets (lifecycle rules — feeds the seed's dedup key). */
   jobId?: string;
+  /** The repo's stored preview recipe (lifecycle:preview-requested) — spliced into the seed's managed
+   *  block; null/absent → the "none saved yet" placeholder + save nudge. */
+  previewInstructions?: string | null;
   /**
    * The text an `operator-message` turn-prefix rule prepends (Thread 5's rail, d18). The host executor supplies
    * it when composing an operator turn; an empty/absent value renders NO prefix chunk (so a turn with no rail

@@ -8,7 +8,6 @@
     "env:inject": "dotenvx run -f .env.local.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict",
     "dev:env": "cross-env NODE_ENV=development NODE_OPTIONS=--enable-source-maps pnpm env:inject",
     "build": "nest build app",
-    "build:mcp-reader": "node scripts/build-mcp-reader.mjs",
     "dev": "pnpm dev:env -- nest start app --watch",
     "start:prod": "node dist/main",
     "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app/e2e/e2e-main.ts",
@@ -32,7 +31,8 @@
     "db:seed": "dotenvx run -f .env.local.enc -f .env.seed.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts",
     "db:recover-turn": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/recover-turn.ts",
     "db:recreate": "pnpm db:schema:drop && pnpm db:migrate && pnpm db:seed",
-    "seed:demo": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/seed-demo-jobs.ts"
+    "seed:demo": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/seed-demo-jobs.ts",
+    "seed:scroll-fixture": "pnpm seed:demo && pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json ts-node --project tsconfig.cli.json scripts/load-scroll-fixture.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.204",

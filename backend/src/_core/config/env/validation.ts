@@ -93,15 +93,27 @@ export interface IEnvConfig {
   SANDBOX_IMAGE?: string;
   WORKSPACE_IMAGE?: string;
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
+  // Relative CPU weight (Docker CpuShares → cgroup v2 cpu.weight) applied to every per-job sandbox
+  // container so best-effort agent bursts (builds/tests) yield to the host control plane under
+  // contention. Low value ⇒ sandboxes lose CPU only when the backend/DB/web compete; idle box ⇒ agents
+  // still use 100% (no cap). UNSET ⇒ Docker default (no de-prioritization). See infra/README.md.
+  SANDBOX_CPU_SHARES?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
-  // SANDBOX_MCP_NETWORK: the internal net the read-only diagnostics MCP reader lives on; a sandbox is
-  //   attached ONLY when its repo slug === ATLAS_REPO_SLUG (`atlas-mcp` in prod; unset in dev = no-op).
   // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
   SANDBOX_REDIS_URL?: string;
   SANDBOX_BUS_NETWORK?: string;
-  SANDBOX_MCP_NETWORK?: string;
   ATLAS_REPO_SLUG?: string;
+
+  // Dedicated prod-diagnostics DB roles (the `atlas-prod` MCP), NEVER the backend's own `app` connection.
+  // MCP_READER_* is the existing SELECT-only `mcp_reader` role (reads + the pre-approval EXPLAIN preview);
+  // MCP_WRITER_* is the DML-only `mcp_writer` role used ONLY to run an operator-approved recovery statement.
+  // Host/port/DB reuse the existing POSTGRES_* (same server + DB as the app). All optional, like
+  // ATLAS_REPO_SLUG — unset in dev fail-closes the whole feature (no dedicated pools, no write path).
+  MCP_READER_PG_USER?: string;
+  MCP_READER_PG_PASSWORD?: string;
+  MCP_WRITER_PG_USER?: string;
+  MCP_WRITER_PG_PASSWORD?: string;
 
   // Secrets. SECRETS_ENCRYPTION_KEY (32-byte hex/base64) encrypts every `org_credentials` row at rest —
   // REQUIRED now that all credentials live there. JWT_* sign the web-console session cookies — REQUIRED
@@ -160,10 +172,12 @@ export interface IEnvConfig {
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
   // reconciliation sweep (documented parallel-tuning safety gate). HARNESS_CHUNK_ROWS: 'off' quiets the
-  // injected system-notice transcript rows.
+  // injected system-notice transcript rows. MEMORY_AUTORECALL_DISABLED: 'on' disables memory auto-recall
+  // (kill-switch; off by default).
   TEST_BRIDGE?: 'on' | 'off';
   DISABLE_RESUME?: string;
   HARNESS_CHUNK_ROWS?: 'on' | 'off';
+  MEMORY_AUTORECALL_DISABLED?: 'on' | 'off';
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -218,10 +232,14 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IMAGE: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
+  SANDBOX_CPU_SHARES: Joi.number().integer().min(2).max(262144).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
-  SANDBOX_MCP_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),
+  MCP_READER_PG_USER: Joi.string().optional(),
+  MCP_READER_PG_PASSWORD: Joi.string().optional(),
+  MCP_WRITER_PG_USER: Joi.string().optional(),
+  MCP_WRITER_PG_PASSWORD: Joi.string().optional(),
 
   // Secrets
   SECRETS_ENCRYPTION_KEY: Joi.string().required(),
@@ -267,4 +285,5 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),
   DISABLE_RESUME: Joi.string().optional(),
   HARNESS_CHUNK_ROWS: Joi.string().valid('on', 'off').optional(),
+  MEMORY_AUTORECALL_DISABLED: Joi.string().valid('on', 'off').optional(),
 });

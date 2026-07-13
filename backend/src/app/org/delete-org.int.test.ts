@@ -47,7 +47,6 @@ import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
-import { TicketService } from '../tickets';
 import { JobDependencyService } from '../job-deps';
 import { OrganizationService } from './organization.service';
 
@@ -213,13 +212,13 @@ beforeEach(async () => {
           anthropicKey: async () => undefined,
           openaiKey: async () => undefined,
           githubToken: async () => undefined,
+          hostGithubToken: async () => undefined,
           engineAuth: async () => ({ secret: 'test-secret' }),
         },
       },
       { provide: GithubPrService, useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' } },
       { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
       { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
-      { provide: TicketService, useValue: { revertForDeletedThread: async () => {} } },
       { provide: JobDependencyService, useValue: { onBlockerResolved: async () => {} } },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
       { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },

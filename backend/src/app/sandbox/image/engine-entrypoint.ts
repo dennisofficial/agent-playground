@@ -22,8 +22,12 @@ import {
   partitionWorkspaceProfileTools,
   qualifyWorkspaceProfileToolNames,
 } from './workspace-profile-bridge-options';
+import {
+  ATLAS_PROD_BRIDGE_NAME,
+  partitionAtlasProdTools,
+  qualifyAtlasProdToolNames,
+} from './atlas-prod-bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
-import { buildContext7BridgeOptions } from './context7-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 import { ToolBridgeReader } from './tool-bridge-reader';
 import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from './host-tool-schemas';
@@ -92,6 +96,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
     let workspaceProfileBridge: BridgeClaudeOptions | undefined;
+    let atlasProdBridge: BridgeClaudeOptions | undefined;
     if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
       // The shared reader owns its own blocking connection (a blocking read can't share the main
       // client) and swaps it internally on a stall-reset; `makeSub` also assigns the outer `sub` so the
@@ -148,14 +153,18 @@ async function runOverRedis(turnId: string): Promise<void> {
       const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(
         spec.toolBridgeTools,
       );
+      // Further split the remaining general tools into the dedicated atlas-prod bridge (only
+      // ever non-empty on the Atlas repo — `buildTools` omits these tools everywhere else).
+      const { rest: generalToolNames, atlasProd: atlasProdToolNames } =
+        partitionAtlasProdTools(hostToolNames);
       const server = claudeSdk.createSdkMcpServer({
         name: BRIDGE_SERVER_NAME,
         version: '1.0.0',
         instructions: 'Atlas host tools. Call these to interact with the host harness.',
-        tools: hostToolNames.map(makeProxyTool),
+        tools: generalToolNames.map(makeProxyTool),
         alwaysLoad: true,
       });
-      bridge = buildBridgeClaudeOptions(server, hostToolNames);
+      bridge = buildBridgeClaudeOptions(server, generalToolNames);
       if (profileToolNames.length > 0) {
         const profileServer = claudeSdk.createSdkMcpServer({
           name: WORKSPACE_PROFILE_BRIDGE_NAME,
@@ -170,17 +179,26 @@ async function runOverRedis(turnId: string): Promise<void> {
           bridgeToolNames: qualifyWorkspaceProfileToolNames(profileToolNames),
         };
       }
+      if (atlasProdToolNames.length > 0) {
+        const atlasProdServer = claudeSdk.createSdkMcpServer({
+          name: ATLAS_PROD_BRIDGE_NAME,
+          version: '1.0.0',
+          instructions:
+            'Atlas prod diagnostics — relocated prod-diagnostics reads plus a gated prod DB write: propose-only, operator-approved.',
+          tools: atlasProdToolNames.map(makeProxyTool),
+          alwaysLoad: true,
+        });
+        atlasProdBridge = {
+          extraClaudeOptions: { mcpServers: { [ATLAS_PROD_BRIDGE_NAME]: atlasProdServer } },
+          bridgeToolNames: qualifyAtlasProdToolNames(atlasProdToolNames),
+        };
+      }
     }
 
     // ── LSP bridge (atlas-lsp-ts, external stdio MCP server) ────────────────────────────────────
     // Unlike the host bridge above, the SDK spawns this process itself — no Redis round-trip. See
     // lsp-bridge-options.ts for why it's gated to execute-mode turns and confined to `spec.cwd`.
     const lsp = buildLspBridgeOptions(spec.mode, spec.cwd);
-
-    // ── Context7 docs bridge (remote HTTP MCP server) ───────────────────────────────────────────
-    // Version-pinned library docs for the `docs` subagent. OFF unless CONTEXT7_API_KEY is in the
-    // container env; execute-mode only (same gate as the LSP bridge). See context7-bridge-options.ts.
-    const context7 = buildContext7BridgeOptions(spec.mode);
 
     // ── User-defined MCP servers (org/repo tiers, resolved host-side) ────────────────────────────
     // Whatever `McpResolver` picked for this turn's org/repo/surface (secrets already inlined). No mode
@@ -241,15 +259,15 @@ async function runOverRedis(turnId: string): Promise<void> {
     const mergedMcpServers = {
       ...(bridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(workspaceProfileBridge?.extraClaudeOptions.mcpServers ?? {}),
+      ...(atlasProdBridge?.extraClaudeOptions.mcpServers ?? {}),
       ...(lsp?.extraClaudeOptions.mcpServers ?? {}),
-      ...(context7?.extraClaudeOptions.mcpServers ?? {}),
       ...(userMcp?.extraClaudeOptions.mcpServers ?? {}),
     };
     const mergedToolNames = [
       ...(bridge?.bridgeToolNames ?? []),
       ...(workspaceProfileBridge?.bridgeToolNames ?? []),
+      ...(atlasProdBridge?.bridgeToolNames ?? []),
       ...(lsp?.lspToolNames ?? []),
-      ...(context7?.context7ToolNames ?? []),
       ...(userMcp?.userMcpToolNames ?? []),
     ];
     // For a Codex execute turn, hand the BARE bridge tool names to `runCodex` — it renders them into the
@@ -276,12 +294,19 @@ async function runOverRedis(turnId: string): Promise<void> {
     );
     await xadd(eventsKey, { t: 'final', r: result });
   } catch (err) {
-    const e = err as { isAuthError?: boolean; sessionId?: string; stack?: string; message?: string };
+    const e = err as {
+      isAuthError?: boolean;
+      sessionId?: string;
+      engine?: string;
+      stack?: string;
+      message?: string;
+    };
     await xadd(eventsKey, {
       t: 'error',
       message: err instanceof Error ? (err.stack ?? err.message) : String(err),
       ...(e?.isAuthError ? { auth: true } : {}),
       ...(typeof e?.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+      ...(typeof e?.engine === 'string' ? { engine: e.engine } : {}),
     }).catch(() => undefined);
     process.exitCode = 1;
   } finally {

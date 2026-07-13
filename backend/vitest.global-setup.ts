@@ -61,4 +61,63 @@ export default async function globalSetup(): Promise<void> {
       env: { ...process.env, TS_NODE_PROJECT: 'tsconfig.cli.json' },
     },
   );
+
+  await provisionMcpRoles({ ...conn, database: db });
+}
+
+/**
+ * Provision the two dedicated diagnostics DB roles on the test database with the SAME least-privilege
+ * grants the `infra/mcp-{reader,writer}-role.sql` files apply in prod, so the backend thread's integration
+ * tests exercise the REAL role restrictions (a `mcp_reader` that genuinely rejects an UPDATE; a `mcp_writer`
+ * that genuinely can't DDL and can't touch its own audit ledger) — not a mock. Runs AFTER migrate so the
+ * blanket grants cover every table and the audit-ledger REVOKE finds `prod_maintenance_write`. Idempotent:
+ * roles are cluster-global, so re-create only if absent; grants are always re-applied. `MCP_*_PG_*` in
+ * `.env.test.enc` point the pools at these roles with the fixed test password.
+ */
+async function provisionMcpRoles(conn: {
+  host?: string;
+  port: number;
+  user?: string;
+  password?: string;
+  database: string;
+}): Promise<void> {
+  const client = new Client(conn);
+  await client.connect();
+  try {
+    // mcp_reader — SELECT-only (mirrors infra/mcp-reader-role.sql).
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mcp_reader') THEN
+        CREATE ROLE mcp_reader LOGIN PASSWORD 'test';
+      END IF;
+    END $$;`);
+    await client.query(`ALTER ROLE mcp_reader WITH LOGIN PASSWORD 'test'`);
+    await client.query(`GRANT CONNECT ON DATABASE "${conn.database}" TO mcp_reader`);
+    await client.query(`GRANT USAGE ON SCHEMA public TO mcp_reader`);
+    await client.query(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_reader`);
+    await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO mcp_reader`);
+    await client.query(`ALTER ROLE mcp_reader SET statement_timeout = '10s'`);
+
+    // mcp_writer — DML-only (mirrors infra/mcp-writer-role.sql): no DDL, and REVOKEd on the audit ledger.
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'mcp_writer') THEN
+        CREATE ROLE mcp_writer LOGIN PASSWORD 'test';
+      END IF;
+    END $$;`);
+    await client.query(`ALTER ROLE mcp_writer WITH LOGIN PASSWORD 'test'`);
+    await client.query(`GRANT CONNECT ON DATABASE "${conn.database}" TO mcp_writer`);
+    await client.query(`GRANT USAGE ON SCHEMA public TO mcp_writer`);
+    await client.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO mcp_writer`);
+    await client.query(
+      `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO mcp_writer`,
+    );
+    await client.query(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO mcp_writer`);
+    await client.query(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO mcp_writer`);
+    await client.query(
+      `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON prod_maintenance_write FROM mcp_writer`,
+    );
+    await client.query(`ALTER ROLE mcp_writer SET statement_timeout = '15s'`);
+    console.log('[global-setup] provisioned mcp_reader (SELECT-only) + mcp_writer (DML-only) roles');
+  } finally {
+    await client.end();
+  }
 }

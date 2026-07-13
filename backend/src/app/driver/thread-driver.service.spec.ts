@@ -3,7 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { BrainGateway } from '../brain-gateway';
-import { EngineAuthError, EngineSessionLimitError } from '../engine';
+import {
+  EngineAuthError,
+  EngineSessionLimitError,
+  NO_ENGINE_CREDENTIAL_MARKER,
+} from '../engine';
 import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
 import {
   ThreadDriver,
@@ -25,6 +29,7 @@ import type { TurnRunnerService } from '../runner';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { CredentialResolver } from '../onboarding';
+import type { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
@@ -37,6 +42,7 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
+import { JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
 import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type { LiveVerificationJudge, LiveVerificationVerdict } from './live-verification-judge';
 import type { StaticVerificationJudge, StaticVerificationVerdict } from './static-verification-judge';
@@ -389,6 +395,28 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return s?.halt_fix_attempts ?? 0;
     }),
+    haltBudgetReason: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as
+        | (DriverThread & { config?: Record<string, unknown> })
+        | undefined;
+      const recovery = s?.config?.recovery as Record<string, unknown> | undefined;
+      return recovery?.haltBudgetReason === 'judge_unavailable'
+        ? 'judge_unavailable'
+        : null;
+    }),
+    setHaltBudgetReason: vi.fn(async (threadId: string, reason: 'judge_unavailable' | null) => {
+      const s = state.threads.find((x) => x.id === threadId) as
+        | (DriverThread & { config?: Record<string, unknown> })
+        | undefined;
+      if (!s) return;
+      const config = { ...(s.config ?? {}) };
+      const recovery = { ...((config.recovery as Record<string, unknown> | undefined) ?? {}) };
+      if (reason) recovery.haltBudgetReason = reason;
+      else delete recovery.haltBudgetReason;
+      if (Object.keys(recovery).length > 0) config.recovery = recovery;
+      else delete config.recovery;
+      s.config = config;
+    }),
     haltOutcome: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
       return (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null;
@@ -403,6 +431,14 @@ function makeStore(state: StoreState): {
         }
       }
       return n;
+    }),
+    rearmThread: vi.fn(async (threadId: string) => {
+      const s = state.threads.find((x) => x.id === threadId) as HaltFields | undefined;
+      if (s && (s.halt_fix_attempts ?? 0) > 0) {
+        s.halt_fix_attempts = 0;
+        return 1;
+      }
+      return 0;
     }),
     // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
     setDoneWakeOwed: vi.fn(async (_threadId: string, _reason: 'final' | 'notable') => undefined),
@@ -523,6 +559,10 @@ function makeTurn(
   opts: {
     completeThread?: boolean;
     transientFailures?: number;
+    /** The message the simulated transient failure throws (default: a sandbox connection-reset blip). Lets a
+     *  test drive a SPECIFIC transient shape — e.g. the d1 circuit-breaker's `in-sandbox engine turn failed:
+     *  Error: engine stream closed …` — through the REAL `runJobWithTransientRetry`/`TRANSIENT_ERROR_RE`. */
+    transientMessage?: string;
     /** Simulate the orchestrator VOLUNTARILY halting via `block_thread` (ADR 0004 Phase 3) instead of
      *  asserting completion — the turn calls `block_thread` with this and returns cleanly. */
     blockThread?: { reason: string; detail: string };
@@ -549,7 +589,7 @@ function makeTurn(
         if (remainingFailures > 0) {
           remainingFailures -= 1;
           // A transient infra blip (NOT auth/detached/timeout/unresumable) — the driver retries it silently.
-          throw new Error('sandbox exec failed: connection reset by peer');
+          throw new Error(opts.transientMessage ?? 'sandbox exec failed: connection reset by peer');
         }
         // Simulate the orchestrator voluntarily blocking (Phase 3) — a terminal assertion, no complete_thread.
         if (opts.blockThread && input.toolBridge?.tools?.['block_thread']) {
@@ -757,8 +797,12 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     prUrl: null,
     prNumber: null,
     shipReviewApprovedAt: null,
-    autoApprove: false,
+    autoApproveMode: 'off',
     autoApproveBy: null,
+    autoMerge: false,
+    autoMergeMethod: 'squash',
+    autoMergeDeleteBranch: true,
+    autoMergeBy: null,
     createdBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -837,6 +881,9 @@ function assemble(
     /** Point the thread sandbox's worktree at a REAL dir so a test can assert NOTHING is written under
      *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
     worktreePath?: string;
+    claudeCreds?: Pick<ClaudeCredentialStore, 'getSelectedRefreshMeta' | 'markNeedsReauth'>;
+    /** The manual "Merge PR" click's resolution path — defaults to a no-op resolve unless a test overrides it. */
+    autoMerge?: Pick<import('./auto-merge.service').AutoMergeService, 'mergeNow'>;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1029,6 +1076,9 @@ function assemble(
     // assertions hold. The open-PR step is now a SEEDED BRAIN TURN reached via the neutral BrainGateway (no
     // separate engine session), and the host latches the PR by branch discovery.
     new BuildShipService(git, pr, store, brainGateway),
+    // AutoMergeService: only `mergeNow` (the manual "Merge PR" click path) is called by the driver; default
+    // no-op resolve unless a test overrides it.
+    (opts.autoMerge ?? { mergeNow: async () => false }) as unknown as import('./auto-merge.service').AutoMergeService,
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -1054,6 +1104,9 @@ function assemble(
     judge,
     staticJudge,
     taskSink,
+    undefined,
+    undefined,
+    opts.claudeCreds as ClaudeCredentialStore | undefined,
   );
   // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the
   // instant the gate parks — so the build→ship pipeline tests keep reaching `done`. The re-drive fast-
@@ -1898,6 +1951,30 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     }
   });
 
+  it('creates the host evidence/<threadDirName>/ subfolder when dispatching a thread leg', async () => {
+    const ctxDir = mkdtempSync(join(tmpdir(), 'atlas-evi-'));
+    try {
+      const state: StoreState = {
+        job: makeJob(),
+        record: makeRecord(),
+        threads: [thread('sec-be', 10, 'Backend')],
+        steps: [],
+        route: { channel: 'C1', threadTs: 't1' },
+        operatorInputCards: [],
+      };
+      const h = assemble(state, { contextDirHost: ctxDir });
+
+      await h.driver.dispatch(state.job);
+      await flushUntil(() => state.job.status === 'done');
+
+      // `evidenceDirForThread` lazily mkdirs `<contextDirHost>/evidence/<ordinal>-<slug>` on the execute
+      // turn — here `010-backend` (ordinal 10, brief "Backend").
+      expect(existsSync(join(ctxDir, 'evidence', '010-backend'))).toBe(true);
+    } finally {
+      rmSync(ctxDir, { recursive: true, force: true });
+    }
+  });
+
   it('SILENTLY RETRIES a transient infra blip and completes — never surfaces a phantom "failed" (ADR 0004)', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -1925,6 +2002,35 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       ),
     ).toBe(false); // never stamped failed
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom error relay
+  });
+
+  it('SILENTLY RE-DRIVES the lane on the d1 stream-closed circuit-breaker throw — restarts on a fresh turn (never failed)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    // The EXACT wrapped shape the engine produces when the circuit-breaker trips: EngineCore throws
+    // `engine stream closed: control channel severed mid-turn (circuit-breaker)`; the entrypoint relays it
+    // (err.stack) and redis-engine-runner rewraps it as `in-sandbox engine turn failed: <msg>`. Its "stream
+    // closed" substring must drive the driver's TRANSIENT_ERROR_RE → runJobWithTransientRetry (fresh turn).
+    const streamClosedThrow =
+      'in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn (circuit-breaker)';
+    const { turn, calls } = makeTurn({ transientFailures: 1, transientMessage: streamClosedThrow });
+    const h = assemble(state, { turn, env: { DRIVER_TRANSIENT_RETRY_MS: '1' } });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.status).toBe('done'); // the lane self-healed on a fresh turn
+    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThanOrEqual(2); // re-drove after the storm throw
+    expect(
+      (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some((c) => c[1] === 'failed'),
+    ).toBe(false); // never stamped failed
+    expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom failure relay
   });
 
   it('shutdown drain: a step error WHILE DRAINING leaves the job running (resumable on boot), never failed', async () => {
@@ -2084,7 +2190,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
       async () => {
-        throw new EngineAuthError('401 invalid api key', 'sess-401');
+        // Raw SDK/CLI string — must never leak to the operator.
+        throw new EngineAuthError('Not logged in · Please run /login', 'sess-401');
       },
     );
 
@@ -2092,9 +2199,16 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
 
     expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT failed
-    expect(
-      h.posts.some((p) => /paused/i.test(p) && /credential|auth/i.test(p)),
-    ).toBe(true);
+    // The stored halt reason is clean, actionable copy — never the raw SDK/CLI string.
+    expect(state.job.halt?.reason).toBe(
+      'Your Claude login needs to be reconnected — reconnect the account in Settings, then resume.',
+    );
+    expect(state.job.halt?.reason).not.toMatch(/not logged in|\/login/i);
+    // The relayed pause notice carries the same clean copy and leaks no raw SDK text.
+    const pausePost = h.posts.find((p) => /paused/i.test(p));
+    expect(pausePost).toBeDefined();
+    expect(pausePost).toContain('Your Claude login needs to be reconnected');
+    expect(pausePost).not.toMatch(/not logged in|\/login/i);
     expect(h.opened).toHaveLength(0);
   });
 
@@ -2378,6 +2492,7 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     haltOutcome?: 'blocked' | null;
     haltWakedAt?: Date | null;
     haltFixAttempts?: number;
+    haltBudgetReason?: 'judge_unavailable';
   }): StoreState {
     const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
     (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = {
@@ -2389,6 +2504,11 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     h.halt_outcome = o.haltOutcome ?? null;
     h.halt_waked_at = o.haltWakedAt ?? null;
     h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    if (o.haltBudgetReason) {
+      (t as DriverThread & { config?: Record<string, unknown> }).config = {
+        recovery: { haltBudgetReason: o.haltBudgetReason },
+      };
+    }
     return {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
@@ -2429,7 +2549,7 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
     expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1);
   });
 
-  it('judge_unavailable transient hold KEEPS re-arming on re-drive (its only recovery path)', async () => {
+  it('judge_unavailable transient hold KEEPS re-arming on re-drive UNDER the judge cap (its only recovery path)', async () => {
     // Already delivered, but judge_unavailable must re-wake the brain to retry_thread when the judge recovers.
     const state = blockedState({ reason: 'judge_unavailable', haltOutcome: 'blocked', haltWakedAt: new Date() });
     const h = assemble(state);
@@ -2440,6 +2560,51 @@ describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread bloc
 
     expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
     expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(1); // owed again
+    expect(state.job.halt).toBeNull(); // still held, NOT rested — the operator dot lights via the owed wake
+  });
+
+  it('judge_unavailable hold RESTS once re-arming has spent the judge cap (no longer re-arms forever)', async () => {
+    // The deadlock's fix: patient re-arming is BOUNDED. Once halt_fix_attempts reaches JUDGE_UNAVAILABLE_REDRIVE_CAP
+    // the re-halt no longer owes a fresh wake — it rests the job `incomplete` for the operator's Retry/Accept levers.
+    const state = blockedState({
+      reason: 'judge_unavailable',
+      haltOutcome: 'blocked',
+      haltWakedAt: new Date(),
+      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
+    });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flushUntil(() => state.job.halt?.kind === 'incomplete');
+
+    expect(state.job.halt?.kind).toBe('incomplete'); // rested for the operator
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false — the sweep stops re-waking the brain
+    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('Retry now'))).toBe(true);
+  });
+
+  it('judge retry budget does NOT consume the real defect budget when the hold flips to unverified', async () => {
+    // Two patient judge-outage retries used the shared counter. If the next drive reaches the judges and gets
+    // a genuine unverified result, that stale judge budget must reset before the 2-attempt defect cap is read.
+    const state = blockedState({
+      reason: 'unverified',
+      haltOutcome: null,
+      haltWakedAt: null,
+      haltFixAttempts: 2,
+      haltBudgetReason: 'judge_unavailable',
+    });
+    const h = assemble(state);
+    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
+
+    await h.driver.resume();
+    await flush();
+
+    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be');
+    expect(h.store.setHaltBudgetReason).toHaveBeenCalledWith('sec-be', null);
+    expect(state.job.halt).toBeNull();
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked');
+    expect(await h.store.haltFixAttempts('sec-be')).toBe(0);
   });
 });
 
@@ -2656,10 +2821,10 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     expect(term.blocked?.detail).toContain('no Anthropic API key configured');
   });
 
-  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable), job stays running, never rested', async () => {
+  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable), job stays running UNDER the judge cap', async () => {
     // 07-09 incident: an Anthropic outage made the judge return undefined for EVERY thread. With a key present
     // that is a TRANSIENT infra failure, not unverified work — the thread must hold + retry, NOT burn the fix
-    // budget and rest the job `budget_exhausted`. Re-drive it up to the cap and prove the job never rests.
+    // budget and rest the job `budget_exhausted`. Under the judge cap the job never rests.
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2683,7 +2848,33 @@ describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — 
     expect(state.job.status).toBe('running');
     expect(h.posts.some((p) => p.includes('temporarily unavailable'))).toBe(true);
     expect(h.posts.some((p) => p.includes('autonomous fix attempts'))).toBe(false);
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed wake keeps the recovery alive
     expect(h.opened).toHaveLength(0); // nothing shipped
+  });
+
+  it('judge UNAVAILABLE with the judge cap already spent → RESTS the job `incomplete` for the operator', async () => {
+    // The bounded end of the patient-retry loop: once halt_fix_attempts has reached JUDGE_UNAVAILABLE_REDRIVE_CAP,
+    // a fresh judge_unavailable block stops re-arming and rests the job so the operator's Retry/Accept levers take over.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = JUDGE_UNAVAILABLE_REDRIVE_CAP;
+    const judge = fakeJudge(undefined);
+    const h = assemble(state, { judge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'incomplete');
+
+    expect(state.job.halt?.kind).toBe('incomplete'); // rested, not left running forever
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false — no more brain re-wakes
+    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
+    expect(h.opened).toHaveLength(0); // still nothing shipped
   });
 
   it('judge THROWING → caught, conservative blocked, never crashes the drive', async () => {
@@ -2878,7 +3069,7 @@ describe('ThreadDriver — static-verification judge gate (sibling of the live g
     expect(term.blocked?.detail).toContain('typecheck'); // missingChecks flows into detail
   });
 
-  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable)', async () => {
+  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable) UNDER the judge cap', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2899,6 +3090,29 @@ describe('ThreadDriver — static-verification judge gate (sibling of the live g
     expect(term.blocked?.reason).toBe('judge_unavailable'); // distinct from 'unverified'
     expect(term.blocked?.detail).toContain('temporarily unavailable');
     expect(state.job.status).toBe('running'); // held for retry, not rested
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed wake keeps re-arming
+  });
+
+  it('static judge UNAVAILABLE with the judge cap already spent → RESTS the job `incomplete`', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = JUDGE_UNAVAILABLE_REDRIVE_CAP;
+    const staticJudge = fakeStaticJudge(undefined);
+    const h = assemble(state, { staticJudge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'incomplete');
+
+    expect(state.job.halt?.kind).toBe('incomplete'); // the static gate's judge_unavailable rests the same way
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled();
+    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
   });
 
   it('judge UNAVAILABLE with NO key configured → conservative blocked (unverified)', async () => {
@@ -3895,6 +4109,268 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
   });
 });
 
+// ── judge_unavailable recovery mechanics (the deadlock, asserted gone) ─────────────────────────────
+//
+// The pre-fix deadlock: a `judge_unavailable` hold re-armed FOREVER (an Anthropic blip could park every
+// in-flight job indefinitely). The fix bounds the patient auto-retry at JUDGE_UNAVAILABLE_REDRIVE_CAP and
+// keeps the thread RECOVERABLE via two operator levers ("Retry now" / "Skip & accept"). These tests prove
+// (a) it holds while under the cap, (b) it rests at the cap, and (c) it stays operator-recoverable.
+describe('ThreadDriver — judge_unavailable recovery mechanics (deadlock repro)', () => {
+  /** A `judge_unavailable`-stuck thread `sec-be` on job `job-abcdef12`, shaped like the prod-stuck row. */
+  function judgeStuckState(o: {
+    staticAdequate?: boolean;
+    acceptRequested?: boolean;
+    haltFixAttempts?: number;
+    threadStatus?: ThreadStatus;
+    withStep?: boolean;
+    reason?: 'judge_unavailable' | 'unverified';
+  } = {}): StoreState {
+    const t = thread('sec-be', 10, 'Backend', o.threadStatus ?? 'executing', false, 'paused');
+    const term: ThreadTerminalRecord = {
+      status: 'blocked',
+      summary: 'built it; live judge was unreachable',
+      blocked: {
+        reason: o.reason ?? 'judge_unavailable',
+        detail: 'a verification judge is temporarily unavailable',
+      },
+      ...(o.staticAdequate !== undefined
+        ? { staticVerification: { verdict: { staticChecksAdequate: o.staticAdequate, reason: 'typecheck clean' } } }
+        : {}),
+      ...(o.acceptRequested ? { acceptRequested: true } : {}),
+    };
+    (t as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record = term;
+    const h = t as HaltFields;
+    h.halt_outcome = 'blocked';
+    h.halt_waked_at = null;
+    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
+    const steps: Step[] = o.withStep
+      ? [
+          {
+            id: 'sec-be-ph0',
+            threadId: 'sec-be',
+            jobId: 'job-abcdef12',
+            ordinal: 10,
+            title: 'build',
+            brief: 'do the backend',
+            stage: 'build',
+            status: 'building',
+            sessionId: null,
+            batchOrdinal: null,
+            legOrdinal: 1,
+            commitSha: null,
+          },
+        ]
+      : [];
+    return {
+      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
+      record: makeRecord(),
+      threads: [t],
+      steps,
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+
+  // ── A. the reproduction: hold under the cap, rest at the cap, stay recoverable ──────────────────
+
+  it('A1 — under the cap: a fresh judge_unavailable block re-arms (owed wake) and does NOT rest', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = JUDGE_UNAVAILABLE_REDRIVE_CAP - 1; // just under
+    const judge = fakeJudge(undefined); // Anthropic down
+    const h = assemble(state, { judge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.threads[0].condition === 'paused');
+
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
+    expect(state.job.halt).toBeNull(); // NOT rested
+    expect(state.job.status).toBe('running');
+    expect(h.posts.some((p) => p.includes('holding to retry'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(false);
+  });
+
+  it('A2 — at the cap: haltJob rests the job `incomplete` with NO owed wake', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = JUDGE_UNAVAILABLE_REDRIVE_CAP; // spent
+    const judge = fakeJudge(undefined);
+    const h = assemble(state, { judge, anthropicKey: async () => 'sk-ant-present' });
+    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'incomplete');
+
+    expect(state.job.halt?.kind).toBe('incomplete'); // deadlock gone — the loop bottoms out into a rest
+    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false: sweeps stop re-waking the brain
+    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
+    expect(h.posts.some((p) => p.includes('Skip & accept'))).toBe(true);
+  });
+
+  it('A3 — still recoverable: operatorRetryStuckThread re-arms + re-drives a rested judge hold', async () => {
+    const state = judgeStuckState({ haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP });
+    state.job.halt = { kind: 'incomplete', reason: 'a verification judge is temporarily unavailable', at: new Date().toISOString() };
+    const h = assemble(state);
+
+    const r = await h.driver.operatorRetryStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(true);
+    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be'); // fresh judge-cap budget, scoped to the target thread
+    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled(); // never job-wide (would reset resting siblings)
+    expect(h.store.clearTerminalRecord).toHaveBeenCalledWith('sec-be'); // redriveThread ran (stale record cleared)
+    expect(h.store.setThreadStatus).toHaveBeenCalledWith('sec-be', 'executing'); // re-driven off paused
+    await flush();
+  });
+
+  it('A3 — still recoverable: operatorAcceptStuckThread marks + drives a static-passed judge hold to done', async () => {
+    const state = judgeStuckState({
+      staticAdequate: true,
+      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
+      withStep: true,
+    });
+    state.threads[0].startSha = 'base-sha'; // so finalize stamps a real commit sha (headSha 'sha0' != base)
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(true);
+    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
+      'sec-be',
+      expect.objectContaining({ acceptRequested: true }),
+    );
+    await flushUntil(() => state.threads[0].status === 'done');
+    expect(state.threads[0].status).toBe('done'); // the drive finalized the accepted thread
+  });
+
+  // ── C. operatorRetryStuckThread guards ──────────────────────────────────────────────────────────
+
+  it('operatorRetryStuckThread REFUSES a thread not held on a judge outage (e.g. unverified)', async () => {
+    const state = judgeStuckState({ reason: 'unverified' });
+    const h = assemble(state);
+
+    const r = await h.driver.operatorRetryStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/verification-judge/i);
+    expect(h.store.rearmThread).not.toHaveBeenCalled(); // no re-arm, no re-drive
+    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled();
+    expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
+  });
+
+  // ── C. operatorAcceptStuckThread guards ─────────────────────────────────────────────────────────
+
+  it('operatorAcceptStuckThread REFUSES a non-judge_unavailable thread (never marks/drives)', async () => {
+    const state = judgeStuckState({ reason: 'unverified', staticAdequate: true });
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/only a verification-judge outage/i);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
+    expect(h.store.clearHalt).not.toHaveBeenCalled();
+  });
+
+  it('operatorAcceptStuckThread REFUSES a foreign thread (threadJobId !== jobId)', async () => {
+    const state = judgeStuckState({ staticAdequate: true });
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread('some-other-job', 'sec-be');
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/not part of this job/i);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
+  });
+
+  it('operatorAcceptStuckThread REFUSES an already-done thread', async () => {
+    const state = judgeStuckState({ staticAdequate: true, threadStatus: 'done' });
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/already complete/i);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
+  });
+
+  it('operatorAcceptStuckThread REFUSES when the static gate has NOT passed (would ship un-built work)', async () => {
+    const state = judgeStuckState({ staticAdequate: false }); // static verdict present but inadequate
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/static/i);
+    expect(r.reason).toMatch(/have not passed/i);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
+  });
+
+  it('operatorAcceptStuckThread on a valid judge+static-passed hold marks acceptRequested, clears halt, and drives', async () => {
+    const state = judgeStuckState({ staticAdequate: true });
+    const h = assemble(state);
+
+    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
+
+    expect(r.ok).toBe(true);
+    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
+      'sec-be',
+      expect.objectContaining({ acceptRequested: true }),
+    );
+    expect(h.store.clearHalt).toHaveBeenCalledWith('sec-be');
+    expect(h.store.clearJobHalt).toHaveBeenCalledWith(state.job.id);
+    expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'running');
+    await flush(); // let the kicked drive settle
+  });
+
+  // ── C. finalizeAcceptedThread (reached through the drive via the acceptRequested marker) ─────────
+
+  it('finalizeAcceptedThread on a CLEAN tree stamps the commit, flips steps + thread done, strips the marker', async () => {
+    const state = judgeStuckState({ staticAdequate: true, acceptRequested: true, withStep: true });
+    state.threads[0].startSha = 'base-sha'; // head 'sha0' != base → a real commit sha (not the NOTHING sentinel)
+    const h = assemble(state);
+
+    await h.driver.resume();
+    await flushUntil(() => state.threads[0].status === 'done');
+
+    expect(state.steps[0].commitSha).toBe('sha0'); // setStepCommit stamped the anchor
+    expect(state.steps[0].status).toBe('done');
+    expect(state.threads[0].status).toBe('done');
+    const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
+    expect(term.status).toBe('done');
+    expect(term.acceptRequested).toBeUndefined(); // marker cleared
+    expect(term.blocked).toBeUndefined(); // blocked stripped
+    expect(h.posts.some((p) => p.includes('Accepted'))).toBe(true);
+  });
+
+  it('finalizeAcceptedThread on a DIRTY tree refuses — stays recoverable (marker cleared, halt re-owed)', async () => {
+    const state = judgeStuckState({ staticAdequate: true, acceptRequested: true, withStep: true });
+    const h = assemble(state);
+    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges = vi.fn(async () => true);
+
+    await h.driver.resume();
+    await flush();
+
+    expect(state.threads[0].status).not.toBe('done'); // NOT shipped with an uncommitted tree
+    const term = (state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }).terminal_record;
+    expect(term.acceptRequested).toBeUndefined(); // the accept marker was cleared
+    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // stays recoverable
+    expect(h.posts.some((p) => p.includes('uncommitted changes'))).toBe(true);
+  });
+});
+
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────
 
 /** Let the fire-and-forget drive settle — drains microtasks AND macrotasks across many ticks. */
@@ -4039,34 +4515,37 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     };
   }
 
-  it('auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive', async () => {
-    const job = makeJob({
-      shipReviewApprovedAt: null,
-      autoApprove: true,
-      autoApproveBy: 'user-42',
-    });
-    const state = baseState(job);
-    const h = assemble(state, { autoShipApprove: false });
-    const approverSpy = vi.spyOn(
-      h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
-      'resolveAutoApprover',
-    );
+  it.each(['ship', 'both'] as const)(
+    'auto-resolves the ship gate INLINE with the job-stamped approver and ships in the same drive (mode: %s)',
+    async (mode) => {
+      const job = makeJob({
+        shipReviewApprovedAt: null,
+        autoApproveMode: mode,
+        autoApproveBy: 'user-42',
+      });
+      const state = baseState(job);
+      const h = assemble(state, { autoShipApprove: false });
+      const approverSpy = vi.spyOn(
+        h.driver as unknown as { resolveAutoApprover: (j: Job) => Promise<string> },
+        'resolveAutoApprover',
+      );
 
-    await h.driver.dispatch(state.job);
-    // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
-    await flushUntil(() => state.job.status === 'done');
+      await h.driver.dispatch(state.job);
+      // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
+      await flushUntil(() => state.job.status === 'done');
 
-    expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
-    expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
-    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
-    expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
-    await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
-  });
+      expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
+      expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
+      expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+      expect(h.shipSeeds).toHaveLength(1); // PR actually opened in this drive
+      await expect(approverSpy.mock.results[0]!.value).resolves.toBe('user-42');
+    },
+  );
 
   it('falls back to the org owner when autoApproveBy is null', async () => {
     const job = makeJob({
       shipReviewApprovedAt: null,
-      autoApprove: true,
+      autoApproveMode: 'ship',
       autoApproveBy: null,
     });
     const state = baseState(job);
@@ -4086,19 +4565,22 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     await expect(approverSpy.mock.results[0]!.value).resolves.toBe('owner-99');
   });
 
-  it('does NOT auto-resolve the ship gate when autoApprove is off', async () => {
-    const job = makeJob({ shipReviewApprovedAt: null, autoApprove: false, autoApproveBy: null });
-    const state = baseState(job);
-    const h = assemble(state, { autoShipApprove: false });
+  it.each(['plan', 'off'] as const)(
+    'does NOT auto-resolve the ship gate when autoApproveMode does not approve the ship gate (mode: %s)',
+    async (mode) => {
+      const job = makeJob({ shipReviewApprovedAt: null, autoApproveMode: mode, autoApproveBy: null });
+      const state = baseState(job);
+      const h = assemble(state, { autoShipApprove: false });
 
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
-    await flush();
+      await h.driver.dispatch(state.job);
+      await flushUntil(() => state.job.status === 'awaiting_ship_review');
+      await flush();
 
-    expect(h.store.approveShip).not.toHaveBeenCalled();
-    expect(h.shipSeeds).toHaveLength(0);
-    expect(state.job.status).toBe('awaiting_ship_review');
-  });
+      expect(h.store.approveShip).not.toHaveBeenCalled();
+      expect(h.shipSeeds).toHaveLength(0);
+      expect(state.job.status).toBe('awaiting_ship_review');
+    },
+  );
 });
 
 // ── 401 auth recovery: pause (not fail) + ping-to-resume the SAME session, durable ─────────────────
@@ -4172,6 +4654,42 @@ describe('ThreadDriver — 401 auth recovery', () => {
     expect(
       h.shipSeeds.length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a Codex no-credential halt does not touch Claude credential recovery state', async () => {
+    const state = freshState();
+    state.threads = [thread('sec-review', 10, 'Master review', 'pending', true)];
+    const getSelectedRefreshMeta = vi.fn(async () => ({
+      id: 'claude-cred',
+      lastRefreshedAt: new Date(),
+    }));
+    const markNeedsReauth = vi.fn(async () => undefined);
+    const turn = {
+      runTurn: vi.fn(async () => {
+        throw new EngineAuthError(
+          `${NO_ENGINE_CREDENTIAL_MARKER}: no codex subscription secret`,
+          undefined,
+          'codex',
+        );
+      }),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, {
+      turn,
+      claudeCreds: { getSelectedRefreshMeta, markNeedsReauth },
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+
+    expect(state.job.halt?.reason).toBe(
+      'No Codex account is connected for this org — connect one in Settings, then resume.',
+    );
+    expect(getSelectedRefreshMeta).not.toHaveBeenCalled();
+    expect(markNeedsReauth).not.toHaveBeenCalled();
+    expect(h.store.setSessionResume).not.toHaveBeenCalled();
+    const pausePost = h.posts.find((p) => /paused/i.test(p));
+    expect(pausePost).toContain('No Codex account is connected');
   });
 
   it('resumePaused is a no-op when the job is not paused', async () => {

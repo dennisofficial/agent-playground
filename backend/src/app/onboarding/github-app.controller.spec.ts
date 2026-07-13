@@ -28,7 +28,6 @@ function fakeStore(overrides: {
       hasCodex: false,
       hasGithubApp: false,
       githubAuthMode: 'pat' as const,
-      githubIdentityMode: null as 'pat' | 'app' | null,
       ...overrides.presence,
     })),
   } as unknown as TenantCredentialStore & {
@@ -164,38 +163,6 @@ describe('GithubAppController', () => {
     });
   });
 
-  describe('PUT identity', () => {
-    it('sets identity mode to "app": writes the column, reactivates, and echoes the value', async () => {
-      const store = fakeStore();
-      const onboarding = fakeOnboarding();
-      const controller = new GithubAppController(
-        store,
-        fakeAppTokens(),
-        onboarding,
-        fakeStateStore(),
-      );
-      const result = await controller.setIdentity(ORG, { identity: 'app' });
-      expect(result).toEqual({ ok: true, identity: 'app' });
-      expect(store.write).toHaveBeenCalledWith('org-1', { githubIdentityMode: 'app' });
-      expect(onboarding.tryActivate).toHaveBeenCalledWith('org-1');
-    });
-
-    it('sets identity mode to "pat": writes the column, reactivates, and echoes the value', async () => {
-      const store = fakeStore();
-      const onboarding = fakeOnboarding();
-      const controller = new GithubAppController(
-        store,
-        fakeAppTokens(),
-        onboarding,
-        fakeStateStore(),
-      );
-      const result = await controller.setIdentity(ORG, { identity: 'pat' });
-      expect(result).toEqual({ ok: true, identity: 'pat' });
-      expect(store.write).toHaveBeenCalledWith('org-1', { githubIdentityMode: 'pat' });
-      expect(onboarding.tryActivate).toHaveBeenCalledWith('org-1');
-    });
-  });
-
   describe('DELETE', () => {
     it('clears the installation and falls back to pat mode', async () => {
       const store = fakeStore();
@@ -218,9 +185,9 @@ describe('GithubAppController', () => {
   });
 
   describe('GET status', () => {
-    it('shapes configured/connected/mode/installationId/account/identityMode from presence + read', async () => {
+    it('shapes configured/connected/mode/installationId/account from presence + read', async () => {
       const store = fakeStore({
-        presence: { hasGithubApp: true, githubAuthMode: 'app', githubIdentityMode: 'app' },
+        presence: { hasGithubApp: true, githubAuthMode: 'app' },
         read: { githubAppInstallationId: '123', githubAppInstallationAccount: 'acme' },
       });
       const controller = new GithubAppController(
@@ -236,7 +203,6 @@ describe('GithubAppController', () => {
         mode: 'app',
         installationId: '123',
         account: 'acme',
-        identityMode: 'app',
       });
     });
 
@@ -250,17 +216,6 @@ describe('GithubAppController', () => {
       const result = await controller.status(ORG);
       expect(result.installationId).toBeNull();
       expect(result.account).toBeNull();
-    });
-
-    it('identityMode defaults to null when unset', async () => {
-      const controller = new GithubAppController(
-        fakeStore(),
-        fakeAppTokens(),
-        fakeOnboarding(),
-        fakeStateStore(),
-      );
-      const result = await controller.status(ORG);
-      expect(result.identityMode).toBeNull();
     });
   });
 });
@@ -282,9 +237,13 @@ describe('GithubAppCallbackController', () => {
     expect(stateStore.consume).toHaveBeenCalledWith('nonce-abc');
     expect(store.write).toHaveBeenCalledWith('org-1', {
       githubAppInstallationId: '999',
-      githubAuthMode: 'app',
       githubAppInstallationAccount: 'acme',
     });
+    // Connecting the App must NEVER auto-flip the in-sandbox auth mode.
+    expect(store.write).not.toHaveBeenCalledWith(
+      'org-1',
+      expect.objectContaining({ githubAuthMode: expect.anything() }),
+    );
     expect(onboarding.tryActivate).toHaveBeenCalledWith('org-1');
     expect(res.redirect).toHaveBeenCalledWith(
       302,

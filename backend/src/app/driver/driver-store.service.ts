@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
+import type { AutoMergeMethod } from '@workspace/shared';
 import type {
   Decision,
   DecisionRecord,
@@ -42,7 +43,8 @@ import {
 } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
-import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
+import { webAmendProposalCard, webMergeReadyCard, webVerdictCard } from '../surface/web-approval-card';
+import { prMergeReady } from './auto-merge.service';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '../prompt-kit/message';
 
@@ -55,6 +57,7 @@ const ORDINAL_GAP = 10;
  * extra field rather than the driver re-querying the thread for it.
  */
 export type DriverThread = Thread & { orgId: string };
+type HaltBudgetReason = 'judge_unavailable';
 
 /**
  * A builder's review CHILD thread (a `review_lens` or `post_review` row) as the driver's child-thread
@@ -501,6 +504,54 @@ export class DriverStoreService {
       row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
       await this.messages.save(row);
     }
+  }
+
+  // ── merge-ready gate (the third human gate: GitHub-mergeable → post the "Merge PR" card) ──────────────
+
+  /** Post (or refresh) the durable "Merge PR" card — keyed on a FIXED `ts` so repeated calls (the
+   *  reconciler re-evaluates on every poll) UPDATE the same row instead of stacking duplicates. Does NOT
+   *  touch job status: the job stays wherever it is, this is purely an informational/actionable card. */
+  async postMergeCard(jobId: string): Promise<void> {
+    const ts = `merge-ready:${jobId}`;
+    const card = webMergeReadyCard(jobId) as unknown as Record<string, unknown>;
+    const existing = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    if (existing) {
+      existing.card = card;
+      await this.messages.save(existing);
+      return;
+    }
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: 'This PR is ready to merge.',
+        kind: 'card',
+        ts,
+        card,
+      }),
+    );
+  }
+
+  /** Neutralize the "Merge PR" card once it's no longer actionable — rewrites it to a verdict card so a
+   *  stale button can't be clicked. `outcome` distinguishes an actual merge (`'merged'` → '✅ Merged.')
+   *  from the PR merely leaving the merge-ready state (`'not-ready'` → 'No longer ready to merge.'): the
+   *  latter fires whenever the PR turns dirty / CI regresses / it closes unmerged, so it must NOT claim
+   *  success. Best-effort: a missing or already-neutralized row is a silent no-op. */
+  async neutralizeMergeCard(jobId: string, outcome: 'merged' | 'not-ready' = 'merged'): Promise<void> {
+    const ts = `merge-ready:${jobId}`;
+    const row = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    if (!row) return;
+    const card = row.card as Record<string, unknown> | null;
+    if (card?.['type'] !== 'approval_card') return;
+    const title = String(card?.['title'] ?? 'Merge PR');
+    const [verdict, verdictLine] =
+      outcome === 'merged'
+        ? (['merged', '✅ Merged.'] as const)
+        : (['expired', 'No longer ready to merge.'] as const);
+    row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
+    await this.messages.save(row);
   }
 
   /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is
@@ -1108,6 +1159,38 @@ export class DriverStoreService {
     return row?.halt_fix_attempts ?? 0;
   }
 
+  /** Which recovery path last consumed the shared `halt_fix_attempts` counter. Stored in existing jsonb so a
+   *  `judge_unavailable` patient retry that later reveals a real defect does not steal the 2-attempt defect
+   *  budget. */
+  async haltBudgetReason(threadId: string): Promise<HaltBudgetReason | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, config: true },
+    });
+    return haltBudgetReasonFromConfig(row?.config);
+  }
+
+  /** Durable marker for the shared halt budget's current owner. `null` clears the marker while preserving the
+   *  rest of the thread config. */
+  async setHaltBudgetReason(
+    threadId: string,
+    reason: HaltBudgetReason | null,
+  ): Promise<void> {
+    const recoveryObject = `(CASE WHEN jsonb_typeof(config->'recovery') = 'object' THEN config->'recovery' ELSE '{}'::jsonb END)`;
+    const configObject = `COALESCE(config, '{}'::jsonb)`;
+    const clearedRecovery = `(${recoveryObject} - 'haltBudgetReason')`;
+    const nextConfig = reason
+      ? `jsonb_set(${configObject}, '{recovery}', ${recoveryObject} || jsonb_build_object('haltBudgetReason', CAST(:reason AS text)), true)`
+      : `CASE WHEN ${clearedRecovery} = '{}'::jsonb THEN ${configObject} - 'recovery' ELSE jsonb_set(${configObject}, '{recovery}', ${clearedRecovery}, true) END`;
+    await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ config: () => nextConfig })
+      .where('id = :threadId', { threadId })
+      .setParameters({ reason })
+      .execute();
+  }
+
   /** OPERATOR RE-ARM (ADR 0004 rider 4): reset the autonomous re-drive budget for a job's spent threads so a
    *  human re-engagement (`resumePaused`/`retry`) grants Atlas a fresh set of attempts. The counter is a
    *  LIFETIME budget for AUTONOMOUS loops — only an explicit operator action re-arms it (never boot-resume),
@@ -1118,6 +1201,22 @@ export class DriverStoreService {
       .update(ThreadEntity)
       .set({ halt_fix_attempts: 0 })
       .where('job_id = :jobId', { jobId })
+      .andWhere('halt_fix_attempts > 0')
+      .execute();
+    return res.affected ?? 0;
+  }
+
+  /** Reset ONE thread's autonomous re-drive budget to 0 — the single-thread analog of
+   *  {@link rearmHaltedThreads}. Used by the operator "Retry now" lever so a fresh judge-cap budget is granted
+   *  to the TARGET thread only (never resetting a resting sibling that genuinely exhausted its defect budget),
+   *  and to clear a defect counter polluted by prior judge-outage retries. Returns 1 if a positive counter was
+   *  reset, else 0. */
+  async rearmThread(threadId: string): Promise<number> {
+    const res = await this.threads
+      .createQueryBuilder()
+      .update(ThreadEntity)
+      .set({ halt_fix_attempts: 0 })
+      .where('id = :threadId', { threadId })
       .andWhere('halt_fix_attempts > 0')
       .execute();
     return res.affected ?? 0;
@@ -1303,7 +1402,12 @@ export class DriverStoreService {
         // its first brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('main'),
         createdBy: thread.created_by ?? null,
-        autoApprove: thread.auto_approve ?? false,
+        autoApproveMode: thread.auto_approve_mode ?? 'off',
+        autoMerge: thread.auto_merge ?? false,
+        autoMergeMethod: thread.auto_merge_method ?? 'squash',
+        autoMergeDeleteBranch: thread.auto_merge_delete_branch ?? true,
+        mergeReady: prMergeReady(thread),
+        mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
         blockedBy,
         blockedSeedMessage,
       };
@@ -1382,6 +1486,12 @@ export class DriverStoreService {
       type: coerceThreadType(s.type),
       status: s.status,
       condition: s.condition,
+      blockReason: s.terminal_record?.blocked?.reason ?? null,
+      // True only when the LIVE judge was the outage and static build+tests passed — gates the "Skip & accept"
+      // button (mirrors operatorAcceptStuckThread's server-side guard, so the UI never offers an unsafe accept).
+      acceptableOnJudgeOutage:
+        s.terminal_record?.blocked?.reason === 'judge_unavailable' &&
+        s.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
       // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
       defaultFooter: laneDefaultFooter(s.kind),
       // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
@@ -1434,9 +1544,16 @@ export class DriverStoreService {
       // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
       // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
       buildPath: thread.build_path ?? null,
-      // Per-job auto-approve flag — surfaced so the console can render + toggle it (also on the no_job
+      // Per-job auto-approve mode — surfaced so the console can render + toggle it (also on the no_job
       // shape above, so the toggle works pre-plan while the job is still `open`).
-      autoApprove: thread.auto_approve ?? false,
+      autoApproveMode: thread.auto_approve_mode ?? 'off',
+      autoMerge: thread.auto_merge ?? false,
+      autoMergeMethod: thread.auto_merge_method ?? 'squash',
+      autoMergeDeleteBranch: thread.auto_merge_delete_branch ?? true,
+      // GitHub-mergeable, independent of the auto_merge toggle (a human can always click Merge PR) — the
+      // manual Merge PR card/button reads this same gate the auto-merge evaluator uses.
+      mergeReady: prMergeReady(thread),
+      mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1568,8 +1685,12 @@ function toJob(row: JobEntity): Job {
     prUrl: row.pr_url,
     prNumber: row.pr_number,
     shipReviewApprovedAt: row.ship_review_approved_at,
-    autoApprove: row.auto_approve ?? false,
+    autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
+    autoMerge: row.auto_merge ?? false,
+    autoMergeMethod: (row.auto_merge_method ?? 'squash') as AutoMergeMethod,
+    autoMergeDeleteBranch: row.auto_merge_delete_branch ?? true,
+    autoMergeBy: row.auto_merge_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1594,6 +1715,16 @@ function toThread(row: ThreadEntity): DriverThread {
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function haltBudgetReasonFromConfig(config: unknown): HaltBudgetReason | null {
+  const recovery = isRecord(config) ? config.recovery : null;
+  const reason = isRecord(recovery) ? recovery.haltBudgetReason : null;
+  return reason === 'judge_unavailable' ? reason : null;
 }
 
 function toReviewChild(row: ThreadEntity): ReviewChildThread {

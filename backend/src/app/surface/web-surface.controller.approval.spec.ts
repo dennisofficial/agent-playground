@@ -44,12 +44,12 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never,
+    {} as never, // autoMerge
     {} as never,
     jobs as never,
     {} as never,
     {} as never,
     {} as never,
-    {} as never, // ticketEvents
     {} as never, // usageBus
     { available: false } as never,
     {} as never,

@@ -320,6 +320,9 @@ export class TurnHarnessFactory {
     // Idempotent finalization: `finish`/`abort` run their body once; afterwards late `onEvent`s are dropped
     // so a turn that errors/times-out while still unwinding can never reopen the lane.
     let closed = false;
+    let terminalReason: string | undefined;
+    let stopReason: string | null | undefined;
+    let streamClosedCount: number | undefined;
 
     const persistAll = async (): Promise<void> => {
       for (let i = 0; i < blocks.length; i++) {
@@ -458,9 +461,16 @@ export class TurnHarnessFactory {
                   resetsAt: e.resetsAt,
                   rateLimitType: e.rateLimitType,
                   utilization: e.utilization,
+                  credentialId: e.credentialId,
                 })
                 .catch(() => undefined);
             }
+            break;
+          }
+          case 'turn_debug': {
+            if ('terminalReason' in e) terminalReason = e.terminalReason;
+            if ('stopReason' in e) stopReason = e.stopReason;
+            if (typeof e.streamClosedCount === 'number') streamClosedCount = e.streamClosedCount;
             break;
           }
           default:
@@ -480,10 +490,15 @@ export class TurnHarnessFactory {
             ...(metaTag ? { meta: { ...metaTag } } : {}),
           });
         }
-        // Per-turn accounting: a `turn_meta` block carrying usage + context occupancy, stamped LAST (the
-        // monotonic `stamp()` sorts it after every transcript block) so the web renders it as the turn-end
-        // divider and reads the latest one for the context ring. Only when usage is actually present.
-        if (turnMeta?.usage) {
+        // Per-turn accounting: a `turn_meta` block carrying usage/context occupancy plus engine diagnostics,
+        // stamped LAST (the monotonic `stamp()` sorts it after every transcript block) so the web renders it
+        // as the turn-end divider and keeps the values after the live Redis stream is reaped.
+        if (
+          turnMeta?.usage ||
+          terminalReason !== undefined ||
+          stopReason !== undefined ||
+          streamClosedCount !== undefined
+        ) {
           // Occupancy for the context ring: prefer the explicit top-level values the brain passes;
           // otherwise fall back to the occupancy already living on `usage` (populated by engine-core for
           // every Claude turn), resolving the window with the SAME per-model map the brain + analytics
@@ -495,18 +510,18 @@ export class TurnHarnessFactory {
           // telescopes to ≈ the final round-trip's input = the real end-of-turn occupancy: `inputTokens −
           // cacheReadTokens`. (Degrades cleanly: a single-round-trip Codex turn has ~0 cache, so this ≈ its
           // one prompt.) Size it against the Codex window — this is what gives Codex lanes a truthful ring.
-          const u = turnMeta.usage;
+          const u = turnMeta?.usage;
           const codexOccupancy =
-            u.engine === 'codex'
+            u?.engine === 'codex'
               ? (u.contextTokens ??
                   (u.inputTokens != null
                     ? Math.max(0, u.inputTokens - (u.cacheReadTokens ?? 0))
                     : null))
               : null;
-          const ctxTokens = turnMeta.contextTokens ?? u.contextTokens ?? codexOccupancy;
+          const ctxTokens = turnMeta?.contextTokens ?? u?.contextTokens ?? codexOccupancy;
           const ctxLimit =
-            turnMeta.contextLimit ??
-            (ctxTokens != null ? resolveContextLimit(u.contextModel ?? u.model, u.engine) : null);
+            turnMeta?.contextLimit ??
+            (ctxTokens != null ? resolveContextLimit(u?.contextModel ?? u?.model, u?.engine) : null);
           // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
           // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
           // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
@@ -518,9 +533,12 @@ export class TurnHarnessFactory {
             emittedAt: stamp(),
             meta: {
               ...(metaTag ?? {}),
-              usage: turnMeta.usage as unknown as Record<string, unknown>,
-              contextTokens: ctxTokens,
-              contextLimit: ctxLimit,
+              ...(u ? { usage: u as unknown as Record<string, unknown> } : {}),
+              ...(u ? { contextTokens: ctxTokens ?? null } : ctxTokens != null ? { contextTokens: ctxTokens } : {}),
+              ...(ctxLimit != null ? { contextLimit: ctxLimit } : {}),
+              ...(terminalReason !== undefined ? { terminalReason } : {}),
+              ...(stopReason !== undefined ? { stopReason } : {}),
+              ...(streamClosedCount !== undefined ? { streamClosedCount } : {}),
               ...(workedMs != null ? { workedMs } : {}),
             },
           });

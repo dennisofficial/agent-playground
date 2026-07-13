@@ -55,7 +55,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   block_thread: { reason: 'question', detail: 'Need operator input to continue.', gaps: ['Missing creds.'] },
   record_leg_handoff: { handoff: 'Finished the migration; next leg wires the API.' },
   record_deviation: { note: 'Renamed a var for clarity.' },
-  capture_ticket: { title: 'Add pagination', body: 'Follow-up: paginate the list endpoint.' },
   task_create: {
     subject: 'Wire the endpoint',
     description: 'Add the route and controller.',
@@ -141,27 +140,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     decisions: [decisionItemPayload],
   },
   create_job: { firstMessage: 'Please fix the flaky test.', title: 'Fix flaky test' },
-  create_ticket: {
-    title: 'Add pagination',
-    status: 'open',
-    priority: 'p2',
-    kind: 'feature',
-    body: 'Paginate the list endpoint.',
-    confirm: true,
-    dependsOn: ['T-1'],
-  },
-  list_tickets: { status: 'open' },
-  update_ticket: {
-    ticketId: 't1',
-    status: 'open',
-    priority: 'p2',
-    kind: 'feature',
-    title: 'Add pagination',
-    body: 'Paginate the list endpoint.',
-  },
-  link_ticket_dependency: { ticketId: 't1', dependsOnTicketId: 't2' },
+  list_jobs: { status: 'all', query: 'auth', limit: 10 },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
-  promote_ticket: { ticketId: 't1' },
   propose_convention_profile_change: {
     slug: 'backend-style',
     body: '# House style\n...',
@@ -188,6 +168,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
   read_setup_script: {},
+  write_preview_instructions: { instructions: 'docker compose up -d && pnpm migrate && pnpm seed' },
+  read_preview_instructions: {},
   derive_secret: {
     name: 'DERIVED_KEY',
     path: '.derived/key',
@@ -227,6 +209,33 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   propose_mcp_removal: { name: 'stripe', rationale: 'No longer used.', scope: 'org' },
   propose_convention_profile: { slug: 'backend-style', rationale: 'Codify the existing convention.' },
   finish_onboarding: { summary: 'Boots green.', verified: 'Brought up the API and worker; both healthy.' },
+
+  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
+  atlas_query: {
+    sql: 'SELECT id FROM jobs WHERE id = $1',
+    params: ['j1'],
+    format: 'json',
+    limit: 100,
+  },
+  atlas_schema: {},
+  atlas_job_overview: { jobId: 'j1' },
+  atlas_session_raw: {
+    jobId: 'j1',
+    sessionId: 's1',
+    raw: false,
+    role: 'assistant',
+    thinking: true,
+    text: true,
+    tools: true,
+    errors: true,
+    tail: 80,
+    since: '2026-07-01T00:00:00.000Z',
+    grep: 'error',
+  },
+  atlas_context_read: { jobId: 'j1', path: 'specs/02-atlas-prod-mcp.md' },
+  atlas_worktree_tree: { jobId: 'j1', subpath: 'src' },
+  atlas_worktree_file: { jobId: 'j1', path: 'src/index.ts' },
+  propose_prod_write: { sql: "UPDATE threads SET halt_fix_attempts = 0 WHERE id = 't1'" },
 };
 
 describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
@@ -262,15 +271,6 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
     const res = await client.callTool({ name, arguments: payload });
     expect(res.isError, `${name} call must not error`).toBeFalsy();
     expect(captured[name]).toEqual(payload);
-  });
-
-  it('update_ticket: an explicit null body round-trips as null (nullable, not stripped)', async () => {
-    const payload = { ticketId: 'x', body: null };
-    captured['update_ticket'] = '(not called)';
-    const res = await client.callTool({ name: 'update_ticket', arguments: payload });
-    expect(res.isError).toBeFalsy();
-    expect(captured['update_ticket']).toEqual(payload);
-    expect((captured['update_ticket'] as { body: unknown }).body).toBeNull();
   });
 
   it('rejects a wrong-typed REQUIRED field before the handler ever sees it', async () => {

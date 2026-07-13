@@ -1,5 +1,6 @@
 "use client";
 
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import { env } from "@/lib/env";
 import { fetchWithRefresh } from "./refresh";
 import type {
@@ -7,6 +8,7 @@ import type {
   ContextFileContent,
   InboxPr,
   JobBlocker,
+  JobDiff,
   JobProvenance,
   PipelineJob,
   PipelineState,
@@ -232,6 +234,16 @@ export interface ReviewCommentItemBody {
   file: string;
   quote: string;
   note?: string;
+  /** Line-range anchor for a diff-gutter comment (absent for a free-text selection comment): the old/new
+   *  spans covered plus the signed diff fragment the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**
@@ -291,7 +303,9 @@ export function answerQuestion(
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
  *  procedure as a server-side seed turn (not the generic /say path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
-export function spinUpPreview(ref: JobRef): Promise<{ ok: boolean; ts: string }> {
+export function spinUpPreview(
+  ref: JobRef,
+): Promise<{ ok: boolean; ts: string }> {
   return webJson(threadPath(ref, "/spin-up-preview"), { method: "POST" });
 }
 
@@ -363,6 +377,28 @@ export function retryJob(
   return webJson(threadPath(ref, "/retry"), { method: "POST" });
 }
 
+/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive (re-runs the live judge),
+ *  re-arming the judge-cap re-drive budget. Refused server-side if the hold is not a judge outage. */
+export function retryVerification(
+  ref: JobRef,
+  threadId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, `/threads/${threadId}/retry-verification`), {
+    method: "POST",
+  });
+}
+
+/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete the thread, bypassing only the
+ *  unreachable live judge, then advance the job. Refused server-side unless the static gate already passed. */
+export function acceptThread(
+  ref: JobRef,
+  threadId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, `/threads/${threadId}/accept`), {
+    method: "POST",
+  });
+}
+
 /**
  * The "Resume" button on a `retryable` system→operator error box (a chat-turn that hit a transient
  * engine failure). Distinct from `retryJob` — this re-pokes the SAME engine session with no new operator
@@ -418,6 +454,12 @@ export function fetchContextFile(
   );
 }
 
+// ── Job diff (accumulated worktree change across all threads) ─────────────────────────────────────
+/** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
+export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
+  return webJson<JobDiff>(threadPath(ref, "/diff"));
+}
+
 // ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
 /** The job worktree's TRACKED-file manifest (git ls-files) — used to verify which inline-code spans name a
  *  real repo file before linkifying them. Empty when the worktree is gone (closed/reset). */
@@ -446,15 +488,37 @@ export function renameJob(
   });
 }
 
-/** Flip the job's per-job auto-approve flag (`PATCH …/jobs/:jobId/auto-approve`). Enabling also resolves
- *  any gate the job is currently parked on; the flag is read back from the pipeline. */
+/** Set the job's per-job auto-approve mode (`PATCH …/jobs/:jobId/auto-approve`) — the header popover's
+ *  Plan/Ship switches compose into one of the four `AutoApproveMode` values. Enabling a gate the job is
+ *  currently parked on also resolves it; the mode is read back from the pipeline. */
 export function setAutoApprove(
   ref: JobRef,
-  enabled: boolean,
-): Promise<{ ok: boolean; autoApprove: boolean }> {
+  mode: AutoApproveMode,
+): Promise<{ ok: boolean; autoApproveMode: AutoApproveMode }> {
   return webJson(threadPath(ref, "/auto-approve"), {
     method: "PATCH",
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ mode }),
+  });
+}
+
+/** Set the job's per-job auto-merge settings (`PATCH …/jobs/:jobId/auto-merge`). Enabling on an already
+ *  merge-ready PR immediately evaluates/merges (backend). */
+export function setAutoMerge(
+  ref: JobRef,
+  body: {
+    autoMerge: boolean;
+    method?: AutoMergeMethod;
+    deleteBranch?: boolean;
+  },
+): Promise<{
+  ok: boolean;
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+}> {
+  return webJson(threadPath(ref, "/auto-merge"), {
+    method: "PATCH",
+    body: JSON.stringify(body),
   });
 }
 
@@ -584,6 +648,14 @@ export interface CreateThreadBody {
   kind?: OperatorJobKind;
   /** For `kind: "review"` — the PR number to review (seeds a <review> block on the brain's first turn). */
   prNumber?: string;
+  /** Arm auto-approve at creation; omit (or "off") to leave the job's gates waiting for a human. */
+  autoApproveMode?: AutoApproveMode;
+  /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
+  autoMerge?: boolean;
+  /** GitHub merge strategy used when auto-merge lands the PR. */
+  autoMergeMethod?: AutoMergeMethod;
+  /** Delete the head branch after a successful auto-merge. */
+  autoMergeDeleteBranch?: boolean;
 }
 
 export function createJob(
@@ -610,6 +682,13 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
+  if (body.autoApproveMode)
+    form.append("autoApproveMode", body.autoApproveMode);
+  if (body.autoMerge) form.append("autoMerge", "true");
+  if (body.autoMergeMethod)
+    form.append("autoMergeMethod", body.autoMergeMethod);
+  if (body.autoMergeDeleteBranch != null)
+    form.append("autoMergeDeleteBranch", String(body.autoMergeDeleteBranch));
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

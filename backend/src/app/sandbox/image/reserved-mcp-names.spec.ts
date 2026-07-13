@@ -9,9 +9,9 @@ describe('reserved-mcp-names', () => {
     for (const name of [
       'atlas-host-bridge',
       'workspace-profile',
+      'atlas-prod',
       'atlasbridge',
       'atlas-lsp-ts',
-      'context7',
     ]) {
       expect(RESERVED_MCP_SERVER_NAMES).toContain(name);
     }

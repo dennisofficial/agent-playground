@@ -17,7 +17,7 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type { JobStatus, JobHalt, JobActivity } from '@workspace/shared';
+import type { JobStatus, JobHalt, JobActivity, AutoApproveMode, AutoMergeMethod } from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
 // Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
 // registry imports from `autofix`, which imports domain types.
@@ -129,11 +129,17 @@ export interface Job {
    *  ship gate reads it to distinguish "just parked" (null → park at `awaiting_ship_review`) from
    *  "approved, proceed" (set → ship). Cleared when a new build is dispatched. See {@link JobStatus}. */
   shipReviewApprovedAt: Date | null;
-  /** Per-job auto-approve: gates auto-advance with no human click when true (see jobs.auto_approve). */
-  autoApprove: boolean;
+  /** Per-job auto-approve mode: which gates auto-advance with no human click (see jobs.auto_approve_mode). */
+  autoApproveMode: AutoApproveMode;
   /** Who enabled auto-approve (users.id), used as the approver on auto-resolve; null if never enabled
    *  / enabling user deleted. */
   autoApproveBy: string | null;
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready PR auto-merges. See jobs.auto_merge. */
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+  /** Who most recently enabled auto-merge (users.id); null if never enabled / user deleted. */
+  autoMergeBy: string | null;
   /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
   createdBy: JobProvenance | null;
   createdAt: Date;
@@ -164,6 +170,11 @@ export interface Message {
  * spent; `resumePaused`/`retry` re-arm it on operator re-engagement) so the two can't drift.
  */
 export const HALT_FIX_ATTEMPT_CAP = 2;
+
+/** Separate, higher re-drive budget for a judge_unavailable hold (transient infra, NOT a work defect —
+ *  see Decision d2). The 2-try HALT_FIX_ATTEMPT_CAP bounds fixes for real defects; a judge blip must
+ *  self-heal patiently, then rest for the operator. The ~30s owed-wake sweep paces each re-drive. */
+export const JUDGE_UNAVAILABLE_REDRIVE_CAP = 20;
 
 /** A thread's PURE LINEAR STEP — explicit, resumable. The driver `await`s each transition. Pause/failure/
  *  skip are NOT steps; they live on the orthogonal {@link ThreadCondition} overlay. */

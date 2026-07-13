@@ -4,6 +4,7 @@ import { envConfigValidation } from '@core/config/env/validation';
 import { CreateModule, EnvModule, LoggerModule } from '@workspace/nestjs-core';
 import { FeaturesModule } from './features.module';
 import { PersistenceModule } from './persistence/persistence.module';
+import { ProdDiagnosticsModule } from './prod-mcp/prod-diagnostics.module';
 
 /**
  * AppModule — the clean-room root for the v2 orchestrator ("Atlas v2"). A LEGIBLE rebuild of the
@@ -33,6 +34,7 @@ import { PersistenceModule } from './persistence/persistence.module';
       validationSchema: envConfigValidation,
     }),
     PersistenceModule,
+    ProdDiagnosticsModule,
     FeaturesModule,
   ],
 })

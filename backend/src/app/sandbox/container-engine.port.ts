@@ -48,6 +48,14 @@ export interface CreateContainerSpec {
   env?: Record<string, string>;
   /** Run privileged (required for inner dockerd / DinD). */
   privileged?: boolean;
+  /**
+   * Relative CPU weight (Docker `HostConfig.CpuShares`, valid range 2–262144; default 1024). On a
+   * cgroup v2 host Docker maps this to `cpu.weight`. It bites ONLY under contention — a low value makes
+   * this container yield CPU to higher-weighted siblings (the control plane) when they compete, while
+   * still using the whole box when it's otherwise idle (no throughput cap). Omitted ⇒ Docker default
+   * (no de-prioritization).
+   */
+  cpuShares?: number;
   /** Override the image entrypoint/cmd (PID 1). */
   cmd?: string[];
   /** Default working directory inside the container. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -86,13 +86,14 @@ export function useOrgCredentials(orgId: string) {
   });
 }
 
-// ── GitHub App (connect the platform Atlas App as an alternative to the per-org PAT) ────────────────
+// ── GitHub App (connect the platform Atlas App as host/background auth and optional sandbox auth) ─────
 // One platform-level Atlas GitHub App; an org INSTALLS it and Atlas stores a non-secret installation id
-// plus a `githubAuthMode` (pat|app). The App's installation token has its OWN rate-limit pool, sidestepping
-// a human's personal 5,000/hr budget. `configured` reflects whether the platform App env is set server-side;
-// when false the connect affordance hides. Connecting is a redirect flow: `install-url` mints a nonce-backed
-// GitHub install URL, the owner installs, and GitHub redirects back to the settings page (`?githubApp=…`).
-// Every write is owner-only server-side; `status` is member-readable (no secrets).
+// plus a `githubAuthMode` (pat|app). Host/background calls use the App token whenever connected; the
+// `githubAuthMode` setting explicitly chooses sandbox commit/push/PR identity. `configured` reflects whether
+// the platform App env is set server-side; when false the connect affordance hides. Connecting is a redirect
+// flow: `install-url` mints a nonce-backed GitHub install URL, the owner installs, and GitHub redirects back
+// to the settings page (`?githubApp=…`). Every write is owner-only server-side; `status` is member-readable
+// (no secrets).
 
 /** Connect state for the settings card (`GET …/github-app/status`) — never any secret value. */
 export interface GithubAppStatus {
@@ -106,12 +107,6 @@ export interface GithubAppStatus {
   installationId: string | null;
   /** The installation's GitHub account login (display) — null when not connected. */
   account: string | null;
-  /**
-   * Which credential AUTHORS identity-bearing writes (commit author, PR create/comment/review):
-   * `pat` (the human PAT owner) or `app` (the Atlas bot). `null` = unset = default = `pat` (the PAT
-   * owner). Orthogonal to `mode` (which credential authenticates transport/rate-limit traffic).
-   */
-  identityMode: "pat" | "app" | null;
 }
 
 export function useGithubAppStatus(orgId: string) {
@@ -153,27 +148,6 @@ export function useSetGithubAuthMode(orgId: string) {
       void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
       void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
       void qc.invalidateQueries({ queryKey: qk.session() });
-    },
-  });
-}
-
-/**
- * Owner-only: set which credential AUTHORS identity-bearing writes (commit author, PR create/comment/
- * review) — `pat` (the human PAT owner) or `app` (the Atlas bot). Permissive: the value is inert unless
- * the resolver's fallback chain lands on it, so any valid enum is accepted. Invalidates presence + status
- * (the choice surfaces on both).
- */
-export function useSetGithubIdentityMode(orgId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (identity: "pat" | "app") =>
-      webJson<{ ok: true; identity: "pat" | "app" }>(`/orgs/${orgId}/github-app/identity`, {
-        method: "PUT",
-        body: JSON.stringify({ identity }),
-      }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.orgGithubAppStatus(orgId) });
-      void qc.invalidateQueries({ queryKey: qk.orgCredentials(orgId) });
     },
   });
 }
@@ -675,6 +649,70 @@ export function useStartMcpOAuth(orgId: string) {
         { method: "POST" },
       ),
   });
+}
+
+/**
+ * Owner-only: drive the interactive OAuth consent popup for an already-registered `authKind='oauth'`
+ * server — centralizes the popup open, the callback's postMessage/focus-close handling, and the server-list
+ * refetch, so the settings form and the job-workspace proposal card share one implementation. Does not
+ * persist the server itself; callers pass a scope+name that's already been saved.
+ */
+export function useMcpOAuthConnect(orgId: string) {
+  const qc = useQueryClient();
+  const startOAuth = useStartMcpOAuth(orgId);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const popupRef = useRef<Window | null>(null);
+
+  useEffect(() => {
+    if (!busy) return;
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { type?: string; ok?: boolean } | null;
+      if (!data || data.type !== "atlas-mcp-oauth") return;
+      setBusy(false);
+      setResult(
+        data.ok
+          ? { ok: true, text: "Connected." }
+          : { ok: false, text: "Authorization did not complete." },
+      );
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    };
+    const onFocus = () => {
+      if (popupRef.current && popupRef.current.closed) {
+        popupRef.current = null;
+        setBusy(false);
+      }
+      void qc.invalidateQueries({ queryKey: qk.orgMcpServers(orgId) });
+    };
+    window.addEventListener("message", onMessage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [busy, orgId, qc]);
+
+  const connect = useCallback(
+    async ({ scope, name }: { scope: string; name: string }) => {
+      setResult(null);
+      try {
+        const { authorizeUrl } = await startOAuth.mutateAsync({ scope, name });
+        setBusy(true);
+        const popup = window.open(authorizeUrl, "atlas-mcp-oauth", "width=520,height=680");
+        popupRef.current = popup;
+        if (!popup) {
+          setBusy(false);
+          setResult({ ok: false, text: "Popup blocked — allow popups and retry." });
+        }
+      } catch (e) {
+        setBusy(false);
+        setResult({ ok: false, text: (e as Error)?.message || "Could not start OAuth." });
+      }
+    },
+    [startOAuth],
+  );
+
+  return { connect, busy, result, reset: () => setResult(null) };
 }
 
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────

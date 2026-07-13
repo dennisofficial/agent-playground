@@ -34,6 +34,8 @@ export type JitLifecycleFireCtx = {
    * is dispatched through the injected {@link LaneSeeder} rather than the operator chat surface.
    */
   lane?: string;
+  /** The repo's stored preview recipe (lifecycle:preview-requested) — spliced into the seed's managed block. */
+  previewInstructions?: string | null;
 };
 
 /**
@@ -65,6 +67,7 @@ export class JitHostExecutor {
       ...(ctx.buildPath !== undefined ? { buildPath: ctx.buildPath } : {}),
       ...(ctx.baseBranch !== undefined ? { baseBranch: ctx.baseBranch } : {}),
       ...(ctx.decisionRecordId !== undefined ? { decisionRecordId: ctx.decisionRecordId } : {}),
+      ...(ctx.previewInstructions !== undefined ? { previewInstructions: ctx.previewInstructions } : {}),
     };
     const body = rule.render(fireCtx);
 
@@ -113,5 +116,10 @@ export class JitHostExecutor {
       chunks.push({ kind: 'system_reminder', body, attrs: { reminderKind: rule.reminderKind ?? 'memory' } });
     }
     return chunks;
+  }
+
+  /** True when the declarative catalog currently enables at least one operator turn-prefix rule. */
+  hasEnabledOperatorPrepends(): boolean {
+    return operatorMessageRules().some((rule) => rule.delivery === 'turn-prefix');
   }
 }

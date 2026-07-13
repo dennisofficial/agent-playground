@@ -77,3 +77,15 @@ export type JobHalt = {
  */
 export const JOB_ACTIVITIES = ['idle', 'turn', 'plan_review', 'build', 'master_review', 'base_check'] as const;
 export type JobActivity = (typeof JOB_ACTIVITIES)[number];
+
+/**
+ * Why a thread parked on its `blocked` terminal record — the WIRE CONTRACT for the `blockReason` field the
+ * pipeline read-model emits (single-sourced here so the backend and web console can't drift). `judge_unavailable`
+ * is the transient verification-judge outage the operator "Retry now"/"Skip & accept" controls recover.
+ */
+export type ThreadBlockReason =
+  | 'question'
+  | 'needs_env'
+  | 'decision'
+  | 'unverified'
+  | 'judge_unavailable';

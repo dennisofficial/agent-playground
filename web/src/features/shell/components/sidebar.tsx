@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronRight, LayoutGrid, Plus, Settings } from "lucide-react";
+import { ChevronRight, Globe, LayoutGrid, Plus, Server, Settings } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { env } from "@/lib/env";
 import { ROUTES, threadHref } from "@/lib/routes";
 import { useOrgs, type OrgSummary } from "@/lib/api/me";
 import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
-import { useAllRepos } from "@/lib/api/tickets-queries";
+import { useAllRepos } from "@/lib/api/job-queries";
 import {
   groupThreadsBySection,
   SECTION_LABEL,
@@ -754,6 +754,27 @@ function ThreadRow({
           {thread.title}
         </span>
       </span>
+      {thread.portState ? (
+        <span
+          className="mt-px flex-none"
+          title={
+            thread.portState === "exposed"
+              ? "Exposed port — reachable preview URL"
+              : "Service running (not exposed)"
+          }
+          aria-label={
+            thread.portState === "exposed"
+              ? "Exposed port"
+              : "Service running, not exposed"
+          }
+        >
+          {thread.portState === "exposed" ? (
+            <Globe size={11} style={{ color: "var(--blue)" }} />
+          ) : (
+            <Server size={11} style={{ color: "var(--faint)" }} />
+          )}
+        </span>
+      ) : null}
       {thread.pr?.number != null ? (
         <span className="mt-px flex-none font-mono text-[10px] text-faint">
           #{thread.pr.number}

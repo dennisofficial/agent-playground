@@ -31,7 +31,6 @@ import {
   useSaveCredentials,
   useSelectClaudeCredential,
   useSetGithubAuthMode,
-  useSetGithubIdentityMode,
   type ClaudeCredential,
   type ClaudeCredentialKind,
   type ClaudeCredentialStatus,
@@ -349,10 +348,11 @@ function githubAppErrorMessage(reason: string | null): string {
 }
 
 /**
- * The GitHub App is a separate, optional credential from the PAT above: connecting it swaps the org's
- * live GitHub auth to an installation token with its own rate-limit pool. Connecting is a redirect flow —
- * `install-url` mints a one-time GitHub install URL, and GitHub's callback lands back here via
- * `?githubApp=connected|error`, which this component picks up on mount.
+ * The GitHub App is a separate, optional credential from the PAT above: connecting it gives host/background
+ * GitHub operations an installation token with its own rate-limit pool. The PAT/App segmented control below
+ * explicitly chooses the in-sandbox commit/push/PR identity. Connecting is a redirect flow — `install-url`
+ * mints a one-time GitHub install URL, and GitHub's callback lands back here via `?githubApp=connected|error`,
+ * which this component picks up on mount.
  */
 function GithubAppConnect({
   orgId,
@@ -366,7 +366,6 @@ function GithubAppConnect({
   const { data: status, isLoading } = useGithubAppStatus(orgId);
   const installUrl = useGithubAppInstallUrl(orgId);
   const setMode = useSetGithubAuthMode(orgId);
-  const setIdentity = useSetGithubIdentityMode(orgId);
   const disconnect = useDisconnectGithubApp(orgId);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
@@ -418,17 +417,6 @@ function GithubAppConnect({
       await setMode.mutateAsync(mode);
     } catch (e) {
       setError((e as Error)?.message || "Could not switch auth mode.");
-    }
-  }
-
-  async function switchIdentity(identity: "pat" | "app") {
-    if (!status || (status.identityMode ?? "pat") === identity) return;
-    setError("");
-    setNote("");
-    try {
-      await setIdentity.mutateAsync(identity);
-    } catch (e) {
-      setError((e as Error)?.message || "Could not switch commit author.");
     }
   }
 
@@ -488,11 +476,14 @@ function GithubAppConnect({
         <div className="mt-3.5">
           <HelpBlock>
             <p>
-              App auth routes Atlas’s GitHub traffic through a GitHub App
-              installation token, which has its own rate-limit pool separate
-              from any human’s personal 5,000/hr budget.
+              App auth routes host and background GitHub traffic through a
+              GitHub App installation token, which has its own rate-limit pool
+              separate from any human’s personal 5,000/hr budget.
             </p>
-            <p>Connecting stops operators from getting personal-account rate-limited.</p>
+            <p>
+              After connecting, choose whether sandbox commits, pushes, and PRs
+              use the PAT or the App.
+            </p>
           </HelpBlock>
           {isOwner ? (
             <button
@@ -567,41 +558,11 @@ function GithubAppConnect({
             ) : null}
           </div>
 
-          {hasPat && status.connected ? (
-            <div className="mt-4 border-t border-border-2 pt-3.5">
-              <div className="text-[12px] font-semibold text-text">
-                Author commits &amp; PRs as
-              </div>
-              <div className="mt-0.5 text-[11px] text-faint">
-                Background traffic always uses the App’s rate-limit pool.
-              </div>
-              <div className="mt-2.5 flex gap-1 rounded-md border border-border-2 bg-surface-2 p-1">
-                {(
-                  [
-                    { id: "pat" as const, label: "You" },
-                    { id: "app" as const, label: "Atlas bot" },
-                  ]
-                ).map((opt) => {
-                  const on = (status.identityMode ?? "pat") === opt.id;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => switchIdentity(opt.id)}
-                      disabled={!isOwner || setIdentity.isPending}
-                      className="rounded-sm px-3 py-1.5 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
-                      style={{
-                        background: on ? "var(--surface)" : "transparent",
-                        color: on ? "var(--accent)" : "var(--dim)",
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
+          <div className="mt-2.5 text-[11px] text-faint">
+            Sets the identity Atlas commits, pushes, and opens PRs as inside the
+            sandbox. Host and background traffic (webhooks, CI, PR checks) always
+            uses the App.
+          </div>
         </div>
       )}
 

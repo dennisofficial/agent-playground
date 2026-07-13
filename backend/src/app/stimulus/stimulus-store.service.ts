@@ -4,6 +4,7 @@ import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
   ChatStimulus,
   EventStimulus,
+  SeedRow,
 } from '../domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -11,6 +12,20 @@ import {
   StimulusEntity,
   JobEntity,
 } from '../persistence/entities';
+import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
+import { fromExternal } from '../prompt-kit/message';
+import { writeSystemChunk } from '../persistence/system-chunk-writer';
+
+/**
+ * `reply_route` jsonb widened LOCALLY with the seed-stamp piggyback keys (mirroring how `priority`
+ * already piggybacks — see `StimulusEntity.reply_route`'s doc). The entity's declared column type stays
+ * narrow; this file is the only reader/writer of the extra keys.
+ */
+type ReplyRouteJson = NonNullable<StimulusEntity['reply_route']> & {
+  seedQuestionId?: string;
+  seedSecretId?: string;
+  seedFileId?: string;
+};
 
 /** A persisted event stimulus + the thread it seeded. */
 export interface SeededEvent {
@@ -280,23 +295,65 @@ export class StimulusStoreService {
     /** The routing coordinate (`'main'` | `'thread:<threadId>'`); absent = `'main'`. Brain callers omit it,
      *  so their rows are byte-identical to before this field existed. */
     lane?: string;
+    /**
+     * SEED RENDER COMMAND (see `SeedRow`) — when present, this is a system seed: a descriptor writes a
+     * deduped curated pill INSTEAD of the plain operator `messages` bubble; `'skip'` writes NEITHER (the
+     * content already has a durable row elsewhere). Absent = a normal operator chat message (today's
+     * behavior — the plain bubble is written).
+     */
+    systemChunk?: SeedRow;
+    /** DELIVERY SEED — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedQuestionId`). */
+    seedQuestionId?: string;
+    /** DELIVERY SEED (secret variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedSecretId`). */
+    seedSecretId?: string;
+    /** DELIVERY SEED (file variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedFileId`). */
+    seedFileId?: string;
   }): Promise<ChatStimulus> {
-    // ATOMIC: the operator-visible `messages` bubble and the `stimuli` row that DRIVES the brain turn
-    // must commit together. Two separate saves let a crash between them (e.g. a mid-turn process
-    // restart) leave a transcript bubble with no stimulus behind it — the message renders but no turn
-    // ever runs and the durable delivery pump can't recover a row that was never written. One
-    // transaction makes it both-or-neither.
+    // ATOMIC: the operator-visible row (a plain bubble, a curated pill, or nothing) and the `stimuli` row
+    // that DRIVES the brain turn must commit together. Two separate saves let a crash between them (e.g. a
+    // mid-turn process restart) leave a transcript row with no stimulus behind it — it renders but no turn
+    // ever runs and the durable delivery pump can't recover a row that was never written. One transaction
+    // makes it both-or-neither.
+    const replyRoute: ReplyRouteJson = {
+      ...input.replyRoute,
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
+      ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
+      ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+    };
+
     const row = await this.dataSource.transaction(async (m) => {
-      await m.save(
-        m.create(MessageEntity, {
-          job_id: input.jobId,
-          author: input.author.displayName,
-          author_id: input.author.id,
-          author_bot_id: null,
-          text: input.body,
-          card: input.card ?? null,
-        }),
-      );
+      if (input.systemChunk === undefined) {
+        await m.save(
+          m.create(MessageEntity, {
+            job_id: input.jobId,
+            author: input.author.displayName,
+            author_id: input.author.id,
+            author_bot_id: null,
+            text: input.body,
+            card: input.card ?? null,
+          }),
+        );
+      } else if (input.systemChunk !== 'skip') {
+        const desc = input.systemChunk;
+        // Reveal-on-expand raw payload — mirror `persistSeedRow`: carry the full engine body only when it's
+        // trusted and actually differs from the short curated label (an untrusted row's label already IS the
+        // clean fenced report, with the trusted framing in its own block).
+        const isUntrusted = (desc.kind ?? 'system_notice') === 'untrusted';
+        const fullBody =
+          !isUntrusted && input.body !== desc.label ? input.body : undefined;
+        await writeSystemChunk(m.getRepository(MessageEntity), {
+          jobId: input.jobId,
+          kind: desc.kind ?? 'system_notice',
+          text: fromExternal(desc.label),
+          chunkKey: desc.chunkKey,
+          ...(desc.untrustedSource ? { untrustedSource: desc.untrustedSource } : {}),
+          ...(desc.severity ? { severity: desc.severity } : {}),
+          ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
+          ...(desc.framing ? { framing: desc.framing } : {}),
+        });
+      }
+      // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
 
       return m.save(
         m.create(StimulusEntity, {
@@ -308,9 +365,7 @@ export class StimulusStoreService {
           job_id: input.jobId,
           author_id: input.author.id,
           author_name: input.author.displayName,
-          reply_route: input.priority
-            ? { ...input.replyRoute, priority: input.priority }
-            : input.replyRoute,
+          reply_route: replyRoute,
           source: null,
           dedupe_key: null,
           severity: null,
@@ -331,6 +386,10 @@ export class StimulusStoreService {
       replyRoute: input.replyRoute,
       receivedAt: row.created_at,
       ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
+      ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
+      ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+      ...(input.author.id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
   }
 
@@ -458,6 +517,57 @@ export class StimulusStoreService {
     );
   }
 
+  /** Reconstruct a single chat stimulus by id (the durable stimuli.id), or null. Used by the brain to
+   *  resolve a delivered row's seed stamp targets (seedQuestionId/seedSecretId/seedFileId) from reply_route. */
+  async findChatStimulusById(id: string): Promise<ChatStimulus | null> {
+    const row = await this.stimuli.findOne({ where: { id, kind: 'chat' } });
+    return row ? this.rowToChatStimulus(row) : null;
+  }
+
+  /**
+   * True when the thread already has a LIVE (undelivered) chat stimulus row whose `reply_route` points at the
+   * given seed card target. The boot backfill (AgentSessionManager) uses this to skip re-creating a durable row
+   * the pump already owns — so boot recovery and the steady-state sweep never double-deliver one answered/
+   * provided card. NOT-EXISTS style: a delivered row means the pump is done, so it does NOT block a backfill.
+   */
+  async hasChatStimulusForSeedTarget(
+    jobId: string,
+    target: { seedQuestionId?: string; seedSecretId?: string; seedFileId?: string },
+  ): Promise<boolean> {
+    const qb = this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL');
+    let hasTarget = false;
+    if (target.seedQuestionId) {
+      qb.andWhere("s.reply_route ->> 'seedQuestionId' = :q", { q: target.seedQuestionId });
+      hasTarget = true;
+    }
+    if (target.seedSecretId) {
+      qb.andWhere("s.reply_route ->> 'seedSecretId' = :sec", { sec: target.seedSecretId });
+      hasTarget = true;
+    }
+    if (target.seedFileId) {
+      qb.andWhere("s.reply_route ->> 'seedFileId' = :f", { f: target.seedFileId });
+      hasTarget = true;
+    }
+    if (!hasTarget) return false;
+    return (await qb.getCount()) > 0;
+  }
+
+  /** True when the job has at least one durable undelivered chat stimulus (excluding `later`-priority rows,
+   *  same filter as {@link undeliveredChatThreads}) — the auto-merge brain-settled guard's queue check. */
+  async hasUndeliveredChat(jobId: string): Promise<boolean> {
+    return this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .getExists();
+  }
+
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
   async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli
@@ -559,6 +669,7 @@ export class StimulusStoreService {
 
   /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
   private rowToChatStimulus(row: StimulusEntity): ChatStimulus {
+    const replyRoute: ReplyRouteJson | null = row.reply_route;
     return {
       id: row.id,
       orgId: row.org_id,
@@ -574,7 +685,11 @@ export class StimulusStoreService {
       },
       replyRoute: row.reply_route ?? { surfaceId: '', jobRef: row.job_id as string },
       receivedAt: row.created_at,
-      ...(row.reply_route?.priority ? { priority: row.reply_route.priority } : {}),
+      ...(replyRoute?.priority ? { priority: replyRoute.priority } : {}),
+      ...(replyRoute?.seedQuestionId ? { seedQuestionId: replyRoute.seedQuestionId } : {}),
+      ...(replyRoute?.seedSecretId ? { seedSecretId: replyRoute.seedSecretId } : {}),
+      ...(replyRoute?.seedFileId ? { seedFileId: replyRoute.seedFileId } : {}),
+      ...(row.author_id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
   }
 

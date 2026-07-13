@@ -10,7 +10,8 @@ import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding';
  * Atlas v2 semantic memory — the pgvector read/write primitives ONLY (a clean-room rewrite of v1's
  * `SemanticMemory` with the board/pipeline/identity-tier machinery DROPPED). It is the only channel
  * for cross-thread coherence: threads never share transcripts. Scopes are plain strings
- * (`team:<id>` | `project:<id>`); `org_id` NULL = the shared/global tier (recalled everywhere).
+ * (`team:<id>` | `project:<id>`) and memory is strictly tenant-scoped — every fact belongs to an
+ * `org_id` (there is no shared/global tier).
  *
  * Stored against the `memory` table on Atlas's OWN datasource. Vector ops use the pgvector text
  * literal (`[0.1,0.2,…]`) and rank with `embedding <=> :qv`. Zero v1 imports.
@@ -20,7 +21,7 @@ export interface StoredFact {
   id: string;
   fact: string;
   scope: string;
-  org_id: string | null;
+  org_id: string;
   confidence: number;
   created_at: string;
   updated_at: string;
@@ -56,8 +57,8 @@ export interface RememberInput {
   fact: string;
   /** Access tier scope, e.g. 'team:T04' | 'project:acme'. */
   scope: string;
-  /** The tenant (Slack team id); null for the shared/global tier. */
-  orgId: string | null;
+  /** The tenant (org id) that owns this fact. Required — memory is strictly tenant-scoped. */
+  orgId: string;
   assertedBy?: string;
 }
 
@@ -77,22 +78,20 @@ export class MemoryStore {
 
   /**
    * Store a fact at its scope, or merge into a near-duplicate (cosine ≥ DEDUP_THRESHOLD) in that
-   * same scope/team. Strict team equality — a tenant fact never merges into the global tier.
+   * same scope/team. Strict team equality — a fact only ever merges within its own tenant.
    */
   async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: string }> {
-    const qv = vecSql(await this.embedder.embed(input.fact, input.orgId ?? undefined));
+    const qv = vecSql(await this.embedder.embed(input.fact, input.orgId));
 
     const qb = this.facts
       .createQueryBuilder('f')
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = :scope', { scope: input.scope })
+      .andWhere('f.org_id = :team', { team: input.orgId })
       .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor: DEDUP_THRESHOLD })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
       .limit(1);
-    qb.andWhere(input.orgId === null ? 'f.org_id IS NULL' : 'f.org_id = :team', {
-      team: input.orgId,
-    });
     const { entities } = await qb.getRawAndEntities();
     const dup = entities[0];
     if (dup) {
@@ -125,23 +124,23 @@ export class MemoryStore {
   }
 
   /**
-   * Semantic recall over the given scopes, filtered to this team (or the global tier). Facts below
-   * `floor` cosine are dropped; the rest come back most-similar-first.
+   * Semantic recall over the given scopes, filtered to this tenant. Facts below `floor` cosine are
+   * dropped; the rest come back most-similar-first.
    */
   async recall(
     query: string,
-    opts: { scopes: string[]; orgId: string | null; limit?: number; floor?: number },
+    opts: { scopes: string[]; orgId: string; limit?: number; floor?: number },
   ): Promise<RecalledFact[]> {
     if (opts.scopes.length === 0) return [];
     const limit = opts.limit ?? 5;
     const floor = opts.floor ?? MIN_RECALL_SIM;
-    const qv = await this.embed(query, opts.orgId ?? undefined);
+    const qv = await this.embed(query, opts.orgId);
 
     const { entities, raw } = await this.facts
       .createQueryBuilder('f')
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = ANY(:scopes)', { scopes: opts.scopes })
-      .andWhere('(f.org_id = :team OR f.org_id IS NULL)', { team: opts.orgId })
+      .andWhere('f.org_id = :team', { team: opts.orgId })
       .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .limit(limit)

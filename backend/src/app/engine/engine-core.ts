@@ -18,7 +18,6 @@ import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
-import { context7Enabled, qualifyContext7ToolNames } from './context7-tools';
 import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
@@ -31,6 +30,7 @@ import {
 import {
   EngineAuthError,
   isAuthErrorMessage,
+  NO_ENGINE_CREDENTIAL_MARKER,
   UNRESUMABLE_SESSION_MARKER,
   type CodexReasoningEffort,
   type EngineAuth,
@@ -66,6 +66,14 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
     });
   }
   return hunks.length ? hunks : undefined;
+}
+
+function containsStreamClosed(content: unknown): boolean {
+  if (typeof content === 'string') return content.toLowerCase().includes('stream closed');
+  if (Array.isArray(content)) return content.some((item) => containsStreamClosed(item));
+  if (!content || typeof content !== 'object') return false;
+  const block = content as { text?: unknown; content?: unknown };
+  return containsStreamClosed(block.text) || containsStreamClosed(block.content);
 }
 
 /**
@@ -236,10 +244,11 @@ export interface EngineCoreConfig {
 /**
  * The agentic-engine model ids — CODE CONSTANTS, never env-configured (env vars are for per-environment
  * config; the model choice doesn't change across local/dev/staging/prod). A per-turn `args.model` still
- * overrides (e.g. the thread brain pins its own). The Claude id is the `'opus'` alias (auto-threads latest
- * Opus, like the brain); the Codex id is the Codex SDK's coding model.
+ * overrides (e.g. the thread brain pins its own Opus). The Claude id is the current Sonnet 5 model id —
+ * the builder lane orchestrator (and its `post_review` autofix child) run on this; the Codex id is the
+ * Codex SDK's coding model.
  */
-const DEFAULT_WORKER_MODEL = 'opus';
+const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
 // NOTE: Codex runs subscription-only here — a ChatGPT-account OAuth token (see `resolveAuth`; there is no
 // API-key path). A ChatGPT account REJECTS any explicit model with a 400 ("The '<model>' model is not
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
@@ -269,10 +278,6 @@ export function claudeSessionExists(configDir: string, sessionId: string): boole
 // the sandbox (the per-sandbox bridge network has NAT egress). Enabled on every turn so the engine can
 // pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
-// Context7 (curated, version-pinned library docs) — see engine/context7-tools.ts. Gated on CONTEXT7_API_KEY:
-// empty (the default) unless the deployment injects the key into the sandbox env, so `docs` sees these tools
-// only when the remote server is actually registered (context7-bridge-options.ts), never a phantom name.
-const CONTEXT7_TOOLS = context7Enabled() ? qualifyContext7ToolNames() : [];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
 // The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
 // TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
@@ -303,10 +308,9 @@ const PLAN_TOOLS = [...WORKER_TOOLS, 'ExitPlanMode'];
 // a review turn shouldn't fan out.
 const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', 'Skill', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
-// boundary is re-applied. Context7 docs tools (read-only, gated off by default) auto-approve too so the
-// `docs` subagent never stalls on a permission prompt for them.
+// boundary is re-applied.
 const AUTO_APPROVE = [
-  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS, ...CONTEXT7_TOOLS,
+  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS,
 ];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
@@ -341,7 +345,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'current API for Y" from the LIBRARY\'S OWN docs on the web, not from this repo\'s source. Returns a ' +
       'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
-    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...CONTEXT7_TOOLS],
+    tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
@@ -414,9 +418,9 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
 
 // VALIDATE subagent — build-time LIVE end-to-end validation + evidence capture. Added ONLY on EXECUTE
 // turns (like the writers), so only the builder can spawn it. It gets `Bash` (to boot services via
-// atlas-svc, curl endpoints, drive Playwright, run e2e) and `Write` (to author the `/context/artifacts/`
+// atlas-svc, curl endpoints, drive Playwright, run e2e) and `Write` (to author the `$ATLAS_EVIDENCE_DIR`
 // evidence bundle + RESULTS.md — the `/context` mount is a writable root, see redis-engine-runner). It has
-// NO `Task` (no recursive fan-out). Its "write only under /context/artifacts, don't edit code" contract is
+// NO `Task` (no recursive fan-out). Its "write only under $ATLAS_EVIDENCE_DIR, don't edit code" contract is
 // prompt discipline (the `canUseTool` write boundary is per-turn, not per-subagent) — same model as `test`
 // being "read-only by prompt". Distinct from `test`: `test` runs typecheck/build/unit → a diagnosis;
 // `validate` boots the thing, exercises it live, and leaves durable proof the operator can see.
@@ -425,9 +429,9 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
     description:
       'LIVE validation + evidence capture (Sonnet). Delegate END-TO-END validation here to keep your ' +
       'context clean: it BOOTS the change and exercises it as a real caller would (atlas-svc services, ' +
-      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF in `/context/artifacts/` ' +
-      '(logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ARTIFACTS panel. Returns a ' +
-      'verdict + the observed behavior + the exact artifact paths it wrote — reference those instead of ' +
+      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF under ' +
+      '`$ATLAS_EVIDENCE_DIR` (logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ' +
+      'EVIDENCE panel. Returns a verdict + the observed behavior + the exact evidence paths it wrote — reference those instead of ' +
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
@@ -562,9 +566,13 @@ export class EngineCore {
    */
   private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
     if (explicit) return explicit;
-    throw new Error(
-      `No ${engine} subscription secret — the org has no ${engine} credential set (add one via ` +
-        'onboarding, or `pnpm db:seed` in dev). The engine runs subscription-only (no API-key fallback).',
+    // Classify as an auth halt (marker → clean, resumable credentials halt at the driver) rather than a
+    // plain Error that fails the job opaquely: a missing credential is fixable by connecting an account.
+    throw new EngineAuthError(
+      `${NO_ENGINE_CREDENTIAL_MARKER}: no ${engine} subscription secret — the org has no ${engine} ` +
+        'credential set (connect one in Settings).',
+      undefined,
+      engine,
     );
   }
 
@@ -641,6 +649,11 @@ export class EngineCore {
     const input = streaming ? makeManualInput() : undefined;
     let turnEnded = false;
     let endTimer: ReturnType<typeof setTimeout> | undefined;
+    const STREAM_CLOSED_THRESHOLD = Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) > 0
+      ? Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) : 3;   // consecutive control-channel failures ⇒ breaker trips
+    let streamClosedRun = 0;      // consecutive "Stream closed" tool_results in the live run (any healthy result resets)
+    let streamClosedTotal = 0;    // per-turn total (instrumentation)
+    let streamClosedTripped = false;   // latched right before the breaker throw so the catch never swallows it as a cooperative abort
     const cancelEnd = (): void => {
       if (endTimer) {
         clearTimeout(endTimer);
@@ -652,19 +665,20 @@ export class EngineCore {
       cancelEnd();
       endTimer = setTimeout(() => input.end(), STEER_IDLE_GRACE_MS);
     };
-    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash): a tool-native background task closes the turn's
-    // first `result` immediately (terminal_reason=completed), which would let the STEER_IDLE_GRACE close the
-    // input and force the SDK to KILL the still-running shell. Instead we hold the query() session open while
-    // any task is in flight so the task's `task_notification` AND the model's auto-continuation land in THIS
-    // turn. The hold is bounded by HOLD_CAP_MS (a stuck/endless task can't wedge the turn forever); after the
-    // cap we steer the agent with the `bg-task-cap` rule's notice and give it CAP_ACK_GRACE_MS to acknowledge
-    // before an unconditional close. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can
-    // mutate the rule); CAP_ACK_GRACE_MS is still process.env-driven (unaffected by d4).
+    // BACKGROUND-TASK HOLD (SDK `run_in_background` Bash + backgrounded Task subagents): a tool-native
+    // background task closes the turn's first `result` immediately (terminal_reason=completed), which would
+    // let the STEER_IDLE_GRACE close the input while work is still in flight. Instead we hold the query()
+    // session open so the task's `task_notification` AND the model's auto-continuation land in THIS turn.
+    // A background SUBAGENT runs UNCAPPED — held open with NO timer (it may run for hours; bounded only by
+    // the outer PHASE_TIMEOUT / an operator Stop). A bare background Bash shell that exceeds HOLD_CAP_MS gets
+    // an ADVISORY nudge (the `bg-task-cap` rule's notice) and the model's NEXT natural result ends the turn —
+    // nothing is ever killed, and the stream is NEVER severed by the cap. Closing stdin under a still-active
+    // turn makes every subsequent host-tool call throw a bare "Stream closed" (prod incident b30616d2), so the
+    // cap never does it. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can mutate the rule).
     const HOLD_CAP_MS = bgTaskCapRule.trigger.kind === 'hold-timer' ? bgTaskCapRule.trigger.holdMs : BG_TASK_HOLD_CAP_MS;
-    const CAP_ACK_GRACE_MS = Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) > 0 ? Number(process.env.BG_TASK_CAP_ACK_GRACE_MS) : 15_000;
     const liveBgTasks = new Set<string>();
+    const liveSubagentTasks = new Set<string>();   // task_ids whose task_started carried subagent_type (a Task subagent, not a bare bg Bash)
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
-    let capKillTimer: ReturnType<typeof setTimeout> | undefined;
     let capping = false;
     const clearHold = (): void => {
       if (holdTimer) {
@@ -672,26 +686,24 @@ export class EngineCore {
         holdTimer = undefined;
       }
     };
-    // Cap fired: warn the agent IN-TURN (mirrors injectRotationNudge), stop the loop from cancelling closes
-    // (`capping`), and arm an UNCONDITIONAL backstop close that a late progress frame can never undo.
+    // Cap fired (bare bg Bash only): warn the agent IN-TURN (mirrors injectRotationNudge) and stop the loop
+    // from cancelling closes (`capping`) so the model's next natural result ends the turn. Advisory-only —
+    // the stream is never severed and no task is killed.
     const onCap = (): void => {
       if (!input || turnEnded || capping) return;
-      capping = true;
-      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background task exceeded ${HOLD_CAP_MS}ms` });
+      if (liveSubagentTasks.size > 0) return;   // safety: never cap while a subagent is live
+      capping = true;                           // the model's NEXT natural result ends the turn (no forced kill)
+      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)` });
       cancelEnd();
-      if (bgTaskCapRule.enabled) {
-        input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
-      }
-      capKillTimer = setTimeout(() => {
-        if (!turnEnded) input.end();
-      }, CAP_ACK_GRACE_MS);
+      if (bgTaskCapRule.enabled) input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      // NO capKillTimer / NO input.end() — the cap is purely advisory; stdin is never severed.
     };
     const armHoldTimer = (): void => {
       clearHold();
       holdTimer = setTimeout(onCap, HOLD_CAP_MS);
     };
     const resetHoldTimer = (): void => {
-      if (liveBgTasks.size > 0) armHoldTimer();
+      if (liveBgTasks.size > 0 && liveSubagentTasks.size === 0) armHoldTimer();
       else clearHold();
     };
     const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
@@ -972,8 +984,13 @@ export class EngineCore {
           if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
         } else if (message.type === 'system' && message.subtype === 'task_started') {
           // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
-          // task settles (its `task_notification`) instead of closing on the immediate first `result`.
-          if (message.task_id) liveBgTasks.add(message.task_id);
+          // task settles (its `task_notification`) instead of closing on the immediate first `result`. A Task
+          // SUBAGENT's task_started carries `subagent_type` (task_type "local_agent"); a bare bg Bash does not
+          // (task_type "local_bash") — a live subagent runs uncapped, so track it separately.
+          if (message.task_id) {
+            liveBgTasks.add(message.task_id);
+            if ((message as { subagent_type?: string }).subagent_type) liveSubagentTasks.add(message.task_id);
+          }
           onEvent?.({
             kind: 'bg_task',
             taskId: message.task_id,
@@ -989,7 +1006,10 @@ export class EngineCore {
         } else if (message.type === 'system' && message.subtype === 'task_notification') {
           // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
           // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
-          if (message.task_id) liveBgTasks.delete(message.task_id);
+          if (message.task_id) {
+            liveBgTasks.delete(message.task_id);
+            liveSubagentTasks.delete(message.task_id);
+          }
           onEvent?.({
             kind: 'bg_task',
             taskId: message.task_id,
@@ -1160,7 +1180,10 @@ export class EngineCore {
               content?: unknown;
               is_error?: boolean;
             }>) {
-              if (block.type === 'tool_result')
+              if (block.type === 'tool_result') {
+                const isStreamClosed = block.is_error === true && containsStreamClosed(block.content);
+                streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0;   // any healthy result resets the run
+                if (isStreamClosed) streamClosedTotal++;
                 onEvent?.({
                   kind: 'tool_result',
                   id: block.tool_use_id ?? '',
@@ -1169,12 +1192,19 @@ export class EngineCore {
                   ...(patch ? { structuredPatch: patch } : {}),
                   ...sub,
                 });
+                if (streamClosedRun >= STREAM_CLOSED_THRESHOLD) {
+                  streamClosedTripped = true;
+                  abortController.abort();   // stop the orphaned CLI child
+                  throw new Error('engine stream closed: control channel severed mid-turn (circuit-breaker)');
+                }
+              }
             }
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
           if (message.subtype === 'success') {
             result = message.result;
+            onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
             // A background-task hold produces ≥2 results per turn (the immediate first result + the
             // auto-continuation after the task settles). SUM the billing tokens across results; the
             // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
@@ -1191,12 +1221,10 @@ export class EngineCore {
             // Streaming-input mode: decide whether this success result ends the turn.
             if (streaming) {
               if (capping) {
-                // The agent acked the cap notice with this result → close NOW, directly (skip the backstop).
-                if (capKillTimer) {
-                  clearTimeout(capKillTimer);
-                  capKillTimer = undefined;
-                }
-                input!.end();
+                // The advisory cap fired — the model's next natural result ends the turn via the NORMAL
+                // grace, unless a background subagent is now live and must remain uncapped.
+                if (liveSubagentTasks.size > 0) cancelEnd();
+                else scheduleEnd();
               } else if (
                 !isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })
               ) {
@@ -1208,12 +1236,11 @@ export class EngineCore {
                 if (sessionLimit) scheduleEnd();
                 else cancelEnd();
               } else if (liveBgTasks.size === 0) {
-                // Genuinely done and no background task in flight — close after the short steer grace.
-                scheduleEnd();
+                scheduleEnd();                 // genuinely done, nothing in flight — close after the steer grace
+              } else if (liveSubagentTasks.size > 0) {
+                cancelEnd();                   // a live SUBAGENT — hold input open with NO timer (may run for hours; bounded only by PHASE_TIMEOUT / Stop)
               } else {
-                // Genuinely done, but a background task is still in flight — hold input open, bounded by
-                // HOLD_CAP_MS (armHoldTimer → onCap).
-                armHoldTimer();
+                armHoldTimer();                // only bare bg Bash left → the advisory cap
               }
             }
           } else {
@@ -1250,7 +1277,8 @@ export class EngineCore {
       // A 401 / expired token / "not logged in" → a RESUMABLE auth error carrying the live session,
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession);
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
+      if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
       // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
       // graceful end — fall through to the normal post-loop return with the partial result + live session,
       // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
@@ -1261,10 +1289,6 @@ export class EngineCore {
       turnEnded = true;
       cancelEnd();
       clearHold();
-      if (capKillTimer) {
-        clearTimeout(capKillTimer);
-        capKillTimer = undefined;
-      }
       input?.end();
       void steerIter?.return?.(undefined);
     }
@@ -1273,6 +1297,7 @@ export class EngineCore {
     const planText = (planMode && capturedPlan) || undefined;
     const summary = planText || result || '(no summary)';
     onEvent?.({ kind: 'result', text: summary });
+    if (streamClosedTotal > 0) onEvent?.({ kind: 'turn_debug', streamClosedCount: streamClosedTotal });
 
     // Auth-refresh write-back: a personal credential's `.credentials.json` is rewritten in place when the
     // SDK self-refreshes it. Read it back and relay it so the host can persist the fresh blob. Gated on
@@ -1292,6 +1317,7 @@ export class EngineCore {
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
+      ...(streamClosedTotal > 0 ? { streamClosedCount: streamClosedTotal } : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
@@ -1489,7 +1515,7 @@ export class EngineCore {
     } catch (err) {
       // 401 / expired creds mid-Codex-turn → resumable auth error carrying the live thread id.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession);
+      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'codex');
       throw err;
     }
 

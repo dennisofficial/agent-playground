@@ -39,7 +39,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { AgentSessionManager } from './agent-session-manager.service';
-import type { JitHostExecutor } from './jit-host-executor';
+import { JitHostExecutor } from './jit-host-executor';
 import type {
   EngineEvent,
   EngineRunnerPort,
@@ -142,7 +142,13 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
    * `collect-pending-for-turn.spec.ts`'s constructor wiring, but deep enough to run a full
    * `runChatTurnInner` turn against the fake leaf engine/sandbox.
    */
-  function makeManager(opts: { live?: boolean; jitChunks?: TurnChunk[] } = {}) {
+  function makeManager(opts: {
+    live?: boolean;
+    jitChunks?: TurnChunk[];
+    jitEnabled?: boolean;
+    jit?: JitHostExecutor;
+    memoryRecall?: ReturnType<typeof vi.fn>;
+  } = {}) {
     const runningBrainTurn = vi
       .fn()
       .mockResolvedValue(opts.live ? { turn_id: 'turn-live-1' } : null);
@@ -217,33 +223,38 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     } as unknown as LeaderElectionService;
     const git = { currentBranch: vi.fn().mockResolvedValue(null) };
     const usage = { getResetAt: () => undefined };
-    const jit = opts.jitChunks
+    const memory = {
+      recall: opts.memoryRecall ?? vi.fn().mockResolvedValue([]),
+    };
+    const jit = opts.jit ?? (opts.jitChunks || opts.jitEnabled !== undefined
       ? ({
-          collectOperatorPrepends: vi.fn().mockReturnValue(opts.jitChunks),
+          hasEnabledOperatorPrepends: vi.fn().mockReturnValue(opts.jitEnabled ?? true),
+          collectOperatorPrepends: vi.fn().mockReturnValue(opts.jitChunks ?? []),
         } as unknown as JitHostExecutor)
-      : undefined;
+      : undefined);
 
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) };
     const manager = new AgentSessionManager(
       store as never, // store (1)
       inert, // driverStore (2)
-      inert, // memory (3)
-      inert, // approvals (4)
-      lifecycle as never, // lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert, // planReview (8)
-      inert, // dispatcher (9)
-      inert, // surface (10)
-      sandboxRows as never, // sandboxRows (11)
-      inert, // stimulusRows (12)
-      stimulusStore, // stimulusStore (13) — REAL, bound to Postgres
-      turnHarness as never, // turnHarness (14)
-      inert, // classifier (15)
-      inert, // ship (16)
-      inert, // repos (17)
-      inert, // awareness (18)
-      inert, // tickets (19)
+      autoMerge as never, // autoMerge (3)
+      memory as never, // memory (4)
+      inert, // approvals (5)
+      lifecycle as never, // lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, // planReview (9)
+      inert, // dispatcher (10)
+      inert, // surface (11)
+      sandboxRows as never, // sandboxRows (12)
+      inert, // stimulusRows (13)
+      stimulusStore, // stimulusStore (14) — REAL, bound to Postgres
+      turnHarness as never, // turnHarness (15)
+      inert, // classifier (16)
+      inert, // ship (17)
+      inert, // repos (18)
+      inert, // awareness (19)
       inert, // jobDeps (20)
       creds as never, // creds (21)
       mcp as never, // mcp (22)
@@ -277,6 +288,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       run,
       steer,
       getCapturedTask: () => capturedTask,
+      jit,
     };
   }
 
@@ -491,5 +503,74 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     expect(task).toContain(rendered);
     expect(task).toContain('a plain operator message');
     expect(task!.indexOf(rendered)).toBeLessThan(task!.indexOf('<user'));
+  });
+
+  it('memory auto-recall hit renders through the real JIT rail before the operator message', async () => {
+    const thread = await makeThread('memory-autorecall-real-jit thread');
+    const recall = vi.fn().mockResolvedValue([
+      {
+        id: 'fact-1',
+        fact: 'uses pnpm for package management',
+        scope: `project:${repoId}`,
+        sim: 0.91,
+      },
+    ]);
+    const { manager, run, getCapturedTask } = makeManager({
+      jit: new JitHostExecutor({} as never),
+      memoryRecall: recall,
+    });
+    const body = 'what package manager does this repo use';
+
+    await stimulusStore.recordChatStimulus({
+      orgId: ORG_ID,
+      repoId,
+      jobId: thread.id,
+      author: OPERATOR,
+      replyRoute: { surfaceId: 'web', jobRef: thread.id },
+      body,
+    });
+
+    await manager.pumpThread(thread.id, ORG_ID, repoId);
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(recall).toHaveBeenCalledWith(
+      body,
+      expect.objectContaining({
+        scopes: [`project:${repoId}`, `team:${ORG_ID}`],
+        orgId: ORG_ID,
+        limit: 3,
+        floor: 0.45,
+      }),
+    );
+    const task = getCapturedTask();
+    expect(task).toContain('<system_reminder source="memory">');
+    expect(task).toContain('uses pnpm for package management');
+    expect(task!.indexOf('source="memory"')).toBeLessThan(task!.indexOf('<user'));
+  });
+
+  it('JIT memory rail disabled: skips auto-recall before any embedding/recall call', async () => {
+    const thread = await makeThread('jit-memory-disabled thread');
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm', scope: `project:${repoId}`, sim: 0.9 },
+    ]);
+    const { manager, run, getCapturedTask } = makeManager({
+      jitEnabled: false,
+      memoryRecall: recall,
+    });
+
+    await stimulusStore.recordChatStimulus({
+      orgId: ORG_ID,
+      repoId,
+      jobId: thread.id,
+      author: OPERATOR,
+      replyRoute: { surfaceId: 'web', jobRef: thread.id },
+      body: 'what package manager does this repo use',
+    });
+
+    await manager.pumpThread(thread.id, ORG_ID, repoId);
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(recall).not.toHaveBeenCalled();
+    expect(getCapturedTask()).not.toContain('source="memory"');
   });
 });

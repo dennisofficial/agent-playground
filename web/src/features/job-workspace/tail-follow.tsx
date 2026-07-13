@@ -47,9 +47,31 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   // True while the pointer rests on interactive content — auto-scroll is suspended so the thing under the
   // cursor holds still. A ref (like `stuckToBottom`) so the effect reads it without re-rendering.
   const pointerHold = useRef(false);
+  // A touch/wheel gesture (including inertial momentum) is in flight — while true, the auto-pin effect
+  // must yield so an in-progress upward scroll is never yanked back to the tail.
+  const userScrolling = useRef(false);
+  const lastScrollTop = useRef(0);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Drives the "Jump to latest" pill — shown only while scrolled up off the tail. Mirrors `stuckToBottom`
   // but as state, since visibility has to re-render (the ref intentionally doesn't).
   const [showJump, setShowJump] = useState(false);
+
+  const IDLE_MS = 140;
+  const settle = () => {
+    userScrolling.current = false;
+    onScroll(); // finalize "stuck" state from the resting position
+  };
+  const armSettle = () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(settle, IDLE_MS);
+  };
+  const markUserScroll = () => {
+    userScrolling.current = true;
+    if (settleTimer.current) {
+      clearTimeout(settleTimer.current);
+      settleTimer.current = null;
+    }
+  };
 
   // Within ~80px of the bottom counts as "stuck" so a tiny bit of slack (and sub-pixel rounding during
   // streaming) doesn't read as "scrolled up".
@@ -57,12 +79,22 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
     const el = scrollRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const stuck = distanceFromBottom < 80;
+    let stuck = distanceFromBottom < 80;
+    if (userScrolling.current) {
+      if (el.scrollTop < lastScrollTop.current - 1) stuck = false;
+      armSettle();
+    }
+    lastScrollTop.current = el.scrollTop;
     stuckToBottom.current = stuck;
     setShowJump(!stuck);
   };
 
   const jumpToLatest = () => {
+    userScrolling.current = false;
+    if (settleTimer.current) {
+      clearTimeout(settleTimer.current);
+      settleTimer.current = null;
+    }
     stuckToBottom.current = true;
     setShowJump(false);
     if (pin) pin();
@@ -86,7 +118,39 @@ export function useTailFollow(deps: React.DependencyList, pin?: () => void) {
   const onPointerLeave = () => setHold(false);
 
   useEffect(() => {
-    if (!stuckToBottom.current || pointerHold.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      markUserScroll();
+      if (e.deltaY < 0) {
+        stuckToBottom.current = false;
+        setShowJump(true);
+      }
+      armSettle();
+    };
+    const onTouchStartMove = () => markUserScroll();
+    const onTouchEnd = () => armSettle();
+    const onScrollEnd = () => settle();
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStartMove, { passive: true });
+    el.addEventListener("touchmove", onTouchStartMove, { passive: true });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    el.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStartMove);
+      el.removeEventListener("touchmove", onTouchStartMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("scrollend", onScrollEnd);
+      if (settleTimer.current) clearTimeout(settleTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use only refs + stable setState; attach once
+  }, []);
+
+  useEffect(() => {
+    if (!stuckToBottom.current || pointerHold.current || userScrolling.current) return;
     if (pin) pin();
     else endRef.current?.scrollIntoView({ block: "end" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are supplied by the caller (content signal)

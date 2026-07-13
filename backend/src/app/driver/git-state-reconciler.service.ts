@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Raw, Repository } from 'typeorm';
 import { CredentialResolver } from '../onboarding';
@@ -6,6 +6,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
 import { GithubPrService, parseGithubRepoUrl, type CheckRun, type CiCounts, type CiSummary } from '../git';
 import { StimulusIntake } from '../stimulus';
+import { AutoMergeService } from './auto-merge.service';
 
 /**
  * The GIT-STATE RECONCILER — the poll half of "host observes GitHub, Atlas acts". Runs on the driver's
@@ -42,6 +43,8 @@ export class GitStateReconciler {
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
     private readonly intake: StimulusIntake,
+    @Optional()
+    private readonly autoMerge?: AutoMergeService,
   ) {}
 
   /**
@@ -166,7 +169,7 @@ export class GitStateReconciler {
   private async reconcileOne(job: JobEntity): Promise<PollTier> {
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(job.org_id);
+    const token = await this.creds.hostGithubToken(job.org_id);
     // Misconfig (no repo URL / no token) is persistent — back off to the slow tier rather than retrying
     // every heartbeat.
     if (!parsed || !token) return 'discovering';
@@ -262,6 +265,13 @@ export class GitStateReconciler {
         correlation: { prNumber },
       });
     }
+
+    // Every reconcile of an open PR re-evaluates auto-merge (fire-and-forget — never blocks/throws this
+    // reconcile): a redelivered/settled mergeability tick can be the FIRST signal a prior brain-not-idle
+    // check would have skipped.
+    void this.autoMerge
+      ?.maybeAutoMerge(job.id)
+      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
 
     // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
     // resolves to clean/dirty. A settled open PR polls at the relaxed `active` cadence.

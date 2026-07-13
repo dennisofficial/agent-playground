@@ -35,6 +35,9 @@ export const qk = {
     ref: { orgId: string; repoId: string; jobId: string },
     path: string,
   ) => ["thread-context-file", ref.orgId, ref.repoId, ref.jobId, path] as const,
+  /** One job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane. */
+  jobDiff: (ref: { orgId: string; repoId: string; jobId: string }) =>
+    ["job-diff", ref.orgId, ref.repoId, ref.jobId] as const,
   /** The job worktree's tracked-file manifest (repo/tree). */
   repoTree: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["repo-tree", ref.orgId, ref.repoId, ref.jobId] as const,
@@ -46,17 +49,6 @@ export const qk = {
   /** One thread's `atlas-svc` supervised-process list. */
   threadServices: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["thread-services", ref.orgId, ref.repoId, ref.jobId] as const,
-  /** Every repo across all the operator's orgs (the tickets repo picker). */
-  allRepos: () => ["all-repos"] as const,
-  /** One repo's board/backlog tickets (`GET /web/orgs/:orgId/repos/:repoId/tickets`). */
-  ticketsList: (orgId: string, repoId: string) =>
-    ["tickets-list", orgId, repoId] as const,
-  /** One ticket's detail (deps + thread link). */
-  ticketDetail: (orgId: string, repoId: string, ticketId: string) =>
-    ["ticket-detail", orgId, repoId, ticketId] as const,
-  /** Tickets raised FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
-  jobTickets: (orgId: string, repoId: string, jobId: string) =>
-    ["job-tickets", orgId, repoId, jobId] as const,
   /** Jobs spawned FROM one job (`GET …/jobs/:jobId/created`) — the job workspace's "Created jobs" panel. */
   jobCreated: (orgId: string, repoId: string, jobId: string) =>
     ["job-created", orgId, repoId, jobId] as const,

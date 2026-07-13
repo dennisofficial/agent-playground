@@ -1,7 +1,14 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { qk } from "./query-keys";
+import { useOrgs } from "./me";
 import {
   addJobDependency,
   answerQuestion,
@@ -15,6 +22,7 @@ import {
   deleteThread,
   fetchContextFile,
   fetchCreatedJobs,
+  fetchJobDiff,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -27,8 +35,11 @@ import {
   removeJobDependency,
   renameJob,
   setAutoApprove,
+  setAutoMerge,
+  acceptThread,
   retryJob,
   retryTurn,
+  retryVerification,
   sayMessage,
   sayMessageWithFiles,
   spinUpPreview,
@@ -40,13 +51,54 @@ import {
   type CreateThreadBody,
   type JobMessage,
   type JobRef,
+  type RepoView,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { JobBlocker, WebAttachmentsCard, WebReviewCommentsCard } from "./types";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
+import type {
+  JobBlocker,
+  WebAttachmentsCard,
+  WebReviewCommentsCard,
+} from "./types";
 
 /** Tanstack Query hooks over the org → repo → thread API. */
 
 const hasRef = (ref: JobRef) => Boolean(ref.orgId && ref.repoId && ref.jobId);
+
+/** A repo in a flat cross-org picker — its org context + the connected-repo view. */
+export interface RepoChoice {
+  orgId: string;
+  orgName: string;
+  repo: RepoView;
+}
+
+/**
+ * Every connected repo across all the operator's orgs. Built from the session orgs + one
+ * `GET /orgs/:id/repos` per org (parallel). Only `accessOk` repos are conversation containers, but we
+ * return all connected repos and let the caller reflect emptiness.
+ */
+export function useAllRepos(): { repos: RepoChoice[]; isLoading: boolean } {
+  const { orgs, isLoading: orgsLoading } = useOrgs();
+  const results = useQueries({
+    queries: orgs.map((o) => ({
+      queryKey: qk.orgRepos(o.id),
+      queryFn: () => fetchOrgRepos(o.id),
+      staleTime: 30_000,
+    })),
+  });
+
+  const repos = useMemo(() => {
+    const out: RepoChoice[] = [];
+    orgs.forEach((o, i) => {
+      const list = results[i]?.data ?? [];
+      for (const repo of list) out.push({ orgId: o.id, orgName: o.name, repo });
+    });
+    return out;
+  }, [orgs, results]);
+
+  const isLoading = orgsLoading || results.some((r) => r.isLoading);
+  return { repos, isLoading };
+}
 
 /** A thread's durable message log. SSE keeps it fresh via `useJobEvents` (refetch on any frame). */
 export function useJobMessages(ref: JobRef) {
@@ -85,6 +137,16 @@ export function useContextFile(ref: JobRef, path: string | null) {
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
+  });
+}
+
+/** The job's accumulated multi-file diff. Lazy — only fetched while the Changes pane is open (`enabled`).
+ *  SSE invalidates it on repo-file writes + turn end (`useJobEvents`), so it refreshes live as the build edits. */
+export function useJobDiff(ref: JobRef, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.jobDiff(ref),
+    queryFn: () => fetchJobDiff(ref),
+    enabled: enabled && hasRef(ref),
   });
 }
 
@@ -363,6 +425,34 @@ export function useRetryJob(ref: JobRef) {
   });
 }
 
+/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive of the live judge. Refreshes
+ *  the pipeline (the lane flips back to running) + messages + the job list. */
+export function useRetryVerification(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: string) => retryVerification(ref, threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete it (bypassing only the live
+ *  judge) and advance the job. Refreshes the pipeline (the lane flips to done) + messages + the job list. */
+export function useAcceptThread(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: string) => acceptThread(ref, threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
 /** The "Resume" button on a `retryable` system→operator error box — re-pokes the same engine session
  *  with no new operator message. Refreshes messages (+ the live stream picks up the resumed turn). */
 export function useRetryTurn(ref: JobRef) {
@@ -380,7 +470,8 @@ export function useRetryTurn(ref: JobRef) {
 export function useAddJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) => addJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) =>
+      addJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -393,7 +484,8 @@ export function useAddJobDependency(ref: JobRef) {
 export function useRemoveJobDependency(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dependsOnJobId: string) => removeJobDependency(ref, dependsOnJobId),
+    mutationFn: (dependsOnJobId: string) =>
+      removeJobDependency(ref, dependsOnJobId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
@@ -527,7 +619,21 @@ export function useRenameJob(ref: JobRef) {
 export function useSetAutoApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (enabled: boolean) => setAutoApprove(ref, enabled),
+    mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+  });
+}
+
+/** Flip the job's auto-merge settings. Invalidate the pipeline so the popover reflects immediately. */
+export function useSetAutoMerge(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      autoMerge: boolean;
+      method?: AutoMergeMethod;
+      deleteBranch?: boolean;
+    }) => setAutoMerge(ref, body),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });

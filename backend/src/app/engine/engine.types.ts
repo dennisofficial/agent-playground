@@ -126,14 +126,18 @@ export type EngineEvent =
       resetsAt?: number;        // epoch ms, verbatim from the SDK
       rateLimitType?: string;
       utilization?: number;
+      /** Dispatch-time credential the turn runs on — stamped HOST-side, never set by the in-container engine. */
+      credentialId?: string;
     }
   /**
    * Lifecycle of an SDK `run_in_background` Bash task, surfaced to the operator. The engine holds the turn's
    * query() session open while any such task is in flight (see the `bg_task` handling in engine-core), so the
    * task's completion and the model's auto-continuation arrive in the SAME turn. `status:'started'` is emitted
    * on `system/task_started`; the settlement statuses (`completed`/`failed`/`stopped`) mirror
-   * `system/task_notification`; `capped` is emitted when the hold hit BG_TASK_MAX_HOLD_MS and the turn was
-   * force-finalized (the task was still running and gets killed). Live-only — not part of the durable transcript.
+   * `system/task_notification`; `capped` is emitted when a bare bg Bash task exceeds the hold cap — an ADVISORY
+   * signal only (the task keeps running and is NOT killed; the agent is nudged toward atlas-svc and the model's
+   * next natural result ends the turn). Subagents run uncapped, so they never emit `capped`. Live-only — not
+   * part of the durable transcript.
    */
   | {
       kind: 'bg_task';
@@ -150,6 +154,19 @@ export type EngineEvent =
        * `capped` synthetic (no originating tool call to attribute).
        */
       parentToolUseId?: string;
+    }
+  /**
+   * Diagnostic breadcrumb for a streaming turn's control channel — emitted on each success `result`
+   * (carrying that result's `terminal_reason`/`stop_reason`) and once at teardown (carrying the per-turn
+   * `streamClosedCount`). Instrumentation only: the turn harness folds the latest values into the durable
+   * `turn_meta` block so a control-channel wobble ("Stream closed" host-tool results) is diagnosable after
+   * the live Redis stream is gone.
+   */
+  | {
+      kind: 'turn_debug';
+      terminalReason?: string;
+      stopReason?: string | null;
+      streamClosedCount?: number;
     };
 
 /**
@@ -273,13 +290,14 @@ export interface SandboxGitIdentity {
 }
 
 /**
- * Authenticated-git for a turn: the remote url + org PAT the sandbox agent uses to fetch/push, plus the
- * resolved commit {@link SandboxGitIdentity} to attribute its commits to. See {@link ExecutionTarget.gitAuth}.
+ * Authenticated-git for a turn: the remote url + effective org GitHub token the sandbox agent uses to
+ * fetch/push, plus the resolved commit {@link SandboxGitIdentity} to attribute its commits to. See
+ * {@link ExecutionTarget.gitAuth}.
  */
 export interface GitAuth {
   gitUrl: string;
   token?: string;
-  /** Token for the sandbox `gh`/GITHUB_TOKEN path (PR create/comment/review), set to the credential that MATCHES the resolved commit identity when it differs from the git transport `token` (identity mode routes API writes through the PAT or App bot independently of transport). Absent → GITHUB_TOKEN falls back to `token`. */
+  /** Token for the sandbox `gh`/GITHUB_TOKEN path (PR create/comment/review). It resolves from the same effective credential as `token`; absent means GITHUB_TOKEN falls back to `token`. */
   apiToken?: string;
   identity?: SandboxGitIdentity;
   /**
@@ -315,6 +333,12 @@ export interface ExecutionTarget {
    * `.git/config`. Absent → git remote ops fail closed (`GIT_TERMINAL_PROMPT=0`).
    */
   gitAuth?: GitAuth;
+  /**
+   * Container path the turn's writers send live-run evidence to: `/context/evidence/<threadDirName>` for a
+   * thread leg, or `/context/evidence` root for a brain/direct-build turn. Emitted as `ATLAS_EVIDENCE_DIR`
+   * in the exec env (per-turn — never baked at container-create, since the container is reused warm).
+   */
+  evidenceDir?: string;
 }
 
 // ── Tool-bridge frame protocol ────────────────────────────────────────────────────────────────────
@@ -778,6 +802,8 @@ export interface EngineRunResult {
    * held-open resume) — the caller parks the lane + schedules an auto-resume at `resetAt`.
    */
   sessionLimit?: SessionLimitHit;
+  /** Count of "Stream closed" host-tool results seen in this turn (control-channel failures). Absent/0 on a healthy turn; a positive value flags a control-channel wobble even if the circuit-breaker didn't trip. */
+  streamClosedCount?: number;
   /**
    * False ⇒ another finisher already claimed (deleted) this turn's active_turns row, so the caller MUST
    * discard (persist nothing). Undefined ⇒ treat as claimed (back-compat for non-redis / test paths).
@@ -810,6 +836,8 @@ export interface EngineRunnerPort {
       onEvent?: (e: EngineEvent) => void;
       toolBridge?: ToolBridgeOptions;
       signal?: AbortSignal;
+      /** Dispatch-time Claude credential id, host-only; used to stamp replayed rate-limit events. */
+      credentialId?: string;
     },
   ): Promise<EngineRunResult>;
   /**
@@ -870,6 +898,8 @@ export class EngineAuthError extends Error {
     message: string,
     /** The engine session to resume on a re-ping (undefined if the 401 hit before a session started). */
     readonly sessionId?: string,
+    /** Which engine's credential failed — so the operator halt copy names the RIGHT integration (Claude vs Codex). */
+    readonly engine?: SessionEngine,
   ) {
     super(message);
     this.name = 'EngineAuthError';
@@ -889,6 +919,7 @@ export class EngineSessionLimitError extends Error {
     readonly resetAt?: string,
     readonly rateLimitType?: string,
     readonly sessionId?: string,
+    readonly credentialId?: string,
   ) {
     super(message);
     this.name = 'EngineSessionLimitError';
@@ -943,4 +974,18 @@ export function isAuthErrorMessage(message: string): boolean {
   return /\b401\b|not logged in|please run \/login|invalid[ _-]?api[ _-]?key|invalid x-api-key|authentication[ _]?error|\bunauthorized\b|oauth[^.]*\b(expired|invalid|revoked)\b|token[^.]*\b(expired|revoked)\b|permission_error/i.test(
     message,
   );
+}
+
+/** Sentinel prefix a no-credential auth halt carries so the operator copy can be specific. */
+export const NO_ENGINE_CREDENTIAL_MARKER = 'NO_ENGINE_CREDENTIAL';
+
+/** Map a raw EngineAuthError message to clean, actionable operator copy — never leak SDK/CLI text. The
+ *  `engine` names the failing integration so the copy points at the RIGHT account (Claude vs Codex);
+ *  when unknown, the message itself is inspected and Claude is the safe default. */
+export function cleanAuthHaltReason(rawMessage: string, engine?: SessionEngine): string {
+  const label = (engine ?? (/\bcodex\b/i.test(rawMessage) ? 'codex' : 'claude')) === 'codex' ? 'Codex' : 'Claude';
+  if (rawMessage.includes(NO_ENGINE_CREDENTIAL_MARKER)) {
+    return `No ${label} account is connected for this org — connect one in Settings, then resume.`;
+  }
+  return `Your ${label} login needs to be reconnected — reconnect the account in Settings, then resume.`;
 }

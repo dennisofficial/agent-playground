@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   FileText,
+  FlaskConical,
   Folder,
   GitBranch,
   GitFork,
@@ -15,6 +16,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
+  Hourglass,
   Image as ImageIcon,
   Lock,
   MoreHorizontal,
@@ -24,7 +26,6 @@ import {
   Server,
   ShieldCheck,
   SquareTerminal,
-  TicketIcon,
   Trash2,
 } from "lucide-react";
 import {
@@ -37,12 +38,15 @@ import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
+import { isOutputGroupHidden } from "./output-group";
 import {
+  useAcceptThread,
   useJobCreatedJobs,
+  useJobDiff,
   useRetryJob,
+  useRetryVerification,
   useServices,
 } from "@/lib/api/job-queries";
-import { useJobTickets } from "@/lib/api/tickets-queries";
 import { threadHref } from "@/lib/routes";
 import {
   Divider,
@@ -53,9 +57,17 @@ import {
 import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
+  NavigatorMergeButton,
   NavigatorShipButton,
 } from "./spec-approval";
-import { pipelineAutoApprove, pipelineMainTasks } from "@/lib/api/types";
+import {
+  pipelineAutoApproveMode,
+  pipelineAutoMerge,
+  pipelineMainTasks,
+} from "@/lib/api/types";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
+import { autoPillView } from "./auto-approve-mode";
+import { AutoApprovePopover } from "./auto-approve-popover";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
@@ -94,42 +106,91 @@ function prNavGlyph(
   return { Icon: GitPullRequest, color: "var(--green)", label: "open" };
 }
 
-/** Compact header switch for the per-job AUTO-APPROVE flag. ON = green/filled (the job is autonomous —
- *  plan + ship gates auto-advance), OFF = quiet. Disabled on terminal jobs (nothing left to gate). */
+const AUTO_APPROVE_TITLES: Record<AutoApproveMode, string> = {
+  off: "Auto-approve off — you approve plan & ship gates",
+  both: "Auto-approve on — plan & ship gates advance without you",
+  plan: "Auto-approve: plan gate only",
+  ship: "Auto-approve: ship gate only",
+};
+
+/** Compact header pill for the per-job AUTO-APPROVE mode. Opens a popover with independent Plan/Ship
+ *  switches; the pill's color + label reflect the resulting mode (quiet grey off, amber naming the single
+ *  active gate, solid green "Auto" once both gates are armed). Disabled on terminal jobs. */
 function AutoApproveToggle({
-  on,
+  mode,
   disabled,
-  onToggle,
+  onChange,
+  autoMerge,
+  autoMergeMethod,
+  autoMergeDeleteBranch,
+  onSetMerge,
 }: {
-  on: boolean;
+  mode: AutoApproveMode;
   disabled?: boolean;
-  onToggle: (next: boolean) => void;
+  onChange: (mode: AutoApproveMode) => void;
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+  onSetMerge: (body: {
+    autoMerge: boolean;
+    method?: AutoMergeMethod;
+    deleteBranch?: boolean;
+  }) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const [draftMode, setDraftMode] = useState(mode);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const view = autoPillView(draftMode);
+
+  useEffect(() => {
+    setDraftMode(mode);
+  }, [mode]);
+
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label="Auto-approve plan and ship gates"
-      title={
-        on
-          ? "Auto-approve is ON — plan & ship gates advance without you"
-          : "Auto-approve is OFF — you approve plan & ship gates"
-      }
-      disabled={disabled}
-      onClick={() => onToggle(!on)}
-      data-testid="auto-approve-toggle"
-      className={cn(
-        "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
-        disabled && "cursor-not-allowed opacity-40",
-        on
-          ? "border-green bg-green-soft text-green"
-          : "border-border-2 bg-surface text-faint hover:text-dim",
-      )}
-    >
-      <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
-      Auto
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label={AUTO_APPROVE_TITLES[draftMode]}
+        title={AUTO_APPROVE_TITLES[draftMode]}
+        disabled={disabled}
+        onClick={() => {
+          setAnchorRect(btnRef.current?.getBoundingClientRect() ?? null);
+          setOpen((o) => !o);
+        }}
+        data-testid="auto-approve-toggle"
+        className={cn(
+          "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.05em] transition",
+          disabled && "cursor-not-allowed opacity-40",
+          view.tone === "full" && "border-green bg-green-soft text-green",
+          view.tone === "partial" && "border-amber bg-amber-soft text-amber",
+          view.tone === "off" &&
+            "border-border-2 bg-surface text-faint hover:text-dim",
+        )}
+      >
+        <ShieldCheck className="h-3 w-3" strokeWidth={2.25} />
+        {view.label}
+      </button>
+      {open && anchorRect ? (
+        <AutoApprovePopover
+          anchorRect={anchorRect}
+          triggerRef={btnRef}
+          mode={draftMode}
+          onSelect={(next) => {
+            setDraftMode(next);
+            onChange(next);
+          }}
+          autoMerge={autoMerge}
+          autoMergeMethod={autoMergeMethod}
+          autoMergeDeleteBranch={autoMergeDeleteBranch}
+          onSetMerge={onSetMerge}
+          onClose={() => setOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -174,11 +235,13 @@ export function Navigator({
   jobRef,
   approveValue,
   shipValue,
+  previewRequestedAt,
   onConversation,
   onSelectNode,
   onRename,
   onDelete,
-  onToggleAutoApprove,
+  onSetAutoApprove,
+  onSetAutoMerge,
   deleting,
   hasOpenPr,
   deleteReady,
@@ -202,13 +265,22 @@ export function Navigator({
   /** The ship card's verbatim `{ jobId }` value, when the job is awaiting ship review (else ''). Drives
    *  the navigator ship button + callout. */
   shipValue: string;
+  /** The ship card's `previewRequestedAt` — gates the header "Spin up preview" button (hidden once a
+   *  preview has been requested). */
+  previewRequestedAt?: string | null;
   /** Clears the detail-pane selection (the Main lane / the state banners' recovery actions). */
   onConversation: () => void;
   onSelectNode: (node: string) => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
-  /** Flip the per-job auto-approve flag — the header toggle. Absent ⇒ the toggle isn't rendered. */
-  onToggleAutoApprove?: (next: boolean) => void;
+  /** Set the per-job auto-approve mode — the header pill's popover. Absent ⇒ the pill isn't rendered. */
+  onSetAutoApprove?: (mode: AutoApproveMode) => void;
+  /** Set the per-job auto-merge settings — the same header pill's popover Merge section. */
+  onSetAutoMerge?: (body: {
+    autoMerge: boolean;
+    method?: AutoMergeMethod;
+    deleteBranch?: boolean;
+  }) => void;
   deleting?: boolean;
   /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
    *  inline double-click confirm. */
@@ -228,9 +300,14 @@ export function Navigator({
   // history and only meaningful at the approval gate). Null while still awaiting approval ⇒ false ⇒ a
   // requested-but-unapproved direct build keeps its placeholders (it can still convert to a full plan).
   const isDirectBuild = job?.buildPath === "direct";
-  // AUTO-APPROVE flag — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
-  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the flag still rides along).
-  const autoApprove = pipelineAutoApprove(pipeline);
+  // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
+  // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
+  const autoApproveMode = pipelineAutoApproveMode(pipeline);
+  // AUTO-MERGE settings + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
+  // as `autoApproveMode`, so an auto-merge-armed job still in the `no_job` (open/pre-plan) shape shows the
+  // Merge toggle correctly instead of reading stale/off (`pipelineJob()` is null there).
+  const { autoMerge, autoMergeMethod, autoMergeDeleteBranch, mergeReady, mergeValue } =
+    pipelineAutoMerge(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -242,8 +319,8 @@ export function Navigator({
   // PR (or a partially-recorded row) can carry `prState`/`prNumber` with a null `prUrl`; gating on `prUrl`
   // would then say "No PR yet" while the sidebar shows the closed glyph. The URL only gates the link-out.
   const hasPr = Boolean(job?.prState);
-  // We can't read a real +/− line stat (no diff endpoint), but a job that hasn't built anything yet
-  // (planning / awaiting / triaging) plainly has no changes — show a muted "—" on the Changes row then.
+  // A job that hasn't built anything yet (planning / awaiting / triaging) plainly has no changes — show a
+  // muted "—" on the Changes row then, and skip the diff fetch below.
   const noChanges =
     !hasPr &&
     meta.status !== "done" &&
@@ -251,9 +328,6 @@ export function Navigator({
     meta.status !== "awaiting_ship_review" &&
     meta.status !== "amending";
   const [editing, setEditing] = useState(false);
-
-  // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
-  const { data: raisedTickets = [] } = useJobTickets(jobRef);
 
   // Jobs Atlas spawned FROM this job — the header "Created jobs" entry appears only once there's ≥1.
   const { data: createdJobs = [] } = useJobCreatedJobs(jobRef);
@@ -263,6 +337,14 @@ export function Navigator({
   const { data: servicesData, isLoading: servicesLoading } =
     useServices(jobRef);
   const services = servicesData?.services ?? [];
+
+  // Real +/− line totals for the "Changes" row — summed from the diff endpoint (shared query with the diff
+  // pane; fetched only when the job could actually have changes). Mirrors the per-file badges in the diff.
+  const { data: diffData } = useJobDiff(jobRef, !noChanges);
+  const diffAdditions =
+    diffData?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
+  const diffDeletions =
+    diffData?.files.reduce((n, f) => n + f.deletions, 0) ?? 0;
 
   const st = meta.status;
   const router = useRouter();
@@ -313,13 +395,17 @@ export function Navigator({
             {STATUS_META[st].label}
           </span>
           <div className="flex-1" />
-          {onToggleAutoApprove ? (
+          {onSetAutoApprove ? (
             <AutoApproveToggle
-              on={autoApprove}
+              mode={autoApproveMode}
               disabled={
                 st === "done" || st === "cancelled" || st === "deleting"
               }
-              onToggle={onToggleAutoApprove}
+              onChange={onSetAutoApprove}
+              autoMerge={autoMerge}
+              autoMergeMethod={autoMergeMethod}
+              autoMergeDeleteBranch={autoMergeDeleteBranch}
+              onSetMerge={onSetAutoMerge ?? (() => {})}
             />
           ) : null}
           {onDelete || onRename ? (
@@ -495,30 +581,19 @@ export function Navigator({
           <span className="flex-1 text-[11px] font-semibold text-dim">
             Changes
           </span>
-          {noChanges ? (
+          {diffAdditions > 0 || diffDeletions > 0 ? (
+            <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold tabular-nums">
+              {diffAdditions > 0 ? (
+                <span style={{ color: "var(--add)" }}>+{diffAdditions}</span>
+              ) : null}
+              {diffDeletions > 0 ? (
+                <span style={{ color: "var(--del)" }}>−{diffDeletions}</span>
+              ) : null}
+            </span>
+          ) : noChanges ? (
             <span className="font-mono text-[9px] text-faint">—</span>
           ) : null}
         </button>
-        {/* Tickets raised — appears only once Atlas has captured out-of-scope work from this job; opens the
-            standing "Tickets raised" list in the detail pane. */}
-        {raisedTickets.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => onSelectNode("tickets")}
-            className={cn(
-              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-              detailNode === "tickets" && "nav-selected-blue",
-            )}
-          >
-            <TicketIcon size={13} className="w-3.5 shrink-0 text-accent" />
-            <span className="flex-1 text-[11px] font-semibold text-dim">
-              Tickets raised
-            </span>
-            <span className="font-mono text-[9px] text-faint">
-              {raisedTickets.length}
-            </span>
-          </button>
-        ) : null}
         {/* Created jobs — appears only once this job has spawned ≥1 follow-up job; opens the standing
             "Created jobs" list in the detail pane. */}
         {createdJobs.length > 0 ? (
@@ -539,8 +614,8 @@ export function Navigator({
             </span>
           </button>
         ) : null}
-        {/* Blocked by — a REAL gate (the brain doesn't run while it's up), not the tickets board's advisory
-            dependencies; appears whenever the job is parked or still carries live blockers. */}
+        {/* Blocked by — a REAL gate (the brain doesn't run while it's up); appears whenever the job is
+            parked or still carries live blockers. */}
         {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
           <button
             type="button"
@@ -576,7 +651,17 @@ export function Navigator({
         {/* Ship it — the SECOND human gate, pinned the same way once the build + master review finish. */}
         {st === "awaiting_ship_review" && shipValue ? (
           <div className="mt-2">
-            <NavigatorShipButton jobRef={jobRef} value={shipValue} />
+            <NavigatorShipButton
+              jobRef={jobRef}
+              value={shipValue}
+              previewRequestedAt={previewRequestedAt}
+            />
+          </div>
+        ) : null}
+        {/* Merge PR — the THIRD human gate, pinned once the PR is GitHub-mergeable. */}
+        {mergeReady && mergeValue ? (
+          <div className="mt-2">
+            <NavigatorMergeButton jobRef={jobRef} value={mergeValue} />
           </div>
         ) : null}
       </div>
@@ -589,6 +674,7 @@ export function Navigator({
           job={job}
           jobRef={jobRef}
           onConversation={onConversation}
+          onNotice={showToast}
         />
 
         {/* THREADS — the Main planning lane + each build lane, as an ACCORDION (design handoff "thread
@@ -852,6 +938,7 @@ function OutputsRegion({
   const specs = context?.specs ?? [];
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
+  const evidence = context?.evidence ?? [];
   const triaging = status === "triaging";
 
   return (
@@ -922,14 +1009,28 @@ function OutputsRegion({
         onSelectNode={onSelectNode}
       />
 
-      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      {/* ARTIFACTS — human-facing deliverables (preview HTML, mockups, reports). Diff + PR live in the header. */}
       <OutputGroup
         label="ARTIFACTS"
         files={artifacts}
         prefix="artifact"
         loading={loading}
         emptyIcon={<ImageIcon size={13} />}
-        emptyText="No screenshots or files yet"
+        emptyText="No deliverables yet"
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
+
+      {/* EVIDENCE — live-run proof (logs, screenshots, RESULTS.md), organized per thread. Hidden until the
+          first evidence lands, so historical jobs (no evidence/) show no empty region. */}
+      <OutputGroup
+        label="EVIDENCE"
+        files={evidence}
+        prefix="evidence"
+        loading={loading}
+        hideWhenEmpty
+        emptyIcon={<FlaskConical size={13} />}
+        emptyText="No evidence captured yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -956,7 +1057,7 @@ function OutputGroup({
 }: {
   label: string;
   files: ContextFile[];
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   loading?: boolean;
   /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
@@ -987,7 +1088,15 @@ function OutputGroup({
     });
   // Drop the group whole (no divider, no ghost row) when asked to hide-when-empty and there's genuinely
   // nothing to show — placed AFTER the hooks above so their order stays unconditional.
-  if (hideWhenEmpty && files.length === 0 && !loading && !children) return null;
+  if (
+    isOutputGroupHidden({
+      hideWhenEmpty,
+      fileCount: files.length,
+      loading,
+      hasChildren: Boolean(children),
+    })
+  )
+    return null;
   return (
     <>
       <Divider
@@ -1202,16 +1311,92 @@ function StateBanner({
   job,
   jobRef,
   onConversation,
+  onNotice,
 }: {
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
+  /** Surface a human-readable notice (the server's refusal `reason`) — a stuck-thread control that the
+   *  backend declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
+  onNotice: (message: string) => void;
 }) {
   const retry = useRetryJob(jobRef);
+  const retryVerification = useRetryVerification(jobRef);
+  const acceptThread = useAcceptThread(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
+
+  // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
+  // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
+  // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
+  const stuck = job?.threads?.find(
+    (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
+  );
+  if (stuck) {
+    const pending = retryVerification.isPending || acceptThread.isPending;
+    // The endpoints return HTTP 200 with `{ ok:false, reason }` for expected refusals (hold isn't
+    // judge_unavailable, static gate not passed, drive in flight, thread already done, …). `webJson` only
+    // throws on non-2xx, so those resolve as mutation "success" — inspect `res.ok` and toast the server's
+    // `reason` instead of navigating away as if the bypass worked.
+    const onRetryNow = () =>
+      retryVerification.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Retry was refused."),
+      });
+    const onAccept = () =>
+      acceptThread.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Accept was refused."),
+      });
+    // "Skip & accept" shows only when the LIVE judge was the outage and the static gate already passed (d4);
+    // "Retry now" is always safe (it just re-runs the judge), so it shows for any judge_unavailable hold.
+    const canAccept = stuck.acceptableOnJudgeOutage === true;
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
+        style={{
+          borderColor: "var(--border)",
+          borderLeftColor: "var(--accent-line)",
+          background: "var(--surface-2)",
+        }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <Hourglass size={11} className="text-dim" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
+            VERIFICATION UNAVAILABLE · §{stuck.ordinal}
+          </span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          The verification judge was unreachable. Retry it, or accept the work
+          as-is.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn
+            tone="accent"
+            icon={<RotateCw size={10} />}
+            label={retryVerification.isPending ? "Retrying…" : "Retry now"}
+            onClick={onRetryNow}
+            disabled={pending}
+          />
+          {canAccept && (
+            <BannerBtn
+              tone="neutral"
+              label={acceptThread.isPending ? "Accepting…" : "Skip & accept"}
+              onClick={onAccept}
+              disabled={pending}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (
     job?.halt &&
     (job.halt.kind === "failed" ||
@@ -1505,7 +1690,7 @@ function renderFileTree({
   node: FileTreeNode;
   path: string;
   depth: number;
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;

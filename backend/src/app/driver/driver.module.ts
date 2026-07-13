@@ -33,6 +33,7 @@ import { StimulusModule, StimulusStoreService } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
+import { AutoMergeService } from './auto-merge.service';
 import { GitStateReconciler } from './git-state-reconciler.service';
 import { SessionResumeSweep } from './session-resume-sweep.service';
 import { JobUnblockSweep } from './job-unblock-sweep.service';
@@ -116,6 +117,7 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     ThreadDriver,
     JobLifecycleService,
+    AutoMergeService,
     GithubPrStateSync,
     GithubCiStateSync,
     GithubTokenRefreshService,
@@ -136,6 +138,7 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
+    AutoMergeService,
     JOB_TEARDOWN,
     GithubPrStateSync,
     GithubCiStateSync,
@@ -264,7 +267,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
       this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
       this.startJobUnblockTimer(); // backstop: wake blocked jobs whose blockers are all terminal (leader-only)
-      this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
+      this.startPreviewTimer(); // the marker → port_state/Caddy reconciler (leader-only; Caddy is exposure-gated)
       this.startTokenRefreshTimer(); // app-mode in-sandbox git token-file refresh sweep (leader-only)
       this.startBuildLaneSweepTimer(); // build-lane host-seed at-least-once re-drive backstop (leader-only)
     });
@@ -434,13 +437,13 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   }
 
   /**
-   * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into live
-   * Caddy routes (and prunes stale ones) without relying on an open console tab. Leader-only (it mutates
-   * shared Caddy state) and inert unless the ExposureService is enabled (PREVIEW_BASE_DOMAIN set); `unref`
-   * so it never keeps the process alive; `previewInFlight` guards against overlap when a tick runs long.
+   * The sandbox-preview reconcile heartbeat (~10s) — the leader turns supervised-service markers into the
+   * sidebar port_state column and, when PREVIEW_BASE_DOMAIN is set, live Caddy routes. Leader-only (the
+   * column is WAL-replicated and Caddy state is shared); `unref` so it never keeps the process alive;
+   * `previewInFlight` guards against overlap when a tick runs long.
    */
   private startPreviewTimer(): void {
-    if (!this.exposure?.enabled) return; // exposure disabled (no PREVIEW_BASE_DOMAIN) — nothing to reconcile
+    if (!this.exposure) return;
     if (this.scheduler.doesExist('interval', PREVIEW_INTERVAL)) return;
     const everyMs = 10 * 1000; // 10s — a marker write becomes a public route within a tick.
     const iv = setInterval(() => {

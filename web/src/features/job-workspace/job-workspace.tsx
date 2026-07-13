@@ -19,6 +19,7 @@ import {
   useDeleteJob,
   useRenameJob,
   useSetAutoApprove,
+  useSetAutoMerge,
   useSay,
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
@@ -32,8 +33,6 @@ import {
   SHIP_ACTION_ID,
   type JobKind,
   type JobStatus,
-  type PipelineJob,
-  type ThreadStatus,
   type WebApprovalCard,
 } from "@/lib/api/types";
 import { Navigator, type JobMeta } from "./navigator";
@@ -66,6 +65,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const del = useDeleteJob(ref);
   const rename = useRenameJob(ref);
   const autoApprove = useSetAutoApprove(ref);
+  const autoMerge = useSetAutoMerge(ref);
   useJobEvents(ref);
 
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
@@ -86,7 +86,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     subNode,
     subLane,
     selectNode,
-    replaceLane,
     openConversation,
     closeDetail,
     closeSub,
@@ -147,21 +146,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // PR state is "known" once EITHER source has resolved; until then, block delete (don't leave-orphan).
   const prStateKnown = job != null || inboxThread != null;
   const [prDialogOpen, setPrDialogOpen] = useState(false);
-
-  // Opening a job lands on the build lane that's currently running (the "builder thread") rather than always
-  // on Main — you click a job to watch what it's doing. Decided ONCE per job open, the first time the
-  // pipeline resolves: if a lane is already selected (deep link / in-place return) we respect it, and if
-  // nothing is actively building we stay on Main. Marking `handled` on the first pipeline response (even the
-  // pre-build `no_job` one) means a later plan-approval→build transition never yanks you off Main mid-read.
-  const autoSelectedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (autoSelectedFor.current === jobId) return;
-    if (!pipeline) return; // wait for the first pipeline response before deciding
-    autoSelectedFor.current = jobId;
-    if (laneNode) return; // an explicit / deep-linked lane wins
-    const running = job ? runningLane(job) : null;
-    if (running) replaceLane(running);
-  }, [pipeline, job, jobId, laneNode, replaceLane]);
 
   const pipelineKind = job ? toJobKind(job.kind) : null;
   const kind: JobKind = inboxThread?.kind ?? pipelineKind ?? "feat";
@@ -250,9 +234,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     // inbox row for a job still in `no_job` (pre-build `open`/chat) — the most common time to want the
     // parent link. `job?.createdBy ?? inboxThread?.createdBy` would wrongly fall through to the inbox row
     // whenever the pipeline's own value is null, so gate on `job` existing at all instead.
-    createdBy: job
-      ? (job.createdBy ?? null)
-      : (inboxThread?.createdBy ?? null),
+    createdBy: job ? (job.createdBy ?? null) : (inboxThread?.createdBy ?? null),
     blockedBy: job ? (job.blockedBy ?? []) : (inboxThread?.blockedBy ?? []),
     blockedSeedMessage: job
       ? (job.blockedSeedMessage ?? null)
@@ -289,12 +271,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       jobRef={ref}
       approveValue={awaitingApproval ? approveValue : ""}
       shipValue={awaitingShip ? shipValue : ""}
+      previewRequestedAt={shipCard?.previewRequestedAt ?? null}
       directBuild={isDirectApproval}
       onConversation={onConversation}
       onSelectNode={onSelectNode}
       onRename={onRename}
       onDelete={onDelete}
-      onToggleAutoApprove={(next) => autoApprove.mutate(next)}
+      onSetAutoApprove={(mode) => autoApprove.mutate(mode)}
+      onSetAutoMerge={(body) => autoMerge.mutate(body)}
       deleting={del.isPending}
       hasOpenPr={hasOpenPr}
       deleteReady={prStateKnown}
@@ -507,26 +491,6 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   );
 }
 
-/** The STEP values that count as "currently running" for the open-a-job default — a lane doing active work
- *  (executing / auto-fixing / reviewing / generating its just-in-time plan). `pending` (queued) and the
- *  terminal `done` are excluded; a lane halted with a `failed`/`incomplete` condition is filtered out at the
- *  call site (a `paused` lane still counts — it's parked mid-build, waiting on you). */
-const RUNNING_THREAD_STATUSES: ReadonlySet<ThreadStatus> =
-  new Set<ThreadStatus>(["planning", "reviewing", "executing", "auto_fixing"]);
-
-/** The `?lane=` id of the build lane to open when a job is first opened, or `null` to stay on Main. Picks the
- *  highest-ordinal running thread (the current build frontier in a sequential run); the id IS the lane token
- *  (a build thread is a bare-id node — see `node-registry.threadNode`). */
-function runningLane(job: PipelineJob): string | null {
-  let pick: PipelineJob["threads"][number] | null = null;
-  for (const t of job.threads) {
-    if (!RUNNING_THREAD_STATUSES.has(t.status)) continue;
-    if (t.condition === "failed" || t.condition === "incomplete") continue; // terminal halt — not running
-    if (!pick || t.ordinal > pick.ordinal) pick = t;
-  }
-  return pick?.id ?? null;
-}
-
 /** Short label for the base detail node, shown in a stacked sub-agent's breadcrumb (`‹ 02-webhooks.md ▸ …`).
  *  Detail nodes are files/docs/ports (never bare thread ids — those open in the left pane), so no job lookup
  *  is needed. */
@@ -534,7 +498,6 @@ function baseCrumbLabel(node: string): string {
   if (node === "diff") return "Diff";
   if (node === "plan") return "Plan";
   if (node === "decision") return "Decision record";
-  if (node === "tickets") return "Tickets raised";
   if (node === "created") return "Created jobs";
   if (node === "blocked-by") return "Blocked by";
   const file = /^(?:spec|gen|artifact):(.+)$/.exec(node);

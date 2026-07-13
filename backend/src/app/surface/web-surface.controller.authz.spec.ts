@@ -29,12 +29,12 @@ function makeController(threadOrgId: string) {
     {} as never, // liveTurns
     {} as never, // driverStore
     { deleteJobDeep, claimDeleteJob } as never, // threadLifecycle
+    {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
     messages as never,
     {} as never, // repos
     {} as never, // threadTitle
-    {} as never, // ticketEvents
     {} as never, // usageBus
     { available: false } as never, // realtime
     { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election

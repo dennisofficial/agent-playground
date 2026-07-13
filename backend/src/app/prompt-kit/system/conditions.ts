@@ -45,9 +45,15 @@ export const isBuildBrain = (c: PromptCtx): boolean =>
 export const hasOrgInstructions = (c: PromptCtx): boolean =>
   !!c.settings?.userOrgInstructions && c.settings.userOrgInstructions.trim().length > 0;
 
-/** Per-job auto-approve is ON — inject the autonomous-mode fragment. */
-export const hasAutoApprove = (c: PromptCtx): boolean => c.settings?.autoApprove === true;
+/** Per-job auto-approve is ON (any mode but 'off') — inject the autonomous-mode fragment. */
+export const hasAutoApprove = (c: PromptCtx): boolean => (c.settings?.autoApproveMode ?? 'off') !== 'off';
+
+/** Per-job auto-merge is ON — inject the auto-merge fragment. */
+export const hasAutoMerge = (c: PromptCtx): boolean => c.settings?.autoMerge === true;
 
 /** The repo has an attached house-style profile (the conditional conventions fragment). */
 export const hasRepoConventions = (c: PromptCtx): boolean =>
   !!c.settings?.repoConventions && c.settings.repoConventions.body.trim().length > 0;
+
+/** This job runs on the Atlas repo itself (slug === ATLAS_REPO_SLUG) — gates the atlas-prod host-tool fragment. */
+export const isAtlasRepo = (c: PromptCtx): boolean => c.job?.isAtlasRepo === true;
