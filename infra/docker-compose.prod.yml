@@ -44,6 +44,13 @@ x-backend-common: &backend-common
     DOCKER_SOCKET_PATH: /var/run/docker.sock
     # Sandbox base image (built on the box at first boot by SandboxImageBuilder)
     SANDBOX_IMAGE: atlas-sandbox:latest
+    # Best-effort CPU for sandboxes. Relative weight (Docker CpuShares → cgroup v2 cpu.weight) stamped on
+    # every per-job sandbox container the backend creates, so bursty agent compute (pnpm install / builds
+    # / tests) YIELDS to the host control plane under contention — the backend/DB/web keep their default
+    # weight (1024), sandboxes get 256 (≈4:1). It only bites under contention: an idle box still lets a
+    # sandbox use 100% of the CPU (no throughput cap). Unset ⇒ Docker default (no isolation). Dial lower
+    # (min 2) to make sandboxes yield harder. See infra/README.md.
+    SANDBOX_CPU_SHARES: "256"
     # Data roots — all under the same-path bind mount /srv/atlas/data:/srv/atlas/data
     # so paths handed to the Docker daemon resolve identically on the host.
     REPOS_ROOT: /srv/atlas/data/repos
@@ -156,6 +163,10 @@ services:
       retries: 10
     networks:
       - atlas
+    # Highest CPU priority among control-plane peers — DB starvation is the worst failure mode, and it
+    # must always out-weigh the best-effort sandboxes (SANDBOX_CPU_SHARES=256). Legacy top-level key,
+    # honored by `docker compose up`; the `deploy.resources` block is Swarm-only and silently ignored.
+    cpu_shares: 2048
     # No published ports — Postgres is internal-only in production.
     restart: unless-stopped
 
@@ -171,6 +182,10 @@ services:
       # `atlas` so the backend reaches it; `atlas-bus` so per-thread sandboxes reach it (and nothing else).
       - atlas
       - atlas-bus
+    # Same rationale as postgres: the engine bus (Redis is the sole sandbox transport) must never lose CPU
+    # to best-effort sandboxes. Legacy top-level key, honored by `docker compose up` (not the Swarm-only
+    # `deploy.resources`).
+    cpu_shares: 2048
     # No published ports — Redis is internal-only in production.
     restart: unless-stopped
 

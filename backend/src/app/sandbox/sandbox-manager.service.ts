@@ -463,6 +463,10 @@ export class SandboxManager implements SandboxProvider {
       image,
       network,
       privileged: true,
+      // Best-effort CPU: a low relative weight so agent compute bursts (builds/tests) yield to the host
+      // control plane under contention, while still using the whole box when it's idle. Undefined when
+      // SANDBOX_CPU_SHARES is unset ⇒ Docker default (no de-prioritization).
+      cpuShares: this.env.get('SANDBOX_CPU_SHARES'),
       binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
       // Bake the preview identity so `atlas-svc` can advertise a service's public URL from inside the
