@@ -11,7 +11,6 @@ import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
-import type { TicketService } from '../tickets';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
 import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
@@ -45,6 +44,7 @@ import type { LocalGitService } from '../git';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
+import type { EnvService } from '@core/config/env/env.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
@@ -117,7 +117,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
-    threadTicketId: vi.fn().mockResolvedValue(null),
     // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
     recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
@@ -244,6 +243,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const mockJit = {
     fireLifecycle: vi.fn(),
     collectOperatorPrepends: vi.fn().mockReturnValue([]),
+    hasEnabledOperatorPrepends: vi.fn().mockReturnValue(true),
   } as unknown as JitHostExecutor;
 
   const mockSurface = {
@@ -367,7 +367,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (mockStore.threadTicketId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
       findings: [],
@@ -437,7 +436,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockShip,
       mockRepos,
       mockAwareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -1280,6 +1278,18 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // …and every contract entry is really registered (no stale name like the old `log_decision`).
     for (const name of contract) {
       expect(registered.has(name), `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`).toBe(true);
+    }
+  });
+
+  // The job-orchestration tools (list_jobs + create_job + link_job_dependency) are available in EVERY
+  // session kind, not just normal build brains — a review/onboarding session may legitimately spin up or
+  // relate sibling jobs. list_jobs is also present in the base (normal) set.
+  it('list_jobs / create_job / link_job_dependency are registered in every session kind', () => {
+    for (const kind of [null, 'review', 'onboarding'] as const) {
+      const tools = manager.buildTools(fakeStimulus, kind);
+      for (const name of ['list_jobs', 'create_job', 'link_job_dependency']) {
+        expect(typeof tools[name], `"${name}" must be registered for kind=${kind}`).toBe('function');
+      }
     }
   });
 
@@ -2418,11 +2428,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const r = (await tools['retry_thread']({ threadId: 'th-x', guidance: 'return JSON' })) as {
         ok?: boolean;
         attempt?: number;
+        message?: string;
       };
       // The cap (HALT_FIX_ATTEMPT_CAP=2) is passed so the DRIVER claims budget only when it will re-drive.
+      // The judge-cap PROMOTION lives inside redriveThread (a judge_unavailable thread gets the higher cap
+      // there), so the brain still hands over the defect cap here — and its success message no longer hardcodes
+      // `/2`, which would misreport the budget for a judge hold.
       expect(mockDispatcher.redriveThread).toHaveBeenCalledWith(THREAD_ID, 'th-x', 'return JSON', 2);
       expect(r.ok).toBe(true);
       expect(r.attempt).toBe(1);
+      expect(r.message).toContain('attempt 1');
+      expect(r.message).not.toContain('/2');
     });
 
     it('retry_thread escalates when redriveThread refuses (budget exhausted / active / wrong job)', async () => {
@@ -2821,7 +2837,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
       awareness,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3671,7 +3686,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3829,7 +3843,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
         appendMarker: vi.fn().mockResolvedValue(undefined),
         drainAndAdvance: vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
       } as unknown as PipelineAwarenessStore,
-      {} as unknown as TicketService,
       {} as unknown as JobDependencyService,
       { engineAuth: async () => undefined, openaiKey: async () => undefined } as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -3963,14 +3976,14 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
       stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
-      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
-      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
-      { register: () => undefined } as never, // threadInput (29, ThreadInputService)
-      { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
-      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
+      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (26)
+      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
+      { register: () => undefined } as never, // threadInput (28, ThreadInputService)
+      { judge: async () => undefined } as never, // liveVerificationJudge (29, LIVE_VERIFICATION_JUDGE)
+      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30, OauthUsageService)
     );
     return { manager, stimulusStore, stimulusRows, turnRegistry, runningBrainTurn, engineRunner, steer, election, getState };
   }
@@ -4167,11 +4180,11 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert, // sandboxRows (11)
       stimulusRows as never, // stimulusRows (12)
       stimulusStore as never, // stimulusStore (13)
-      inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
-      inert, inert, inert, inert, // turnRecovery…git (27)
-      { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
+      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
+      inert, inert, inert, inert, // turnRecovery…git (26)
+      { generate: () => 'SYSTEM' } as never, // prompts (27, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
@@ -4386,14 +4399,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // sandboxRows (11)
         inert, // stimulusRows (12)
         stimulusStore as never, // stimulusStore (13)
-        inert, inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
-        inert, // mcp (McpResolver, 22)
-        election, // election (23)
-        inert, inert, inert, inert, // turnRecovery…git (27)
-        { generate: () => 'SYSTEM' } as never, // prompts (28)
-        { register: () => undefined } as never, // threadInput (29)
-        { judge: async () => undefined } as never, // liveVerificationJudge (30)
-        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (20)
+        inert, // mcp (McpResolver, 21)
+        election, // election (22)
+        inert, inert, inert, inert, // turnRecovery…git (26)
+        { generate: () => 'SYSTEM' } as never, // prompts (27)
+        { register: () => undefined } as never, // threadInput (28)
+        { judge: async () => undefined } as never, // liveVerificationJudge (29)
+        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30)
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi
@@ -4471,5 +4484,160 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(steer).not.toHaveBeenCalled();
     expect(stimulusStore.eligiblePendingChat).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval turn-prefix, d1/d2)', () => {
+  const TEAM_ID = 'T-MEMRECALL';
+  const PROJECT_ID = 'memrecall-proj';
+  const THREAD_ID = 'th-memrecall-001';
+
+  const stimulus: ChatStimulus = {
+    kind: 'chat',
+    trust: 'trusted',
+    id: 'stim-memrecall-001',
+    receivedAt: new Date('2026-07-12T00:00:00Z'),
+    orgId: TEAM_ID,
+    repoId: PROJECT_ID,
+    jobId: THREAD_ID,
+    body: 'what auth library does this project use',
+    author: { id: 'U-OP', displayName: 'Operator' },
+    replyRoute: { surfaceId: 'web', jobRef: 'ts-memrecall-001' },
+  };
+
+  /** Only `memory` + `env` matter here — every other dep is an unused stub (buildMemoryRecallPrefix
+   *  touches neither store, driver, nor surface). */
+  function makeManager(opts: { recall?: ReturnType<typeof vi.fn>; envGet?: ReturnType<typeof vi.fn> }) {
+    const memory = {
+      recall: opts.recall ?? vi.fn().mockResolvedValue([]),
+      remember: vi.fn(),
+    } as unknown as MemoryStore;
+    const env = { get: opts.envGet ?? vi.fn().mockReturnValue(undefined) } as unknown as EnvService;
+
+    const manager = new AgentSessionManager(
+      {} as unknown as BrainStoreService,
+      {} as unknown as DriverStoreService,
+      memory,
+      {} as unknown as DecisionApprovalService,
+      {} as unknown as JobLifecycleService,
+      {} as unknown as EngineRunnerPort,
+      { listRunning: async () => [] } as never, // turnRegistry
+      {} as unknown as PlanReviewService,
+      {} as unknown as JobDispatcher,
+      {} as unknown as ChatSurface,
+      {} as unknown as Repository<JobSandboxEntity>,
+      { findOne: async () => null, update: async () => undefined, find: async () => [] } as never, // stimulusRows
+      {
+        eligiblePendingChat: async () => [],
+        leaseChatStimuli: async () => undefined,
+        markChatDelivered: async () => undefined,
+        undeliveredChatThreads: async () => [],
+        resetChatLeases: async () => undefined,
+      } as never, // stimulusStore
+      noopTurnHarness,
+      {} as unknown as DecisionClassifier,
+      {} as unknown as BuildShipService,
+      {} as unknown as DriverRepoResolver,
+      {} as unknown as PipelineAwarenessStore,
+      {} as unknown as JobDependencyService,
+      {} as unknown as CredentialResolver,
+      { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
+      {
+        getState: () => 'leader',
+        isLeader: () => true,
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as never, // election
+      { recoverInterruptedTurns: async () => 0 } as unknown as TurnRecoveryService,
+      {} as unknown as WorkspaceSecretFileStore,
+      {} as unknown as WorkspaceConfigStore,
+      {} as unknown as LocalGitService,
+      { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
+      { register: () => undefined } as never, // threadInput (ThreadInputService)
+      {} as unknown as LiveVerificationJudge,
+      { getResetAt: () => undefined } as unknown as OauthUsageService,
+      undefined, // usageProjector
+      env,
+    );
+    return manager as unknown as {
+      buildMemoryRecallPrefix(s: ChatStimulus, sessionId?: string): Promise<string | null>;
+      bindInjectedMemorySession(jobId: string, sessionId: string): void;
+    };
+  }
+
+  it('a recall hit renders the fact into the memory-block body', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toContain('uses pnpm for package management');
+    expect(recall).toHaveBeenCalledWith(
+      stimulus.body,
+      expect.objectContaining({
+        scopes: [`project:${PROJECT_ID}`, `team:${TEAM_ID}`],
+        orgId: TEAM_ID,
+      }),
+    );
+  });
+
+  it('per-session dedup: a fact id already injected for this job is suppressed on a later call', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    const second = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(second).toBeNull();
+  });
+
+  it('per-session dedup rebinds the first turn to its emitted session id and resets for a fresh session', async () => {
+    const recall = vi.fn().mockResolvedValue([
+      { id: 'fact-1', fact: 'uses pnpm for package management', scope: `project:${PROJECT_ID}`, sim: 0.9 },
+    ]);
+    const manager = makeManager({ recall });
+
+    const first = await manager.buildMemoryRecallPrefix(stimulus);
+    manager.bindInjectedMemorySession(THREAD_ID, 'session-1');
+    const sameSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-1');
+    const freshSession = await manager.buildMemoryRecallPrefix(stimulus, 'session-2');
+
+    expect(first).toContain('uses pnpm for package management');
+    expect(sameSession).toBeNull();
+    expect(freshSession).toContain('uses pnpm for package management');
+  });
+
+  it('a trivial operator body skips recall entirely (no embedding call)', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const manager = makeManager({ recall });
+
+    const prefix = await manager.buildMemoryRecallPrefix({ ...stimulus, body: 'ok' });
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+  });
+
+  it('the MEMORY_AUTORECALL_DISABLED kill-switch short-circuits before recall is ever called', async () => {
+    const recall = vi.fn().mockResolvedValue([{ id: 'fact-1', fact: 'x', scope: 'project:p', sim: 0.9 }]);
+    const envGet = vi.fn().mockReturnValue('on');
+    const manager = makeManager({ recall, envGet });
+
+    const prefix = await manager.buildMemoryRecallPrefix(stimulus);
+
+    expect(prefix).toBeNull();
+    expect(recall).not.toHaveBeenCalled();
+    expect(envGet).toHaveBeenCalledWith('MEMORY_AUTORECALL_DISABLED');
+  });
+
+  it('a rejecting recall resolves to null rather than throwing (best-effort, mirrors the recall tool)', async () => {
+    const recall = vi.fn().mockRejectedValue(new Error('embedding provider down'));
+    const manager = makeManager({ recall });
+
+    await expect(manager.buildMemoryRecallPrefix(stimulus)).resolves.toBeNull();
   });
 });

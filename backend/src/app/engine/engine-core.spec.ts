@@ -281,7 +281,7 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       const { sdk, captured } = fakeClaudeSdk();
       const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
       await core.run({ engine: 'claude', task: agentMessage('t'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
-      return captured.options!.agents as Record<string, { tools: string[]; model: string }>;
+      return captured.options!.agents as Record<string, { description: string; tools: string[]; model: string }>;
     };
 
     const execAgents = await run('execute');
@@ -298,9 +298,12 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(execAgents.explore).toBeDefined();
 
     // The build-time `validate` subagent: execute-only, Sonnet, Bash + Write (to author the evidence
-    // bundle) but NO Task (no recursive fan-out). Its "write only under /context/artifacts" contract is
+    // bundle) but NO Task (no recursive fan-out). Its "write only under $ATLAS_EVIDENCE_DIR" contract is
     // prompt discipline, NOT enforced here — the write boundary is per-turn (see the canUseTool test).
     expect(execAgents.validate).toBeDefined();
+    expect(execAgents.validate.description).toContain('$ATLAS_EVIDENCE_DIR');
+    expect(execAgents.validate.description).toContain('EVIDENCE panel');
+    expect(execAgents.validate.description).not.toContain('/context/artifacts/');
     expect(execAgents.validate.model).toBe('claude-sonnet-5');
     expect(execAgents.validate.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
     expect(execAgents.validate.tools).not.toContain('Task');

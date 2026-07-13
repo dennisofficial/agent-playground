@@ -267,7 +267,6 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // messages
       {} as never, // repos
       {} as never, // threadTitle
-      { stream$: new Subject() } as never, // ticketEvents
       { stream$: new Subject() } as never, // usageBus
       { available: false } as never, // realtime
       { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election

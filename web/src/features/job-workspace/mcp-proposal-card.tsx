@@ -1,10 +1,11 @@
 "use client";
 
-import { CheckCircle2, Lock, Plug } from "lucide-react";
+import { CheckCircle2, Lock, Plug, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { useApproveMcpProposal } from "@/lib/api/job-queries";
 import { useOrg } from "@/lib/api/me";
+import { useMcpOAuthConnect, useMcpServers } from "@/lib/api/orgs";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebMcpProposalCard, WebMcpProposalServer } from "@/lib/api/types";
 
@@ -21,10 +22,70 @@ function endpoint(s: WebMcpProposalServer): string {
 }
 
 /**
+ * One registered OAuth server row with its own inline Connect/Reconnect button. Each row owns its own
+ * `useMcpOAuthConnect` instance so `busy`/`result` stay scoped to this server — connecting one server
+ * never spins or mislabels another's button when a card proposes several OAuth servers.
+ */
+function OAuthServerRow({
+  orgId,
+  name,
+  scope,
+  connected,
+  needsReauth,
+  isOwner,
+}: {
+  orgId: string;
+  name: string;
+  scope: string;
+  connected: boolean;
+  needsReauth: boolean;
+  isOwner: boolean;
+}) {
+  const oauth = useMcpOAuthConnect(orgId);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Plug size={13} className="shrink-0 text-accent" />
+        <span className="font-mono text-[12px] font-medium text-text">{name}</span>
+        {connected ? (
+          <span className="flex items-center gap-1 text-[11.5px] font-medium" style={{ color: "var(--green)" }}>
+            <CheckCircle2 size={12} style={{ color: "var(--green)" }} />
+            Connected
+          </span>
+        ) : needsReauth ? (
+          <span className="text-[11.5px] font-medium text-amber">Needs re-auth</span>
+        ) : (
+          <span className="text-[11.5px] text-dim">Not connected</span>
+        )}
+        <div className="flex-1" />
+        {isOwner ? (
+          <Button
+            size="sm"
+            variant="soft"
+            icon={connected || needsReauth ? <RefreshCw size={12} /> : <Plug size={12} />}
+            loading={oauth.busy}
+            loadingText="Connecting…"
+            onClick={() => oauth.connect({ scope, name })}
+          >
+            {connected || needsReauth ? "Reconnect" : "Connect"}
+          </Button>
+        ) : null}
+      </div>
+      {oauth.result ? (
+        <span className={`text-[11px] ${oauth.result.ok ? "text-green" : "text-red"}`}>
+          {oauth.result.text}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * A stack-matched MCP-server recommendation the onboarding brain posed via `propose_mcp_servers`. The brain
  * never registers servers itself — the OWNER approves this card, which commits each server on the repo
- * (owner-only on the server). Secret slots are filled afterwards via the normal secure secret card. Once
- * `approved_at` is set, renders the compact "registered" state. Value-free (server defs only).
+ * (owner-only on the server). Secret slots are filled afterwards via the normal secure secret card; an
+ * `oauth` server is instead connected right here (before or after approving) via the shared OAuth popup
+ * flow. Once `approved_at` is set, renders the compact "registered" state. Value-free (server defs only).
  */
 export function McpProposalCard({
   card,
@@ -36,10 +97,15 @@ export function McpProposalCard({
   const approve = useApproveMcpProposal(jobRef);
   const org = useOrg(jobRef.orgId);
   const isOwner = org?.role === "owner";
+  const oauth = useMcpOAuthConnect(jobRef.orgId);
+  const { data: mcp } = useMcpServers(jobRef.orgId);
+  const scopeOf = card.scope === "org" ? "org" : jobRef.repoId;
+  const isRegisterCard = card.mode !== "remove";
+  const oauthServers = isRegisterCard ? card.servers.filter((s) => s.authKind === "oauth") : [];
+  const statusOf = (name: string) => mcp?.servers.find((s) => s.scope === scopeOf && s.name === name);
 
   if (card.approved_at != null) {
     const names = card.committed ?? card.servers.map((s) => s.name);
-    const oauthNames = card.servers.filter((s) => s.authKind === "oauth").map((s) => s.name);
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
@@ -57,19 +123,22 @@ export function McpProposalCard({
             </p>
           </div>
         </div>
-        {oauthNames.length > 0 ? (
-          <div className="flex items-start gap-2 border-t border-border bg-surface-2 px-4 py-2.5 text-[11.5px] leading-snug text-dim">
-            <Plug size={13} className="mt-0.5 shrink-0 text-accent" />
-            <span>
-              {oauthNames.length === 1 ? "This server uses" : "These servers use"} OAuth — finish by opening{" "}
-              <span className="font-medium text-text">MCP settings → Connect</span> to authorize{" "}
-              {oauthNames.map((n) => (
-                <span key={n} className="mr-1 font-mono">
-                  {n}
-                </span>
-              ))}
-              .
-            </span>
+        {oauthServers.length > 0 ? (
+          <div className="flex flex-col gap-2 border-t border-border bg-surface-2 px-4 py-2.5">
+            {oauthServers.map((s) => {
+              const status = statusOf(s.name);
+              return (
+                <OAuthServerRow
+                  key={s.name}
+                  orgId={jobRef.orgId}
+                  name={s.name}
+                  scope={scopeOf}
+                  connected={status?.oauthConnected ?? false}
+                  needsReauth={status?.needsReauth ?? false}
+                  isOwner={isOwner}
+                />
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -122,11 +191,11 @@ export function McpProposalCard({
           Approving registers {card.servers.length === 1 ? "this server" : "these servers"} on this repo.
           Servers marked <span className="text-amber">needs secret</span> then ask you for a credential
           through a secure field — the value never appears in the conversation.
-          {card.servers.some((s) => s.authKind === "oauth") ? (
+          {oauthServers.length > 0 ? (
             <>
               {" "}
-              Servers marked <span className="text-accent">oauth</span> need one more step after approving:
-              open <span className="font-medium text-text">MCP settings → Connect</span> to authorize them.
+              Servers marked <span className="text-accent">oauth</span> need one more step — you'll
+              authorize them right here after approving.
             </>
           ) : null}
         </p>
@@ -135,16 +204,39 @@ export function McpProposalCard({
       <div className="flex flex-col gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {isOwner ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              loading={approve.isPending}
-              loadingText="Registering…"
-              onClick={() => approve.mutate(card.requestId)}
-            >
-              Approve &amp; register
-            </Button>
+            {oauthServers.length === 1 ? (
+              <Button
+                size="sm"
+                loading={approve.isPending || oauth.busy}
+                loadingText={approve.isPending ? "Registering…" : "Connecting…"}
+                onClick={async () => {
+                  try {
+                    await approve.mutateAsync(card.requestId);
+                    await oauth.connect({ scope: scopeOf, name: oauthServers[0].name });
+                  } catch {
+                    /* approve.isError renders the failure state */
+                  }
+                }}
+              >
+                Approve &amp; Connect
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                loading={approve.isPending}
+                loadingText="Registering…"
+                onClick={() => approve.mutate(card.requestId)}
+              >
+                Approve &amp; register
+              </Button>
+            )}
             {approve.isError ? (
               <span className="text-[11.5px] text-red">Could not register the servers. Try again.</span>
+            ) : null}
+            {oauth.result ? (
+              <span className={`text-[11.5px] ${oauth.result.ok ? "text-green" : "text-red"}`}>
+                {oauth.result.text}
+              </span>
             ) : null}
           </div>
         ) : (

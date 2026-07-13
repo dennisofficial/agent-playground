@@ -46,17 +46,6 @@ export const qk = {
   /** One thread's `atlas-svc` supervised-process list. */
   threadServices: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["thread-services", ref.orgId, ref.repoId, ref.jobId] as const,
-  /** Every repo across all the operator's orgs (the tickets repo picker). */
-  allRepos: () => ["all-repos"] as const,
-  /** One repo's board/backlog tickets (`GET /web/orgs/:orgId/repos/:repoId/tickets`). */
-  ticketsList: (orgId: string, repoId: string) =>
-    ["tickets-list", orgId, repoId] as const,
-  /** One ticket's detail (deps + thread link). */
-  ticketDetail: (orgId: string, repoId: string, ticketId: string) =>
-    ["ticket-detail", orgId, repoId, ticketId] as const,
-  /** Tickets raised FROM one job (`?originJobId=`) — the job workspace's "Tickets raised" panel. */
-  jobTickets: (orgId: string, repoId: string, jobId: string) =>
-    ["job-tickets", orgId, repoId, jobId] as const,
   /** Jobs spawned FROM one job (`GET …/jobs/:jobId/created`) — the job workspace's "Created jobs" panel. */
   jobCreated: (orgId: string, repoId: string, jobId: string) =>
     ["job-created", orgId, repoId, jobId] as const,

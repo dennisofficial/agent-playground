@@ -45,7 +45,7 @@ const FILE_WRITE_TOOLS = new Set([
   "MultiEdit",
   "NotebookEdit",
 ]);
-const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts)\//;
+const CONTEXT_WRITE_RE = /\/context\/(specs|generated|artifacts|evidence)\//;
 
 /**
  * Live updates for the open thread. The repo-scoped SSE (`…/repos/:repoId/events`) carries two frame
@@ -177,20 +177,6 @@ export function useJobEvents(ref: JobRef): void {
             refetchContext();
           }
         }
-        return;
-      }
-      if (frame?.type === "ticket_event") {
-        // A board mutation on this repo (often Atlas capturing a ticket mid-conversation) — keep the
-        // tickets caches fresh so the board reflects it the moment the operator switches to it, and
-        // refresh any mounted per-job "Tickets raised" panel (prefix match covers every job under this
-        // repo — the frame carries no jobId).
-        void qc.invalidateQueries({ queryKey: qk.ticketsList(orgId, repoId) });
-        void qc.invalidateQueries({
-          queryKey: ["ticket-detail", orgId, repoId],
-        });
-        void qc.invalidateQueries({
-          queryKey: ["job-tickets", orgId, repoId],
-        });
         return;
       }
       if (frame?.type === "thread_meta" && frame.jobId && frame.title) {

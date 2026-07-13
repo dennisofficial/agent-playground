@@ -167,7 +167,7 @@ export function AutoApprovePopover({
   );
 }
 
-function SwitchRow({
+export function SwitchRow({
   title,
   description,
   checked,

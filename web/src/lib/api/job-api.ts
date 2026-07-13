@@ -366,6 +366,28 @@ export function retryJob(
   return webJson(threadPath(ref, "/retry"), { method: "POST" });
 }
 
+/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive (re-runs the live judge),
+ *  re-arming the judge-cap re-drive budget. Refused server-side if the hold is not a judge outage. */
+export function retryVerification(
+  ref: JobRef,
+  threadId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, `/threads/${threadId}/retry-verification`), {
+    method: "POST",
+  });
+}
+
+/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete the thread, bypassing only the
+ *  unreachable live judge, then advance the job. Refused server-side unless the static gate already passed. */
+export function acceptThread(
+  ref: JobRef,
+  threadId: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, `/threads/${threadId}/accept`), {
+    method: "POST",
+  });
+}
+
 /**
  * The "Resume" button on a `retryable` system→operator error box (a chat-turn that hit a transient
  * engine failure). Distinct from `retryJob` — this re-pokes the SAME engine session with no new operator
@@ -588,6 +610,8 @@ export interface CreateThreadBody {
   kind?: OperatorJobKind;
   /** For `kind: "review"` — the PR number to review (seeds a <review> block on the brain's first turn). */
   prNumber?: string;
+  /** Arm auto-approve at creation; omit (or "off") to leave the job's gates waiting for a human. */
+  autoApproveMode?: AutoApproveMode;
 }
 
 export function createJob(
@@ -614,6 +638,7 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
+  if (body.autoApproveMode) form.append("autoApproveMode", body.autoApproveMode);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

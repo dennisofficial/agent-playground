@@ -9,7 +9,7 @@ describe('turns / ship-open-pr', () => {
       const task = shipOpenPrBody(base);
       expect(task).toContain('## Summary');
       expect(task).toContain('## Verification');
-      expect(task).toContain('/context/artifacts/RESULTS.md');
+      expect(task).toContain('/context/evidence/');
       expect(task).toContain('gh pr create');
       // the branch + base flow through
       expect(task).toContain('atlas/feat');

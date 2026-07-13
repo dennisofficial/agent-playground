@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   FileText,
+  FlaskConical,
   Folder,
   GitBranch,
   GitFork,
@@ -15,6 +16,7 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
+  Hourglass,
   Image as ImageIcon,
   Lock,
   MoreHorizontal,
@@ -24,7 +26,6 @@ import {
   Server,
   ShieldCheck,
   SquareTerminal,
-  TicketIcon,
   Trash2,
 } from "lucide-react";
 import {
@@ -37,12 +38,14 @@ import { STATUS_META } from "@/lib/api/status";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
+import { isOutputGroupHidden } from "./output-group";
 import {
+  useAcceptThread,
   useJobCreatedJobs,
   useRetryJob,
+  useRetryVerification,
   useServices,
 } from "@/lib/api/job-queries";
-import { useJobTickets } from "@/lib/api/tickets-queries";
 import { threadHref } from "@/lib/routes";
 import {
   Divider,
@@ -289,9 +292,6 @@ export function Navigator({
     meta.status !== "amending";
   const [editing, setEditing] = useState(false);
 
-  // Tickets Atlas raised FROM this job — the header "Tickets raised" entry appears only once there's ≥1.
-  const { data: raisedTickets = [] } = useJobTickets(jobRef);
-
   // Jobs Atlas spawned FROM this job — the header "Created jobs" entry appears only once there's ≥1.
   const { data: createdJobs = [] } = useJobCreatedJobs(jobRef);
 
@@ -536,26 +536,6 @@ export function Navigator({
             <span className="font-mono text-[9px] text-faint">—</span>
           ) : null}
         </button>
-        {/* Tickets raised — appears only once Atlas has captured out-of-scope work from this job; opens the
-            standing "Tickets raised" list in the detail pane. */}
-        {raisedTickets.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => onSelectNode("tickets")}
-            className={cn(
-              "-mx-4 flex w-[calc(100%+2rem)] items-center gap-2.5 px-4 py-1.5 text-left transition hover:bg-surface-2",
-              detailNode === "tickets" && "nav-selected-blue",
-            )}
-          >
-            <TicketIcon size={13} className="w-3.5 shrink-0 text-accent" />
-            <span className="flex-1 text-[11px] font-semibold text-dim">
-              Tickets raised
-            </span>
-            <span className="font-mono text-[9px] text-faint">
-              {raisedTickets.length}
-            </span>
-          </button>
-        ) : null}
         {/* Created jobs — appears only once this job has spawned ≥1 follow-up job; opens the standing
             "Created jobs" list in the detail pane. */}
         {createdJobs.length > 0 ? (
@@ -576,8 +556,8 @@ export function Navigator({
             </span>
           </button>
         ) : null}
-        {/* Blocked by — a REAL gate (the brain doesn't run while it's up), not the tickets board's advisory
-            dependencies; appears whenever the job is parked or still carries live blockers. */}
+        {/* Blocked by — a REAL gate (the brain doesn't run while it's up); appears whenever the job is
+            parked or still carries live blockers. */}
         {st === "blocked" || (meta.blockedBy?.length ?? 0) > 0 ? (
           <button
             type="button"
@@ -630,6 +610,7 @@ export function Navigator({
           job={job}
           jobRef={jobRef}
           onConversation={onConversation}
+          onNotice={showToast}
         />
 
         {/* THREADS — the Main planning lane + each build lane, as an ACCORDION (design handoff "thread
@@ -893,6 +874,7 @@ function OutputsRegion({
   const specs = context?.specs ?? [];
   const generated = context?.generated ?? [];
   const artifacts = context?.artifacts ?? [];
+  const evidence = context?.evidence ?? [];
   const triaging = status === "triaging";
 
   return (
@@ -963,14 +945,28 @@ function OutputsRegion({
         onSelectNode={onSelectNode}
       />
 
-      {/* ARTIFACTS — real output files (preview HTML, screenshots). Diff + PR live in the header. */}
+      {/* ARTIFACTS — human-facing deliverables (preview HTML, mockups, reports). Diff + PR live in the header. */}
       <OutputGroup
         label="ARTIFACTS"
         files={artifacts}
         prefix="artifact"
         loading={loading}
         emptyIcon={<ImageIcon size={13} />}
-        emptyText="No screenshots or files yet"
+        emptyText="No deliverables yet"
+        detailNode={detailNode}
+        onSelectNode={onSelectNode}
+      />
+
+      {/* EVIDENCE — live-run proof (logs, screenshots, RESULTS.md), organized per thread. Hidden until the
+          first evidence lands, so historical jobs (no evidence/) show no empty region. */}
+      <OutputGroup
+        label="EVIDENCE"
+        files={evidence}
+        prefix="evidence"
+        loading={loading}
+        hideWhenEmpty
+        emptyIcon={<FlaskConical size={13} />}
+        emptyText="No evidence captured yet"
         detailNode={detailNode}
         onSelectNode={onSelectNode}
       />
@@ -997,7 +993,7 @@ function OutputGroup({
 }: {
   label: string;
   files: ContextFile[];
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   loading?: boolean;
   /** Drop the whole group (divider + empty row) when it has no files and nothing is loading/pending —
@@ -1028,7 +1024,15 @@ function OutputGroup({
     });
   // Drop the group whole (no divider, no ghost row) when asked to hide-when-empty and there's genuinely
   // nothing to show — placed AFTER the hooks above so their order stays unconditional.
-  if (hideWhenEmpty && files.length === 0 && !loading && !children) return null;
+  if (
+    isOutputGroupHidden({
+      hideWhenEmpty,
+      fileCount: files.length,
+      loading,
+      hasChildren: Boolean(children),
+    })
+  )
+    return null;
   return (
     <>
       <Divider
@@ -1243,16 +1247,92 @@ function StateBanner({
   job,
   jobRef,
   onConversation,
+  onNotice,
 }: {
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
+  /** Surface a human-readable notice (the server's refusal `reason`) — a stuck-thread control that the
+   *  backend declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
+  onNotice: (message: string) => void;
 }) {
   const retry = useRetryJob(jobRef);
+  const retryVerification = useRetryVerification(jobRef);
+  const acceptThread = useAcceptThread(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
+
+  // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
+  // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
+  // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
+  const stuck = job?.threads?.find(
+    (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
+  );
+  if (stuck) {
+    const pending = retryVerification.isPending || acceptThread.isPending;
+    // The endpoints return HTTP 200 with `{ ok:false, reason }` for expected refusals (hold isn't
+    // judge_unavailable, static gate not passed, drive in flight, thread already done, …). `webJson` only
+    // throws on non-2xx, so those resolve as mutation "success" — inspect `res.ok` and toast the server's
+    // `reason` instead of navigating away as if the bypass worked.
+    const onRetryNow = () =>
+      retryVerification.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Retry was refused."),
+      });
+    const onAccept = () =>
+      acceptThread.mutate(stuck.id, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Accept was refused."),
+      });
+    // "Skip & accept" shows only when the LIVE judge was the outage and the static gate already passed (d4);
+    // "Retry now" is always safe (it just re-runs the judge), so it shows for any judge_unavailable hold.
+    const canAccept = stuck.acceptableOnJudgeOutage === true;
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
+        style={{
+          borderColor: "var(--border)",
+          borderLeftColor: "var(--accent-line)",
+          background: "var(--surface-2)",
+        }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <Hourglass size={11} className="text-dim" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
+            VERIFICATION UNAVAILABLE · §{stuck.ordinal}
+          </span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          The verification judge was unreachable. Retry it, or accept the work
+          as-is.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn
+            tone="accent"
+            icon={<RotateCw size={10} />}
+            label={retryVerification.isPending ? "Retrying…" : "Retry now"}
+            onClick={onRetryNow}
+            disabled={pending}
+          />
+          {canAccept && (
+            <BannerBtn
+              tone="neutral"
+              label={acceptThread.isPending ? "Accepting…" : "Skip & accept"}
+              onClick={onAccept}
+              disabled={pending}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (
     job?.halt &&
     (job.halt.kind === "failed" ||
@@ -1546,7 +1626,7 @@ function renderFileTree({
   node: FileTreeNode;
   path: string;
   depth: number;
-  prefix: "spec" | "artifact" | "gen";
+  prefix: "spec" | "artifact" | "gen" | "evidence";
   generated?: boolean;
   detailNode: string | null;
   onSelectNode: (node: string) => void;

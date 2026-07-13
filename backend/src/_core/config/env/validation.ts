@@ -160,10 +160,12 @@ export interface IEnvConfig {
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
   // reconciliation sweep (documented parallel-tuning safety gate). HARNESS_CHUNK_ROWS: 'off' quiets the
-  // injected system-notice transcript rows.
+  // injected system-notice transcript rows. MEMORY_AUTORECALL_DISABLED: 'on' disables memory auto-recall
+  // (kill-switch; off by default).
   TEST_BRIDGE?: 'on' | 'off';
   DISABLE_RESUME?: string;
   HARNESS_CHUNK_ROWS?: 'on' | 'off';
+  MEMORY_AUTORECALL_DISABLED?: 'on' | 'off';
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -267,4 +269,5 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),
   DISABLE_RESUME: Joi.string().optional(),
   HARNESS_CHUNK_ROWS: Joi.string().valid('on', 'off').optional(),
+  MEMORY_AUTORECALL_DISABLED: Joi.string().valid('on', 'off').optional(),
 });

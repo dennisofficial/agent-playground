@@ -14,7 +14,6 @@ export type PlanReviewInput = {
   jobId: string;
   orgId: string;
   goal: string;
-  ticket?: { number: number; title: string; body?: string } | null;
   overview: string;
   decisions: Decision[];
   threadTitles: string[];
@@ -25,28 +24,16 @@ export type PlanReviewInput = {
 
 /**
  * Render the `<intent>` block shared by the first-round review task and `plan-review.eval.ts`'s stand-in
- * reviewer task — the operator's GOAL (falling back to the overview when unset) + an optional originating
- * ticket + the overview. Single source so the eval's calibration harness can never drift from what the
- * real review turn actually reads.
+ * reviewer task — the operator's GOAL (falling back to the overview when unset) + the overview. Single
+ * source so the eval's calibration harness can never drift from what the real review turn actually reads.
  */
-export function renderReviewIntent(input: {
-  goal: string;
-  overview: string;
-  ticket?: PlanReviewInput['ticket'];
-}): string {
+export function renderReviewIntent(input: { goal: string; overview: string }): string {
   const intent = [
     '<intent>',
     'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
     '',
     `GOAL: ${input.goal || '(see overview)'}`,
   ];
-  if (input.ticket) {
-    intent.push(
-      '',
-      `ORIGINATING TICKET #${input.ticket.number} — ${input.ticket.title}`,
-      ...(input.ticket.body ? [input.ticket.body] : []),
-    );
-  }
   intent.push('', "OVERVIEW (Atlas's framing of the work):", input.overview, '</intent>');
   return intent.join('\n');
 }
