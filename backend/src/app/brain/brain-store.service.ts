@@ -1980,8 +1980,6 @@ function toThread(row: JobEntity): Job {
     autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
     autoMerge: row.auto_merge ?? false,
-    autoMergeMethod: row.auto_merge_method ?? 'squash',
-    autoMergeDeleteBranch: row.auto_merge_delete_branch ?? true,
     autoMergeBy: row.auto_merge_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,

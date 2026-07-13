@@ -11,8 +11,9 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 import { Repository } from 'typeorm';
+import { AUTO_MERGE_METHODS, type AutoMergeMethod } from '@workspace/shared';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
@@ -31,6 +32,10 @@ class UpdateRepoDto {
   @IsOptional() @IsString() defaultBranch?: string;
   /** Per-repo feature-branch prefix. Empty string clears it back to the neutral built-in default. */
   @IsOptional() @IsString() branchPrefix?: string;
+  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
+  @IsOptional() @IsIn(AUTO_MERGE_METHODS) defaultAutoMergeMethod?: AutoMergeMethod;
+  /** Whether to delete the head branch after a merge, for this repo's jobs. */
+  @IsOptional() @IsBoolean() defaultAutoMergeDeleteBranch?: boolean;
 }
 
 /** A repo as the web app lists it. */
@@ -53,6 +58,10 @@ interface RepoView {
   webhookWarning: string | null;
   /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
   branchPrefix: string | null;
+  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
+  defaultAutoMergeMethod: AutoMergeMethod;
+  /** Whether to delete the head branch after a merge, for this repo's jobs. */
+  defaultAutoMergeDeleteBranch: boolean;
 }
 
 /**
@@ -116,6 +125,8 @@ export class RepoController {
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
       webhookWarning: r.webhook_warning ?? null,
       branchPrefix: r.branch_prefix ?? null,
+      defaultAutoMergeMethod: r.default_auto_merge_method,
+      defaultAutoMergeDeleteBranch: r.default_auto_merge_delete_branch,
     }));
   }
 
@@ -167,6 +178,12 @@ export class RepoController {
       ...(body.name !== undefined ? { name: body.name } : {}),
       ...(body.defaultBranch !== undefined ? { defaultBranch: body.defaultBranch } : {}),
       ...(body.branchPrefix !== undefined ? { branchPrefix: body.branchPrefix } : {}),
+      ...(body.defaultAutoMergeMethod !== undefined
+        ? { defaultAutoMergeMethod: body.defaultAutoMergeMethod }
+        : {}),
+      ...(body.defaultAutoMergeDeleteBranch !== undefined
+        ? { defaultAutoMergeDeleteBranch: body.defaultAutoMergeDeleteBranch }
+        : {}),
     });
   }
 

@@ -89,6 +89,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, m };
 }

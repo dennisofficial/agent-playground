@@ -38,11 +38,13 @@ import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { AutoMergeService } from '../driver/auto-merge.service';
+import { MERGE_ACTION_ID } from '../surface/approval-blocks';
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
   openaiKey: async () => undefined,
   githubToken: async () => 'fake-token',
+  hostGithubToken: async () => undefined,
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
@@ -64,6 +66,8 @@ const REPO = '99999999-9999-4999-9999-999999999902';
 const MERGE_JOB = '99999999-9999-4999-9999-999999999903'; // enable auto-merge on a green PR → merges
 const CARD_JOB = '99999999-9999-4999-9999-999999999904'; // green PR, auto-merge OFF → card, no merge
 const NOT_MERGEABLE_JOB = '99999999-9999-4999-9999-999999999905'; // GitHub rejects the merge attempt
+const APPROVE_MERGE_JOB = '99999999-9999-4999-9999-999999999906'; // synchronous manual Merge PR approve → merges
+const APPROVE_MERGE_FAIL_JOB = '99999999-9999-4999-9999-999999999907'; // manual Merge PR approve, GitHub rejects → 409
 
 const OWNER_EMAIL = 'auto-merge-it-owner@example.test';
 const PASSWORD = 'auto-merge-it-pw-12345';
@@ -100,10 +104,13 @@ function pipelineUrl(jobId: string): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/pipeline`;
 }
 
+function approveUrl(jobId: string): string {
+  return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/approve`;
+}
+
 async function loadJobRow(jobId: string): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
-    `SELECT status, pr_state, pr_number, pr_mergeable, ci_status, auto_merge, auto_merge_method,
-            auto_merge_delete_branch, auto_merge_by, feature_branch
+    `SELECT status, pr_state, pr_number, pr_mergeable, ci_status, auto_merge, auto_merge_by, feature_branch
        FROM jobs WHERE id = $1`,
     [jobId],
   )) as Array<Record<string, unknown>>;
@@ -191,15 +198,22 @@ beforeAll(async () => {
     ORG,
     owner.id,
   ]);
+  // Explicit repo-level merge defaults: `mergeNow` reads THESE (the per-job method/delete-branch columns
+  // are gone), so the fixture is explicit about what CASE 1 / the manual-merge proof assert against.
   await ds.query(
-    `INSERT INTO repos (id, org_id, slug, name, git_url, default_branch, access_ok)
-     VALUES ($1, $2, 'auto-merge-repo', 'Auto Merge Repo', 'https://github.com/atlas-it/auto-merge-test.git', 'main', true)`,
+    `INSERT INTO repos
+       (id, org_id, slug, name, git_url, default_branch, access_ok,
+        default_auto_merge_method, default_auto_merge_delete_branch)
+     VALUES ($1, $2, 'auto-merge-repo', 'Auto Merge Repo', 'https://github.com/atlas-it/auto-merge-test.git',
+             'main', true, 'squash', true)`,
     [REPO, ORG],
   );
 
   await seedGreenJob(MERGE_JOB, 701, 'Green PR, auto-merge enabled');
   await seedGreenJob(CARD_JOB, 702, 'Green PR, auto-merge off');
   await seedGreenJob(NOT_MERGEABLE_JOB, 703, 'Green PR, GitHub rejects the merge');
+  await seedGreenJob(APPROVE_MERGE_JOB, 704, 'Green PR, manual Merge PR approve');
+  await seedGreenJob(APPROVE_MERGE_FAIL_JOB, 705, 'Green PR, manual Merge PR approve that GitHub rejects');
 
   if (prevSurface === undefined) delete process.env.SURFACE;
   else process.env.SURFACE = prevSurface;
@@ -221,12 +235,7 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
       .send({ autoMerge: true });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      ok: true,
-      autoMerge: true,
-      autoMergeMethod: 'squash',
-      autoMergeDeleteBranch: true,
-    });
+    expect(res.body).toEqual({ ok: true, autoMerge: true });
 
     // The merge is fire-and-forget (`maybeAutoMerge`, triggered by the PATCH) — poll for the terminal state.
     await waitFor(async () => {
@@ -319,33 +328,85 @@ describe('auto-merge — POST .../jobs armed at creation (live Postgres, real HT
     return res.body.jobId as string;
   }
 
-  it("CREATE 1 — autoMerge at creation persists method/delete-branch and who armed it", async () => {
+  it("CREATE 1 — autoMerge at creation arms the toggle and records who armed it", async () => {
     const jobId = await createJob({
-      firstMessage: 'Add creation-time auto-merge settings.',
+      firstMessage: 'Add creation-time auto-merge.',
       autoMerge: true,
-      autoMergeMethod: 'rebase',
-      autoMergeDeleteBranch: false,
     });
 
     const row = await loadJobRow(jobId);
     expect(row).toMatchObject({
       auto_merge: true,
-      auto_merge_method: 'rebase',
-      auto_merge_delete_branch: false,
       auto_merge_by: ownerId,
     });
     // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
-    console.log('OBSERVED CREATE 1 DB row (created with autoMerge settings):', JSON.stringify(row));
+    console.log('OBSERVED CREATE 1 DB row (created with autoMerge armed):', JSON.stringify(row));
   });
 
-  it("CREATE 2 — absent autoMerge leaves defaults in place", async () => {
+  it("CREATE 2 — absent autoMerge leaves the toggle off", async () => {
     const jobId = await createJob({ firstMessage: 'Plain job, no auto-merge.' });
     const row = await loadJobRow(jobId);
     expect(row).toMatchObject({
       auto_merge: false,
-      auto_merge_method: 'squash',
-      auto_merge_delete_branch: true,
       auto_merge_by: null,
     });
+  });
+});
+
+describe('manual Merge PR — POST .../jobs/:jobId/approve is SYNCHRONOUS (live Postgres, real HTTP)', () => {
+  it('MERGE APPROVE 1 — the approve response only resolves AFTER the merge completes: pr_state is already "merged" the instant the request settles', async () => {
+    const before = await loadJobRow(APPROVE_MERGE_JOB);
+    expect(before).toMatchObject({ pr_state: 'open' });
+
+    const res = await request(server)
+      .post(approveUrl(APPROVE_MERGE_JOB))
+      .set('Cookie', ownerCookie)
+      .send({
+        actionId: MERGE_ACTION_ID,
+        value: JSON.stringify({ jobId: APPROVE_MERGE_JOB }),
+      });
+
+    // 2xx ONLY once the merge finished — the endpoint awaits `mergeNow`, so no polling is needed: the
+    // terminal state is observable the moment the awaited response resolves.
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+    expect(res.body).toEqual({ ok: true, jobId: APPROVE_MERGE_JOB });
+
+    const after = await loadJobRow(APPROVE_MERGE_JOB);
+    expect(after).toMatchObject({ pr_state: 'merged' });
+    expect(mergePullRequest).toHaveBeenCalledWith(
+      'fake-token',
+      expect.objectContaining({ number: 704, method: 'squash', sha: 'HEAD' }),
+    );
+    // eslint-disable-next-line no-console -- evidence: OBSERVED synchronous merge (status + terminal row).
+    console.log(
+      `OBSERVED MERGE APPROVE 1: status ${res.status}, pr_state "${String(after?.pr_state)}" immediately after the awaited response`,
+    );
+  });
+
+  it('MERGE APPROVE 2 — a GitHub-rejected merge surfaces as a 409 and the PR stays open (no false success)', async () => {
+    mergePullRequest.mockResolvedValueOnce({
+      ok: false,
+      reason: 'not_mergeable',
+      status: 405,
+      message: 'Pull Request is not mergeable',
+    } as never);
+
+    const res = await request(server)
+      .post(approveUrl(APPROVE_MERGE_FAIL_JOB))
+      .set('Cookie', ownerCookie)
+      .send({
+        actionId: MERGE_ACTION_ID,
+        value: JSON.stringify({ jobId: APPROVE_MERGE_FAIL_JOB }),
+      });
+
+    expect(res.status).toBe(409);
+
+    const after = await loadJobRow(APPROVE_MERGE_FAIL_JOB);
+    expect(after).toMatchObject({ pr_state: 'open' });
+    // eslint-disable-next-line no-console -- evidence: OBSERVED failed merge (non-2xx + PR still open).
+    console.log(
+      `OBSERVED MERGE APPROVE 2: status ${res.status}, pr_state stayed "${String(after?.pr_state)}"`,
+    );
   });
 });

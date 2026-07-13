@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
-import type { AutoMergeMethod } from '@workspace/shared';
 import type {
   Decision,
   DecisionRecord,
@@ -1419,8 +1418,6 @@ export class DriverStoreService {
         createdBy: thread.created_by ?? null,
         autoApproveMode: thread.auto_approve_mode ?? 'off',
         autoMerge: thread.auto_merge ?? false,
-        autoMergeMethod: thread.auto_merge_method ?? 'squash',
-        autoMergeDeleteBranch: thread.auto_merge_delete_branch ?? true,
         mergeReady: prMergeReady(thread),
         mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
         blockedBy,
@@ -1563,8 +1560,6 @@ export class DriverStoreService {
       // shape above, so the toggle works pre-plan while the job is still `open`).
       autoApproveMode: thread.auto_approve_mode ?? 'off',
       autoMerge: thread.auto_merge ?? false,
-      autoMergeMethod: thread.auto_merge_method ?? 'squash',
-      autoMergeDeleteBranch: thread.auto_merge_delete_branch ?? true,
       // GitHub-mergeable, independent of the auto_merge toggle (a human can always click Merge PR) — the
       // manual Merge PR card/button reads this same gate the auto-merge evaluator uses.
       mergeReady: prMergeReady(thread),
@@ -1703,8 +1698,6 @@ function toJob(row: JobEntity): Job {
     autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
     autoMerge: row.auto_merge ?? false,
-    autoMergeMethod: (row.auto_merge_method ?? 'squash') as AutoMergeMethod,
-    autoMergeDeleteBranch: row.auto_merge_delete_branch ?? true,
     autoMergeBy: row.auto_merge_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,

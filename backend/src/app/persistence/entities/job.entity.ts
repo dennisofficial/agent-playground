@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { AutoApproveMode, AutoMergeMethod, JobActivity, JobHalt } from '@workspace/shared';
+import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { JobProvenance } from '../../domain/job';
@@ -392,15 +392,6 @@ export class JobEntity extends TimestampedEntity {
    *  the PR to green and merges it. Strictly per-job (no repo/org default). */
   @Column({ type: 'boolean', default: false })
   auto_merge!: boolean;
-
-  /** The GitHub merge strategy used when auto-merge (or a manual Merge-PR click) merges — passed to
-   *  PUT /pulls/:n/merge as `merge_method`. Text-union per repo convention (no PG enum). */
-  @Column({ type: 'text', default: 'squash' })
-  auto_merge_method!: AutoMergeMethod;
-
-  /** Delete the head branch after a successful merge (a second host-side ref delete). */
-  @Column({ type: 'boolean', default: true })
-  auto_merge_delete_branch!: boolean;
 
   /** Who most recently ENABLED auto-merge (FK → users.id, SET NULL) — the approver id stamped on an
    *  auto-clicked merge. Null when never enabled / the user was deleted (falls back to org owner). Not

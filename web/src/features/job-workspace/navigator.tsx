@@ -65,7 +65,7 @@ import {
   pipelineAutoMerge,
   pipelineMainTasks,
 } from "@/lib/api/types";
-import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
+import type { AutoApproveMode } from "@workspace/shared";
 import { autoPillView } from "./auto-approve-mode";
 import { AutoApprovePopover } from "./auto-approve-popover";
 import { useLiveTurn } from "@/lib/api/job-stream";
@@ -121,21 +121,13 @@ function AutoApproveToggle({
   disabled,
   onChange,
   autoMerge,
-  autoMergeMethod,
-  autoMergeDeleteBranch,
   onSetMerge,
 }: {
   mode: AutoApproveMode;
   disabled?: boolean;
   onChange: (mode: AutoApproveMode) => void;
   autoMerge: boolean;
-  autoMergeMethod: AutoMergeMethod;
-  autoMergeDeleteBranch: boolean;
-  onSetMerge: (body: {
-    autoMerge: boolean;
-    method?: AutoMergeMethod;
-    deleteBranch?: boolean;
-  }) => void;
+  onSetMerge: (body: { autoMerge: boolean }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -184,8 +176,6 @@ function AutoApproveToggle({
             onChange(next);
           }}
           autoMerge={autoMerge}
-          autoMergeMethod={autoMergeMethod}
-          autoMergeDeleteBranch={autoMergeDeleteBranch}
           onSetMerge={onSetMerge}
           onClose={() => setOpen(false)}
         />
@@ -276,11 +266,7 @@ export function Navigator({
   /** Set the per-job auto-approve mode — the header pill's popover. Absent ⇒ the pill isn't rendered. */
   onSetAutoApprove?: (mode: AutoApproveMode) => void;
   /** Set the per-job auto-merge settings — the same header pill's popover Merge section. */
-  onSetAutoMerge?: (body: {
-    autoMerge: boolean;
-    method?: AutoMergeMethod;
-    deleteBranch?: boolean;
-  }) => void;
+  onSetAutoMerge?: (body: { autoMerge: boolean }) => void;
   deleting?: boolean;
   /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
    *  inline double-click confirm. */
@@ -303,11 +289,10 @@ export function Navigator({
   // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
   // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
   const autoApproveMode = pipelineAutoApproveMode(pipeline);
-  // AUTO-MERGE settings + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
+  // AUTO-MERGE setting + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
   // as `autoApproveMode`, so an auto-merge-armed job still in the `no_job` (open/pre-plan) shape shows the
   // Merge toggle correctly instead of reading stale/off (`pipelineJob()` is null there).
-  const { autoMerge, autoMergeMethod, autoMergeDeleteBranch, mergeReady, mergeValue } =
-    pipelineAutoMerge(pipeline);
+  const { autoMerge, mergeReady, mergeValue } = pipelineAutoMerge(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -403,8 +388,6 @@ export function Navigator({
               }
               onChange={onSetAutoApprove}
               autoMerge={autoMerge}
-              autoMergeMethod={autoMergeMethod}
-              autoMergeDeleteBranch={autoMergeDeleteBranch}
               onSetMerge={onSetAutoMerge ?? (() => {})}
             />
           ) : null}

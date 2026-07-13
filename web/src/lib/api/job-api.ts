@@ -505,17 +505,8 @@ export function setAutoApprove(
  *  merge-ready PR immediately evaluates/merges (backend). */
 export function setAutoMerge(
   ref: JobRef,
-  body: {
-    autoMerge: boolean;
-    method?: AutoMergeMethod;
-    deleteBranch?: boolean;
-  },
-): Promise<{
-  ok: boolean;
-  autoMerge: boolean;
-  autoMergeMethod: AutoMergeMethod;
-  autoMergeDeleteBranch: boolean;
-}> {
+  body: { autoMerge: boolean },
+): Promise<{ ok: boolean; autoMerge: boolean }> {
   return webJson(threadPath(ref, "/auto-merge"), {
     method: "PATCH",
     body: JSON.stringify(body),
@@ -618,6 +609,10 @@ export interface RepoView {
   webhookWarning: string | null;
   /** Per-repo feature-branch prefix override; null → the neutral built-in default (`feature/`). */
   branchPrefix: string | null;
+  /** Repo-level default GitHub merge method used by auto-merge and the manual Merge PR button. */
+  defaultAutoMergeMethod: AutoMergeMethod;
+  /** Repo-level default: delete the head branch after a successful merge. */
+  defaultAutoMergeDeleteBranch: boolean;
 }
 
 export function fetchOrgRepos(orgId: string): Promise<RepoView[]> {
@@ -652,10 +647,6 @@ export interface CreateThreadBody {
   autoApproveMode?: AutoApproveMode;
   /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
   autoMerge?: boolean;
-  /** GitHub merge strategy used when auto-merge lands the PR. */
-  autoMergeMethod?: AutoMergeMethod;
-  /** Delete the head branch after a successful auto-merge. */
-  autoMergeDeleteBranch?: boolean;
 }
 
 export function createJob(
@@ -685,10 +676,6 @@ export function createJobWithFiles(
   if (body.autoApproveMode)
     form.append("autoApproveMode", body.autoApproveMode);
   if (body.autoMerge) form.append("autoMerge", "true");
-  if (body.autoMergeMethod)
-    form.append("autoMergeMethod", body.autoMergeMethod);
-  if (body.autoMergeDeleteBranch != null)
-    form.append("autoMergeDeleteBranch", String(body.autoMergeDeleteBranch));
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

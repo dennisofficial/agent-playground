@@ -9,7 +9,6 @@
 
 import type {
   AutoApproveMode,
-  AutoMergeMethod,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
@@ -572,10 +571,6 @@ export interface PipelineJob {
   autoApproveMode: AutoApproveMode;
   /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the Merge gate). Orthogonal to autoApproveMode. */
   autoMerge: boolean;
-  /** GitHub merge strategy used when merging (auto or manual click). */
-  autoMergeMethod: AutoMergeMethod;
-  /** Delete the head branch after a successful merge. */
-  autoMergeDeleteBranch: boolean;
   /** True when the PR is GitHub-mergeable right now (open + clean + CI not failing/pending) — gates the manual "Merge PR" button/card. */
   mergeReady: boolean;
   /** The Merge gate's verbatim `{ jobId }` value when mergeReady, else null. */
@@ -642,8 +637,6 @@ export type PipelineState =
       /** Carried on the open/pre-plan shape too (mirroring autoApproveMode), so the Merge toggle reflects an
        *  auto-merge-armed job from creation onward — read via `pipelineAutoMerge()`. */
       autoMerge?: boolean;
-      autoMergeMethod?: AutoMergeMethod;
-      autoMergeDeleteBranch?: boolean;
       mergeReady?: boolean;
       mergeValue?: string | null;
       blockedSeedMessage?: string | null;
@@ -673,8 +666,6 @@ export function pipelineAutoApproveMode(
  *  that hasn't approved its first plan yet. */
 export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
   autoMerge: boolean;
-  autoMergeMethod: AutoMergeMethod;
-  autoMergeDeleteBranch: boolean;
   mergeReady: boolean;
   mergeValue: string | null;
 } {
@@ -683,8 +674,6 @@ export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
     | undefined;
   return {
     autoMerge: p?.autoMerge ?? false,
-    autoMergeMethod: p?.autoMergeMethod ?? "squash",
-    autoMergeDeleteBranch: p?.autoMergeDeleteBranch ?? true,
     mergeReady: p?.mergeReady ?? false,
     mergeValue: p?.mergeValue ?? null,
   };

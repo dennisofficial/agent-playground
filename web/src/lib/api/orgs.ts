@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AutoMergeMethod } from "@workspace/shared";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -786,6 +787,10 @@ export interface ConnectedRepo {
   defaultBranch: string;
   /** Per-repo feature-branch prefix override; null uses the built-in default. */
   branchPrefix: string | null;
+  /** Repo-level default GitHub merge method used by auto-merge and the manual Merge PR button. */
+  defaultAutoMergeMethod: AutoMergeMethod;
+  /** Repo-level default: delete the head branch after a successful merge. */
+  defaultAutoMergeDeleteBranch: boolean;
   accessOk: boolean;
   /** Present on a failed access probe (connect / re-validate); the real GitHub reason. */
   reason?: string;
@@ -853,6 +858,10 @@ export interface UpdateRepoBody {
   defaultBranch?: string;
   /** Per-repo feature-branch prefix; empty string clears it back to the neutral default. */
   branchPrefix?: string;
+  /** Repo-level default GitHub merge method for auto-merge / manual Merge PR. */
+  defaultAutoMergeMethod?: AutoMergeMethod;
+  /** Repo-level default: delete the head branch after a successful merge. */
+  defaultAutoMergeDeleteBranch?: boolean;
 }
 
 /** Update a repo's display name / base branch (owner only). */

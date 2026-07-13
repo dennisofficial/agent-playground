@@ -1454,9 +1454,10 @@ export class ThreadDriver implements JobDispatcher {
    * MERGE-GATE APPROVAL (the "Merge PR" click, routed here by the web surface bridge). Posts a durable
    * note then merges through the ONE host merge path (`AutoMergeService.mergeNow`) — unlike
    * {@link resolveShipApprovalDurably} this does NOT re-drive: a merge is terminal, there is nothing left
-   * to build.
+   * to build. Returns whether the PR was actually merged, so the synchronous HTTP merge path can surface
+   * a non-2xx when the merge did not complete.
    */
-  async resolveMergeApprovalDurably(jobId: string, ruledBy: string): Promise<void> {
+  async resolveMergeApprovalDurably(jobId: string, ruledBy: string): Promise<boolean> {
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
@@ -1464,7 +1465,7 @@ export class ThreadDriver implements JobDispatcher {
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
-    await this.autoMerge.mergeNow(jobId, ruledBy);
+    return await this.autoMerge.mergeNow(jobId, ruledBy);
   }
 
   /**

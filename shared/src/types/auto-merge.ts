@@ -10,10 +10,3 @@ export type AutoMergeMethod = (typeof AUTO_MERGE_METHODS)[number];
 
 export const isAutoMergeMethod = (v: unknown): v is AutoMergeMethod =>
   typeof v === 'string' && (AUTO_MERGE_METHODS as readonly string[]).includes(v);
-
-/** The full per-job auto-merge config as it crosses the wire (PATCH body + pipeline DTO). */
-export interface AutoMergeSettings {
-  autoMerge: boolean;
-  autoMergeMethod: AutoMergeMethod;
-  autoMergeDeleteBranch: boolean;
-}

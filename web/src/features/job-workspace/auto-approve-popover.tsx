@@ -10,9 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import {
-  AUTO_MERGE_METHODS,
   type AutoApproveMode,
-  type AutoMergeMethod,
   modeApprovesPlan,
   modeApprovesShip,
 } from "@workspace/shared";
@@ -35,8 +33,6 @@ export function AutoApprovePopover({
   mode,
   onSelect,
   autoMerge,
-  autoMergeMethod,
-  autoMergeDeleteBranch,
   onSetMerge,
   onClose,
 }: {
@@ -47,23 +43,13 @@ export function AutoApprovePopover({
   mode: AutoApproveMode;
   onSelect: (mode: AutoApproveMode) => void;
   autoMerge: boolean;
-  autoMergeMethod: AutoMergeMethod;
-  autoMergeDeleteBranch: boolean;
-  onSetMerge: (body: {
-    autoMerge: boolean;
-    method?: AutoMergeMethod;
-    deleteBranch?: boolean;
-  }) => void;
+  onSetMerge: (body: { autoMerge: boolean }) => void;
   onClose: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(mode);
   const [draftMode, setDraftMode] = useState(mode);
   const [draftMerge, setDraftMerge] = useState(autoMerge);
-  const [draftMergeMethod, setDraftMergeMethod] = useState(autoMergeMethod);
-  const [draftMergeDeleteBranch, setDraftMergeDeleteBranch] = useState(
-    autoMergeDeleteBranch,
-  );
 
   useEffect(() => {
     draftRef.current = mode;
@@ -72,9 +58,7 @@ export function AutoApprovePopover({
 
   useEffect(() => {
     setDraftMerge(autoMerge);
-    setDraftMergeMethod(autoMergeMethod);
-    setDraftMergeDeleteBranch(autoMergeDeleteBranch);
-  }, [autoMerge, autoMergeMethod, autoMergeDeleteBranch]);
+  }, [autoMerge]);
 
   const selectMode = useCallback(
     (next: AutoApproveMode) => {
@@ -100,22 +84,11 @@ export function AutoApprovePopover({
   );
 
   const setMerge = useCallback(
-    (next: {
-      autoMerge?: boolean;
-      method?: AutoMergeMethod;
-      deleteBranch?: boolean;
-    }) => {
-      const body = {
-        autoMerge: next.autoMerge ?? draftMerge,
-        method: next.method ?? draftMergeMethod,
-        deleteBranch: next.deleteBranch ?? draftMergeDeleteBranch,
-      };
-      setDraftMerge(body.autoMerge);
-      setDraftMergeMethod(body.method);
-      setDraftMergeDeleteBranch(body.deleteBranch);
-      onSetMerge(body);
+    (next: boolean) => {
+      setDraftMerge(next);
+      onSetMerge({ autoMerge: next });
     },
-    [draftMerge, draftMergeDeleteBranch, draftMergeMethod, onSetMerge],
+    [onSetMerge],
   );
 
   useEffect(() => {
@@ -216,67 +189,8 @@ export function AutoApprovePopover({
           checked={draftMerge}
           first
           testId="auto-merge-toggle"
-          onChange={(next) => setMerge({ autoMerge: next })}
+          onChange={setMerge}
         />
-
-        <div className="flex items-center justify-between gap-2 pb-1">
-          <label
-            htmlFor="auto-merge-method"
-            className="font-mono text-[9.5px] uppercase tracking-[0.04em] text-faint"
-          >
-            Method
-          </label>
-          <select
-            id="auto-merge-method"
-            data-testid="auto-merge-method"
-            value={draftMergeMethod}
-            onChange={(e) =>
-              setMerge({
-                method: e.target.value as AutoMergeMethod,
-              })
-            }
-            className="rounded-md border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[11px] text-text outline-none focus:border-accent"
-          >
-            {AUTO_MERGE_METHODS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-[10.5px] leading-snug text-faint">
-            Delete branch after merge
-          </span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={draftMergeDeleteBranch}
-            aria-label="Delete branch after merge"
-            data-testid="auto-merge-delete-branch"
-            onClick={() => setMerge({ deleteBranch: !draftMergeDeleteBranch })}
-            className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
-            style={{
-              background: draftMergeDeleteBranch
-                ? "var(--green)"
-                : "var(--surface-3)",
-              borderColor: draftMergeDeleteBranch
-                ? "var(--green)"
-                : "var(--border-2)",
-            }}
-          >
-            <span
-              className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
-              style={{
-                transform: draftMergeDeleteBranch
-                  ? "translateX(13px)"
-                  : "translateX(0)",
-                boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
-              }}
-            />
-          </button>
-        </div>
       </div>
 
       <div className="mt-2.5 border-t border-border pt-2.5 text-[10px] leading-relaxed text-faint">

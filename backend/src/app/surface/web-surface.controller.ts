@@ -6,6 +6,8 @@ import {
   Delete,
   Get,
   Header,
+  HttpException,
+  HttpStatus,
   Inject,
   Logger,
   NotFoundException,
@@ -22,6 +24,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -41,9 +44,7 @@ import type { MessageEvent } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import {
   type AutoApproveMode,
-  type AutoMergeMethod,
   isAutoApproveMode,
-  isAutoMergeMethod,
   modeApprovesPlan,
   modeApprovesShip,
 } from '@workspace/shared';
@@ -76,6 +77,7 @@ import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
+import { resolveMergeApproval } from './resolve-merge-approval';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
@@ -344,10 +346,8 @@ interface CreateThreadDto {
   prNumber?: string | number;
   /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
   autoApproveMode?: string;
-  /** Operator-chosen auto-merge toggle + settings to arm at creation; absent/false leaves the DB defaults. */
+  /** Operator-chosen auto-merge toggle to arm at creation; absent/false leaves the DB default. */
   autoMerge?: boolean;
-  autoMergeMethod?: AutoMergeMethod;
-  autoMergeDeleteBranch?: boolean;
 }
 
 /**
@@ -397,8 +397,6 @@ interface SetAutoApproveDto {
 }
 interface SetAutoMergeDto {
   autoMerge: boolean;
-  method?: AutoMergeMethod;
-  deleteBranch?: boolean;
 }
 function coerceBoolean(raw: unknown): boolean | undefined {
   if (raw === true || raw === 'true') return true;
@@ -642,6 +640,10 @@ export class WebSurfaceController {
     private readonly git: LocalGitService,
     // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
     private readonly jobDeps: JobDependencyService,
+    // Resolves `ThreadDriver` lazily for the SYNCHRONOUS manual-merge path (the "Merge PR" approve click
+    // awaits `resolveMergeApproval` → `mergeNow`). Placed after the last required dep so the controller's
+    // positional-arg unit tests keep their alignment.
+    private readonly moduleRef: ModuleRef,
     // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
@@ -832,7 +834,6 @@ export class WebSurfaceController {
     // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
     const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
     const autoMerge = coerceBoolean(body.autoMerge) === true;
-    const autoMergeDeleteBranch = coerceBoolean(body.autoMergeDeleteBranch);
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -846,12 +847,10 @@ export class WebSurfaceController {
           ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
           : {}),
         // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
-        // also records who armed it; an unknown/absent method defaults to 'squash', deleteBranch to true.
+        // also records who armed it. The merge method + delete-branch are repo-level defaults now.
         ...(autoMerge
           ? {
               auto_merge: true,
-              auto_merge_method: isAutoMergeMethod(body.autoMergeMethod) ? body.autoMergeMethod : 'squash',
-              auto_merge_delete_branch: autoMergeDeleteBranch ?? true,
               auto_merge_by: user.id,
             }
           : {}),
@@ -1224,6 +1223,13 @@ export class WebSurfaceController {
     // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
     // the approver — never the client-sent `ruledBy` (untrusted, and a label like "U-OPERATOR" is not a
     // uuid, which previously made `store.approve` throw and the verdict silently no-op).
+    // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
+    // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
+    if (actionId === MERGE_ACTION_ID) {
+      const merged = await resolveMergeApproval(this.moduleRef, meta.jobId, user.id);
+      if (!merged) throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
+      return { ok: true, jobId: meta.jobId };
+    }
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
   }
@@ -2543,8 +2549,8 @@ export class WebSurfaceController {
     return { ok: true, autoApproveMode: body.mode };
   }
 
-  /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle (+ method/delete-branch). On
-   *  enable, immediately evaluates an already-ready PR through the exact same evaluator every trigger uses
+  /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle. On enable, immediately
+   *  evaluates an already-ready PR through the exact same evaluator every trigger uses
    *  (`AutoMergeService.maybeAutoMerge`) rather than blocking the request on the merge itself. */
   @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId/auto-merge')
   @UseGuards(OrgMembershipGuard)
@@ -2553,18 +2559,14 @@ export class WebSurfaceController {
     @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
     @Body() body: SetAutoMergeDto,
-  ): Promise<{ ok: boolean; autoMerge: boolean; autoMergeMethod: AutoMergeMethod; autoMergeDeleteBranch: boolean }> {
+  ): Promise<{ ok: boolean; autoMerge: boolean }> {
     // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
     await this.requireThread(jobId, org.id);
     const enable = coerceBoolean(body.autoMerge) === true;
-    const method = isAutoMergeMethod(body.method) ? body.method : undefined;
-    const deleteBranch = coerceBoolean(body.deleteBranch);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
       {
         auto_merge: enable,
-        ...(method ? { auto_merge_method: method } : {}),
-        ...(deleteBranch != null ? { auto_merge_delete_branch: deleteBranch } : {}),
         // Stamp who enabled it; never clear on disable — the audit trail of the last arm stands.
         ...(enable ? { auto_merge_by: user.id } : {}),
       },
@@ -2576,8 +2578,6 @@ export class WebSurfaceController {
     return {
       ok: true,
       autoMerge: fresh?.auto_merge ?? enable,
-      autoMergeMethod: fresh?.auto_merge_method ?? 'squash',
-      autoMergeDeleteBranch: fresh?.auto_merge_delete_branch ?? true,
     };
   }
 

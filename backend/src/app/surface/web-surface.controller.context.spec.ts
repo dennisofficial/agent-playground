@@ -69,6 +69,7 @@ function makeController(threadOrgId: string) {
     {} as never, // skillInstaller (SkillInstallerService)
     git as never,
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, threads, threadLifecycle, git };
 }
