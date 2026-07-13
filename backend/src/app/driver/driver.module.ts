@@ -548,7 +548,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       if (owner?.descriptor.kind !== 'builder') continue; // only build lanes; `main` rides the brain's own sweep
       const threadId = owner.ids[0];
       if (!threadId) continue;
-      void this.buildLaneDelivery!
+      await this.buildLaneDelivery!
         .pump({ jobId: l.jobId, orgId: l.orgId, repoId: l.repoId, threadId })
         .catch((err) => this.logger.debug(`build-lane sweep pump failed for thread=${threadId}: ${err}`));
     }

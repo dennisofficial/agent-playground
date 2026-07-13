@@ -217,6 +217,36 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(afterPending).toHaveLength(0);
   });
 
+  it('(c2) terminal escalation re-keys leased leftovers to main and clears the lease', async () => {
+    const job = await makeJob();
+    const seed = await store.recordHostSeed({
+      orgId: ORG_ID,
+      repoId,
+      jobId: job.id,
+      lane,
+      body: 'leased leftover',
+      priority: 'now',
+    });
+    await store.leaseChatStimuli([seed.id]);
+
+    expect(await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane)).toHaveLength(0);
+    expect(await store.undeliveredChatForLane(job.id, lane)).toHaveLength(1);
+
+    await store.rekeyLaneToMain(seed.id, 'Undelivered host seed from build thread thread-1: leased leftover');
+
+    const rows = await ds.query(
+      `SELECT lane, attempted_at, delivered_at, body FROM stimuli WHERE id = $1`,
+      [seed.id],
+    );
+    expect(rows[0].lane).toBe('main');
+    expect(rows[0].attempted_at).toBeNull();
+    expect(rows[0].delivered_at).toBeNull();
+    expect(rows[0].body).toContain('leased leftover');
+
+    const mainPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, 'main');
+    expect(mainPending.map((p) => p.id)).toContain(seed.id);
+  });
+
   it('(d) a build lane stays operator-read-only — canPost(thread:<id>) is false', () => {
     const input = new ThreadInputService();
     expect(input.canPost(lane)).toBe(false);

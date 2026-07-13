@@ -126,7 +126,7 @@ describe('TurnRegistry', () => {
   });
 
   it('runningSteerableTurn queries the running+steerable row for (job_id, lane)', async () => {
-    const row = { turn_id: 't1', job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true };
+    const row = { turn_id: 't1', job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true } as const;
     const repo = makeRepo([row]);
     const out = await new TurnRegistry(repo, makeRepo() as never).runningSteerableTurn('th1', 'thread:sec-be');
     expect(repo.findOne).toHaveBeenCalledWith({

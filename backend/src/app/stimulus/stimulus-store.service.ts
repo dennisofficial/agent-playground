@@ -428,15 +428,33 @@ export class StimulusStoreService {
   }
 
   /**
+   * Every still-undelivered chat stimulus on a lane, ignoring the delivery lease. Used only at terminal
+   * lane teardown, where a leased-but-unacked build-lane seed must not be stranded just because the normal
+   * retry window has not expired yet.
+   */
+  async undeliveredChatForLane(jobId: string, lane: string): Promise<ChatStimulus[]> {
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere("COALESCE(s.lane, 'main') = :lane", { lane })
+      .andWhere('s.delivered_at IS NULL')
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
+    return rows.map((r) => this.rowToChatStimulus(r));
+  }
+
+  /**
    * Re-key a still-undelivered chat stimulus onto the `main` lane, replacing its body — the build-lane
    * thread-end escalation backstop (see `AgentSessionManager.escalateBuildLaneLeftovers`). Leaves
-   * `delivered_at` NULL so the brain's existing main pump/sweep picks it up at-least-once; only touches a
-   * still-null row (idempotent alongside a racing sweep that already delivered it under its old lane).
+   * `delivered_at` NULL and clears any old delivery lease so the brain's existing main pump/sweep can pick
+   * it up immediately; only touches a still-null row (idempotent alongside a racing sweep that already
+   * delivered it under its old lane).
    */
   async rekeyLaneToMain(id: string, labeledBody: string): Promise<void> {
     await this.stimuli.update(
       { id, delivered_at: IsNull() },
-      { lane: 'main', body: labeledBody },
+      { lane: 'main', body: labeledBody, attempted_at: null },
     );
   }
 

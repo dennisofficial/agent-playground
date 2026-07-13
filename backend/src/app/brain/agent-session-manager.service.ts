@@ -842,14 +842,15 @@ export class AgentSessionManager
    * reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host seeds —
    * `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Re-key each onto the
    * `main` lane (leaving `delivered_at` NULL, never stamped here) with its origin labeled, so the brain's
-   * existing main pump/sweep (`sweepUndeliveredChat`) delivers them at-least-once. Deliberately does NOT touch
-   * the done/halt wake body: a wake is dropped whenever `handleChatTurn` early-returns (draining / blocked
-   * job), and a body mutation would then be lost right alongside a premature delivered-stamp — re-keying is
-   * durable on its own and needs no wake to succeed.
+   * existing main pump/sweep (`sweepUndeliveredChat`) delivers them at-least-once. This intentionally ignores
+   * the normal delivery lease: a recently-attempted seed is still undelivered at terminal teardown, and the
+   * build lane may never run again. Deliberately does NOT touch the done/halt wake body: a wake is dropped
+   * whenever `handleChatTurn` early-returns (draining / blocked job), and a body mutation would then be lost
+   * right alongside a premature delivered-stamp — re-keying is durable on its own and needs no wake to succeed.
    */
   private async escalateBuildLaneLeftovers(jobId: string, threadId: string): Promise<void> {
     const leftovers = await this.stimulusStore
-      .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, laneFor('builder', threadId))
+      .undeliveredChatForLane(jobId, laneFor('builder', threadId))
       .catch(() => [] as ChatStimulus[]);
     for (const s of leftovers) {
       const labeled = `Undelivered host seed from build thread ${threadId}: ${s.body}`;
