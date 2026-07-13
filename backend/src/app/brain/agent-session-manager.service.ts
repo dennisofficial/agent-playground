@@ -29,6 +29,14 @@ import {
   StimulusStoreService,
   renderTurn,
   type TurnChunk,
+  type CollectedPending,
+  type DeliveryLane,
+  CHAT_DELIVERY_LEASE_MS as DELIVERY_LEASE_MS,
+  steerPending,
+  trySteerLive,
+  isNowPriority,
+  isWakeEligible,
+  userChunkFor,
 } from '../stimulus';
 import {
   CHAT_SURFACE,
@@ -36,6 +44,7 @@ import {
   type DecisionApprovalCard,
   TurnHarnessFactory,
   ThreadInputService,
+  laneFor,
   SYSTEM_SEED_AUTHOR,
   type McpProposalServer,
   type WebQuestionCard,
@@ -50,6 +59,7 @@ import {
   webSkillProposalCard,
   wrapSystemNotification,
 } from '../surface';
+import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { EnvService } from '@core/config/env/env.service';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -75,6 +85,7 @@ import {
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BuildShipService } from '../driver/build-ship.service';
+import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
@@ -91,6 +102,7 @@ import {
   renderWorkOwedNudge,
   renderRequestChangesDelivery,
   renderEventDelivery,
+  renderFollowUpJobSeed,
   haltWakeFraming,
   renderHaltDelivery,
   haltRecordBody,
@@ -139,13 +151,25 @@ import {
   type VerificationEvidence,
 } from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
-import { CredentialResolver, WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import {
+  CredentialResolver,
+  WorkspaceConfigStore,
+  WorkspaceSecretFileStore,
+} from '../onboarding';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
 import { defaultResumeAt } from '../engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
-import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
+import {
+  SkillFileWriter,
+  SkillInstallerService,
+  SkillResolver,
+  WorkspaceSkillStore,
+} from '../skills';
+import {
+  WorkspaceProfileService,
+  detectRepoManifests,
+} from '../workspace-profile';
 import {
   CONTAINER_CONTEXT,
   isExternalMountPath,
@@ -158,7 +182,11 @@ import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { JobDependencyService } from '../job-deps';
 import type { Decision } from '../domain';
-import { nextDecisionId, DECISION_CLASS_IDS, HALT_FIX_ATTEMPT_CAP } from '../domain';
+import {
+  nextDecisionId,
+  DECISION_CLASS_IDS,
+  HALT_FIX_ATTEMPT_CAP,
+} from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
@@ -173,8 +201,11 @@ import {
 } from '../sandbox/turn-reattach.registry';
 import {
   ENGINE_RUNNER,
+  HOST_RETRY_BACKOFF_MS,
   isEngineDetachedError,
+  isRetryableTransientError,
   isUnresumableSessionMessage,
+  MAX_HOST_RETRIES,
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
 } from '../engine/engine.types';
@@ -195,10 +226,7 @@ import type {
   ApprovalVerdict,
 } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
-import {
-  PlanReviewService,
-  deserializeFindings,
-} from './plan-review.service';
+import { PlanReviewService, deserializeFindings } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 
@@ -248,7 +276,7 @@ export class AgentSessionManager
    * it can't be re-selected for this long. Longer than a cold-container provision so a live delivery isn't
    * raced by the sweep; the per-thread turn queue is the real serializer, so this is a cross-pass guard.
    */
-  private static readonly CHAT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
+  private static readonly CHAT_DELIVERY_LEASE_MS = DELIVERY_LEASE_MS;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -274,10 +302,20 @@ export class AgentSessionManager
   private readonly benignAbortRedrives = new Map<string, number>();
   private static readonly MAX_BENIGN_ABORT_REDRIVES = 2;
 
+  /** Bounded host-side auto-retry budget for a RETRYABLE transient error (transient auth / host↔container
+   *  transport blip) — keyed by jobId, count of consecutive retries. Reset on the next successful turn. */
+  private readonly transientRetryRedrives = new Map<string, number>();
+  /** Per-job in-process re-drive timer for the 10s host-retry backoff (the durable clock is the restart-only
+   *  backstop). Cleared/replaced when a superseding turn is scheduled. */
+  private readonly hostRetryTimers = new Map<string, NodeJS.Timeout>();
+
   // ── reset_sandbox bookkeeping (all keyed `orgId:jobId`, in-memory, per-process) ─────────────────
   /** "Tear down before the verify turn": set by the `reset_sandbox` tool, consumed by the turn tail. `hard`
    *  ⇒ a from-scratch worktree + container re-provision (vs the default container-only reset). */
-  private readonly resetRequests = new Map<string, { reason: string; hard?: boolean }>();
+  private readonly resetRequests = new Map<
+    string,
+    { reason: string; hard?: boolean }
+  >();
   /** After a teardown, the verify framing is owed to the FIRST cold-attached turn (operator or synthetic). */
   private readonly pendingResetVerify = new Set<string>();
   /** Consecutive autonomous resets — incremented by the tool, cleared ONLY on an operator turn (loop guard). */
@@ -293,7 +331,13 @@ export class AgentSessionManager
    *  installation token expires hourly), so only the stable bits are cached here. See resolveBrainGitAuth. */
   private readonly gitTargetByJob = new Map<
     string,
-    { gitUrl: string; orgId: string; owner: string; repo: string; defaultBranch: string }
+    {
+      gitUrl: string;
+      orgId: string;
+      owner: string;
+      repo: string;
+      defaultBranch: string;
+    }
   >();
   /**
    * SESSION-scoped `Edit`/`Write` grants for skills (`request_skill_edit_access`), keyed by jobId — in-memory
@@ -313,7 +357,10 @@ export class AgentSessionManager
   // Per-session dedup for memory auto-recall (d2): fact ids already injected into THIS job's current live
   // SDK session, so a re-recalled fact is surfaced once but a fresh session can see it again. The first turn
   // has no session id yet; the set is rebound when the engine emits the session event.
-  private readonly injectedMemoryByJob = new Map<string, InjectedMemoryDedupState>();
+  private readonly injectedMemoryByJob = new Map<
+    string,
+    InjectedMemoryDedupState
+  >();
 
   /**
    * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
@@ -333,6 +380,8 @@ export class AgentSessionManager
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
+    // The ONE merge resolution path — re-evaluated at every turn end (a settled brain is a merge trigger).
+    private readonly autoMerge: AutoMergeService,
     private readonly memory: MemoryStore,
     private readonly approvals: DecisionApprovalService,
     private readonly lifecycle: JobLifecycleService,
@@ -384,7 +433,8 @@ export class AgentSessionManager
     // ADR-0005 live-verification judge — the SAME port the driver's per-thread gate uses (shared @Global
     // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
     // live (curl / drive / run), not merely typechecked, before the PR opens.
-    @Inject(LIVE_VERIFICATION_JUDGE) private readonly liveVerificationJudge: LiveVerificationJudge,
+    @Inject(LIVE_VERIFICATION_JUDGE)
+    private readonly liveVerificationJudge: LiveVerificationJudge,
     // Host-side subscription usage snapshot — the Main-lane session-limit park reads `getResetAt(orgId,
     // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
     // @Global OnboardingModule.
@@ -448,6 +498,9 @@ export class AgentSessionManager
     @Optional()
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repoRows?: Repository<RepoEntity>,
+    // Live-turn fan-out for the mid-turn "Reconnecting…" indicator during a host-backstop retry. @Optional
+    // so unit tests construct the manager without it; DI (@Global LiveTurnModule) supplies it live.
+    @Optional() private readonly liveTurns?: LiveTurnStore,
   ) {}
 
   /**
@@ -483,7 +536,9 @@ export class AgentSessionManager
       // Optional-call: test fakes/older CredentialResolver stand-ins may predate this method — default
       // 'pat' (today's behavior) rather than throwing mid-turn.
       const mode = (await this.creds.githubAuthMode?.(target.orgId)) ?? 'pat';
-      const { identity, apiToken } = await this.creds.githubWriteIdentity(target.orgId);
+      const { identity, apiToken } = await this.creds.githubWriteIdentity(
+        target.orgId,
+      );
       return {
         gitUrl: target.gitUrl,
         mode,
@@ -547,8 +602,12 @@ export class AgentSessionManager
     );
     // Leader-only periodic chat-delivery sweep: re-drive any operator message still undelivered (an
     // unacked steer, a fresh turn that never registered). Started on promote, stopped on demote/shutdown.
-    this.chatSweepPromoteSub = this.election.onPromote(() => this.startChatDeliverySweep());
-    this.chatSweepDemoteSub = this.election.onDemote(() => this.stopChatDeliverySweep());
+    this.chatSweepPromoteSub = this.election.onPromote(() =>
+      this.startChatDeliverySweep(),
+    );
+    this.chatSweepDemoteSub = this.election.onDemote(() =>
+      this.stopChatDeliverySweep(),
+    );
   }
 
   onApplicationShutdown(): void {
@@ -578,11 +637,15 @@ export class AgentSessionManager
       // within a sweep interval — steady-state at-least-once, without waiting for a restart's boot sweep.
       void this.dispatcher
         .deliverOwedHaltWakes()
-        .catch((err) => this.logger.warn(`periodic halt-wake sweep failed: ${err}`));
+        .catch((err) =>
+          this.logger.warn(`periodic halt-wake sweep failed: ${err}`),
+        );
       // Decision d1: same at-least-once backstop for the completion wake (`'final'`/`'notable'`).
       void this.dispatcher
         .deliverOwedDoneWakes()
-        .catch((err) => this.logger.warn(`periodic done-wake sweep failed: ${err}`));
+        .catch((err) =>
+          this.logger.warn(`periodic done-wake sweep failed: ${err}`),
+        );
     }, CHAT_SWEEP_INTERVAL_MS);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
     this.scheduler.addInterval(CHAT_SWEEP_INTERVAL, iv);
@@ -656,7 +719,9 @@ export class AgentSessionManager
             },
             seedQuestionId: q.questionId,
           }).catch((err) =>
-            this.logger.warn(`question backfill failed for thread=${q.jobId}: ${err}`),
+            this.logger.warn(
+              `question backfill failed for thread=${q.jobId}: ${err}`,
+            ),
           );
         }
       }
@@ -689,10 +754,15 @@ export class AgentSessionManager
             repoId: s.repoId,
             body: wrapSystemNotification(notice),
             // Same content-stable key as the live provide-secret path ⇒ one visible pill.
-            seedRow: { label: notice, chunkKey: chunkKey.secret(s.jobId, s.name) },
+            seedRow: {
+              label: notice,
+              chunkKey: chunkKey.secret(s.jobId, s.name),
+            },
             seedSecretId: s.requestId,
           }).catch((err) =>
-            this.logger.warn(`secret backfill failed for thread=${s.jobId}: ${err}`),
+            this.logger.warn(
+              `secret backfill failed for thread=${s.jobId}: ${err}`,
+            ),
           );
         }
       }
@@ -717,10 +787,15 @@ export class AgentSessionManager
             repoId: f.repoId,
             body: wrapSystemNotification(notice),
             // Same content-stable key as the live provide-file path ⇒ one visible pill.
-            seedRow: { label: notice, chunkKey: chunkKey.file(f.jobId, f.path) },
+            seedRow: {
+              label: notice,
+              chunkKey: chunkKey.file(f.jobId, f.path),
+            },
             seedFileId: f.requestId,
           }).catch((err) =>
-            this.logger.warn(`file backfill failed for thread=${f.jobId}: ${err}`),
+            this.logger.warn(
+              `file backfill failed for thread=${f.jobId}: ${err}`,
+            ),
           );
         }
       }
@@ -751,7 +826,9 @@ export class AgentSessionManager
         );
         for (const ev of events) {
           void this.pumpEvent(ev).catch((err) =>
-            this.logger.warn(`boot event re-drive failed for stimulus=${ev.id}: ${err}`),
+            this.logger.warn(
+              `boot event re-drive failed for stimulus=${ev.id}: ${err}`,
+            ),
           );
         }
       }
@@ -790,7 +867,9 @@ export class AgentSessionManager
         );
         for (const t of threads) {
           void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
-            this.logger.warn(`boot chat re-drive failed for thread=${t.jobId}: ${err}`),
+            this.logger.warn(
+              `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
+            ),
           );
         }
       }
@@ -806,7 +885,9 @@ export class AgentSessionManager
     try {
       const recovered = await this.turnRecovery.recoverInterruptedTurns();
       if (recovered > 0)
-        this.logger.log(`Leader: JSONL backstop back-filled ${recovered} lost turn(s)`);
+        this.logger.log(
+          `Leader: JSONL backstop back-filled ${recovered} lost turn(s)`,
+        );
     } catch (err) {
       this.logger.warn(`JSONL turn-recovery backstop failed: ${err}`);
     }
@@ -856,6 +937,29 @@ export class AgentSessionManager
    * `/context/generated/threads/<ordinal>-<slug>/completion.md` + the fenced record in the body, then either re-drives with guidance
    * (`retry_thread`) or escalates. A no-op if the thread is no longer owed a wake (already re-driven / done).
    */
+  /**
+   * ESCALATE any still-undelivered build-lane host seed at thread end (spec step 6, d2). When a thread
+   * reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host seeds —
+   * `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Re-key each onto the
+   * `main` lane (leaving `delivered_at` NULL, never stamped here) with its origin labeled, so the brain's
+   * existing main pump/sweep (`sweepUndeliveredChat`) delivers them at-least-once. This intentionally ignores
+   * the normal delivery lease: a recently-attempted seed is still undelivered at terminal teardown, and the
+   * build lane may never run again. Deliberately does NOT touch the done/halt wake body: a wake is dropped
+   * whenever `handleChatTurn` early-returns (draining / blocked job), and a body mutation would then be lost
+   * right alongside a premature delivered-stamp — re-keying is durable on its own and needs no wake to succeed.
+   */
+  private async escalateBuildLaneLeftovers(jobId: string, threadId: string): Promise<void> {
+    const leftovers = await this.stimulusStore
+      .undeliveredChatForLane(jobId, laneFor('builder', threadId))
+      .catch(() => [] as ChatStimulus[]);
+    for (const s of leftovers) {
+      const labeled = `Undelivered host seed from build thread ${threadId}: ${s.body}`;
+      await this.stimulusStore.rekeyLaneToMain(s.id, labeled).catch((err) =>
+        this.logger.warn(`build-lane escalation re-key for ${s.id} failed (thread=${threadId}): ${err}`),
+      );
+    }
+  }
+
   async notifyThreadHalted(
     jobId: string,
     threadId: string,
@@ -877,6 +981,7 @@ export class AgentSessionManager
     const anchor = await this.driverStore
       .resolveSessionAnchor(threadId)
       .catch(() => undefined);
+    await this.escalateBuildLaneLeftovers(jobId, threadId);
     const stimulus = haltDeliveryStimulus({
       jobId,
       orgId: job.orgId,
@@ -912,7 +1017,9 @@ export class AgentSessionManager
     if (!job) return;
     const thread = await this.driverStore.getThread(threadId).catch(() => null);
     if (!thread) return;
-    const term = await this.driverStore.getTerminalRecord(threadId).catch(() => null);
+    const term = await this.driverStore
+      .getTerminalRecord(threadId)
+      .catch(() => null);
     // Claim a fresh completion-wake generation for THIS delivery, then supersede any prior (dead) attempt's
     // truncated partial before we stream the fresh summary. `claimDoneWakeGen` returns null when the wake is
     // no longer owed (already delivered by a racing sweep) → no-op. The supersede is deliberately NOT wrapped
@@ -920,22 +1027,33 @@ export class AgentSessionManager
     // orphaned with no later sweep to clean it — let it throw so the sweep's per-thread catch retries the
     // whole delivery (owed stays true; the gen already bumped so the retry's higher-gen supersede still
     // sweeps the earlier partial).
-    const gen = await this.driverStore.claimDoneWakeGen(threadId).catch(() => null);
+    const gen = await this.driverStore
+      .claimDoneWakeGen(threadId)
+      .catch(() => null);
     if (gen == null) return;
     await this.driverStore.supersedeDoneWakeMessages(jobId, threadId, gen);
     // Resolved DIRECTLY from steps/legs at delivery time (not stored) — mirrors `notifyThreadHalted`.
-    const anchor = await this.driverStore.resolveSessionAnchor(threadId).catch(() => undefined);
+    const anchor = await this.driverStore
+      .resolveSessionAnchor(threadId)
+      .catch(() => undefined);
     let perThreadGaps: { brief: string; gaps: string[] }[] | undefined;
     if (reason === 'final') {
-      const allThreads = await this.driverStore.threadsForJob(jobId).catch(() => []);
+      const allThreads = await this.driverStore
+        .threadsForJob(jobId)
+        .catch(() => []);
       const withGaps = await Promise.all(
         allThreads.map(async (t) => {
-          const r = await this.driverStore.getTerminalRecord(t.id).catch(() => null);
+          const r = await this.driverStore
+            .getTerminalRecord(t.id)
+            .catch(() => null);
           return r?.gaps?.length ? { brief: t.brief, gaps: r.gaps } : null;
         }),
       );
-      perThreadGaps = withGaps.filter((g): g is { brief: string; gaps: string[] } => g != null);
+      perThreadGaps = withGaps.filter(
+        (g): g is { brief: string; gaps: string[] } => g != null,
+      );
     }
+    await this.escalateBuildLaneLeftovers(jobId, threadId);
     const stimulus = doneDeliveryStimulus({
       jobId,
       orgId: job.orgId,
@@ -963,14 +1081,19 @@ export class AgentSessionManager
    * turn (drained from `job_sandboxes.setup_error` in {@link handleChatTurn}), so this body stays generic to
    * avoid duplicating it. Concurrency-safe via `handleChatTurn` (steers into a live turn / queues behind one).
    */
-  async wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
+  async wakeForProvisioningFailure(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId,
       orgId,
       repoId,
       body: wakeForProvisioningFailureBody(),
       seedRow: {
-        label: 'Repo setup script failed on cold bring-up — checking the environment.',
+        label:
+          'Repo setup script failed on cold bring-up — checking the environment.',
         chunkKey: `seed:setup-fail:${jobId}`,
       },
     });
@@ -991,7 +1114,9 @@ export class AgentSessionManager
     input: { seed: string | null; note: string | null },
   ): Promise<void> {
     if (input.seed != null) {
-      const firstMessage = input.note ? `${input.note}\n\n${input.seed}` : input.seed;
+      const firstMessage = input.note
+        ? `${input.note}\n\n${input.seed}`
+        : input.seed;
       await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
       return;
     }
@@ -1000,7 +1125,10 @@ export class AgentSessionManager
       orgId,
       repoId,
       body: wakeUnblockedJobBody(input.note),
-      seedRow: { label: 'Unblocked — a blocking job resolved.', chunkKey: `seed:unblock:${jobId}` },
+      seedRow: {
+        label: 'Unblocked — a blocking job resolved.',
+        chunkKey: `seed:unblock:${jobId}`,
+      },
     });
     await this.handleChatTurn(stimulus);
   }
@@ -1046,7 +1174,9 @@ export class AgentSessionManager
     // A dependency-blocked job is fully parked: no system wake/re-drive should start its brain until the
     // dependency service first flips it back to `open`.
     if (await this.isJobBlocked(stimulus.jobId)) {
-      this.logger.log(`job=${stimulus.jobId} is blocked; dropping system turn until it is unblocked`);
+      this.logger.log(
+        `job=${stimulus.jobId} is blocked; dropping system turn until it is unblocked`,
+      );
       return;
     }
 
@@ -1069,7 +1199,9 @@ export class AgentSessionManager
       !stimulus.seedResetVerify &&
       !stimulus.compact &&
       (await this.steerIntoLiveBrainTurn(stimulus).catch((err) => {
-        this.logger.warn(`steer-into-live pre-check failed for job=${stimulus.jobId}: ${err}`);
+        this.logger.warn(
+          `steer-into-live pre-check failed for job=${stimulus.jobId}: ${err}`,
+        );
         return false;
       }))
     ) {
@@ -1148,14 +1280,17 @@ export class AgentSessionManager
     const isUntrusted = (row.kind ?? 'system_notice') === 'untrusted';
     // Untrusted rows: `label` already IS the clean fenced report and the trusted framing rides in
     // `row.framing` (its own block) — so DON'T fold the whole engine body (framing+fence) into fullBody.
-    const fullBody = !isUntrusted && stimulus.body !== row.label ? stimulus.body : undefined;
+    const fullBody =
+      !isUntrusted && stimulus.body !== row.label ? stimulus.body : undefined;
     void this.store
       .recordSystemChunk?.({
         jobId: stimulus.jobId,
         kind: row.kind ?? 'system_notice',
         text: fromExternal(row.label),
         chunkKey: row.chunkKey,
-        ...(row.untrustedSource ? { untrustedSource: row.untrustedSource } : {}),
+        ...(row.untrustedSource
+          ? { untrustedSource: row.untrustedSource }
+          : {}),
         ...(row.severity ? { severity: row.severity } : {}),
         ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
         ...(row.framing ? { framing: row.framing } : {}),
@@ -1192,14 +1327,20 @@ export class AgentSessionManager
     });
   }
 
-  private async steerIntoLiveBrainTurn(stimulus: ChatStimulus): Promise<boolean> {
+  private async steerIntoLiveBrainTurn(
+    stimulus: ChatStimulus,
+  ): Promise<boolean> {
     if (typeof this.engineRunner.steer !== 'function') return false;
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
     if (!live?.turn_id) return false;
     try {
-      await this.engineRunner.steer(live.turn_id, stimulus.id, this.engineBody(stimulus));
+      await this.engineRunner.steer(
+        live.turn_id,
+        stimulus.id,
+        this.engineBody(stimulus),
+      );
     } catch (err) {
       // A live turn exists but the steer XADD failed (transient). Report handled anyway — falling back to a
       // fresh turn would just hit the single-turn guard. A dropped card-answer self-heals: the boot re-seed
@@ -1258,7 +1399,9 @@ export class AgentSessionManager
       | { kind: 'halt'; threadId: string; gen: number },
   ): void {
     this.pendingWakeAcks.set(id, wake);
-    while (this.pendingWakeAcks.size > AgentSessionManager.MAX_PENDING_WAKE_ACKS) {
+    while (
+      this.pendingWakeAcks.size > AgentSessionManager.MAX_PENDING_WAKE_ACKS
+    ) {
       const oldest = this.pendingWakeAcks.keys().next().value;
       if (oldest === undefined) break;
       this.pendingWakeAcks.delete(oldest);
@@ -1272,12 +1415,18 @@ export class AgentSessionManager
   private async stampWakeSuccessTails(stimulus: ChatStimulus): Promise<void> {
     if (stimulus.seedHaltWake) {
       await this.driverStore
-        .markHaltWaked(stimulus.seedHaltWake.threadId, stimulus.seedHaltWake.gen)
+        .markHaltWaked(
+          stimulus.seedHaltWake.threadId,
+          stimulus.seedHaltWake.gen,
+        )
         .catch((err) => this.logger.warn(`markHaltWaked failed: ${err}`));
     }
     if (stimulus.seedDoneWake) {
       await this.driverStore
-        .markDoneWaked(stimulus.seedDoneWake.threadId, stimulus.seedDoneWake.gen)
+        .markDoneWaked(
+          stimulus.seedDoneWake.threadId,
+          stimulus.seedDoneWake.gen,
+        )
         .catch((err) => this.logger.warn(`markDoneWaked failed: ${err}`));
     }
   }
@@ -1310,13 +1459,17 @@ export class AgentSessionManager
           await this.store
             .markSecretDelivered(stimulus.jobId, stimulus.seedSecretId)
             .catch((err) =>
-              this.logger.warn(`markSecretDelivered (legacy seed) failed: ${err}`),
+              this.logger.warn(
+                `markSecretDelivered (legacy seed) failed: ${err}`,
+              ),
             );
         }
         await this.store
           .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
           .catch((err) =>
-            this.logger.warn(`clearAwaitingSecret (legacy seed) failed: ${err}`),
+            this.logger.warn(
+              `clearAwaitingSecret (legacy seed) failed: ${err}`,
+            ),
           );
       }
     }
@@ -1390,7 +1543,9 @@ export class AgentSessionManager
    * the reconstructed `ChatStimulus.id` is the engine turn id, not the row. Best-effort: a failed stamp leaves
    * BOTH owed for the sweep (at-least-once).
    */
-  private async stampSeedCardSuccessTails(stimulusRowId: string): Promise<SeedCardStampResult> {
+  private async stampSeedCardSuccessTails(
+    stimulusRowId: string,
+  ): Promise<SeedCardStampResult> {
     // CARD first, ROW last: the sweep re-drives on `stimuli.delivered_at IS NULL`, so the row (its key) MUST
     // be the final write — a crash mid-tail then leaves the row un-stamped and the whole idempotent sequence
     // re-runs. If the card stamp fails, the row stamp is skipped (the throw propagates from
@@ -1401,7 +1556,9 @@ export class AgentSessionManager
       await this.stimulusStore.markChatDelivered(stimulusRowId);
       return 'stamped';
     } catch (err) {
-      this.logger.warn(`stampSeedCardSuccessTails failed (sweep will re-drive): ${err}`);
+      this.logger.warn(
+        `stampSeedCardSuccessTails failed (sweep will re-drive): ${err}`,
+      );
       return 'failed';
     }
   }
@@ -1447,12 +1604,18 @@ export class AgentSessionManager
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
     };
-    if (await this.stimulusStore.hasChatStimulusForSeedTarget(input.jobId, target)) return;
+    if (
+      await this.stimulusStore.hasChatStimulusForSeedTarget(input.jobId, target)
+    )
+      return;
     const recorded = await this.stimulusStore.recordChatStimulus({
       orgId: input.orgId,
       repoId: input.repoId,
       jobId: input.jobId,
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       replyRoute: { surfaceId: 'web', jobRef: input.jobId },
       body: input.body,
       systemChunk: input.seedRow,
@@ -1482,7 +1645,11 @@ export class AgentSessionManager
    * registration hand-off. Idempotent + safe to call redundantly (intake poke, sweep) — the lease + the
    * in-container exactly-once steer id set prevent double-injection.
    */
-  async pumpThread(jobId: string, orgId: string, repoId: string): Promise<void> {
+  async pumpThread(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
     // Leave pending operator chat undelivered while the job is dependency-blocked. The unblock wake flips the
@@ -1492,27 +1659,20 @@ export class AgentSessionManager
       return;
     }
 
-    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
-      const pending = await this.stimulusStore
-        .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
-        .catch((err) => {
-          this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
-          return [] as ChatStimulus[];
-        });
-      // Only `now`-priority messages steer a live turn; `queue`/`later` stay pending — they drain at
-      // turn-end (the turn-end re-pump) or ride along the next turn that runs for any other reason (d18).
-      const nowOnly = pending.filter(isNowPriority);
-      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
+    // FAST PATH: a live brain turn is steered directly (the pump core resolves + steers `now`-priority
+    // pending; `queue`/`later` stay pending for turn-end / ride-along).
+    const lane = this.mainDeliveryLane(jobId, orgId, repoId);
+    if (await trySteerLive(this.stimulusStore, lane, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, this.logger)) {
       return;
     }
 
-    // No running turn → deliver via a fresh turn, serialized on the per-thread turn queue.
+    // SLOW PATH: no running turn → deliver via a fresh turn, serialized on the per-thread turn queue (the
+    // queue keying is brain-specific, so the brain owns this serialization around the lane's fresh-turn drain).
     const key = `${orgId}:${jobId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     const next = prev
       .catch(() => undefined)
-      .then(() => this.deliverPendingViaFreshTurn(jobId, orgId, repoId));
+      .then(() => this.deliverPendingViaFreshTurn(lane));
     this.turnQueues.set(
       key,
       next.finally(() => {
@@ -1523,29 +1683,74 @@ export class AgentSessionManager
   }
 
   /**
-   * Owned coalescing selection for a fresh operator turn (d18). Fetch the thread's eligible pending chat, then
-   * build the chronological `<user>` chunks (one per message), the id set to stamp delivered, and the wake flag
-   * (true when at least one pending message is wake-eligible — a thread whose only pending rows are `later`
-   * composes them as ride-along but must NOT start a turn on its own). Returns null when nothing is pending.
+   * The brain's `main`-lane descriptor for the delivery pump: live-turn resolution stays `runningBrainTurn`
+   * (its exact live-turn + compaction semantics), steering stays the engine `steer`, body framing stays
+   * `engineBody`, and a fresh-turn drain coalesces the pending batch into ONE brain turn.
    */
-  private async collectPendingForTurn(jobId: string): Promise<{
-    pending: ChatStimulus[];
-    userChunks: TurnChunk[];
-    ids: string[];
-    wake: boolean;
-  } | null> {
+  private mainDeliveryLane(jobId: string, orgId: string, repoId: string): DeliveryLane {
+    return {
+      jobId,
+      orgId,
+      repoId,
+      lane: 'main',
+      resolveLiveTurn: () => this.turnRegistry.runningBrainTurn(jobId),
+      canSteer: () => typeof this.engineRunner.steer === 'function',
+      steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
+      renderBody: (p) => this.engineBody(p),
+      drainFreshTurn: async (collected) => {
+        await this.stimulusStore.leaseChatStimuli(collected.ids);
+        const ids = collected.ids;
+        // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
+        // message); the brain reads them together as this turn's task. Base fields come from the oldest.
+        const combined: ChatStimulus = {
+          ...collected.pending[0],
+          body: collected.pending.map((p) => p.body).join('\n\n'),
+          // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
+          // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
+          // is the clean fallback (used for logging + when `chunks` is absent on a replay).
+          chunks: collected.userChunks,
+        };
+        // A solo seed-card delivery defers its stimulus stamp to the SUCCESS tail (stamped together with the
+        // card via `stampSeedCardSuccessTails`) so a register-then-fail turn leaves BOTH unstamped and the
+        // sweep re-drives it (at-least-once atomicity). Operator chat keeps the looser at-registration bar —
+        // its input rides the prompt the instant it registers.
+        const deferStimulusStamp = isSeedCardDelivery(combined);
+        await this.runChatTurn(combined, {
+          // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
+          // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
+          onRegistered: () => {
+            if (deferStimulusStamp) return;
+            for (const id of ids) {
+              void this.stimulusStore.markChatDelivered(id).catch((err) =>
+                this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
+              );
+            }
+          },
+        });
+      },
+    };
+  }
+
+  /**
+   * Owned coalescing selection for a fresh operator turn (d18). Fetches the `main` lane's eligible pending
+   * chat, then PARTITIONS on the head row's authorship so a system seed never coalesces with operator rows: a
+   * seed batched as a `<user>` chunk would render named "System" and mis-decide the batch's awareness drain.
+   * An operator head takes the leading run of operator rows (coalesced as one turn); a seed head takes ONLY
+   * that one seed (each seed delivers solo, keeping its `<system_notice>` framing + awareness-drain
+   * semantics). The remainder stays pending and drains via the turn-end re-pump. Builds the chronological
+   * `<user>` chunks (one per batched message), the id set to stamp delivered, and the wake flag. Returns null
+   * when nothing is pending.
+   */
+  private async collectPendingForTurn(jobId: string): Promise<CollectedPending | null> {
     const pending = await this.stimulusStore
       .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
       .catch((err) => {
-        this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
+        this.logger.warn(
+          `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
+        );
         return [] as ChatStimulus[];
       });
     if (pending.length === 0) return null;
-    // Never coalesce a system seed with operator rows: a seed batched as a `<user>` chunk would render named
-    // "System" and mis-decide the batch's awareness drain. Partition on the HEAD row's authorship — an operator
-    // head takes the leading run of operator rows (coalesced as before); a seed head takes ONLY that one seed
-    // (each seed delivers solo, keeping its `<system_notice>` framing + awareness-drain semantics). The
-    // remainder stays pending and drains via the turn-end re-pump, so no 30 s stall.
     const operatorHead = isOperatorAuthored(pending[0]);
     const batch: ChatStimulus[] = [];
     for (const p of pending) {
@@ -1557,20 +1762,17 @@ export class AgentSessionManager
       pending: batch,
       userChunks: batch.map((p) => userChunkFor(p)),
       ids: batch.map((p) => p.id),
-      // Wake is computed over the FULL eligible-pending set, not just `batch`: a wake-eligible row excluded by the
-      // author partition (e.g. a `now` seed behind a `later` operator head) must still start a turn — otherwise no
-      // turn runs, no turn-end re-pump reconsiders the remainder, and the thread stalls until an unrelated wake.
+      // Wake is computed over the FULL eligible-pending set, not just `batch`: a wake-eligible row excluded by
+      // the author partition (e.g. a `now` seed behind a `later` operator head) must still start a turn —
+      // otherwise no turn runs, no turn-end re-pump reconsiders the remainder, and the thread stalls until an
+      // unrelated wake.
       wake: pending.some(isWakeEligible),
     };
   }
 
-  /** Run ONE fresh turn that consumes the thread's pending operator messages (coalesced, oldest first). */
-  private async deliverPendingViaFreshTurn(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void> {
-    const collected = await this.collectPendingForTurn(jobId);
+  /** Run ONE fresh turn that consumes the lane's pending operator messages (coalesced, oldest first). */
+  private async deliverPendingViaFreshTurn(lane: DeliveryLane): Promise<void> {
+    const collected = await this.collectPendingForTurn(lane.jobId);
     if (!collected) return;
     // Only WAKE for a wake-eligible (now/queue) message. A thread whose only pending rows are `later`
     // composes them as ride-along into some OTHER turn — it must never start a turn on its own.
@@ -1579,62 +1781,14 @@ export class AgentSessionManager
     // A turn may have appeared since pumpThread's check (a boot re-attach resumed one). Steer the `now`
     // messages into it instead of starting a SECOND turn on the same session; queue/later stay pending for
     // the turn-end drain.
-    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    const live = await lane.resolveLiveTurn().catch(() => null);
+    if (live?.turn_id && lane.canSteer()) {
       const nowOnly = collected.pending.filter(isNowPriority);
-      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
+      if (nowOnly.length) await steerPending(this.stimulusStore, lane, live.turn_id, nowOnly, this.logger);
       return;
     }
 
-    const leased = await this.stimulusStore
-      .leaseChatStimuli(collected.ids)
-      .then(() => true)
-      .catch((err) => {
-        this.logger.warn(`pump: leaseChatStimuli failed for thread=${jobId}: ${err}`);
-        return false;
-      });
-    if (!leased) return;
-    const ids = collected.ids;
-    // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
-    // message); the brain reads them together as this turn's task. Base fields come from the oldest.
-    const combined: ChatStimulus = {
-      ...collected.pending[0],
-      body: collected.pending.map((p) => p.body).join('\n\n'),
-      // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
-      // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
-      // is the clean fallback (used for logging + when `chunks` is absent on a replay).
-      chunks: collected.userChunks,
-    };
-    // A solo seed-card delivery defers its stimulus stamp to the SUCCESS tail (stamped together with the card)
-    // so a register-then-fail turn leaves BOTH unstamped and the sweep re-drives it (at-least-once atomicity).
-    // Operator chat keeps the looser at-registration bar — its input rides the prompt the instant it registers.
-    const deferStimulusStamp = isSeedCardDelivery(combined);
-    await this.runChatTurn(combined, {
-      // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
-      // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
-      onRegistered: () => {
-        if (deferStimulusStamp) return;
-        for (const id of ids) {
-          void this.stimulusStore.markChatDelivered(id).catch((err) =>
-            this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
-          );
-        }
-      },
-    });
-  }
-
-  /** Steer each pending message into a live turn (lease first; the engine `input_ack` stamps delivered). */
-  private async steerPending(turnId: string, pending: ChatStimulus[]): Promise<void> {
-    await this.stimulusStore.leaseChatStimuli(pending.map((p) => p.id)).catch((err) =>
-      this.logger.debug(`pump: leaseChat failed (continuing): ${err}`),
-    );
-    for (const p of pending) {
-      await this.engineRunner
-        .steer!(turnId, p.id, this.engineBody(p))
-        .catch((err) =>
-          this.logger.warn(`pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`),
-        );
-    }
+    await lane.drainFreshTurn(collected);
   }
 
   /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). A steered
@@ -1651,7 +1805,9 @@ export class AgentSessionManager
       await this.markCardDeliveredForStimulus(e.id);
       await this.stimulusStore.markChatDelivered(e.id);
     })().catch((err) =>
-      this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
+      this.logger.debug(
+        `input_ack stamp for ${e.id} failed (sweep will retry): ${err}`,
+      ),
     );
     const wake = this.pendingWakeAcks.get(e.id);
     if (wake) {
@@ -1659,11 +1815,15 @@ export class AgentSessionManager
       if (wake.kind === 'done') {
         void this.driverStore
           .markDoneWaked(wake.threadId, wake.gen)
-          .catch((err) => this.logger.warn(`markDoneWaked (ack) failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`markDoneWaked (ack) failed: ${err}`),
+          );
       } else {
         void this.driverStore
           .markHaltWaked(wake.threadId, wake.gen)
-          .catch((err) => this.logger.warn(`markHaltWaked (ack) failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`markHaltWaked (ack) failed: ${err}`),
+          );
       }
     }
   }
@@ -1675,12 +1835,16 @@ export class AgentSessionManager
     try {
       threads = await this.stimulusStore.undeliveredChatThreads();
     } catch (err) {
-      this.logger.debug(`chat delivery sweep query failed (will retry): ${err}`);
+      this.logger.debug(
+        `chat delivery sweep query failed (will retry): ${err}`,
+      );
       return;
     }
     for (const t of threads) {
       void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
-        this.logger.debug(`chat sweep pump failed for thread=${t.jobId}: ${err}`),
+        this.logger.debug(
+          `chat sweep pump failed for thread=${t.jobId}: ${err}`,
+        ),
       );
     }
   }
@@ -1702,7 +1866,9 @@ export class AgentSessionManager
     try {
       running = await this.planReview.findRunningReviews();
     } catch (err) {
-      this.logger.debug(`work-owed review sweep query failed (will retry): ${err}`);
+      this.logger.debug(
+        `work-owed review sweep query failed (will retry): ${err}`,
+      );
       return;
     }
     for (const review of running) {
@@ -1733,8 +1899,7 @@ export class AgentSessionManager
     const job = await this.store.loadJob(review.job_id).catch(() => null);
     if (!job) return;
     // A terminal job no longer owes a review continuation (operator already saw the plan, or it's closed).
-    if (job.status === 'awaiting_approval' || job.status === 'running')
-      return;
+    if (job.status === 'awaiting_approval' || job.status === 'running') return;
     const live = await this.turnRegistry
       .runningBrainTurn(review.job_id)
       .catch(() => null);
@@ -1773,10 +1938,14 @@ export class AgentSessionManager
    */
   async stopTurn(jobId: string): Promise<boolean> {
     if (typeof this.engineRunner.stop !== 'function') return false;
-    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
+    const live = await this.turnRegistry
+      .runningBrainTurn(jobId)
+      .catch(() => null);
     if (!live?.turn_id) return false;
     await this.engineRunner.stop(live.turn_id);
-    this.logger.log(`stop requested for brain turn ${live.turn_id} (job ${jobId})`);
+    this.logger.log(
+      `stop requested for brain turn ${live.turn_id} (job ${jobId})`,
+    );
     return true;
   }
 
@@ -1914,9 +2083,13 @@ export class AgentSessionManager
       await handler.run(row);
     } else {
       // Long-running kinds (brain) stream for minutes — fire-and-forget, mirroring the boot sweep.
-      void handler.run(row).catch((err) =>
-        this.logger.warn(`watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`),
-      );
+      void handler
+        .run(row)
+        .catch((err) =>
+          this.logger.warn(
+            `watchdog re-attach turn ${row.turn_id} (${row.kind}) failed: ${err}`,
+          ),
+        );
     }
     return 'attached';
   }
@@ -1933,9 +2106,12 @@ export class AgentSessionManager
     // and double-persist the transcript at finish. Atomically claim the in-process slot (check-and-add in
     // one synchronous step ⇒ no TOCTOU between two concurrent sweep entries); the outer `finally` releases
     // it on every bail before `reattach()` runs (runAttached's own finally releases once attached).
-    const claimedAttach = this.engineRunner.tryClaimAttach?.(row.turn_id) ?? true;
+    const claimedAttach =
+      this.engineRunner.tryClaimAttach?.(row.turn_id) ?? true;
     if (!claimedAttach) {
-      this.logger.log(`re-attach turn ${row.turn_id}: already attached in this process — skipping`);
+      this.logger.log(
+        `re-attach turn ${row.turn_id}: already attached in this process — skipping`,
+      );
       return;
     }
     try {
@@ -1951,7 +2127,11 @@ export class AgentSessionManager
         // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
         deliveryStimulusId?: string;
         seedHaltWake?: { threadId: string; gen: number };
-        seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
+        seedDoneWake?: {
+          threadId: string;
+          reason: 'final' | 'notable';
+          gen: number;
+        };
         // Dispatch-time credential the turn ran on — re-stamped onto rate_limit events so the reattach path
         // feeds the credential-scoped usage snapshot exactly like a fresh dispatch (else it tags `undefined`).
         credentialId?: string;
@@ -2085,7 +2265,9 @@ export class AgentSessionManager
           },
           result.usage,
         );
-        this.logger.log(`re-attached turn ${row.turn_id} completed + persisted`);
+        this.logger.log(
+          `re-attached turn ${row.turn_id} completed + persisted`,
+        );
       } catch (err) {
         if (isEngineDetachedError(err)) {
           // We lost the tail again (another respawn mid-re-attach), the turn didn't fail — persist NOTHING
@@ -2102,7 +2284,10 @@ export class AgentSessionManager
         // wake sweep (owed stays true — the success stamp above never ran), so DISCARD the truncated partial
         // rather than persisting a durable half-message. Matches the fresh-run error tail. Any other error (or a
         // non-wake turn) keeps its partial as context.
-        if (this.isBenignStreamAbort(err) && (ctx.seedHaltWake || ctx.seedDoneWake)) {
+        if (
+          this.isBenignStreamAbort(err) &&
+          (ctx.seedHaltWake || ctx.seedDoneWake)
+        ) {
           await streamer.discard();
         } else if (this.engineRunner.consumeClaim?.(row.turn_id) === false) {
           // Errored AFTER another attacher already claimed the row — discard the partial rather than
@@ -2112,12 +2297,11 @@ export class AgentSessionManager
           await streamer.finish();
         }
       } finally {
-        await this.store
-          .endTurnActivity(row.job_id)
-          .catch(() => undefined);
+        await this.store.endTurnActivity(row.job_id).catch(() => undefined);
       }
     } finally {
-      if (this.engineRunner.tryClaimAttach) this.engineRunner.releaseAttach?.(row.turn_id);
+      if (this.engineRunner.tryClaimAttach)
+        this.engineRunner.releaseAttach?.(row.turn_id);
     }
   }
 
@@ -2131,27 +2315,28 @@ export class AgentSessionManager
     stimulus: ChatStimulus,
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
-    await this.store
-      .setActivity(stimulus.jobId, 'turn')
-      .catch(() => undefined);
+    await this.store.setActivity(stimulus.jobId, 'turn').catch(() => undefined);
     // A new turn is starting (a fresh operator message OR the Resume nudge) — clear any outstanding halted
     // flag so the thread reads as working again. Best-effort; never block the turn.
-    await this.store
-      .setHalted(stimulus.jobId, false)
-      .catch(() => undefined);
+    await this.store.setHalted(stimulus.jobId, false).catch(() => undefined);
     try {
       await this.runChatTurnInner(stimulus, opts);
     } finally {
       await this.latchDirectBuildAtTurnEnd(stimulus);
-      await this.store
-        .endTurnActivity(stimulus.jobId)
-        .catch(() => undefined);
+      await this.store.endTurnActivity(stimulus.jobId).catch(() => undefined);
       // Turn-end re-pump (d18): drain any `queue` message that arrived mid-turn (it was intentionally NOT
       // steered) into a fresh turn now rather than waiting the 30s sweep. Best-effort + idempotent —
       // delivered rows are stamped, and a `later`-only thread won't wake (collectPendingForTurn's wake guard).
-      void this.pumpThread(stimulus.jobId, stimulus.orgId, stimulus.repoId).catch((err) =>
+      void this.pumpThread(
+        stimulus.jobId,
+        stimulus.orgId,
+        stimulus.repoId,
+      ).catch((err) =>
         this.logger.debug(`turn-end re-pump failed (sweep will retry): ${err}`),
       );
+      // A turn just ended — the brain-settled half of auto-merge's guard may now hold. Fire-and-forget;
+      // errors never affect turn completion.
+      void this.autoMerge.maybeAutoMerge(stimulus.jobId).catch(() => undefined);
     }
   }
 
@@ -2162,7 +2347,9 @@ export class AgentSessionManager
    * `GitStateReconciler` discovery. Runs only when the pending flag was set for this job (consumed here); a
    * latch MISS leaves the job `running` for that same reconciler backstop.
    */
-  private async latchDirectBuildAtTurnEnd(stimulus: ChatStimulus): Promise<void> {
+  private async latchDirectBuildAtTurnEnd(
+    stimulus: ChatStimulus,
+  ): Promise<void> {
     if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
     const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
     // Mirror the `finalize_build` refusal gate: only a `running` build with an owning feature branch latches.
@@ -2170,11 +2357,16 @@ export class AgentSessionManager
     const sandbox = await this.lifecycle
       .findSandbox(job.id, job.orgId)
       .catch(() => null);
-    const repo = sandbox ? await this.repos.resolve(job).catch(() => null) : null;
+    const repo = sandbox
+      ? await this.repos.resolve(job).catch(() => null)
+      : null;
     if (!sandbox || !repo) return;
     // Follow the LIVE branch (the agent may have `git checkout -b …` mid-build) — `discoverOpenPr` matches
     // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
-    const liveSandbox = { ...sandbox, branch: job.currentBranch ?? sandbox.branch };
+    const liveSandbox = {
+      ...sandbox,
+      branch: job.currentBranch ?? sandbox.branch,
+    };
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
   }
 
@@ -2187,6 +2379,10 @@ export class AgentSessionManager
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
+    // A fresh turn supersedes any parked host-retry backstop for this job (mirrors the build lane's
+    // `ThreadDriver.drive()` guard): cancel the pending 10s timer + its durable retry clock so a stale timer
+    // can't later seed a spurious 'Please continue' nudge into this now-live turn.
+    await this.clearPendingHostRetry(stimulus.jobId);
     // A real operator turn breaks any autonomous reset→verify→reset spiral — clear the loop counter so
     // operator-driven resets never trip the guard (only unattended self-resets accumulate). Also disarm any
     // pending hard-reset confirm: the two `hard:true` calls must be consecutive within one autonomous stretch,
@@ -2198,7 +2394,8 @@ export class AgentSessionManager
     // Reset-verify continuation no-op: the verify instruction rides the reset-notice, consumed by whichever
     // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
-    if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey)) return;
+    if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey))
+      return;
 
     // The job may have become blocked after this turn was queued. Do not mark chat delivered here; it should
     // stay pending and run after the dependency wake reopens the job.
@@ -2320,7 +2517,12 @@ export class AgentSessionManager
     // returns early — NOT a normal conversational turn. Serialized on this per-job queue, so it never races
     // the turn it compacts, and the build (separate driver sessions) is unaffected.
     if (stimulus.compact) {
-      await this.runCompaction(stimulus, sandbox, sandboxRow ?? null, sessionId);
+      await this.runCompaction(
+        stimulus,
+        sandbox,
+        sandboxRow ?? null,
+        sessionId,
+      );
       return;
     }
 
@@ -2343,7 +2545,9 @@ export class AgentSessionManager
         : SANDBOX_RESET_NOTICE;
       noticeChunks.push({ kind: 'system_notice', body: notice });
       if (owedVerify) {
-        this.logger.log(`reset_sandbox: fresh container up for thread=${stimulus.jobId} — this turn verifies the environment`);
+        this.logger.log(
+          `reset_sandbox: fresh container up for thread=${stimulus.jobId} — this turn verifies the environment`,
+        );
         // Operator-visible bookend to the reset pill: makes the reset→recreate→verify cycle legible in the
         // transcript (the fresh container was just attached; this turn re-establishes + checks the stack).
         await this.store
@@ -2351,7 +2555,9 @@ export class AgentSessionManager
             stimulus.jobId,
             '🟢 Sandbox is back up on a fresh container — verifying the environment cold-booted from durable config.',
           )
-          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+          .catch((err) =>
+            this.logger.debug(`appendSystemEvent failed: ${err}`),
+          );
       }
     }
 
@@ -2439,8 +2645,12 @@ export class AgentSessionManager
 
     // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
     // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
-    if (isOperatorAuthored(stimulus) && this.jit?.hasEnabledOperatorPrepends()) {
-      const prependText = (await this.buildMemoryRecallPrefix(stimulus, sessionId)) ?? undefined;
+    if (
+      isOperatorAuthored(stimulus) &&
+      this.jit?.hasEnabledOperatorPrepends()
+    ) {
+      const prependText =
+        (await this.buildMemoryRecallPrefix(stimulus, sessionId)) ?? undefined;
       reminderChunks.push(
         ...(this.jit?.collectOperatorPrepends({
           jobId: stimulus.jobId,
@@ -2455,8 +2665,13 @@ export class AgentSessionManager
     // be a `<user>` chunk, so that path keeps the inline prefix+body concat.
     let task: AgentMessage;
     if (isOperatorAuthored(stimulus)) {
-      const userChunks = stimulus.chunks?.length ? stimulus.chunks : [userChunkFor(stimulus)];
-      task = composeTurn({ prefixChunks: [...noticeChunks, ...reminderChunks], userChunks });
+      const userChunks = stimulus.chunks?.length
+        ? stimulus.chunks
+        : [userChunkFor(stimulus)];
+      task = composeTurn({
+        prefixChunks: [...noticeChunks, ...reminderChunks],
+        userChunks,
+      });
     } else {
       // Non-operator seed body is RAW/already-framed passthrough (`engineBody` returns it verbatim) — it can't
       // be a `<user>` chunk, so frame it through the hub's seed-turn factory; `fromExternal` marks the non-hub
@@ -2483,9 +2698,7 @@ export class AgentSessionManager
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
     // toolset (the gating is enforced here, not just in prose — omitted tool names aren't registered).
-    const brainJob = await this.store
-      .loadJob(stimulus.jobId)
-      .catch(() => null);
+    const brainJob = await this.store.loadJob(stimulus.jobId).catch(() => null);
     if (brainJob?.status === 'blocked') return;
 
     // Build the host-side tool dispatch table, scoped to this thread. Curated by kind (onboarding/review
@@ -2557,7 +2770,10 @@ export class AgentSessionManager
     // ATLAS_MAIN prompt below AND forwarded on the run args so any FAN_OUT/REVIEW_AGENT subagent the turn
     // spawns in-container gets the same envelope (Layer B).
     const repoConventions =
-      (await this.conventions?.resolveForRepo(stimulus.orgId, stimulus.repoId)) ?? null;
+      (await this.conventions?.resolveForRepo(
+        stimulus.orgId,
+        stimulus.repoId,
+      )) ?? null;
     // The CURRENT state of this repo's Workspace Profile + any host-derived GAPS (an approved MCP server
     // with an unfilled secret slot, or a new dependency manifest the profile hasn't acknowledged) the
     // brain can't otherwise see. Gaps render ONLY when present, so a healthy profile adds nothing — upkeep
@@ -2581,7 +2797,11 @@ export class AgentSessionManager
     // engine symlinks each into `<CLAUDE_CONFIG_DIR>/skills/`, natively discovered by the SDK (Layer B,
     // like `userMcpServers`/`repoConventions`).
     const skills =
-      (await this.skills?.resolveForTurn(stimulus.orgId, stimulus.repoId, 'brain')) ?? [];
+      (await this.skills?.resolveForTurn(
+        stimulus.orgId,
+        stimulus.repoId,
+        'brain',
+      )) ?? [];
     // This job's currently-approved skill edit-access grants (`request_skill_edit_access`), if any — see
     // `skillEditGrantsByJob` / `grantSkillEditAccess`.
     const grantedSkills = this.skillEditGrantsByJob.get(stimulus.jobId);
@@ -2595,14 +2815,20 @@ export class AgentSessionManager
     // GET /user). Every field is optional: a missing target (git disabled) drops the repo/base lines, and
     // an uncut feature branch drops the branch line — the fragment guards each.
     const gitTarget = this.gitTargetByJob.get(stimulus.jobId);
-    const branch = brainJob?.featureBranch ?? brainJob?.currentBranch ?? undefined;
-    const baseBranch = brainJob?.baseBranch ?? gitTarget?.defaultBranch ?? undefined;
+    const branch =
+      brainJob?.featureBranch ?? brainJob?.currentBranch ?? undefined;
+    const baseBranch =
+      brainJob?.baseBranch ?? gitTarget?.defaultBranch ?? undefined;
     const jobContext = {
-      ...(gitTarget ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` } : {}),
+      ...(gitTarget
+        ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` }
+        : {}),
       cwd: sandbox.worktreePath,
       ...(branch ? { branch } : {}),
       ...(baseBranch ? { baseBranch } : {}),
-      ...(this.env && isAtlasRepo(repoSlug ?? '', this.env) ? { isAtlasRepo: true } : {}),
+      ...(this.env && isAtlasRepo(repoSlug ?? '', this.env)
+        ? { isAtlasRepo: true }
+        : {}),
     };
     const runArgs: RunEngineArgs = {
       engine: 'claude',
@@ -2614,14 +2840,21 @@ export class AgentSessionManager
       systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
         jobKind: brainJob?.kind ?? null,
         job: jobContext,
-        settings: { repoConventions, workspaceProfile, autoApproveMode: brainJob?.autoApproveMode ?? 'off' },
+        settings: {
+          repoConventions,
+          workspaceProfile,
+          autoApproveMode: brainJob?.autoApproveMode ?? 'off',
+          autoMerge: brainJob?.autoMerge ?? false,
+        },
       }),
       sandboxKey,
       ...(auth ? { auth } : {}),
       ...(userMcpServers.length > 0 ? { userMcpServers } : {}),
       ...(repoConventions ? { repoConventions } : {}),
       ...(skills.length > 0 ? { skills } : {}),
-      ...(grantedSkills && grantedSkills.size > 0 ? { grantedSkills: Array.from(grantedSkills) } : {}),
+      ...(grantedSkills && grantedSkills.size > 0
+        ? { grantedSkills: Array.from(grantedSkills) }
+        : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
       ...(threadKindSpec('main').reasoningEffort
@@ -2664,16 +2897,24 @@ export class AgentSessionManager
           ...(stimulus.seedQuestionId
             ? { seedQuestionId: stimulus.seedQuestionId }
             : {}),
-          ...(stimulus.seedSecretId ? { seedSecretId: stimulus.seedSecretId } : {}),
+          ...(stimulus.seedSecretId
+            ? { seedSecretId: stimulus.seedSecretId }
+            : {}),
           ...(stimulus.seedFileId ? { seedFileId: stimulus.seedFileId } : {}),
           // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
           // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
           // Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag their id through the tail.
-          ...(isSeedCardDelivery(stimulus) ? { deliveryStimulusId: stimulus.id } : {}),
+          ...(isSeedCardDelivery(stimulus)
+            ? { deliveryStimulusId: stimulus.id }
+            : {}),
           // Halt-wake key: a reattached wake turn must still stamp `halt_waked_at` on success (Medium-1).
-          ...(stimulus.seedHaltWake ? { seedHaltWake: stimulus.seedHaltWake } : {}),
+          ...(stimulus.seedHaltWake
+            ? { seedHaltWake: stimulus.seedHaltWake }
+            : {}),
           // Done-wake key (decision d1): same reasoning, for `done_waked_at`.
-          ...(stimulus.seedDoneWake ? { seedDoneWake: stimulus.seedDoneWake } : {}),
+          ...(stimulus.seedDoneWake
+            ? { seedDoneWake: stimulus.seedDoneWake }
+            : {}),
         },
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
@@ -2719,7 +2960,10 @@ export class AgentSessionManager
                 {
                   session_id: sid,
                   ...(hadCompactionSeed
-                    ? { pending_compaction_seed: null, compacting_session_id: null }
+                    ? {
+                        pending_compaction_seed: null,
+                        compacting_session_id: null,
+                      }
                     : {}),
                 },
               ),
@@ -2858,24 +3102,70 @@ export class AgentSessionManager
           );
           // Name the task in the nudge — a bare "Please continue." on a cold re-attach is exactly what left
           // the brain disoriented (posting a needless "what should I continue?" question). The title orients it.
-          const title = await this.store.jobTitle(stimulus.jobId).catch(() => null);
+          const title = await this.store
+            .jobTitle(stimulus.jobId)
+            .catch(() => null);
           const nudge = retryResumeNudge(title ?? undefined);
-          this.surface.seedSystemNotification?.(stimulus.repoId, stimulus.jobId, nudge, {
-            orgId: stimulus.orgId,
-          });
+          this.surface.seedSystemNotification?.(
+            stimulus.repoId,
+            stimulus.jobId,
+            nudge,
+            {
+              orgId: stimulus.orgId,
+            },
+          );
         } else {
           this.logger.warn(
             `benign aborted_streaming recurred ${n}× for thread=${stimulus.jobId} — surfacing retryable box`,
           );
-          await this.saySystemOperator(stimulus, String(err), { retryable: true });
+          await this.saySystemOperator(stimulus, String(err), {
+            retryable: true,
+          });
+        }
+      } else if (isRetryableTransientError(err)) {
+        // Host-side backstop for an error the SDK did NOT retry (a transient auth hiccup or a host↔container
+        // transport/infra blip): re-drive the SAME session up to MAX_HOST_RETRIES with a fixed backoff,
+        // posting a quiet durable notice + driving the live "Reconnecting…" indicator each attempt. Only an
+        // exhausted budget surfaces the retryable box.
+        const n = (this.transientRetryRedrives.get(stimulus.jobId) ?? 0) + 1;
+        if (n <= MAX_HOST_RETRIES) {
+          this.transientRetryRedrives.set(stimulus.jobId, n);
+          this.logger.warn(
+            `retryable transient error for thread=${stimulus.jobId} — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms: ${err}`,
+          );
+          await this.store.appendSystemNotice(
+            stimulus.jobId,
+            `Reconnecting to Claude — auto-retry ${n}/${MAX_HOST_RETRIES}…`,
+          );
+          // Fan the live indicator AFTER the turn_end from the earlier finish() (retry() uses a fresh higher
+          // seq). Best-effort: the durable notice above is the real deliverable.
+          this.liveTurns?.retry(channel, stimulus.jobId, MAIN_LANE, {
+            attempt: n,
+            max: MAX_HOST_RETRIES,
+            nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
+          });
+          await this.scheduleHostRetry(stimulus, String(err));
+        } else {
+          this.logger.warn(
+            `retryable transient error recurred ${n}× for thread=${stimulus.jobId} — surfacing retryable box`,
+          );
+          await this.saySystemOperator(stimulus, String(err), {
+            retryable: true,
+          });
         }
       } else {
-        await this.saySystemOperator(stimulus, String(err), { retryable: true });
+        await this.saySystemOperator(stimulus, String(err), {
+          retryable: true,
+        });
       }
       return;
     }
     // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
     this.benignAbortRedrives.delete(stimulus.jobId);
+    this.transientRetryRedrives.delete(stimulus.jobId);
+    // …and cancel any still-pending host-retry backstop (timer + durable retry clock): this clean turn IS the
+    // recovery, so a stale 10s timer must not fire a spurious 'Please continue' nudge on the now-healthy job.
+    await this.clearPendingHostRetry(stimulus.jobId);
 
     // Live-branch backstop (universal floor): re-read HEAD once at the turn boundary in case the per-tool
     // listener missed a switch (a branch change not made via a matched `git` command, or a dropped event).
@@ -2908,10 +3198,14 @@ export class AgentSessionManager
     // run the triage success tails), post ONE stable notice, and stop. The leader sweep auto-resumes at the
     // reset (or the operator Force-resumes via `POST …/retry-turn`); every un-park path clears the clock.
     if (result.sessionLimit) {
-      if (this.lost(result)) { await streamer.discard(); return; }
+      if (this.lost(result)) {
+        await streamer.discard();
+        return;
+      }
       const rlType = result.sessionLimit.rateLimitType;
       const resumeAt =
-        result.sessionLimit.resetAt ?? (await this.usage.getResetAt(stimulus.orgId, rlType));
+        result.sessionLimit.resetAt ??
+        (await this.usage.getResetAt(stimulus.orgId, rlType));
       // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
       // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
       // still has something to resume — a null clock would strand the lane on manual Force-resume only.
@@ -2927,10 +3221,16 @@ export class AgentSessionManager
           credentialId: auth?.refreshBack?.credentialId,
         })
         .catch(() => undefined);
-      const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
+      const resetSource: 'usage_api' | 'parsed_string' = rlType
+        ? 'usage_api'
+        : 'parsed_string';
       const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
       await this.store
-        .setSessionResume(stimulus.jobId, resumeClock, { lane: 'main', reason, resetSource })
+        .setSessionResume(stimulus.jobId, resumeClock, {
+          lane: 'main',
+          reason,
+          resetSource,
+        })
         .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
       // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
       // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
@@ -2942,18 +3242,30 @@ export class AgentSessionManager
           ? {
               usage: result.usage,
               contextTokens: result.usage.contextTokens ?? null,
-              contextLimit: resolveContextLimit(result.usage.contextModel ?? result.usage.model),
+              contextLimit: resolveContextLimit(
+                result.usage.contextModel ?? result.usage.model,
+              ),
             }
           : undefined,
       );
       void this.usageProjector?.record(
-        { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'brain', engine: 'claude' },
+        {
+          jobId: stimulus.jobId,
+          orgId: stimulus.orgId,
+          lane: 'main',
+          kind: 'brain',
+          engine: 'claude',
+        },
         result.usage,
       );
       await this.saySystemOperator(
         stimulus,
         `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
-        { retryable: false, sessionLimit: true, ...(resumeAt ? { resumeAt } : {}) },
+        {
+          retryable: false,
+          sessionLimit: true,
+          ...(resumeAt ? { resumeAt } : {}),
+        },
       );
       return;
     }
@@ -2961,7 +3273,10 @@ export class AgentSessionManager
     // Flush the durable transcript (persists any unpaired tool call + a text fallback if the turn emitted
     // no text block) + a `turn_meta` block (per-turn token usage + context-window occupancy, when the SDK
     // reported usage), then signal turn end so the client reconciles its live buffer against /messages.
-    if (this.lost(result)) { await streamer.discard(); return; }
+    if (this.lost(result)) {
+      await streamer.discard();
+      return;
+    }
     await streamer.finish(
       result.result,
       result.usage
@@ -2979,7 +3294,13 @@ export class AgentSessionManager
         : undefined,
     );
     void this.usageProjector?.record(
-      { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'brain', engine: 'claude' },
+      {
+        jobId: stimulus.jobId,
+        orgId: stimulus.orgId,
+        lane: 'main',
+        kind: 'brain',
+        engine: 'claude',
+      },
       result.usage,
     );
 
@@ -3023,16 +3344,21 @@ export class AgentSessionManager
 
     // HARD reset re-provisions the whole sandbox (worktree + container, session preserved); the default reset
     // recreates only the container. Both keep `session_id`, so the fresh box resumes the same brain session.
-    const res = await (req.hard
-      ? this.lifecycle.hardResetSandbox(stimulus.jobId, stimulus.orgId)
-      : this.lifecycle.resetContainer(stimulus.jobId, stimulus.orgId)
+    const res = await (
+      req.hard
+        ? this.lifecycle.hardResetSandbox(stimulus.jobId, stimulus.orgId)
+        : this.lifecycle.resetContainer(stimulus.jobId, stimulus.orgId)
     ).catch((err) => {
-      this.logger.warn(`reset_sandbox ${req.hard ? 'hard-' : ''}teardown failed for thread=${stimulus.jobId}: ${err}`);
+      this.logger.warn(
+        `reset_sandbox ${req.hard ? 'hard-' : ''}teardown failed for thread=${stimulus.jobId}: ${err}`,
+      );
       return { reset: false, reason: 'no-container' } as const;
     });
 
     if (!res.reset) {
-      this.logger.log(`reset_sandbox: skipped for thread=${stimulus.jobId} — ${res.reason}`);
+      this.logger.log(
+        `reset_sandbox: skipped for thread=${stimulus.jobId} — ${res.reason}`,
+      );
       const pill =
         res.reason === 'busy'
           ? '🔄 Sandbox reset skipped — a build is currently running in this container. Try again once it finishes.'
@@ -3042,7 +3368,9 @@ export class AgentSessionManager
         .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
       return;
     }
-    this.logger.log(`reset_sandbox: container torn down for thread=${stimulus.jobId} — kicking verify continuation`);
+    this.logger.log(
+      `reset_sandbox: container torn down for thread=${stimulus.jobId} — kicking verify continuation`,
+    );
 
     // NOTE: the operator-visible "reset requested" pill is posted by the TOOL (mid-turn, so it lands on this
     // turn's reconcile); the "back up — verifying" bookend is posted by the verify turn's notice-fold. Nothing
@@ -3056,7 +3384,9 @@ export class AgentSessionManager
         repoId: stimulus.repoId,
       }),
     ).catch((err) =>
-      this.logger.warn(`reset_sandbox verify continuation failed for thread=${stimulus.jobId}: ${err}`),
+      this.logger.warn(
+        `reset_sandbox verify continuation failed for thread=${stimulus.jobId}: ${err}`,
+      ),
     );
   }
 
@@ -3064,8 +3394,11 @@ export class AgentSessionManager
    *  NEVER the repoId UUID. A light RepoEntity lookup — NOT `repos.resolve()` (which does a network git GET). */
   private async resolveRepoSlug(repoId: string): Promise<string | null> {
     if (!this.repoRows) return null;
-    if (this.repoSlugCache.has(repoId)) return this.repoSlugCache.get(repoId) ?? null;
-    const row = await this.repoRows.findOne({ where: { id: repoId } }).catch(() => null);
+    if (this.repoSlugCache.has(repoId))
+      return this.repoSlugCache.get(repoId) ?? null;
+    const row = await this.repoRows
+      .findOne({ where: { id: repoId } })
+      .catch(() => null);
     const slug = row?.slug ?? null;
     this.repoSlugCache.set(repoId, slug);
     return slug;
@@ -3112,9 +3445,12 @@ export class AgentSessionManager
       // the most-recently-answered unlogged card. No single-slot pointer.
       const explicitQuestionId =
         typeof args['questionId'] === 'string'
-          ? (args['questionId'] as string).trim() || undefined
+          ? args['questionId'].trim() || undefined
           : undefined;
-      const answered = await this.resolveAnsweredCard(stimulus, explicitQuestionId);
+      const answered = await this.resolveAnsweredCard(
+        stimulus,
+        explicitQuestionId,
+      );
       const answeredId = answered?.id;
       const answeredCard = answered?.card;
       const hasAnswer = answeredCard?.answer != null;
@@ -3125,7 +3461,7 @@ export class AgentSessionManager
         args['confirmedByOperator'] === true && hasAnswer;
       const title =
         String(args['title'] ?? '').trim() ||
-        deriveDecisionTitle(hasAnswer ? answeredCard!.question : ruling);
+        deriveDecisionTitle(hasAnswer ? answeredCard.question : ruling);
       const { decision, all } = await this.store.createDecision(
         stimulus.jobId,
         {
@@ -3133,10 +3469,10 @@ export class AgentSessionManager
           title,
           ruling,
           confirmedByOperator,
-          ...(hasAnswer && answeredCard!.question
-            ? { question: answeredCard!.question }
+          ...(hasAnswer && answeredCard.question
+            ? { question: answeredCard.question }
             : {}),
-          ...(hasAnswer ? { answer: answeredCard!.answer } : {}),
+          ...(hasAnswer ? { answer: answeredCard.answer } : {}),
         },
       );
       if (answeredId && hasAnswer) {
@@ -3183,18 +3519,23 @@ export class AgentSessionManager
                 return {
                   kind: String(o['kind'] ?? '').trim(),
                   command: String(o['command'] ?? '').trim(),
-                  exitCode: Number.isFinite(Number(o['exitCode'])) ? Number(o['exitCode']) : -1,
-                  outputTail: clampEvidenceOutput(String(o['outputTail'] ?? '')),
+                  exitCode: Number.isFinite(Number(o['exitCode']))
+                    ? Number(o['exitCode'])
+                    : -1,
+                  outputTail: clampEvidenceOutput(
+                    String(o['outputTail'] ?? ''),
+                  ),
                 };
               })
               .filter((v) => v.command)
-          : typeof args['verification'] === 'string' && args['verification'].trim()
+          : typeof args['verification'] === 'string' &&
+              args['verification'].trim()
             ? [
                 {
                   kind: 'reported',
                   command: '(see outputTail)',
                   exitCode: 0,
-                  outputTail: clampEvidenceOutput((args['verification'] as string).trim()),
+                  outputTail: clampEvidenceOutput(args['verification'].trim()),
                 },
               ]
             : [];
@@ -3204,7 +3545,9 @@ export class AgentSessionManager
           // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
           // there is no detour back through a `running` build. On any other status this is the normal
           // direct-build flag-set (finalize_build ships), so leave it untouched.
-          const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
+          const job = await this.store
+            .loadJob(stimulus.jobId)
+            .catch(() => null);
           if (job?.status === 'amending') {
             const title = job.title ?? 'this build';
             const summary =
@@ -3225,7 +3568,9 @@ export class AgentSessionManager
           return { ok: true };
         }
         const remaining = Array.isArray(args['remaining'])
-          ? (args['remaining'] as unknown[]).map((x) => String(x).trim()).filter(Boolean)
+          ? (args['remaining'] as unknown[])
+              .map((x) => String(x).trim())
+              .filter(Boolean)
           : [];
         return {
           ok: true,
@@ -3243,9 +3588,7 @@ export class AgentSessionManager
       },
 
       get_decision_record: async (_args) => {
-        const record = await this.driverStore.getDecisionRecord(
-          stimulus.jobId,
-        );
+        const record = await this.driverStore.getDecisionRecord(stimulus.jobId);
         if (record) return record;
         // No proposal yet — surface the working set logged so far so the brain can see what it has locked.
         const pending = await this.store.pendingDecisions(stimulus.jobId);
@@ -3310,7 +3653,10 @@ export class AgentSessionManager
           card: card as unknown as Record<string, unknown>,
         });
         if (!opened.ok) {
-          return { ok: false, reason: 'Could not open the question (thread not found).' };
+          return {
+            ok: false,
+            reason: 'Could not open the question (thread not found).',
+          };
         }
         return {
           ok: true,
@@ -3354,7 +3700,10 @@ export class AgentSessionManager
 
       withdraw_plan: async (args) => {
         const reason = String(args['reason'] ?? '').trim();
-        const res = await this.store.withdrawPlan(stimulus.jobId, reason || undefined);
+        const res = await this.store.withdrawPlan(
+          stimulus.jobId,
+          reason || undefined,
+        );
         if (!res.withdrawn) {
           return {
             ok: false,
@@ -3363,7 +3712,10 @@ export class AgentSessionManager
               '(If it was already approved or denied, work from that instead.)',
           };
         }
-        this.approvals.cancel(stimulus.jobId, reason || 'plan withdrawn by Atlas');
+        this.approvals.cancel(
+          stimulus.jobId,
+          reason || 'plan withdrawn by Atlas',
+        );
         await this.store.appendAtlasMessage(
           stimulus.jobId,
           `Withdrew the plan from approval${reason ? `: ${reason}` : ''}. Still working — I’ll re-propose when ready.`,
@@ -3383,7 +3735,10 @@ export class AgentSessionManager
       // MUST stop and wait after proposing — do not keep building.
       withdraw_ship: async (args) => {
         const reason = String(args['reason'] ?? '').trim();
-        const outcome = await this.driverStore.openAmendProposal(stimulus.jobId, reason);
+        const outcome = await this.driverStore.openAmendProposal(
+          stimulus.jobId,
+          reason,
+        );
         if (outcome === 'not-parked') {
           return {
             ok: false,
@@ -3456,7 +3811,7 @@ export class AgentSessionManager
             // turn delivered, else newest-answered). Attachment of the Q&A itself stays in `create_decision`.
             const explicitQuestionId =
               typeof args['questionId'] === 'string'
-                ? (args['questionId'] as string).trim() || undefined
+                ? args['questionId'].trim() || undefined
                 : undefined;
             const answered = await this.resolveAnsweredCard(
               stimulus,
@@ -3531,11 +3886,7 @@ export class AgentSessionManager
             knownIds: all.map((d) => d.id),
           };
         }
-        await this.writeDecisionRecordMd(
-          stimulus.jobId,
-          stimulus.orgId,
-          all,
-        );
+        await this.writeDecisionRecordMd(stimulus.jobId, stimulus.orgId, all);
         return { ok: true, removed: id, remainingIds: all.map((d) => d.id) };
       },
 
@@ -3594,8 +3945,12 @@ export class AgentSessionManager
           };
         }
 
-        const blocking = outcome.findings.filter((f) => f.severity === 'BLOCKING');
-        const advisory = outcome.findings.filter((f) => f.severity === 'ADVISORY');
+        const blocking = outcome.findings.filter(
+          (f) => f.severity === 'BLOCKING',
+        );
+        const advisory = outcome.findings.filter(
+          (f) => f.severity === 'ADVISORY',
+        );
         const ceilingNote = outcome.ceilingHit
           ? '\n\n(Re-review ceiling reached — stop re-reviewing; address what matters and call propose_plan.)'
           : '';
@@ -3654,7 +4009,9 @@ export class AgentSessionManager
         const threadTitles = threads.map((s) => s.title);
         const threadTypes = threads.map((s) => s.type);
         const hasSteps = threads.some((s) => s.steps.length > 0);
-        const stepsByThread = hasSteps ? threads.map((s) => s.steps) : undefined;
+        const stepsByThread = hasSteps
+          ? threads.map((s) => s.steps)
+          : undefined;
 
         if (!overview || !goal || threads.length === 0) {
           return {
@@ -3712,12 +4069,17 @@ export class AgentSessionManager
 
         const rec = await this.store.loadDecisionRecord(decisionRecordId);
         if (!rec) {
-          return { ok: false, reason: 'No decision record found for this plan.' };
+          return {
+            ok: false,
+            reason: 'No decision record found for this plan.',
+          };
         }
 
         // Surface the review disposition in the timeline so the operator sees a review ran (advisory).
         const findings = deserializeFindings(reviewed.row.findings);
-        const blocking = findings.filter((f) => f.severity === 'BLOCKING').length;
+        const blocking = findings.filter(
+          (f) => f.severity === 'BLOCKING',
+        ).length;
         const reviewNote =
           reviewed.row.status === 'failed'
             ? `⚠️ Codex review did not run (${reviewed.row.error ?? 'infrastructure error'}) — proposed without an automated pass.`
@@ -3726,7 +4088,9 @@ export class AgentSessionManager
               : '🔍 Codex review: no findings.';
         await this.store
           .appendSystemEvent(job.id, reviewNote)
-          .catch((err) => this.logger.debug(`appendSystemEvent failed: ${err}`));
+          .catch((err) =>
+            this.logger.debug(`appendSystemEvent failed: ${err}`),
+          );
 
         // Post the card + await the verdict in the background.
         void this.requestApprovalAndAct(stimulus, job, decisionRecordId, {
@@ -3771,7 +4135,11 @@ export class AgentSessionManager
         // same brain session, so it must not be awaited here); 'plan' dispatches the full build pipeline.
         if (job.buildPath === 'direct') {
           if (!(await this.store.buildNotStarted(job.id))) {
-            return { ok: true, jobId: job.id, message: 'Build already started.' };
+            return {
+              ok: true,
+              jobId: job.id,
+              message: 'Build already started.',
+            };
           }
           // Stamp the durable "direct build started" marker BEFORE firing the (fire-and-forget) implement
           // turn, so `buildNotStarted()` closes the pre-start base-check window the instant the build begins
@@ -3808,7 +4176,8 @@ export class AgentSessionManager
         if (!(await this.store.buildNotStarted(job.id))) {
           return {
             ok: false,
-            reason: 'The build has already started — too late to hold. Use the normal build controls.',
+            reason:
+              'The build has already started — too late to hold. Use the normal build controls.',
           };
         }
         await this.store.reopenPlanning(job.id);
@@ -3834,7 +4203,10 @@ export class AgentSessionManager
         const threadId = String(args['threadId'] ?? '').trim();
         const guidance = String(args['guidance'] ?? '').trim();
         if (!threadId) {
-          return { ok: false, reason: 'threadId is required (the halted thread to re-drive)' };
+          return {
+            ok: false,
+            reason: 'threadId is required (the halted thread to re-drive)',
+          };
         }
         // The driver owns the whole precondition chain atomically (active guard → job exists → thread belongs
         // to this job → claim the bounded budget → re-drive), so a refused/no-op re-drive never spends budget
@@ -3886,10 +4258,13 @@ export class AgentSessionManager
             text: `FYI: cleared a ${reason || 'blocked'} block on a build thread by retrieving an existing answer — ${evidence.slice(0, 160)}`,
           })
           .catch(() => undefined);
-        await this.writeClearedBlocksMd(stimulus.jobId, stimulus.orgId).catch(() => undefined);
+        await this.writeClearedBlocksMd(stimulus.jobId, stimulus.orgId).catch(
+          () => undefined,
+        );
         return {
           ok: true,
-          message: 'Recorded to the cleared-blocks audit. Now call `retry_thread` with the retrieved answer as guidance.',
+          message:
+            'Recorded to the cleared-blocks audit. Now call `retry_thread` with the retrieved answer as guidance.',
         };
       },
 
@@ -4044,7 +4419,8 @@ export class AgentSessionManager
           `origin/${repo.defaultBranch}`,
         );
         const nonRuntime =
-          changedFiles.length === 0 || changedFiles.every((f) => NON_RUNTIME_FILE_RE.test(f));
+          changedFiles.length === 0 ||
+          changedFiles.every((f) => NON_RUNTIME_FILE_RE.test(f));
         let verdict: LiveVerificationVerdict | undefined;
         if (!nonRuntime) {
           verdict = await this.liveVerificationJudge
@@ -4075,17 +4451,29 @@ export class AgentSessionManager
         // Persist on BOTH paths (pass + refusal) so direct-build verdicts are queryable — the observability
         // hook the prod audit needs. Best-effort; a write failure must never wedge the ship turn.
         await this.store
-          .recordDirectBuildVerification(jobId, { verdict: effective, at: new Date().toISOString() })
-          .catch((err) => this.logger.debug(`recordDirectBuildVerification failed: ${err}`));
-        if (effective.runtimeSurfaceTouched && !effective.liveVerificationAdequate) {
-          let detail = [effective.reason, effective.missingChecks].filter(Boolean).join(' — ');
+          .recordDirectBuildVerification(jobId, {
+            verdict: effective,
+            at: new Date().toISOString(),
+          })
+          .catch((err) =>
+            this.logger.debug(`recordDirectBuildVerification failed: ${err}`),
+          );
+        if (
+          effective.runtimeSurfaceTouched &&
+          !effective.liveVerificationAdequate
+        ) {
+          let detail = [effective.reason, effective.missingChecks]
+            .filter(Boolean)
+            .join(' — ');
           // The judge was CONSULTED but returned nothing → UNAVAILABLE, not a real "inadequate" verdict.
           // Distinguish infra-unavailability from genuinely-inadequate evidence so the brain retries the ship
           // (rather than being told to go re-exercise work that may already be fine). A missing key is a real
           // config gap the operator must fix.
           let judgeUnavailable = false;
           if (!nonRuntime && !verdict) {
-            const hasKey = await this.creds.anthropicKey(stimulus.orgId).catch(() => undefined);
+            const hasKey = await this.creds
+              .anthropicKey(stimulus.orgId)
+              .catch(() => undefined);
             if (!hasKey) {
               detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
             } else {
@@ -4128,7 +4516,9 @@ export class AgentSessionManager
         // uncommitted, reconciles, pushes, and opens the PR itself. The git-state reconciler then records
         // `pr_url` + flips the job `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR the
         // moment the turn completes.
-        const pre = await this.ship.preShip(job, repo, sandbox, (m) => this.say(stimulus, m));
+        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
+          this.say(stimulus, m),
+        );
 
         if (!pre.ok) {
           if (pre.reason === 'leak-scan') {
@@ -4145,7 +4535,8 @@ export class AgentSessionManager
           return {
             ok: true,
             jobId,
-            message: 'No GitHub token is configured — PR not opened. Commit your work; connect a token to ship.',
+            message:
+              'No GitHub token is configured — PR not opened. Commit your work; connect a token to ship.',
           };
         }
 
@@ -4242,9 +4633,7 @@ export class AgentSessionManager
           stimulus.repoId,
           firstMessage,
         ).catch((err) =>
-          this.logger.warn(
-            `create_job: start of ${newJobId} failed: ${err}`,
-          ),
+          this.logger.warn(`create_job: start of ${newJobId} failed: ${err}`),
         );
         this.logger.log(
           `thread ${stimulus.jobId} created + started follow-up ${newJobId}`,
@@ -4267,7 +4656,8 @@ export class AgentSessionManager
             repoId: stimulus.repoId,
             status: optStr(args['status']),
             query: optStr(args['query']),
-            limit: typeof args['limit'] === 'number' ? args['limit'] : undefined,
+            limit:
+              typeof args['limit'] === 'number' ? args['limit'] : undefined,
           });
           return { ok: true, jobs };
         } catch (err) {
@@ -4301,7 +4691,8 @@ export class AgentSessionManager
 
       // House-style: propose an owner-approved CHANGE to a reusable convention profile when the build notices
       // the convention itself should evolve (attaching one is onboarding's `propose_convention_profile`).
-      propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
+      propose_convention_profile_change:
+        this.buildProposeConventionProfileChangeTool(stimulus),
     };
 
     // The ceremony and an ordinary build thread share the SAME onboarding capabilities — the ceremony just
@@ -4317,8 +4708,10 @@ export class AgentSessionManager
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       read_setup_script: this.buildReadSetupScriptTool(stimulus),
-      write_preview_instructions: this.buildWritePreviewInstructionsTool(stimulus),
-      read_preview_instructions: this.buildReadPreviewInstructionsTool(stimulus),
+      write_preview_instructions:
+        this.buildWritePreviewInstructionsTool(stimulus),
+      read_preview_instructions:
+        this.buildReadPreviewInstructionsTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
       // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
@@ -4340,13 +4733,23 @@ export class AgentSessionManager
       this.env && this.prodDiagnostics && isAtlasRepo(repoSlug ?? '', this.env)
         ? {
             atlas_query: (a) => this.prodDiagnostics!.runRead('atlas_query', a),
-            atlas_schema: (a) => this.prodDiagnostics!.runRead('atlas_schema', a),
-            atlas_job_overview: (a) => this.prodDiagnostics!.runRead('atlas_job_overview', a),
-            atlas_session_raw: (a) => this.prodDiagnostics!.runRead('atlas_session_raw', a),
-            atlas_context_read: (a) => this.prodDiagnostics!.runRead('atlas_context_read', a),
-            atlas_worktree_tree: (a) => this.prodDiagnostics!.runRead('atlas_worktree_tree', a),
-            atlas_worktree_file: (a) => this.prodDiagnostics!.runRead('atlas_worktree_file', a),
-            propose_prod_write: (a) => this.prodDiagnostics!.proposeWrite(stimulus, String(a['sql'] ?? '')),
+            atlas_schema: (a) =>
+              this.prodDiagnostics!.runRead('atlas_schema', a),
+            atlas_job_overview: (a) =>
+              this.prodDiagnostics!.runRead('atlas_job_overview', a),
+            atlas_session_raw: (a) =>
+              this.prodDiagnostics!.runRead('atlas_session_raw', a),
+            atlas_context_read: (a) =>
+              this.prodDiagnostics!.runRead('atlas_context_read', a),
+            atlas_worktree_tree: (a) =>
+              this.prodDiagnostics!.runRead('atlas_worktree_tree', a),
+            atlas_worktree_file: (a) =>
+              this.prodDiagnostics!.runRead('atlas_worktree_file', a),
+            propose_prod_write: (a) =>
+              this.prodDiagnostics!.proposeWrite(
+                stimulus,
+                String(a['sql'] ?? ''),
+              ),
           }
         : {};
 
@@ -4384,8 +4787,10 @@ export class AgentSessionManager
       link_job_dependency: tools.link_job_dependency,
       ...intake,
       list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
-      propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
-      propose_convention_profile_change: this.buildProposeConventionProfileChangeTool(stimulus),
+      propose_convention_profile:
+        this.buildProposeConventionProfileTool(stimulus),
+      propose_convention_profile_change:
+        this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
       ...atlasProd,
     };
@@ -4433,7 +4838,8 @@ export class AgentSessionManager
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(label)) {
           return {
             ok: false,
-            reason: 'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
+            reason:
+              'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
           };
         }
         const requestId = `s-${randomUUID()}`;
@@ -4479,12 +4885,19 @@ export class AgentSessionManager
         const slot = String(m['slot'] ?? '').trim();
         const key = String(m['key'] ?? '').trim();
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(server)) {
-          return { ok: false, reason: 'mcp.server must be the name of a registered MCP server' };
+          return {
+            ok: false,
+            reason: 'mcp.server must be the name of a registered MCP server',
+          };
         }
         if (slot !== 'header' && slot !== 'env') {
           return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
         }
-        if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
+        if (!key)
+          return {
+            ok: false,
+            reason: 'mcp.key is required (the header/env key name)',
+          };
         // An OAuth server has NO fillable secret slot — its Authorization is minted by the owner Connect flow
         // (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
         // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
@@ -4507,7 +4920,10 @@ export class AgentSessionManager
           mcp: { server, slot, key },
           ...(url ? { url } : {}),
         });
-        const opened = await this.store.openSecretRequest(stimulus.jobId, { requestId, card });
+        const opened = await this.store.openSecretRequest(stimulus.jobId, {
+          requestId,
+          card,
+        });
         if (!opened.ok) {
           return {
             ok: false,
@@ -4704,7 +5120,11 @@ export class AgentSessionManager
             'description is required (what this value is and how you derived it)',
         };
       }
-      const existing = await this.secretStore.read(stimulus.orgId, stimulus.repoId, path);
+      const existing = await this.secretStore.read(
+        stimulus.orgId,
+        stimulus.repoId,
+        path,
+      );
       if (existing != null && !overwrite) {
         return {
           ok: false,
@@ -4715,7 +5135,13 @@ export class AgentSessionManager
       }
       // A single write IS the value + the authority: (repo, path) is the file's identity; `name` rides
       // along as the display label. Renders on your next hydration and every future job's.
-      await this.secretStore.write(stimulus.orgId, stimulus.repoId, path, value, name);
+      await this.secretStore.write(
+        stimulus.orgId,
+        stimulus.repoId,
+        path,
+        value,
+        name,
+      );
       await this.store.appendSystemEvent(
         stimulus.jobId,
         `🔑 Derived and stored \`${name}\` (${description}) — future jobs on this repo won't need to re-derive it.`,
@@ -4743,7 +5169,9 @@ export class AgentSessionManager
             'secrets do not go in workspace config — use request_secret instead',
         };
       }
-      const { mounts: newMounts, warnings } = this.normalizeMounts(args['mounts']);
+      const { mounts: newMounts, warnings } = this.normalizeMounts(
+        args['mounts'],
+      );
 
       // A DB hiccup here must never crash the turn — warn, tell Atlas the real error via `reason` (its
       // next tool call is retryable), don't leave it silently believing the write landed.
@@ -4759,13 +5187,23 @@ export class AgentSessionManager
           .sort()
           .join(',');
         for (const m of newMounts) {
-          await this.configStore.upsertMount(stimulus.orgId, stimulus.repoId, m.path, m.mode);
+          await this.configStore.upsertMount(
+            stimulus.orgId,
+            stimulus.repoId,
+            m.path,
+            m.mode,
+          );
         }
 
-        const mounts = await this.configStore.listMounts(stimulus.orgId, stimulus.repoId);
+        const mounts = await this.configStore.listMounts(
+          stimulus.orgId,
+          stimulus.repoId,
+        );
         const mountSetChanged =
-          mounts.map((m) => `${m.path}:${m.mode}`).sort().join(',') !==
-          priorMountSig;
+          mounts
+            .map((m) => `${m.path}:${m.mode}`)
+            .sort()
+            .join(',') !== priorMountSig;
         await this.store.appendSystemEvent(
           stimulus.jobId,
           `⚙️ Updated workspace config (${mounts.length} mount(s)) — live for every job on this repo immediately.` +
@@ -4780,7 +5218,9 @@ export class AgentSessionManager
           ...(warnings.length ? { warnings } : {}),
         };
       } catch (err) {
-        this.logger.warn(`write_workspace_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `write_workspace_config failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4796,14 +5236,28 @@ export class AgentSessionManager
    */
   private buildWriteSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
-      const script = String(args['script'] ?? '').trim() ? String(args['script']) : null;
+      const script = String(args['script'] ?? '').trim()
+        ? String(args['script'])
+        : null;
       try {
-        await this.configStore.setSetupScript(stimulus.orgId, stimulus.repoId, script);
+        await this.configStore.setSetupScript(
+          stimulus.orgId,
+          stimulus.repoId,
+          script,
+        );
         // Recording a setup script is an "I've addressed the stack" moment — acknowledge the worktree's
         // current dependency manifests so a manifest already present stops reading as a NEW stack.
         if (script) {
-          const sandbox = await this.lifecycle.findSandbox(stimulus.jobId, stimulus.orgId);
-          if (sandbox) await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
+          const sandbox = await this.lifecycle.findSandbox(
+            stimulus.jobId,
+            stimulus.orgId,
+          );
+          if (sandbox)
+            await this.refreshSeenManifests(
+              stimulus.orgId,
+              stimulus.repoId,
+              sandbox.worktreePath,
+            );
         }
         await this.store.appendSystemEvent(
           stimulus.jobId,
@@ -4813,7 +5267,9 @@ export class AgentSessionManager
         );
         return { ok: true, saved: !!script };
       } catch (err) {
-        this.logger.warn(`write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `write_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4829,10 +5285,15 @@ export class AgentSessionManager
   private buildReadSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
     return async () => {
       try {
-        const script = await this.configStore.getSetupScript(stimulus.orgId, stimulus.repoId);
+        const script = await this.configStore.getSetupScript(
+          stimulus.orgId,
+          stimulus.repoId,
+        );
         return { ok: true, present: script !== null, script };
       } catch (err) {
-        this.logger.warn(`read_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `read_setup_script failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4840,9 +5301,15 @@ export class AgentSessionManager
 
   private buildWritePreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
     return async (args) => {
-      const instructions = String(args['instructions'] ?? '').trim() ? String(args['instructions']) : null;
+      const instructions = String(args['instructions'] ?? '').trim()
+        ? String(args['instructions'])
+        : null;
       try {
-        await this.configStore.setPreviewInstructions(stimulus.orgId, stimulus.repoId, instructions);
+        await this.configStore.setPreviewInstructions(
+          stimulus.orgId,
+          stimulus.repoId,
+          instructions,
+        );
         await this.store.appendSystemEvent(
           stimulus.jobId,
           instructions
@@ -4851,7 +5318,9 @@ export class AgentSessionManager
         );
         return { ok: true, saved: !!instructions };
       } catch (err) {
-        this.logger.warn(`write_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `write_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4860,10 +5329,15 @@ export class AgentSessionManager
   private buildReadPreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
     return async () => {
       try {
-        const instructions = await this.configStore.getPreviewInstructions(stimulus.orgId, stimulus.repoId);
+        const instructions = await this.configStore.getPreviewInstructions(
+          stimulus.orgId,
+          stimulus.repoId,
+        );
         return { ok: true, present: instructions !== null, instructions };
       } catch (err) {
-        this.logger.warn(`read_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `read_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -4875,11 +5349,21 @@ export class AgentSessionManager
    * onboarding finishes (the bulk pass saw the whole stack) and refreshed when a setup script is recorded.
    * Best-effort: never throws into the caller.
    */
-  private async refreshSeenManifests(orgId: string, repoId: string, worktreePath: string): Promise<void> {
+  private async refreshSeenManifests(
+    orgId: string,
+    repoId: string,
+    worktreePath: string,
+  ): Promise<void> {
     try {
-      await this.configStore.setSeenManifests(orgId, repoId, detectRepoManifests(worktreePath));
+      await this.configStore.setSeenManifests(
+        orgId,
+        repoId,
+        detectRepoManifests(worktreePath),
+      );
     } catch (err) {
-      this.logger.warn(`refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`);
+      this.logger.warn(
+        `refreshSeenManifests failed for org=${orgId} repo=${repoId}: ${err}`,
+      );
     }
   }
 
@@ -4923,7 +5407,8 @@ export class AgentSessionManager
       if (!raw || raw.length === 0) {
         return {
           ok: false,
-          reason: 'servers must be a non-empty array of proposed MCP server definitions',
+          reason:
+            'servers must be a non-empty array of proposed MCP server definitions',
         };
       }
       const servers: McpProposalServer[] = [];
@@ -4943,16 +5428,30 @@ export class AgentSessionManager
           };
         }
         const transport = String(s['transport'] ?? '').trim();
-        if (transport !== 'http' && transport !== 'sse' && transport !== 'stdio') {
-          return { ok: false, reason: `server "${name}": transport must be http | sse | stdio` };
+        if (
+          transport !== 'http' &&
+          transport !== 'sse' &&
+          transport !== 'stdio'
+        ) {
+          return {
+            ok: false,
+            reason: `server "${name}": transport must be http | sse | stdio`,
+          };
         }
         const url = String(s['url'] ?? '').trim() || undefined;
         const command = String(s['command'] ?? '').trim() || undefined;
         // Transport-shape guard (mirrors McpServersController.assertShape).
         if (transport === 'stdio') {
-          if (!command) return { ok: false, reason: `server "${name}": stdio transport requires a command` };
+          if (!command)
+            return {
+              ok: false,
+              reason: `server "${name}": stdio transport requires a command`,
+            };
         } else if (!url) {
-          return { ok: false, reason: `server "${name}": ${transport} transport requires a url` };
+          return {
+            ok: false,
+            reason: `server "${name}": ${transport} transport requires a url`,
+          };
         }
         const argv = Array.isArray(s['args'])
           ? (s['args'] as unknown[]).map((a) => String(a))
@@ -4960,19 +5459,28 @@ export class AgentSessionManager
         const headers = normPairs(s['headers']);
         const env = normPairs(s['env']);
         const surfaces = (
-          Array.isArray(s['surfaces']) ? (s['surfaces'] as unknown[]).map((x) => String(x)) : []
+          Array.isArray(s['surfaces'])
+            ? (s['surfaces'] as unknown[]).map((x) => String(x))
+            : []
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
         // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
         // the OWNER completes via Connect). OAuth is http/sse-only and owns the Authorization header itself,
         // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
         // McpServersController.assertShape.
-        const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
+        const authKind: McpAuthKind =
+          s['authKind'] === 'oauth' ? 'oauth' : 'static';
         if (authKind === 'oauth') {
           if (transport === 'stdio') {
-            return { ok: false, reason: `server "${name}": oauth is only supported for http/sse transports` };
+            return {
+              ok: false,
+              reason: `server "${name}": oauth is only supported for http/sse transports`,
+            };
           }
-          if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
+          if (
+            (headers ?? []).some((h) => h.secret) ||
+            (env ?? []).some((e) => e.secret)
+          ) {
             return {
               ok: false,
               reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth with the proposal-card Connect button or in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
@@ -4981,14 +5489,19 @@ export class AgentSessionManager
         }
         const oauthRaw = (s['oauth'] ?? {}) as Record<string, unknown>;
         const oauthScope = String(oauthRaw['scope'] ?? '').trim() || undefined;
-        const oauthTam = ['none', 'client_secret_post', 'client_secret_basic'].includes(
-          String(oauthRaw['tokenAuthMethod'] ?? ''),
-        )
+        const oauthTam = [
+          'none',
+          'client_secret_post',
+          'client_secret_basic',
+        ].includes(String(oauthRaw['tokenAuthMethod'] ?? ''))
           ? (String(oauthRaw['tokenAuthMethod']) as McpOAuthTokenAuthMethod)
           : undefined;
         const oauth: StoredMcpOAuthConfig | undefined =
           authKind === 'oauth' && (oauthScope || oauthTam)
-            ? { ...(oauthScope ? { scope: oauthScope } : {}), ...(oauthTam ? { tokenAuthMethod: oauthTam } : {}) }
+            ? {
+                ...(oauthScope ? { scope: oauthScope } : {}),
+                ...(oauthTam ? { tokenAuthMethod: oauthTam } : {}),
+              }
             : undefined;
         servers.push({
           name,
@@ -5010,7 +5523,8 @@ export class AgentSessionManager
       }
       // Registration scope: 'repo' (this repo only, the default) or 'org' (every repo in the org) — mirrors
       // propose_skill. Repo scope OVERRIDES an org server of the same name at resolve time.
-      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      const scope: 'org' | 'repo' =
+        String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
       try {
         const requestId = `mcp-${randomUUID()}`;
         const card = webMcpProposalCard({
@@ -5020,13 +5534,26 @@ export class AgentSessionManager
           scope,
           servers,
         });
-        const opened = await this.store.openMcpProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the MCP proposal (thread not found).' };
+        const opened = await this.store.openMcpProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason: 'Could not open the MCP proposal (thread not found).',
+          };
         const needSecrets = servers.flatMap((s) => [
-          ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
-          ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
+          ...(s.headers ?? [])
+            .filter((h) => h.secret)
+            .map((h) => `${s.name} header:${h.name}`),
+          ...(s.env ?? [])
+            .filter((e) => e.secret)
+            .map((e) => `${s.name} env:${e.name}`),
         ]);
-        const oauthNames = servers.filter((s) => s.authKind === 'oauth').map((s) => s.name);
+        const oauthNames = servers
+          .filter((s) => s.authKind === 'oauth')
+          .map((s) => s.name);
         return {
           ok: true,
           requestId,
@@ -5044,7 +5571,9 @@ export class AgentSessionManager
               : ''),
         };
       } catch (err) {
-        this.logger.warn(`propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `propose_mcp_servers failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5057,7 +5586,12 @@ export class AgentSessionManager
    */
   private buildListConventionProfilesTool(stimulus: ChatStimulus): ToolImpl {
     return async () => {
-      if (!this.conventions) return { ok: true, profiles: [], message: 'No house-style profiles are configured.' };
+      if (!this.conventions)
+        return {
+          ok: true,
+          profiles: [],
+          message: 'No house-style profiles are configured.',
+        };
       try {
         const profiles = await this.conventions.listProfiles(stimulus.orgId);
         return {
@@ -5068,7 +5602,9 @@ export class AgentSessionManager
             : 'This org has no house-style profiles defined — skip propose_convention_profile.',
         };
       } catch (err) {
-        this.logger.warn(`list_convention_profiles failed for org=${stimulus.orgId}: ${err}`);
+        this.logger.warn(
+          `list_convention_profiles failed for org=${stimulus.orgId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5095,7 +5631,11 @@ export class AgentSessionManager
             'Recorded that no house-style profile matches this repo — leaving its conventions unset (the default). Continue onboarding.',
         };
       }
-      if (!this.conventions) return { ok: false, reason: 'house-style profiles are not configured for this org' };
+      if (!this.conventions)
+        return {
+          ok: false,
+          reason: 'house-style profiles are not configured for this org',
+        };
       try {
         const profile = await this.conventions.getProfile(stimulus.orgId, slug);
         if (!profile) {
@@ -5113,8 +5653,16 @@ export class AgentSessionManager
           profileName: profile.name,
           rationale: rationale || `Matches this repo's stack.`,
         });
-        const opened = await this.store.openConventionProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the convention proposal (thread not found).' };
+        const opened = await this.store.openConventionProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason:
+              'Could not open the convention proposal (thread not found).',
+          };
         return {
           ok: true,
           requestId,
@@ -5142,7 +5690,9 @@ export class AgentSessionManager
    * belongs in repo memory via `remember`). If `slug` matches an existing profile it's an EDIT (the card
    * shows the prior body); a new `slug` is a CREATE. org/repo/job come from the closure (never tool args).
    */
-  private buildProposeConventionProfileChangeTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeConventionProfileChangeTool(
+    stimulus: ChatStimulus,
+  ): ToolImpl {
     const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     return async (args) => {
       const slug = String(args['slug'] ?? '').trim();
@@ -5151,16 +5701,39 @@ export class AgentSessionManager
       const nameArg = String(args['name'] ?? '').trim();
       const detectHintArg = String(args['detectHint'] ?? '').trim();
       if (!SLUG_RE.test(slug)) {
-        return { ok: false, reason: 'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)' };
+        return {
+          ok: false,
+          reason:
+            'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)',
+        };
       }
-      if (!body) return { ok: false, reason: 'body (the house-style rules) is required' };
-      if (!rationale) return { ok: false, reason: 'rationale — why the house style should change — is required' };
-      if (!this.conventions) return { ok: false, reason: 'house-style profiles are not configured for this org' };
+      if (!body)
+        return {
+          ok: false,
+          reason: 'body (the house-style rules) is required',
+        };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why the house style should change — is required',
+        };
+      if (!this.conventions)
+        return {
+          ok: false,
+          reason: 'house-style profiles are not configured for this org',
+        };
       try {
-        const existing = await this.conventions.getProfile(stimulus.orgId, slug);
+        const existing = await this.conventions.getProfile(
+          stimulus.orgId,
+          slug,
+        );
         const mode: 'create' | 'update' = existing ? 'update' : 'create';
         const name = nameArg || existing?.name;
-        if (!name) return { ok: false, reason: 'name is required when creating a new profile' };
+        if (!name)
+          return {
+            ok: false,
+            reason: 'name is required when creating a new profile',
+          };
         const requestId = `conv-edit-${randomUUID()}`;
         const card = webConventionEditProposalCard({
           jobId: stimulus.jobId,
@@ -5174,8 +5747,15 @@ export class AgentSessionManager
           ...(existing ? { priorBody: existing.body } : {}),
           rationale,
         });
-        const opened = await this.store.openConventionEditProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the proposal (thread not found).' };
+        const opened = await this.store.openConventionEditProposal(
+          stimulus.jobId,
+          { requestId, card },
+        );
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason: 'Could not open the proposal (thread not found).',
+          };
         return {
           ok: true,
           requestId,
@@ -5203,7 +5783,12 @@ export class AgentSessionManager
    */
   private buildListMcpServersTool(stimulus: ChatStimulus): ToolImpl {
     return async () => {
-      if (!this.mcpStore) return { ok: true, servers: [], message: 'MCP servers are not configured for this org.' };
+      if (!this.mcpStore)
+        return {
+          ok: true,
+          servers: [],
+          message: 'MCP servers are not configured for this org.',
+        };
       try {
         const servers = (await this.mcpStore.list(stimulus.orgId)).map((s) => ({
           name: s.name,
@@ -5233,7 +5818,9 @@ export class AgentSessionManager
               : ''),
         };
       } catch (err) {
-        this.logger.warn(`list_mcp_servers failed for org=${stimulus.orgId}: ${err}`);
+        this.logger.warn(
+          `list_mcp_servers failed for org=${stimulus.orgId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5246,15 +5833,22 @@ export class AgentSessionManager
    */
   private buildListSkillsTool(stimulus: ChatStimulus): ToolImpl {
     return async () => {
-      if (!this.skillStore) return { ok: true, skills: [], message: 'Skills are not configured for this org.' };
+      if (!this.skillStore)
+        return {
+          ok: true,
+          skills: [],
+          message: 'Skills are not configured for this org.',
+        };
       try {
-        const skills = (await this.skillStore.list(stimulus.orgId)).map((s) => ({
-          name: s.name,
-          scope: s.scope === 'org' ? 'org' : 'repo',
-          description: s.description,
-          surfaces: s.surfaces,
-          enabled: s.enabled,
-        }));
+        const skills = (await this.skillStore.list(stimulus.orgId)).map(
+          (s) => ({
+            name: s.name,
+            scope: s.scope === 'org' ? 'org' : 'repo',
+            description: s.description,
+            surfaces: s.surfaces,
+            enabled: s.enabled,
+          }),
+        );
         return {
           ok: true,
           skills,
@@ -5264,7 +5858,9 @@ export class AgentSessionManager
             : 'No skills registered yet — propose_skill to create the first.',
         };
       } catch (err) {
-        this.logger.warn(`list_skills failed for org=${stimulus.orgId}: ${err}`);
+        this.logger.warn(
+          `list_skills failed for org=${stimulus.orgId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5290,42 +5886,71 @@ export class AgentSessionManager
       const name = String(args['name'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
-      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      const scope: 'org' | 'repo' =
+        String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
 
       if (!NAME_RE.test(name)) {
-        return { ok: false, reason: 'name must be lowercase letters/digits/_/- (e.g. house-migrations)' };
+        return {
+          ok: false,
+          reason:
+            'name must be lowercase letters/digits/_/- (e.g. house-migrations)',
+        };
       }
-      if (!description) return { ok: false, reason: 'description (the "Use when …" trigger blurb) is required' };
-      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!description)
+        return {
+          ok: false,
+          reason: 'description (the "Use when …" trigger blurb) is required',
+        };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why this skill helps builds here — is required',
+        };
       if (!this.skillStore || !this.skillFiles) {
         return { ok: false, reason: 'skills are not configured for this org' };
       }
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
+        const existing = await this.skillStore.get(
+          stimulus.orgId,
+          dbScope,
+          name,
+        );
         if (existing) {
           return {
             ok: false,
             reason:
               `a ${scope}-scoped skill "${name}" already exists — propose_skill only CREATES. Call ` +
-              'request_skill_edit_access({ skill: \'' + name + '\' }) to get owner-approved edit access, ' +
+              "request_skill_edit_access({ skill: '" +
+              name +
+              "' }) to get owner-approved edit access, " +
               'then Edit/Write its files directly.',
           };
         }
         // The brain authors the skill as real files here first (with its built-in run-skill-generator).
-        const draftDir = join(this.lifecycle.contextDirHost(stimulus.jobId, stimulus.orgId), 'skill-drafts', name);
+        const draftDir = join(
+          this.lifecycle.contextDirHost(stimulus.jobId, stimulus.orgId),
+          'skill-drafts',
+          name,
+        );
         if (!existsSync(join(draftDir, 'SKILL.md'))) {
           return {
             ok: false,
             reason:
               `no authored skill found at /context/skill-drafts/${name}/SKILL.md. Author it FIRST — use your ` +
               'built-in run-skill-generator skill to scaffold and write the folder (SKILL.md + any ' +
-              'references/scripts) under /context/skill-drafts/' + name + '/, then call propose_skill again.',
+              'references/scripts) under /context/skill-drafts/' +
+              name +
+              '/, then call propose_skill again.',
           };
         }
         const requestId = `skill-${randomUUID()}`;
         // Freeze exactly what exists now — approval vendors this immutable copy, not the still-writable draft.
-        const stagingPath = this.skillFiles.freezeDraft(draftDir, stimulus.orgId, requestId);
+        const stagingPath = this.skillFiles.freezeDraft(
+          draftDir,
+          stimulus.orgId,
+          requestId,
+        );
         const preview = this.skillFiles.previewDir(stagingPath) ?? undefined;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
@@ -5340,10 +5965,16 @@ export class AgentSessionManager
           stagingPath,
           preview,
         });
-        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
+        const opened = await this.store.openSkillProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
         if (!opened.ok) {
           this.skillFiles.removeStaging(stimulus.orgId, requestId);
-          return { ok: false, reason: 'Could not open the skill proposal (thread not found).' };
+          return {
+            ok: false,
+            reason: 'Could not open the skill proposal (thread not found).',
+          };
         }
         return {
           ok: true,
@@ -5380,12 +6011,21 @@ export class AgentSessionManager
       const ref = String(args['ref'] ?? '').trim() || undefined;
       const subpath = String(args['subpath'] ?? '').trim() || undefined;
       const rationale = String(args['rationale'] ?? '').trim();
-      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      const scope: 'org' | 'repo' =
+        String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
 
       if (!/^https:\/\/\S+$/.test(sourceUrl)) {
-        return { ok: false, reason: 'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)' };
+        return {
+          ok: false,
+          reason:
+            'sourceUrl must be an https git URL (e.g. https://github.com/anthropics/skills)',
+        };
       }
-      if (!rationale) return { ok: false, reason: 'rationale — why this skill helps builds here — is required' };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why this skill helps builds here — is required',
+        };
       if (!this.skillStore || !this.skillInstaller) {
         return { ok: false, reason: 'skills are not configured for this org' };
       }
@@ -5393,12 +6033,25 @@ export class AgentSessionManager
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
         let rows;
         try {
-          rows = await this.skillInstaller.preview({ orgId: stimulus.orgId, scope: dbScope, sourceUrl, ref, subpath });
+          rows = await this.skillInstaller.preview({
+            orgId: stimulus.orgId,
+            scope: dbScope,
+            sourceUrl,
+            ref,
+            subpath,
+          });
         } catch (err) {
-          return { ok: false, reason: `could not resolve that skill source: ${errText(err)}` };
+          return {
+            ok: false,
+            reason: `could not resolve that skill source: ${errText(err)}`,
+          };
         }
         const resolved = rows[0];
-        if (!resolved) return { ok: false, reason: 'that source resolved no installable skill' };
+        if (!resolved)
+          return {
+            ok: false,
+            reason: 'that source resolved no installable skill',
+          };
         const requestId = `skill-${randomUUID()}`;
         const card = webSkillProposalCard({
           jobId: stimulus.jobId,
@@ -5415,8 +6068,16 @@ export class AgentSessionManager
           sourceSubpath: subpath,
           installPreview: { rows },
         });
-        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the skill install proposal (thread not found).' };
+        const opened = await this.store.openSkillProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason:
+              'Could not open the skill install proposal (thread not found).',
+          };
         return {
           ok: true,
           requestId,
@@ -5427,7 +6088,9 @@ export class AgentSessionManager
             'next fresh session (reset_sandbox to pick it up). Mention the proposal, then continue.',
         };
       } catch (err) {
-        this.logger.warn(`propose_skill_install failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `propose_skill_install failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5448,16 +6111,34 @@ export class AgentSessionManager
     return async (args) => {
       const name = String(args['skill'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
-      if (!name) return { ok: false, reason: 'skill (the name to unlock) is required — call list_skills first' };
-      if (!rationale) return { ok: false, reason: 'rationale — why you need to edit this skill — is required' };
-      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      if (!name)
+        return {
+          ok: false,
+          reason:
+            'skill (the name to unlock) is required — call list_skills first',
+        };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why you need to edit this skill — is required',
+        };
+      if (!this.skillStore)
+        return { ok: false, reason: 'skills are not configured for this org' };
       try {
         // Repo scope overrides an org skill of the same name (SkillResolver's own precedence) — resolve
         // whichever one is actually ACTIVE for this repo/job.
-        const repoRow = await this.skillStore.get(stimulus.orgId, stimulus.repoId, name);
+        const repoRow = await this.skillStore.get(
+          stimulus.orgId,
+          stimulus.repoId,
+          name,
+        );
         const orgRow = repoRow
           ? null
-          : await this.skillStore.get(stimulus.orgId, WorkspaceSkillStore.toDbScope('org'), name);
+          : await this.skillStore.get(
+              stimulus.orgId,
+              WorkspaceSkillStore.toDbScope('org'),
+              name,
+            );
         const row = repoRow ?? orgRow;
         if (!row) {
           return {
@@ -5478,9 +6159,16 @@ export class AgentSessionManager
           sourceRef: row.source_ref,
           rationale,
         });
-        const opened = await this.store.openSkillEditAccessRequest(stimulus.jobId, { requestId, card });
+        const opened = await this.store.openSkillEditAccessRequest(
+          stimulus.jobId,
+          { requestId, card },
+        );
         if (!opened.ok) {
-          return { ok: false, reason: 'Could not open the edit-access request (thread not found).' };
+          return {
+            ok: false,
+            reason:
+              'Could not open the edit-access request (thread not found).',
+          };
         }
         return {
           ok: true,
@@ -5511,13 +6199,24 @@ export class AgentSessionManager
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
-      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      if (!name) return { ok: false, reason: 'name (the skill to remove) is required' };
-      if (!rationale) return { ok: false, reason: 'rationale — why the skill should be removed — is required' };
-      if (!this.skillStore) return { ok: false, reason: 'skills are not configured for this org' };
+      const scope: 'org' | 'repo' =
+        String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      if (!name)
+        return { ok: false, reason: 'name (the skill to remove) is required' };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why the skill should be removed — is required',
+        };
+      if (!this.skillStore)
+        return { ok: false, reason: 'skills are not configured for this org' };
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.skillStore.get(stimulus.orgId, dbScope, name);
+        const existing = await this.skillStore.get(
+          stimulus.orgId,
+          dbScope,
+          name,
+        );
         if (!existing) {
           return {
             ok: false,
@@ -5534,11 +6233,23 @@ export class AgentSessionManager
           description: '',
           surfaces: existing.surfaces,
           mode: 'remove',
-          priorBody: this.skillFiles?.readSkillBody(stimulus.orgId, dbScope, name),
+          priorBody: this.skillFiles?.readSkillBody(
+            stimulus.orgId,
+            dbScope,
+            name,
+          ),
           rationale,
         });
-        const opened = await this.store.openSkillProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the skill removal proposal (thread not found).' };
+        const opened = await this.store.openSkillProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason:
+              'Could not open the skill removal proposal (thread not found).',
+          };
         return {
           ok: true,
           requestId,
@@ -5547,7 +6258,9 @@ export class AgentSessionManager
             'the deletion — you cannot remove it yourself. Mention the proposal, then continue.',
         };
       } catch (err) {
-        this.logger.warn(`propose_skill_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `propose_skill_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5563,13 +6276,30 @@ export class AgentSessionManager
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
-      const scope: 'org' | 'repo' = String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
-      if (!name) return { ok: false, reason: 'name (the MCP server to remove) is required' };
-      if (!rationale) return { ok: false, reason: 'rationale — why the server should be removed — is required' };
-      if (!this.mcpStore) return { ok: false, reason: 'MCP servers are not configured for this org' };
+      const scope: 'org' | 'repo' =
+        String(args['scope'] ?? 'repo').trim() === 'org' ? 'org' : 'repo';
+      if (!name)
+        return {
+          ok: false,
+          reason: 'name (the MCP server to remove) is required',
+        };
+      if (!rationale)
+        return {
+          ok: false,
+          reason: 'rationale — why the server should be removed — is required',
+        };
+      if (!this.mcpStore)
+        return {
+          ok: false,
+          reason: 'MCP servers are not configured for this org',
+        };
       try {
         const dbScope = scope === 'org' ? '*' : stimulus.repoId;
-        const existing = await this.mcpStore.rawRow(stimulus.orgId, dbScope, name);
+        const existing = await this.mcpStore.rawRow(
+          stimulus.orgId,
+          dbScope,
+          name,
+        );
         if (!existing) {
           return {
             ok: false,
@@ -5586,8 +6316,16 @@ export class AgentSessionManager
           removeNames: [name],
           servers: [],
         });
-        const opened = await this.store.openMcpProposal(stimulus.jobId, { requestId, card });
-        if (!opened.ok) return { ok: false, reason: 'Could not open the MCP removal proposal (thread not found).' };
+        const opened = await this.store.openMcpProposal(stimulus.jobId, {
+          requestId,
+          card,
+        });
+        if (!opened.ok)
+          return {
+            ok: false,
+            reason:
+              'Could not open the MCP removal proposal (thread not found).',
+          };
         return {
           ok: true,
           requestId,
@@ -5596,7 +6334,9 @@ export class AgentSessionManager
             'approve the deletion — you cannot remove it yourself. Mention the proposal, then continue.',
         };
       } catch (err) {
-        this.logger.warn(`propose_mcp_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `propose_mcp_removal failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5630,12 +6370,19 @@ export class AgentSessionManager
           .catch(() => null);
         if (!sandbox) {
           this.pendingHardReset.delete(key);
-          return { ok: false, reason: 'No sandbox for this job yet — nothing to hard-reset.' };
+          return {
+            ok: false,
+            reason: 'No sandbox for this job yet — nothing to hard-reset.',
+          };
         }
-        const dirty = await this.git.hasChanges(sandbox.worktreePath).catch(() => true);
+        const dirty = await this.git
+          .hasChanges(sandbox.worktreePath)
+          .catch(() => true);
         const safe = dirty
           ? false
-          : await this.git.worktreeSafeToRecut(sandbox.worktreePath, sandbox.branch).catch(() => false);
+          : await this.git
+              .worktreeSafeToRecut(sandbox.worktreePath, sandbox.branch)
+              .catch(() => false);
         if (!safe) {
           this.pendingHardReset.delete(key);
           return {
@@ -5758,7 +6505,11 @@ export class AgentSessionManager
         await this.lifecycle.markRepoOnboarded(stimulus.orgId, stimulus.repoId);
         // Seed the new-stack baseline: the bulk pass has seen the whole stack, so acknowledge every
         // dependency manifest now — future jobs only flag manifests that appear AFTER this.
-        await this.refreshSeenManifests(stimulus.orgId, stimulus.repoId, sandbox.worktreePath);
+        await this.refreshSeenManifests(
+          stimulus.orgId,
+          stimulus.repoId,
+          sandbox.worktreePath,
+        );
 
         const hasChanges = await this.git.hasChanges(sandbox.worktreePath);
         if (!hasChanges) {
@@ -5794,7 +6545,8 @@ export class AgentSessionManager
           return {
             ok: true,
             prOpened: false,
-            message: 'Made repo changes but no GitHub token is set — connect one to open the PR.',
+            message:
+              'Made repo changes but no GitHub token is set — connect one to open the PR.',
           };
         }
         return {
@@ -5807,7 +6559,9 @@ export class AgentSessionManager
           }),
         };
       } catch (err) {
-        this.logger.warn(`finish_onboarding failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        this.logger.warn(
+          `finish_onboarding failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`,
+        );
         return { ok: false, reason: errText(err) };
       }
     };
@@ -5824,24 +6578,33 @@ export class AgentSessionManager
     for (const e of raw) {
       const o = e as Record<string, unknown>;
       const path = String(o?.['path'] ?? '').trim();
-      if (!path || path.split('/').includes('..') || path.length > MAX_MOUNT_PATH_LEN) continue;
+      if (
+        !path ||
+        path.split('/').includes('..') ||
+        path.length > MAX_MOUNT_PATH_LEN
+      )
+        continue;
       if (isExternalMountPath(path)) {
         // ABSOLUTE path = an EXTERNAL durable mount at that exact container location (e.g. a tool's default
         // `~/.config/gcloud` → `/root/.config/gcloud`), bound OUTSIDE /workspace so nothing lands in the
         // repo. Guarded so it can't shadow a system bind or OS root.
         if (isReservedContainerPath(path)) {
-          warnings.push(`mount "${path}" targets a reserved/system container path (do not mount it) — dropped`);
+          warnings.push(
+            `mount "${path}" targets a reserved/system container path (do not mount it) — dropped`,
+          );
           continue;
         }
       } else if (isReservedMountPath(path)) {
         // Worktree-relative reserved paths (e.g. `.pnpm-store`) are system-managed caches with no
         // legitimate reason to be mounted into a repo's own worktree — drop + warn.
-        warnings.push(`mount "${path}" is auto-managed by the system (do not add it) — dropped`);
+        warnings.push(
+          `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
+        );
         continue;
       }
       const mode: MountMode =
         o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw'
-          ? (o['mode'] as MountMode)
+          ? o['mode']
           : 'per-thread';
       out.push({ path, mode });
     }
@@ -5902,9 +6665,15 @@ export class AgentSessionManager
    * teardown), the file is a re-render, so idempotency falls out of re-projecting a deduped store. This is a
    * job-scoped audit only — NOT ADR-promotable; Atlas never authors significant decisions on its own.
    */
-  private async writeClearedBlocksMd(jobId: string, orgId: string): Promise<void> {
+  private async writeClearedBlocksMd(
+    jobId: string,
+    orgId: string,
+  ): Promise<void> {
     const entries = await this.store.listClearedBlockCards(jobId);
-    const generatedDir = join(this.lifecycle.contextDirHost(jobId, orgId), 'generated');
+    const generatedDir = join(
+      this.lifecycle.contextDirHost(jobId, orgId),
+      'generated',
+    );
     await mkdir(generatedDir, { recursive: true });
     const body = entries.length
       ? entries
@@ -5936,12 +6705,23 @@ export class AgentSessionManager
     // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
     // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
     // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
-    const pastGate: JobStatus[] = ['running', 'awaiting_ship_review', 'done', 'cancelled', 'deleting'];
+    const pastGate: JobStatus[] = [
+      'running',
+      'awaiting_ship_review',
+      'done',
+      'cancelled',
+      'deleting',
+    ];
     if (pastGate.includes(existing.status)) {
-      return { refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.` };
+      return {
+        refuse: `This job is already '${existing.status}' — can’t (re)propose a plan for it.`,
+      };
     }
     if (existing.status === 'awaiting_approval' && existing.decisionRecordId) {
-      const res = await this.store.withdrawPlan(jobId, 'superseded by a re-proposed plan');
+      const res = await this.store.withdrawPlan(
+        jobId,
+        'superseded by a re-proposed plan',
+      );
       if (!res.withdrawn) {
         const now = await this.store.loadJob(jobId).catch(() => null);
         return {
@@ -5960,7 +6740,10 @@ export class AgentSessionManager
   private async resolveAutoApprover(job: Job): Promise<string> {
     if (job.autoApproveBy) return job.autoApproveBy;
     const owner = await this.store.ownerUserId(job.orgId);
-    if (!owner) throw new Error(`no auto-approve approver for job ${job.id} (no auto_approve_by and no org owner)`);
+    if (!owner)
+      throw new Error(
+        `no auto-approve approver for job ${job.id} (no auto_approve_by and no org owner)`,
+      );
     return owner;
   }
 
@@ -5991,11 +6774,7 @@ export class AgentSessionManager
     // to `goal` in persistPlan (full path) / jobTitle(summary) (direct); publish a live `thread_meta`
     // frame so the open UI repaints the title in place. Emitted on the CARD path only (never on the
     // pre-review draft return), AFTER the durable write, so live and durable never diverge. Best-effort.
-    this.surface.emitThreadMeta?.(
-      stimulus.repoId,
-      stimulus.jobId,
-      card.title,
-    );
+    this.surface.emitThreadMeta?.(stimulus.repoId, stimulus.jobId, card.title);
 
     // AUTO-APPROVE (per-job opt-in): the card is posted above for audit/transcript; now immediately drive the
     // SAME resolution an operator's click would — the awaited handle.verdict below fires and actOnApprovalVerdict
@@ -6007,8 +6786,17 @@ export class AgentSessionManager
         .catch(() => null)) ?? job;
     if (modeApprovesPlan(autoApprovalJob.autoApproveMode)) {
       const approver = await this.resolveAutoApprover(autoApprovalJob);
-      await this.saySystemNotice(stimulus, 'Auto-approve is on — approving this plan automatically.');
-      this.approvals.resolve(autoApprovalJob.id, 'approve', approver, undefined, decisionRecordId);
+      await this.saySystemNotice(
+        stimulus,
+        'Auto-approve is on — approving this plan automatically.',
+      );
+      this.approvals.resolve(
+        autoApprovalJob.id,
+        'approve',
+        approver,
+        undefined,
+        decisionRecordId,
+      );
     }
 
     let resolution;
@@ -6065,7 +6853,9 @@ export class AgentSessionManager
       // Atlas to rebase-check the base branch (always auto-resolving git conflicts inline) and judge PLAN
       // VALIDITY before it calls `dispatch_build` (valid) or `hold_build` (redundant/needs-revision). This
       // is the SAME seed for both build paths — only `dispatch_build`'s internal branch differs.
-      await this.store.setActivity(stimulus.jobId, 'base_check').catch(() => undefined);
+      await this.store
+        .setActivity(stimulus.jobId, 'base_check')
+        .catch(() => undefined);
       // Passive milestone — the plan WAS approved (drained into the NEXT operator turn). Recorded AFTER the
       // durable `approve`. The former `dispatched:` milestone is dropped — it now fires when the build
       // actually starts (inside `dispatch_build`), not at approval.
@@ -6074,7 +6864,10 @@ export class AgentSessionManager
         `approved:${decisionRecordId}`,
         'Your plan was approved by the operator.',
       );
-      await this.saySystemNotice(stimulus, 'Approved — checking the base branch before starting…');
+      await this.saySystemNotice(
+        stimulus,
+        'Approved — checking the base branch before starting…',
+      );
       this.jit?.fireLifecycle('plan-approved', {
         repoId: running.repoId,
         jobId: running.id,
@@ -6218,7 +7011,9 @@ export class AgentSessionManager
         { compacting_session_id: sessionId },
       )
       .catch((err) =>
-        this.logger.warn(`compaction: marker set failed for job=${stimulus.jobId}: ${err}`),
+        this.logger.warn(
+          `compaction: marker set failed for job=${stimulus.jobId}: ${err}`,
+        ),
       );
 
     const channel = stimulus.replyRoute?.jobRef ?? stimulus.jobId;
@@ -6258,7 +7053,13 @@ export class AgentSessionManager
       };
       const result = await this.engineRunner.run(runArgs);
       void this.usageProjector?.record(
-        { jobId: stimulus.jobId, orgId: stimulus.orgId, lane: 'main', kind: 'compaction', engine: 'claude' },
+        {
+          jobId: stimulus.jobId,
+          orgId: stimulus.orgId,
+          lane: 'main',
+          kind: 'compaction',
+          engine: 'claude',
+        },
         result.usage,
       );
       summary = (result.result ?? '').trim();
@@ -6299,11 +7100,16 @@ export class AgentSessionManager
   }
 
   /** Clear the {@link JobSandboxEntity.compacting_session_id} marker (best-effort). */
-  private async clearCompactionMarker(jobId: string, orgId: string): Promise<void> {
+  private async clearCompactionMarker(
+    jobId: string,
+    orgId: string,
+  ): Promise<void> {
     await this.sandboxRows
       .update({ job_id: jobId, org_id: orgId }, { compacting_session_id: null })
       .catch((err) =>
-        this.logger.warn(`compaction: marker clear failed for job=${jobId}: ${err}`),
+        this.logger.warn(
+          `compaction: marker clear failed for job=${jobId}: ${err}`,
+        ),
       );
   }
 
@@ -6374,13 +7180,17 @@ export class AgentSessionManager
     let result: EngineRunResult;
     try {
       const ctx = (row.ctx ?? {}) as { credentialId?: string };
-      result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
-        onEvent: () => {
-          /* internal turn — not surfaced in the operator transcript */
+      result = await this.engineRunner.reattach!(
+        row.turn_id,
+        row.container_id,
+        {
+          onEvent: () => {
+            /* internal turn — not surfaced in the operator transcript */
+          },
+          // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
+          ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
         },
-        // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
-        ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
-      });
+      );
     } catch (err) {
       // Lost the tail (detached again) — the row survives; the next boot re-attempts. Best-effort.
       this.logger.warn(
@@ -6516,7 +7326,7 @@ export class AgentSessionManager
     const instruction =
       'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
       '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete, ' +
-      'run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo\'s own typecheck, and fix ' +
+      "run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo's own typecheck, and fix " +
       'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
       'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
       'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
@@ -6565,11 +7375,18 @@ export class AgentSessionManager
       jobId,
       `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`,
     );
+    // Frame the engine-facing seed with the spawning job's provenance (already snapshotted on the child at
+    // create time) so the child brain knows this thread came from ANOTHER Atlas job, not from the operator.
+    const job = await this.store.loadJob(jobId);
+    const seed = renderFollowUpJobSeed({
+      firstMessage,
+      parent: job?.createdBy ?? null,
+    });
     const stimulus: ChatStimulus = {
       id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
       orgId,
       repoId,
-      body: firstMessage,
+      body: seed,
       receivedAt: new Date(),
       kind: 'chat',
       trust: 'trusted',
@@ -6655,7 +7472,9 @@ export class AgentSessionManager
     if (row?.delivered_at) return;
 
     const body = renderEventDelivery(stimulus);
-    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    const live = await this.turnRegistry
+      .runningBrainTurn(stimulus.jobId)
+      .catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
@@ -6677,22 +7496,33 @@ export class AgentSessionManager
   }
 
   /** Steer an event into a live turn (lease first; the engine `input_ack` on the event-row id stamps delivered). */
-  private async steerEvent(turnId: string, eventRowId: string, body: AgentMessage): Promise<void> {
+  private async steerEvent(
+    turnId: string,
+    eventRowId: string,
+    body: AgentMessage,
+  ): Promise<void> {
     await this.stimulusStore
       .leaseChatStimuli([eventRowId]) // kind-agnostic (updates by id) — reused for the event row
-      .catch((err) => this.logger.debug(`pump: lease event failed (continuing): ${err}`));
-    await this.engineRunner
-      .steer!(turnId, eventRowId, body)
       .catch((err) =>
-        this.logger.warn(`pump: steer event into turn ${turnId} failed (sweep will re-drive): ${err}`),
+        this.logger.debug(`pump: lease event failed (continuing): ${err}`),
       );
+    await this.engineRunner.steer!(turnId, eventRowId, body).catch((err) =>
+      this.logger.warn(
+        `pump: steer event into turn ${turnId} failed (sweep will re-drive): ${err}`,
+      ),
+    );
   }
 
   /** Run ONE fresh turn that consumes a single event, stamping delivery at the registration hand-off. */
-  private async deliverEventViaFreshTurn(stimulus: EventStimulus, body: AgentMessage): Promise<void> {
+  private async deliverEventViaFreshTurn(
+    stimulus: EventStimulus,
+    body: AgentMessage,
+  ): Promise<void> {
     // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
     // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
-    const live = await this.turnRegistry.runningBrainTurn(stimulus.jobId).catch(() => null);
+    const live = await this.turnRegistry
+      .runningBrainTurn(stimulus.jobId)
+      .catch(() => null);
     if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
@@ -6716,7 +7546,9 @@ export class AgentSessionManager
         void this.stimulusStore
           .markChatDelivered(stimulus.id)
           .catch((err) =>
-            this.logger.debug(`event markDelivered ${stimulus.id} failed (sweep will retry): ${err}`),
+            this.logger.debug(
+              `event markDelivered ${stimulus.id} failed (sweep will retry): ${err}`,
+            ),
           );
       },
     });
@@ -6731,12 +7563,16 @@ export class AgentSessionManager
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
       );
     } catch (err) {
-      this.logger.debug(`event delivery sweep query failed (will retry): ${err}`);
+      this.logger.debug(
+        `event delivery sweep query failed (will retry): ${err}`,
+      );
       return;
     }
     for (const ev of events) {
       void this.pumpEvent(ev).catch((err) =>
-        this.logger.debug(`event sweep pump failed for stimulus=${ev.id}: ${err}`),
+        this.logger.debug(
+          `event sweep pump failed for stimulus=${ev.id}: ${err}`,
+        ),
       );
     }
   }
@@ -6789,7 +7625,10 @@ export class AgentSessionManager
       const open = await this.store.openQuestionCards(jobId);
       if (open.length === 0) return null;
       const lines = open.map((c) => {
-        const gist = (c.header?.trim() || c.question || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+        const gist = (c.header?.trim() || c.question || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 160);
         return `  • [${c.questionId}] ${gist}`;
       });
       const n = open.length;
@@ -6838,7 +7677,10 @@ export class AgentSessionManager
    * the runtime `MEMORY_AUTORECALL_DISABLED` env guard here + the declarative `memoryPrependRule.enabled`.
    * Per-session dedup suppresses a fact already injected earlier in the same live session.
    */
-  private injectedMemoryFactIds(jobId: string, sessionId: string | null): Set<string> {
+  private injectedMemoryFactIds(
+    jobId: string,
+    sessionId: string | null,
+  ): Set<string> {
     let state = this.injectedMemoryByJob.get(jobId);
     if (!state || state.sessionId !== sessionId) {
       state = { sessionId, factIds: new Set<string>() };
@@ -6854,7 +7696,10 @@ export class AgentSessionManager
       state.sessionId = sessionId;
       return;
     }
-    this.injectedMemoryByJob.set(jobId, { sessionId, factIds: new Set<string>() });
+    this.injectedMemoryByJob.set(jobId, {
+      sessionId,
+      factIds: new Set<string>(),
+    });
   }
 
   private async buildMemoryRecallPrefix(
@@ -6871,15 +7716,22 @@ export class AgentSessionManager
         floor: 0.45,
       });
       if (facts.length === 0) return null;
-      const seen = this.injectedMemoryFactIds(stimulus.jobId, sessionId ?? null);
+      const seen = this.injectedMemoryFactIds(
+        stimulus.jobId,
+        sessionId ?? null,
+      );
       const fresh = facts.filter((f) => !seen.has(f.id));
       if (fresh.length === 0) return null;
-      const body = renderMemoryRecall(fresh.map((f) => ({ fact: f.fact, scope: f.scope })));
+      const body = renderMemoryRecall(
+        fresh.map((f) => ({ fact: f.fact, scope: f.scope })),
+      );
       if (!body) return null;
       for (const f of fresh) seen.add(f.id);
       return body;
     } catch (err) {
-      this.logger.debug(`memory auto-recall prefix failed (continuing): ${err}`);
+      this.logger.debug(
+        `memory auto-recall prefix failed (continuing): ${err}`,
+      );
       return null;
     }
   }
@@ -6904,7 +7756,9 @@ export class AgentSessionManager
         `no longer needed).\n${lines.join('\n')}`
       );
     } catch (err) {
-      this.logger.debug(`open-file-requests prefix failed (continuing): ${err}`);
+      this.logger.debug(
+        `open-file-requests prefix failed (continuing): ${err}`,
+      );
       return null;
     }
   }
@@ -6916,7 +7770,9 @@ export class AgentSessionManager
    * (that mechanism buffers for the BRAIN's own next turn — this needs to be seen by the operator now).
    * Fire-and-forget with a debug-logged catch, matching this file's other best-effort append style.
    */
-  private sandboxMilestoneNotifier(stimulus: ChatStimulus): (stage: SandboxMilestoneStage) => void {
+  private sandboxMilestoneNotifier(
+    stimulus: ChatStimulus,
+  ): (stage: SandboxMilestoneStage) => void {
     return (stage) => {
       const text =
         stage === 'image_build'
@@ -6924,7 +7780,9 @@ export class AgentSessionManager
           : "Preparing this thread's workspace container — one moment…";
       void this.store
         .appendSystemEvent(stimulus.jobId, text)
-        .catch((err) => this.logger.debug(`milestone event append failed: ${err}`));
+        .catch((err) =>
+          this.logger.debug(`milestone event append failed: ${err}`),
+        );
     };
   }
 
@@ -6968,13 +7826,18 @@ export class AgentSessionManager
     }
     await this.store
       .appendAtlasMessage(stimulus.jobId, text)
-      .catch((err) => this.logger.warn(`failed to persist brain reply: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`failed to persist brain reply: ${err}`),
+      );
   }
 
   /** Post a calm SYSTEM→OPERATOR notice (meta.source='system_notice') in-thread AND append the durable
    *  row. Mirrors {@link say} but is NOT in Atlas's voice — a benign harness ack the resumed brain
    *  session never authored, with no error/Resume semantics (contrast {@link saySystemOperator}). */
-  private async saySystemNotice(stimulus: ChatStimulus, text: string): Promise<void> {
+  private async saySystemNotice(
+    stimulus: ChatStimulus,
+    text: string,
+  ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
       repoId: stimulus.repoId,
@@ -7016,13 +7879,20 @@ export class AgentSessionManager
   private fmtReset(iso: string): string {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   }
 
   private async saySystemOperator(
     stimulus: ChatStimulus,
     text: string,
-    opts: { retryable?: boolean; sessionLimit?: boolean; resumeAt?: string } = {},
+    opts: {
+      retryable?: boolean;
+      sessionLimit?: boolean;
+      resumeAt?: string;
+    } = {},
   ): Promise<void> {
     const route = await this.store.route({
       orgId: stimulus.orgId,
@@ -7063,6 +7933,71 @@ export class AgentSessionManager
     // A turn-failure operator box is now outstanding — mark the thread halted so the sidebar renders it as
     // errored (a ✕ + needs-you dot) even though `status` is untouched. Cleared when the next turn starts.
     await this.store.setHalted(stimulus.jobId, true).catch(() => undefined);
+  }
+
+  /**
+   * Cancel any pending Main-lane host-retry backstop for this job (in-process 10s timer + its durable
+   * `kind:'retry'` resume clock), mirroring the build lane's `ThreadDriver.drive()` guard ('a fresh drive
+   * supersedes any parked host-retry timer'). Called at the top of a fresh `runChatTurnInner` and on the
+   * successful-turn tail: if the thread recovered through an unrelated path (an operator message, a pump/wake)
+   * the stale timer must not later seed a spurious 'Please continue' nudge into an already-healthy job, and the
+   * leftover retry clock must not keep `endTurnActivity` reporting `activity:'retrying'` or let the leader
+   * `SessionResumeSweep` re-fire the nudge. The durable clear is conditional on `kind:'retry'` + lane `main`,
+   * so it cannot clobber a session-limit park on either lane.
+   */
+  private async clearPendingHostRetry(jobId: string): Promise<void> {
+    const t = this.hostRetryTimers.get(jobId);
+    if (t) {
+      clearTimeout(t);
+      this.hostRetryTimers.delete(jobId);
+    }
+    await this.store
+      .clearRetrySessionResume(jobId, 'main')
+      .catch((e) =>
+        this.logger.warn(
+          `clearPendingHostRetry(${jobId}) clock clear failed: ${e}`,
+        ),
+      );
+  }
+
+  private async scheduleHostRetry(
+    stimulus: ChatStimulus,
+    reason: string,
+  ): Promise<void> {
+    const resumeAt = new Date(Date.now() + HOST_RETRY_BACKOFF_MS).toISOString();
+    await this.store
+      .setSessionResume(stimulus.jobId, resumeAt, {
+        lane: 'main',
+        reason,
+        resetSource: 'usage_api',
+        kind: 'retry',
+      })
+      .catch((e) => this.logger.warn(`setSessionResume(retry) failed: ${e}`));
+    const existing = this.hostRetryTimers.get(stimulus.jobId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      this.hostRetryTimers.delete(stimulus.jobId);
+      void (async () => {
+        try {
+          await this.store.setSessionResume(stimulus.jobId, null, null);
+          const title = await this.store
+            .jobTitle(stimulus.jobId)
+            .catch(() => null);
+          this.surface.seedSystemNotification?.(
+            stimulus.repoId,
+            stimulus.jobId,
+            retryResumeNudge(title ?? undefined),
+            { orgId: stimulus.orgId },
+          );
+        } catch (e) {
+          this.logger.warn(
+            `host-retry re-drive for thread=${stimulus.jobId} failed: ${e}`,
+          );
+        }
+      })();
+    }, HOST_RETRY_BACKOFF_MS);
+    if (typeof t.unref === 'function') t.unref();
+    this.hostRetryTimers.set(stimulus.jobId, t);
   }
 
   /** Find the open scoping job on this thread, or open a fresh one. */
@@ -7122,35 +8057,11 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
   );
 }
 
-/** Wake-eligible (d18): `now`/`queue` (absent = `now`) may WAKE a fresh turn; `later` only rides along. */
-function isWakeEligible(s: ChatStimulus): boolean {
-  return (s.priority ?? 'now') !== 'later';
-}
-
 /** A durable system seed that stamps a card (question/secret/file). Its stimulus row + card must be stamped
  *  TOGETHER on the consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or
  *  registration — so a register-then-fail turn re-drives instead of stranding a card behind a delivered row. */
 function isSeedCardDelivery(s: ChatStimulus): boolean {
   return !!s.seed && (!!s.seedQuestionId || !!s.seedSecretId || !!s.seedFileId);
-}
-
-/** Steer-eligible (d18): only `now` (absent = `now`) steers mid-turn; `queue`/`later` never interrupt a live turn. */
-function isNowPriority(s: ChatStimulus): boolean {
-  return (s.priority ?? 'now') === 'now';
-}
-
-/** Build the `<user name at>` chunk for a human message — attribution reconstructed from the stimulus
- *  author + receipt time at engine-render time (the persisted body stays clean). `role` is provisioned
- *  for later multi-operator persona context; unset for now. */
-function userChunkFor(stimulus: ChatStimulus): TurnChunk {
-  return {
-    kind: 'user',
-    body: stimulus.body,
-    attrs: {
-      name: stimulus.author.displayName,
-      at: stimulus.receivedAt.toISOString(),
-    },
-  };
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
@@ -7338,9 +8249,7 @@ function normalizeDecisions(raw: unknown): Decision[] {
   const out: Decision[] = [];
   for (const d of candidates) {
     const id =
-      typeof d['id'] === 'string' && d['id']
-        ? (d['id'] as string)
-        : nextDecisionId(out);
+      typeof d['id'] === 'string' && d['id'] ? d['id'] : nextDecisionId(out);
     out.push({
       id,
       decisionClass: d['decisionClass'] as Decision['decisionClass'],
@@ -7466,7 +8375,7 @@ function strArray(v: unknown): string[] | undefined {
 /** A safe, short error message for a tool's `{ ok:false, reason }` (surfaces validation/404 cleanly). */
 function errText(err: unknown): string {
   if (err && typeof err === 'object' && 'message' in err)
-    return String((err as { message: unknown }).message).slice(0, 200);
+    return String(err.message).slice(0, 200);
   return String(err).slice(0, 200);
 }
 

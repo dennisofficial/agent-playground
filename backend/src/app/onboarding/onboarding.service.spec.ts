@@ -394,6 +394,23 @@ describe('OnboardingService', () => {
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       await expect(svc.updateRepo('OTHER', connected.id, { name: 'x' })).rejects.toThrow(/not found/i);
     });
+
+    it('persists repo-level merge default updates (method + delete-branch)', async () => {
+      // The 'squash'/true DB column defaults themselves are real-Postgres behavior (this in-memory fake
+      // doesn't model `@Column({ default: ... })`) — covered by the int test's connect-then-read assertion.
+      // This exercises the write/read-back path the fake CAN model: `updateRepo` persisting new values.
+      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
+
+      const res = await svc.updateRepo('T1', connected.id, {
+        defaultAutoMergeMethod: 'rebase',
+        defaultAutoMergeDeleteBranch: false,
+      });
+      expect(res.defaultAutoMergeMethod).toBe('rebase');
+      expect(res.defaultAutoMergeDeleteBranch).toBe(false);
+      expect(repos.map.get('T1:web')?.default_auto_merge_method).toBe('rebase');
+      expect(repos.map.get('T1:web')?.default_auto_merge_delete_branch).toBe(false);
+    });
   });
 
   describe('reonboardRepo (operator-initiated re-onboard)', () => {

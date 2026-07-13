@@ -442,7 +442,8 @@ function bearerTokenFromSecret(secret: string, kind: 'setup-token' | 'personal' 
 /**
  * Parse ONE `/api/oauth/usage` window entry: `{ utilization: number(0–100), resets_at: ISO-8601 }`. The
  * response shape is unofficial — every field is guarded, and anything missing/malformed → `null` (the
- * window is simply omitted from the panel).
+ * window carries no data: the always-on Session/Weekly rows fall back to their unknown state, while
+ * dynamic windows (Opus/Sonnet/per-model) are simply omitted from the panel).
  */
 function parseWindow(raw: unknown): UsageWindow {
   if (!raw || typeof raw !== 'object') return null;
@@ -476,10 +477,13 @@ function parseUsageResponse(body: unknown): OrgUsage {
     sevenDaySonnet: parseWindow(pick('seven_day_sonnet')),
   };
   const modelWindows = parseModelWindows(root);
-  const ok = Boolean(
-    windows.fiveHour ?? windows.sevenDay ?? windows.sevenDayOpus ?? windows.sevenDaySonnet,
-  );
-  return { ...windows, fetchedAt: new Date().toISOString(), source: ok ? 'usage_api' : 'stale', ok, modelWindows };
+  // `ok` means "the endpoint responded" — NOT "we have at least one fixed window". A brand-new account
+  // that has used nothing yet returns every fixed window null (often with only per-model rows), yet the
+  // fetch fully succeeded: that is a fresh, not-started account, not an outage. Reaching here already means
+  // a 200 + parseable body, so this is always a successful response. Marking it `ok` lets the UI tell
+  // "Waiting for next turn" (responded, window not started) apart from "Usage unavailable" (a real fetch
+  // failure, which routes through `degradedUsage()` with `ok:false`).
+  return { ...windows, fetchedAt: new Date().toISOString(), source: 'usage_api', ok: true, modelWindows };
 }
 
 /**

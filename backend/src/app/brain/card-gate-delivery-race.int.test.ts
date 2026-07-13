@@ -232,6 +232,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       setActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
       getSecretCard: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),
@@ -284,26 +285,28 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const usage = { getResetAt: () => undefined };
 
     const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) };
     const manager = new AgentSessionManager(
       store as never, // store (1)
       inert, // driverStore (2)
-      inert, // memory (3)
-      inert, // approvals (4)
-      lifecycle as never, // lifecycle (5)
-      engineRunner, // engineRunner (6)
-      turnRegistry, // turnRegistry (7)
-      inert, // planReview (8)
-      inert, // dispatcher (9)
-      inert, // surface (10)
-      sandboxRows as never, // sandboxRows (11)
-      inert, // stimulusRows (12)
-      stimulusStore, // stimulusStore (13) — REAL, bound to Postgres
-      turnHarness as never, // turnHarness (14)
-      inert, // classifier (15)
-      inert, // ship (16)
-      inert, // repos (17)
-      inert, // awareness (18)
-      inert, // jobDeps (19)
+      autoMerge as never, // autoMerge (3)
+      inert, // memory (4)
+      inert, // approvals (5)
+      lifecycle as never, // lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, // planReview (9)
+      inert, // dispatcher (10)
+      inert, // surface (11)
+      sandboxRows as never, // sandboxRows (12)
+      inert, // stimulusRows (13)
+      stimulusStore, // stimulusStore (14) — REAL, bound to Postgres
+      turnHarness as never, // turnHarness (15)
+      inert, // classifier (16)
+      inert, // ship (17)
+      inert, // repos (18)
+      inert, // awareness (19)
+      inert, // jobDeps (20)
       creds as never, // creds (21)
       mcp as never, // mcp (22)
       election, // election (23)

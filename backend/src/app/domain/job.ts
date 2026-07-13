@@ -134,6 +134,10 @@ export interface Job {
   /** Who enabled auto-approve (users.id), used as the approver on auto-resolve; null if never enabled
    *  / enabling user deleted. */
   autoApproveBy: string | null;
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready PR auto-merges. See jobs.auto_merge. */
+  autoMerge: boolean;
+  /** Who most recently enabled auto-merge (users.id); null if never enabled / user deleted. */
+  autoMergeBy: string | null;
   /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
   createdBy: JobProvenance | null;
   createdAt: Date;

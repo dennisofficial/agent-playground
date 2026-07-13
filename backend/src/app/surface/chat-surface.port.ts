@@ -168,6 +168,13 @@ export interface ChatSurface {
       deliveredFileId?: string;
       deliveredSecretId?: string;
       seedRow?: SeedRow;
+      /**
+       * Routing coordinate — `'main'` (the brain, default) or a build lane (`'thread:<threadId>'`). d4 makes
+       * the seed MECHANISM lane-capable; `'main'` (or absent) is byte-identical to before. Build-lane routing
+       * is dispatched by the CALLER (`JitHostExecutor` → the build-lane seed path), not inside a surface impl —
+       * a surface adapter can't reach the driver seeder without a SurfaceModule↔DriverModule cycle.
+       */
+      lane?: string;
     },
   ): string;
 }

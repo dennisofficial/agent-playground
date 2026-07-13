@@ -88,6 +88,9 @@ export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
  *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
 export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
 export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
+/** The MERGE gate's "Merge PR" button — the THIRD human gate (after Approve/Ship). Auto-merge auto-clicks
+ *  the same gate. POSTs to the SAME `/approve` endpoint with a `value` of just `{ jobId }`. */
+export const MERGE_ACTION_ID = "atlas_approval:merge";
 /** The `atlas-prod` gated-write approval card's buttons — `Execute write` runs the operator's approved
  *  single SQL statement on the DML-only `mcp_writer` role; `Deny` marks the ledger row rejected. Its button
  *  `value` carries `{ jobId, writeId }` (the `prod_maintenance_write` row id). Must match the backend
@@ -103,6 +106,7 @@ export type ApprovalActionId =
   | typeof RETRACT_SHIP_ACTION_ID
   | typeof AMEND_APPROVE_ACTION_ID
   | typeof AMEND_DISMISS_ACTION_ID
+  | typeof MERGE_ACTION_ID
   | typeof DB_WRITE_APPROVE_ACTION_ID
   | typeof DB_WRITE_DENY_ACTION_ID;
 
@@ -132,11 +136,12 @@ export interface WebApprovalCard {
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
    * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
-   * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `db_write` — the `atlas-prod`
-   * gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the proposed
-   * statement rides `sql`/`estimatedRows`/`estimateLabel`/`error`.
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `merge` — the merge gate
+   * (`Merge PR`), posted once the PR is GitHub-mergeable; `threads`/`decisions` empty. `db_write` — the
+   * `atlas-prod` gated-write approval card (`Execute write` + `Deny`; `threads`/`decisions` empty); the
+   * proposed statement rides `sql`/`estimatedRows`/`estimateLabel`/`error`.
    */
-  kind?: "plan" | "direct" | "ship" | "amend" | "db_write";
+  kind?: "plan" | "direct" | "ship" | "amend" | "merge" | "db_write";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -564,6 +569,12 @@ export interface PipelineJob {
    *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
    *  onward — so the `no_job` (open) shape carries it too. */
   autoApproveMode: AutoApproveMode;
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the Merge gate). Orthogonal to autoApproveMode. */
+  autoMerge: boolean;
+  /** True when the PR is GitHub-mergeable right now (open + clean + CI not failing/pending) — gates the manual "Merge PR" button/card. */
+  mergeReady: boolean;
+  /** The Merge gate's verbatim `{ jobId }` value when mergeReady, else null. */
+  mergeValue: string | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the
@@ -623,6 +634,11 @@ export type PipelineState =
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
       autoApproveMode?: AutoApproveMode;
+      /** Carried on the open/pre-plan shape too (mirroring autoApproveMode), so the Merge toggle reflects an
+       *  auto-merge-armed job from creation onward — read via `pipelineAutoMerge()`. */
+      autoMerge?: boolean;
+      mergeReady?: boolean;
+      mergeValue?: string | null;
       blockedSeedMessage?: string | null;
     };
 
@@ -642,6 +658,25 @@ export function pipelineAutoApproveMode(
   const mode =
     "autoApproveMode" in pipeline ? pipeline.autoApproveMode : undefined;
   return mode ?? "off";
+}
+
+/** The job's auto-merge settings + manual-merge gate, from either pipeline shape (`no_job` carries them too,
+ *  mirroring `pipelineAutoApproveMode`). Reading via this helper — instead of gating on `pipelineJob()`,
+ *  which is null for the open/pre-plan shape — keeps the Merge toggle in sync for an auto-merge-armed job
+ *  that hasn't approved its first plan yet. */
+export function pipelineAutoMerge(pipeline: PipelineState | undefined): {
+  autoMerge: boolean;
+  mergeReady: boolean;
+  mergeValue: string | null;
+} {
+  const p = pipeline as
+    | { [K in keyof PipelineJob]?: PipelineJob[K] }
+    | undefined;
+  return {
+    autoMerge: p?.autoMerge ?? false,
+    mergeReady: p?.mergeReady ?? false,
+    mergeValue: p?.mergeValue ?? null,
+  };
 }
 
 // ── Context files (`…/threads/:jobId/context`) ────────────────────────────────────────────────

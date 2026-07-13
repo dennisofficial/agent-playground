@@ -6,6 +6,8 @@ import {
   Delete,
   Get,
   Header,
+  HttpException,
+  HttpStatus,
   Inject,
   Logger,
   NotFoundException,
@@ -22,6 +24,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -54,6 +57,7 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -73,6 +77,7 @@ import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
+import { resolveMergeApproval } from './resolve-merge-approval';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
@@ -80,6 +85,7 @@ import type { McpProposalServer } from './web-mcp-proposal-card';
 import type { WebOutboundMessage } from './web-surface';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
+import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { parseGitDiff, type JobDiff } from './job-diff';
@@ -155,6 +161,9 @@ const VALID_ACTION_IDS = new Set([
   // Dismiss just neutralizes the card. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule).
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
+  // The "Merge PR" gate button — same endpoint, but the `approval$` bridge routes it to the driver's merge
+  // resolution instead of a plan verdict (see WebSurfaceModule).
+  MERGE_ACTION_ID,
   // The atlas-prod gated DB-write card buttons — Execute runs the approved statement on the `mcp_writer`
   // role; Deny rejects it. Same endpoint, routed by the `approval$` bridge (see WebSurfaceModule). These
   // are NOT plan verdicts, so they skip the `awaiting_approval` + decisionRecordId invariant below.
@@ -337,6 +346,8 @@ interface CreateThreadDto {
   prNumber?: string | number;
   /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
   autoApproveMode?: string;
+  /** Operator-chosen auto-merge toggle to arm at creation; absent/false leaves the DB default. */
+  autoMerge?: boolean;
 }
 
 /**
@@ -383,6 +394,14 @@ interface RenameThreadDto {
 }
 interface SetAutoApproveDto {
   mode: AutoApproveMode;
+}
+interface SetAutoMergeDto {
+  autoMerge: boolean;
+}
+function coerceBoolean(raw: unknown): boolean | undefined {
+  if (raw === true || raw === 'true') return true;
+  if (raw === false || raw === 'false') return false;
+  return undefined;
 }
 interface ApproveDto {
   actionId: string;
@@ -577,6 +596,8 @@ export class WebSurfaceController {
     private readonly liveTurns: LiveTurnStore,
     private readonly driverStore: DriverStoreService,
     private readonly threadLifecycle: JobLifecycleService,
+    // The ONE merge resolution path — `setAutoMerge` immediately evaluates an already-ready PR on enable.
+    private readonly autoMerge: AutoMergeService,
     private readonly orgService: OrganizationService,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
@@ -619,6 +640,10 @@ export class WebSurfaceController {
     private readonly git: LocalGitService,
     // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
     private readonly jobDeps: JobDependencyService,
+    // Resolves `ThreadDriver` lazily for the SYNCHRONOUS manual-merge path (the "Merge PR" approve click
+    // awaits `resolveMergeApproval` → `mergeNow`). Placed after the last required dep so the controller's
+    // positional-arg unit tests keep their alignment.
+    private readonly moduleRef: ModuleRef,
     // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
@@ -808,6 +833,7 @@ export class WebSurfaceController {
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
     // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
     const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
+    const autoMerge = coerceBoolean(body.autoMerge) === true;
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -819,6 +845,14 @@ export class WebSurfaceController {
         ...(kind ? { kind } : {}),
         ...(autoApproveMode && autoApproveMode !== 'off'
           ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
+          : {}),
+        // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
+        // also records who armed it. The merge method + delete-branch are repo-level defaults now.
+        ...(autoMerge
+          ? {
+              auto_merge: true,
+              auto_merge_by: user.id,
+            }
           : {}),
       }),
     );
@@ -1095,6 +1129,7 @@ export class WebSurfaceController {
               blocks: s.blocks,
               active: s.active,
               startedAt: s.startedAt,
+              retrying: s.retrying,
             },
           },
         }),
@@ -1165,6 +1200,7 @@ export class WebSurfaceController {
       actionId !== RETRACT_SHIP_ACTION_ID &&
       actionId !== AMEND_APPROVE_ACTION_ID &&
       actionId !== AMEND_DISMISS_ACTION_ID &&
+      actionId !== MERGE_ACTION_ID &&
       actionId !== DB_WRITE_APPROVE_ACTION_ID &&
       actionId !== DB_WRITE_DENY_ACTION_ID
     ) {
@@ -1187,6 +1223,13 @@ export class WebSurfaceController {
     // Stamp the AUTHENTICATED operator (a real user uuid, FK-valid for `decision_records.approved_by`) as
     // the approver — never the client-sent `ruledBy` (untrusted, and a label like "U-OPERATOR" is not a
     // uuid, which previously made `store.approve` throw and the verdict silently no-op).
+    // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
+    // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
+    if (actionId === MERGE_ACTION_ID) {
+      const merged = await resolveMergeApproval(this.moduleRef, meta.jobId, user.id);
+      if (!merged) throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
+      return { ok: true, jobId: meta.jobId };
+    }
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
     return { ok: true, jobId: meta.jobId };
   }
@@ -2504,6 +2547,38 @@ export class WebSurfaceController {
       this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
     }
     return { ok: true, autoApproveMode: body.mode };
+  }
+
+  /** `PATCH …/jobs/:jobId/auto-merge` — flip the per-job auto-merge toggle. On enable, immediately
+   *  evaluates an already-ready PR through the exact same evaluator every trigger uses
+   *  (`AutoMergeService.maybeAutoMerge`) rather than blocking the request on the merge itself. */
+  @Patch('orgs/:orgId/repos/:repoId/jobs/:jobId/auto-merge')
+  @UseGuards(OrgMembershipGuard)
+  async setAutoMerge(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @CurrentUser() user: UserEntity,
+    @Param('jobId') jobId: string,
+    @Body() body: SetAutoMergeDto,
+  ): Promise<{ ok: boolean; autoMerge: boolean }> {
+    // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
+    await this.requireThread(jobId, org.id);
+    const enable = coerceBoolean(body.autoMerge) === true;
+    const result = await this.jobs.update(
+      { id: jobId, org_id: org.id },
+      {
+        auto_merge: enable,
+        // Stamp who enabled it; never clear on disable — the audit trail of the last arm stands.
+        ...(enable ? { auto_merge_by: user.id } : {}),
+      },
+    );
+    if (!result.affected) throw new NotFoundException('thread not found');
+    this.logger.log(`web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`);
+    if (enable) void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
+    const fresh = await this.jobs.findOneBy({ id: jobId });
+    return {
+      ok: true,
+      autoMerge: fresh?.auto_merge ?? enable,
+    };
   }
 
   /** `DELETE …/threads/:jobId` — tear down the sandbox + remove the thread and its messages. */

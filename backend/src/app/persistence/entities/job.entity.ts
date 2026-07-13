@@ -324,11 +324,18 @@ export class JobEntity extends TimestampedEntity {
    * Which lane is parked on {@link session_resume_at} + why, so the sweep dispatches to the right resume
    * rail (`main` re-drives via the seed path; `build` calls `ThreadDriver.resumePaused`). `resetSource`
    * records how the reset instant was determined (the live usage API vs. a best-effort parse of the CLI's
-   * "resets 5:20pm" string). Null when not parked. Nullable jsonb, no default — a `() => '...'::jsonb`
-   * default makes `migration:generate` loop forever (see {@link halt}).
+   * "resets 5:20pm" string). `kind` distinguishes a `session_limit` park (park-until-reset) from a `retry`
+   * park (the 10×/10s host backstop), so the resume sweep dispatches to the right rail. Null when not
+   * parked. Nullable jsonb, no default — a `() => '...'::jsonb` default makes `migration:generate` loop
+   * forever (see {@link halt}).
    */
   @Column({ type: 'jsonb', nullable: true })
-  session_resume!: { lane: 'main' | 'build'; reason: string; resetSource: 'usage_api' | 'parsed_string' } | null;
+  session_resume!: {
+    lane: 'main' | 'build';
+    reason: string;
+    resetSource: 'usage_api' | 'parsed_string';
+    kind?: 'session_limit' | 'retry';
+  } | null;
 
   /**
    * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned
@@ -379,4 +386,20 @@ export class JobEntity extends TimestampedEntity {
   @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'auto_approve_by' })
   autoApproveByUser?: UserEntity | null;
+
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the
+   *  Merge gate). Orthogonal to auto_approve_mode — a human may still gate plan/ship while Atlas babysits
+   *  the PR to green and merges it. Strictly per-job (no repo/org default). */
+  @Column({ type: 'boolean', default: false })
+  auto_merge!: boolean;
+
+  /** Who most recently ENABLED auto-merge (FK → users.id, SET NULL) — the approver id stamped on an
+   *  auto-clicked merge. Null when never enabled / the user was deleted (falls back to org owner). Not
+   *  cleared on disable (kept for audit). */
+  @Column({ type: 'uuid', nullable: true })
+  auto_merge_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'auto_merge_by' })
+  autoMergeByUser?: UserEntity | null;
 }

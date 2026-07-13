@@ -55,8 +55,16 @@ import {
   haltThreadIdx,
 } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
-import { NavigatorApproveButton, NavigatorShipButton } from "./spec-approval";
-import { pipelineAutoApproveMode, pipelineMainTasks } from "@/lib/api/types";
+import {
+  NavigatorApproveButton,
+  NavigatorMergeButton,
+  NavigatorShipButton,
+} from "./spec-approval";
+import {
+  pipelineAutoApproveMode,
+  pipelineAutoMerge,
+  pipelineMainTasks,
+} from "@/lib/api/types";
 import type { AutoApproveMode } from "@workspace/shared";
 import { autoPillView } from "./auto-approve-mode";
 import { AutoApprovePopover } from "./auto-approve-popover";
@@ -112,10 +120,14 @@ function AutoApproveToggle({
   mode,
   disabled,
   onChange,
+  autoMerge,
+  onSetMerge,
 }: {
   mode: AutoApproveMode;
   disabled?: boolean;
   onChange: (mode: AutoApproveMode) => void;
+  autoMerge: boolean;
+  onSetMerge: (body: { autoMerge: boolean }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -163,6 +175,8 @@ function AutoApproveToggle({
             setDraftMode(next);
             onChange(next);
           }}
+          autoMerge={autoMerge}
+          onSetMerge={onSetMerge}
           onClose={() => setOpen(false)}
         />
       ) : null}
@@ -217,6 +231,7 @@ export function Navigator({
   onRename,
   onDelete,
   onSetAutoApprove,
+  onSetAutoMerge,
   deleting,
   hasOpenPr,
   deleteReady,
@@ -250,6 +265,8 @@ export function Navigator({
   onDelete?: () => void;
   /** Set the per-job auto-approve mode — the header pill's popover. Absent ⇒ the pill isn't rendered. */
   onSetAutoApprove?: (mode: AutoApproveMode) => void;
+  /** Set the per-job auto-merge settings — the same header pill's popover Merge section. */
+  onSetAutoMerge?: (body: { autoMerge: boolean }) => void;
   deleting?: boolean;
   /** True when the job's PR is open — routes delete through the secondary PR-choice dialog instead of the
    *  inline double-click confirm. */
@@ -272,6 +289,10 @@ export function Navigator({
   // AUTO-APPROVE mode — read from the RAW pipeline (not `job`), so it works for an open/pre-plan job whose
   // pipeline is the `no_job` shape (`pipelineJob()` is null there but the mode still rides along).
   const autoApproveMode = pipelineAutoApproveMode(pipeline);
+  // AUTO-MERGE setting + manual-merge gate — read from the RAW pipeline (not `job`) the same cross-shape way
+  // as `autoApproveMode`, so an auto-merge-armed job still in the `no_job` (open/pre-plan) shape shows the
+  // Merge toggle correctly instead of reading stale/off (`pipelineJob()` is null there).
+  const { autoMerge, mergeReady, mergeValue } = pipelineAutoMerge(pipeline);
   const branch = job?.featureBranch ?? job?.baseBranch ?? undefined;
   // DRIFT: the agent switched the sandbox HEAD to a branch other than the host-named featureBranch. Surfaced
   // (never blocked) — the live branch is what actually ships. Null when there's no divergence to show.
@@ -366,6 +387,8 @@ export function Navigator({
                 st === "done" || st === "cancelled" || st === "deleting"
               }
               onChange={onSetAutoApprove}
+              autoMerge={autoMerge}
+              onSetMerge={onSetAutoMerge ?? (() => {})}
             />
           ) : null}
           {onDelete || onRename ? (
@@ -616,6 +639,12 @@ export function Navigator({
               value={shipValue}
               previewRequestedAt={previewRequestedAt}
             />
+          </div>
+        ) : null}
+        {/* Merge PR — the THIRD human gate, pinned once the PR is GitHub-mergeable. */}
+        {mergeReady && mergeValue ? (
+          <div className="mt-2">
+            <NavigatorMergeButton jobRef={jobRef} value={mergeValue} />
           </div>
         ) : null}
       </div>

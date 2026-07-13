@@ -52,6 +52,12 @@ export {
 } from './static-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
+  LANE_SEEDER,
+  BuildLaneDeliveryService,
+  type LaneSeeder,
+  type LaneSeedTarget,
+} from './build-lane-delivery.service';
+export {
   clampEvidenceOutput,
   BUILD_RELEVANT_FILE_RE,
   NON_RUNTIME_FILE_RE,

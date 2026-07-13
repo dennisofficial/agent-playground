@@ -1,4 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import type { AutoMergeMethod } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 
@@ -100,6 +101,14 @@ export class RepoEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   convention_profile_slug!: string | null;
+
+  /** Default GitHub merge method for auto-merge / the manual Merge PR button on this repo's jobs. */
+  @Column({ type: 'text', default: 'squash' })
+  default_auto_merge_method!: AutoMergeMethod;
+
+  /** Whether to delete the head branch after a merge, for this repo's jobs. */
+  @Column({ type: 'boolean', default: true })
+  default_auto_merge_delete_branch!: boolean;
 
   /** Whether the org's GitHub token reached the repo at the last connect/validate. */
   @Column({ type: 'boolean', default: false })

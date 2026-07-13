@@ -1,6 +1,12 @@
 "use client";
 
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import {
@@ -17,14 +23,17 @@ const MIN_WIDTH = 180;
 
 /**
  * The header "Auto" pill's popover — two independent switches (Plan gate / Ship gate) that compose into
- * one `AutoApproveMode`. Modeled on {@link SelectionCommentPopover}'s portal + `position:fixed` + dismiss
- * pattern, but anchored under the pill instead of a text selection.
+ * one `AutoApproveMode`, plus a separate Merge section (a plain boolean, orthogonal to the approve mode).
+ * Modeled on {@link SelectionCommentPopover}'s portal + `position:fixed` + dismiss pattern, but anchored
+ * under the pill instead of a text selection.
  */
 export function AutoApprovePopover({
   anchorRect,
   triggerRef,
   mode,
   onSelect,
+  autoMerge,
+  onSetMerge,
   onClose,
 }: {
   anchorRect: DOMRect;
@@ -33,16 +42,23 @@ export function AutoApprovePopover({
   triggerRef: RefObject<HTMLElement | null>;
   mode: AutoApproveMode;
   onSelect: (mode: AutoApproveMode) => void;
+  autoMerge: boolean;
+  onSetMerge: (body: { autoMerge: boolean }) => void;
   onClose: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(mode);
   const [draftMode, setDraftMode] = useState(mode);
+  const [draftMerge, setDraftMerge] = useState(autoMerge);
 
   useEffect(() => {
     draftRef.current = mode;
     setDraftMode(mode);
   }, [mode]);
+
+  useEffect(() => {
+    setDraftMerge(autoMerge);
+  }, [autoMerge]);
 
   const selectMode = useCallback(
     (next: AutoApproveMode) => {
@@ -65,6 +81,14 @@ export function AutoApprovePopover({
       selectMode(composeMode(modeApprovesPlan(draftRef.current), nextShip));
     },
     [selectMode],
+  );
+
+  const setMerge = useCallback(
+    (next: boolean) => {
+      setDraftMerge(next);
+      onSetMerge({ autoMerge: next });
+    },
+    [onSetMerge],
   );
 
   useEffect(() => {
@@ -114,7 +138,7 @@ export function AutoApprovePopover({
       ref={popRef}
       data-testid="auto-approve-popover"
       role="dialog"
-      aria-label="Auto-approve settings"
+      aria-label="Automation settings"
       className="fixed z-[90] rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
       style={{
         left,
@@ -126,7 +150,7 @@ export function AutoApprovePopover({
       <div className="mb-0.5 flex items-center gap-1.5">
         <ShieldCheck size={12} className="text-accent" strokeWidth={2.25} />
         <span className="font-mono text-[9.5px] font-semibold tracking-[0.06em] uppercase text-accent-2">
-          Auto-approve
+          Automation
         </span>
         <span className="flex-1" />
         <button
@@ -158,9 +182,20 @@ export function AutoApprovePopover({
         onChange={setShip}
       />
 
+      <div className="border-t border-border pt-2.5">
+        <SwitchRow
+          title="Merge"
+          description="Merge the PR automatically once it's green & mergeable"
+          checked={draftMerge}
+          first
+          testId="auto-merge-toggle"
+          onChange={setMerge}
+        />
+      </div>
+
       <div className="mt-2.5 border-t border-border pt-2.5 text-[10px] leading-relaxed text-faint">
-        Applies to this job only — you can flip either gate back at any time
-        before it fires.
+        Applies to this job only — you can flip any gate back at any time before
+        it fires.
       </div>
     </div>,
     document.body,

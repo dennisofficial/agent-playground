@@ -48,6 +48,7 @@ function makeController(threadOrgId: string) {
     {} as never, // liveTurns
     {} as never, // driverStore
     threadLifecycle as never,
+    {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
     {} as never, // messages
@@ -68,6 +69,7 @@ function makeController(threadOrgId: string) {
     {} as never, // skillInstaller (SkillInstallerService)
     git as never,
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, threads, threadLifecycle, git };
 }

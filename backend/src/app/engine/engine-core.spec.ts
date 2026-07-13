@@ -26,13 +26,24 @@ afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
 /** A default engine-home key for tests that don't care about its exact shape (most of this file — the
  *  isolated-home behavior itself is `engine-home.spec.ts`'s job). */
-const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
+const TEST_KEY: EngineHomeKey = {
+  orgId: 'acme',
+  repoId: 'atlas',
+  jobId: 'feat',
+  type: 'build',
+};
 
 /** A fake Claude SDK whose `query` records the options it was called with and yields a success. */
 function fakeClaudeSdk() {
   const captured: { prompt?: string; options?: Record<string, unknown> } = {};
   const sdk = {
-    query: ({ prompt, options }: { prompt: string; options: Record<string, unknown> }) => {
+    query: ({
+      prompt,
+      options,
+    }: {
+      prompt: string;
+      options: Record<string, unknown>;
+    }) => {
       captured.prompt = prompt;
       captured.options = options;
       return (async function* () {
@@ -42,7 +53,11 @@ function fakeClaudeSdk() {
           subtype: 'success',
           session_id: 'sess-1',
           result: 'done',
-          usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2 },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 4,
+            cache_read_input_tokens: 2,
+          },
           total_cost_usd: 0.01,
         };
       })();
@@ -55,27 +70,64 @@ function fakeClaudeSdk() {
 function fakeRichClaudeSdk() {
   const captured: { options?: Record<string, unknown> } = {};
   const sdk = {
-    query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+    query: ({
+      options,
+    }: {
+      prompt: string;
+      options: Record<string, unknown>;
+    }) => {
       captured.options = options;
       return (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
-        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } };
-        yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } };
+        yield {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_delta',
+            delta: { type: 'text_delta', text: 'Hel' },
+          },
+        };
+        yield {
+          type: 'stream_event',
+          event: {
+            type: 'content_block_delta',
+            delta: { type: 'thinking_delta', thinking: 'hmm' },
+          },
+        };
         yield {
           type: 'assistant',
           message: {
             content: [
               { type: 'thinking', thinking: 'full thought' },
               { type: 'text', text: 'Hello' },
-              { type: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } },
+              {
+                type: 'tool_use',
+                id: 'tu1',
+                name: 'Read',
+                input: { path: 'README.md' },
+              },
             ],
           },
         };
         yield {
           type: 'user',
-          message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file contents', is_error: false }] },
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu1',
+                content: 'file contents',
+                is_error: false,
+              },
+            ],
+          },
         };
-        yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'Hello', usage: { input_tokens: 1, output_tokens: 1 } };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'Hello',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
       })();
     },
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
@@ -98,7 +150,11 @@ function fakeMultiTurnClaudeSdk() {
           type: 'assistant',
           message: {
             model: 'claude-opus-4-8',
-            usage: { input_tokens: 50, cache_read_input_tokens: 10000, cache_creation_input_tokens: 2000 },
+            usage: {
+              input_tokens: 50,
+              cache_read_input_tokens: 10000,
+              cache_creation_input_tokens: 2000,
+            },
             content: [{ type: 'tool_use', id: 'tu1', name: 'Task', input: {} }],
           },
         };
@@ -117,7 +173,11 @@ function fakeMultiTurnClaudeSdk() {
           type: 'assistant',
           message: {
             model: 'claude-opus-4-8',
-            usage: { input_tokens: 80, cache_read_input_tokens: 23000, cache_creation_input_tokens: 1000 },
+            usage: {
+              input_tokens: 80,
+              cache_read_input_tokens: 23000,
+              cache_creation_input_tokens: 1000,
+            },
             content: [{ type: 'text', text: 'done' }],
           },
         };
@@ -155,8 +215,14 @@ function fakeCodexSdk() {
         runStreamed: async () => ({
           events: (async function* () {
             yield { type: 'thread.started', job_id: 'thread-1' };
-            yield { type: 'item.completed', item: { type: 'agent_message', text: 'codex done' } };
-            yield { type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 3 } };
+            yield {
+              type: 'item.completed',
+              item: { type: 'agent_message', text: 'codex done' },
+            };
+            yield {
+              type: 'turn.completed',
+              usage: { input_tokens: 5, output_tokens: 3 },
+            };
           })(),
         }),
       };
@@ -165,7 +231,9 @@ function fakeCodexSdk() {
       return this.startThread(opts);
     }
   }
-  const sdk = { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk');
+  const sdk = {
+    Codex: FakeCodex,
+  } as unknown as typeof import('@openai/codex-sdk');
   return { sdk, ctorCalls, threadCalls };
 }
 
@@ -199,8 +267,14 @@ function fakeRefreshingCodexSdk(refreshedBlob: string | null) {
           return {
             events: (async function* () {
               yield { type: 'thread.started', job_id: 'thread-1' };
-              yield { type: 'item.completed', item: { type: 'agent_message', text: 'codex done' } };
-              yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } };
+              yield {
+                type: 'item.completed',
+                item: { type: 'agent_message', text: 'codex done' },
+              };
+              yield {
+                type: 'turn.completed',
+                usage: { input_tokens: 1, output_tokens: 1 },
+              };
             })(),
           };
         },
@@ -216,7 +290,9 @@ function fakeRefreshingCodexSdk(refreshedBlob: string | null) {
 describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('execute mode: write tools, default permission, isolated CLAUDE_CONFIG_DIR, subscription token threaded', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'claude',
       task: agentMessage('do it'),
@@ -240,6 +316,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // Subscription token threaded into the SUBPROCESS env (any ambient API key is stripped at the seam).
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth-tok');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    // The SDK is allowed to ride out its own retryable API errors natively (default 10 retries) instead of
+    // failing the turn on the first overloaded/5xx blip.
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('10');
     // settingSources ['user'] = only <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op), never CLAUDE.md,
     // never the untrusted worktree's own project-scope config (see engine-core.ts's options comment).
     expect(opts.settingSources).toEqual(['user']);
@@ -248,13 +327,19 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // Result + usage surfaced.
     expect(res.result).toBe('done');
     expect(res.sessionId).toBe('sess-1');
-    expect(res.usage).toMatchObject({ inputTokens: 12, outputTokens: 4, costUsd: 0.01 });
+    expect(res.usage).toMatchObject({
+      inputTokens: 12,
+      outputTokens: 4,
+      costUsd: 0.01,
+    });
   });
 
   it('threads modelReasoningEffort to the Claude SDK Options.effort (mapping minimal→low, omitting when unset)', async () => {
     const runWith = async (modelReasoningEffort?: ReasoningEffort) => {
       const { sdk, captured } = fakeClaudeSdk();
-      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+        homeRoot: HOME_ROOT,
+      });
       await core.run({
         engine: 'claude',
         task: agentMessage('do it'),
@@ -279,9 +364,22 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('writer subagents (implement/implement-deep) are spawnable ONLY on execute turns, not plan/review', async () => {
     const run = async (mode: 'execute' | 'plan' | 'review') => {
       const { sdk, captured } = fakeClaudeSdk();
-      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
-      await core.run({ engine: 'claude', task: agentMessage('t'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode, auth: { secret: 'tok' } });
-      return captured.options!.agents as Record<string, { description: string; tools: string[]; model: string }>;
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+        homeRoot: HOME_ROOT,
+      });
+      await core.run({
+        engine: 'claude',
+        task: agentMessage('t'),
+        cwd: '/tmp/wt',
+        systemPrompt: agentMessage('p'),
+        sandboxKey: TEST_KEY,
+        mode,
+        auth: { secret: 'tok' },
+      });
+      return captured.options!.agents as Record<
+        string,
+        { description: string; tools: string[]; model: string }
+      >;
     };
 
     const execAgents = await run('execute');
@@ -291,7 +389,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(execAgents.implement.model).toBe('claude-sonnet-5');
     expect(execAgents['implement-deep'].model).toBe('opus');
     for (const w of [execAgents.implement, execAgents['implement-deep']]) {
-      expect(w.tools).toEqual(expect.arrayContaining(['Write', 'Edit', 'Bash']));
+      expect(w.tools).toEqual(
+        expect.arrayContaining(['Write', 'Edit', 'Bash']),
+      );
       expect(w.tools).not.toContain('Task');
     }
     // The advisory read-only subagent is still there.
@@ -303,16 +403,22 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(execAgents.validate).toBeDefined();
     expect(execAgents.validate.description).toContain('$ATLAS_EVIDENCE_DIR');
     expect(execAgents.validate.description).toContain('EVIDENCE panel');
-    expect(execAgents.validate.description).not.toContain('/context/artifacts/');
+    expect(execAgents.validate.description).not.toContain(
+      '/context/artifacts/',
+    );
     expect(execAgents.validate.model).toBe('claude-sonnet-5');
-    expect(execAgents.validate.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+    expect(execAgents.validate.tools).toEqual(
+      expect.arrayContaining(['Bash', 'Write']),
+    );
     expect(execAgents.validate.tools).not.toContain('Task');
 
     // The design-fidelity `prototype` subagent: execute-only, Sonnet, Bash + Write (to author the mockup)
     // but NO Task (no recursive fan-out) and NO Edit (authors one new file, never edits source).
     expect(execAgents.prototype).toBeDefined();
     expect(execAgents.prototype.model).toBe('claude-sonnet-5');
-    expect(execAgents.prototype.tools).toEqual(expect.arrayContaining(['Bash', 'Write']));
+    expect(execAgents.prototype.tools).toEqual(
+      expect.arrayContaining(['Bash', 'Write']),
+    );
     expect(execAgents.prototype.tools).not.toContain('Task');
     expect(execAgents.prototype.tools).not.toContain('Edit');
 
@@ -329,7 +435,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('do it'),
@@ -346,18 +454,37 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       input: Record<string, unknown>,
     ) => Promise<{ behavior: string }>;
     // Inside the worktree → allowed.
-    expect(await canUseTool('Write', { file_path: '/workspace/src/x.ts' })).toMatchObject({ behavior: 'allow' });
+    expect(
+      await canUseTool('Write', { file_path: '/workspace/src/x.ts' }),
+    ).toMatchObject({ behavior: 'allow' });
     // Inside the extra writable root (`/context`) → allowed (was the Bash-fallback bug).
-    expect(await canUseTool('Write', { file_path: '/context/specs/plan.md' })).toMatchObject({ behavior: 'allow' });
-    expect(await canUseTool('Edit', { file_path: '/context/artifacts/preview.html' })).toMatchObject({ behavior: 'allow' });
+    expect(
+      await canUseTool('Write', { file_path: '/context/specs/plan.md' }),
+    ).toMatchObject({ behavior: 'allow' });
+    expect(
+      await canUseTool('Edit', {
+        file_path: '/context/artifacts/preview.html',
+      }),
+    ).toMatchObject({ behavior: 'allow' });
     // Outside both → denied.
-    expect(await canUseTool('Write', { file_path: '/etc/passwd' })).toMatchObject({ behavior: 'deny' });
+    expect(
+      await canUseTool('Write', { file_path: '/etc/passwd' }),
+    ).toMatchObject({ behavior: 'deny' });
   });
 
   it('execute mode: skills are read-only by default, editable only with a matching grant', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, skillsRoot: '/skills' });
-    const skills = [{ name: 'house-migrations', description: 'd', dirPath: 'house-migrations' }];
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+      skillsRoot: '/skills',
+    });
+    const skills = [
+      {
+        name: 'house-migrations',
+        description: 'd',
+        dirPath: 'house-migrations',
+      },
+    ];
     await core.run({
       engine: 'claude',
       task: agentMessage('do it'),
@@ -374,23 +501,44 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       input: Record<string, unknown>,
     ) => Promise<{ behavior: string; message?: string }>;
     const claudeConfigDir = atlasEngineHomeDir(HOME_ROOT, 'claude', TEST_KEY);
-    const composedPath = join(claudeConfigDir, 'skills', 'house-migrations', 'SKILL.md');
+    const composedPath = join(
+      claudeConfigDir,
+      'skills',
+      'house-migrations',
+      'SKILL.md',
+    );
     const storePath = '/skills/house-migrations/SKILL.md';
     // Granted skill: allowed via both the composed symlink path AND the resolved store path.
-    expect(await canUseTool('Edit', { file_path: composedPath })).toMatchObject({ behavior: 'allow' });
-    expect(await canUseTool('Write', { file_path: storePath })).toMatchObject({ behavior: 'allow' });
+    expect(await canUseTool('Edit', { file_path: composedPath })).toMatchObject(
+      { behavior: 'allow' },
+    );
+    expect(await canUseTool('Write', { file_path: storePath })).toMatchObject({
+      behavior: 'allow',
+    });
     // A DIFFERENT (ungranted) skill under the same composed dir → denied, with the unlock hint.
-    const ungrantedPath = join(claudeConfigDir, 'skills', 'other-skill', 'SKILL.md');
+    const ungrantedPath = join(
+      claudeConfigDir,
+      'skills',
+      'other-skill',
+      'SKILL.md',
+    );
     const denied = await canUseTool('Edit', { file_path: ungrantedPath });
     expect(denied.behavior).toBe('deny');
-    expect(denied.message).toContain("request_skill_edit_access({ skill: 'other-skill' })");
+    expect(denied.message).toContain(
+      "request_skill_edit_access({ skill: 'other-skill' })",
+    );
     // Reads are never touched by the skill guard.
-    expect(await canUseTool('Read', { file_path: ungrantedPath })).toMatchObject({ behavior: 'allow' });
+    expect(
+      await canUseTool('Read', { file_path: ungrantedPath }),
+    ).toMatchObject({ behavior: 'allow' });
   });
 
   it('execute mode: with no grantedSkills at all, ANY skill path is denied', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT, skillsRoot: '/skills' });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+      skillsRoot: '/skills',
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('do it'),
@@ -399,7 +547,13 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       sandboxKey: TEST_KEY,
       mode: 'execute',
       auth: { secret: 'tok' },
-      skills: [{ name: 'house-migrations', description: 'd', dirPath: 'house-migrations' }],
+      skills: [
+        {
+          name: 'house-migrations',
+          description: 'd',
+          dirPath: 'house-migrations',
+        },
+      ],
     });
     const canUseTool = captured.options!.canUseTool as (
       name: string,
@@ -408,14 +562,21 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const claudeConfigDir = atlasEngineHomeDir(HOME_ROOT, 'claude', TEST_KEY);
     expect(
       await canUseTool('Edit', {
-        file_path: join(claudeConfigDir, 'skills', 'house-migrations', 'SKILL.md'),
+        file_path: join(
+          claudeConfigDir,
+          'skills',
+          'house-migrations',
+          'SKILL.md',
+        ),
       }),
     ).toMatchObject({ behavior: 'deny' });
   });
 
   it('plan mode: permissionMode plan, ExitPlanMode tool present, no writes flag in canUseTool', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('plan it'),
@@ -432,7 +593,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('review mode: read-only tool set, default permission, no Write/Edit', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('review it'),
@@ -450,7 +613,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('richStream: enables partial stream + thinking, emits token deltas, thinking, tool_use(input) + tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -469,46 +634,168 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
     const kinds = events.map((e) => e.kind);
     expect(kinds).toEqual(
-      expect.arrayContaining(['text_delta', 'thinking_delta', 'thinking', 'text', 'tool_use', 'tool_result']),
+      expect.arrayContaining([
+        'text_delta',
+        'thinking_delta',
+        'thinking',
+        'text',
+        'tool_use',
+        'tool_result',
+      ]),
     );
-    const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<EngineEvent, { kind: 'tool_use' }>;
+    const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<
+      EngineEvent,
+      { kind: 'tool_use' }
+    >;
     expect(toolUse).toMatchObject({ id: 'tu1', name: 'Read' });
     expect(toolUse.input).toMatchObject({ path: 'README.md' });
-    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
-    expect(toolResult).toMatchObject({ id: 'tu1', result: 'file contents', isError: false });
+    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<
+      EngineEvent,
+      { kind: 'tool_result' }
+    >;
+    expect(toolResult).toMatchObject({
+      id: 'tu1',
+      result: 'file contents',
+      isError: false,
+    });
   });
 
   it('richStream: forwards an Edit `tool_use_result.structuredPatch` (real file offsets) onto tool_result', async () => {
-    const hunks = [{ oldStart: 79, oldLines: 7, newStart: 79, newLines: 8, lines: [' a', '-b', '+c', '+d'] }];
+    const hunks = [
+      {
+        oldStart: 79,
+        oldLines: 7,
+        newStart: 79,
+        newLines: 8,
+        lines: [' a', '-b', '+c', '+d'],
+      },
+    ];
     const sdk = {
       query: () =>
         (async function* () {
           yield { type: 'system', subtype: 'init', session_id: 's' };
           yield {
             type: 'assistant',
-            message: { content: [{ type: 'tool_use', id: 'e1', name: 'Edit', input: { file_path: 'x.md' } }] },
+            message: {
+              content: [
+                {
+                  type: 'tool_use',
+                  id: 'e1',
+                  name: 'Edit',
+                  input: { file_path: 'x.md' },
+                },
+              ],
+            },
           };
           yield {
             type: 'user',
             tool_use_result: { structuredPatch: hunks },
-            message: { content: [{ type: 'tool_result', tool_use_id: 'e1', content: 'updated', is_error: false }] },
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'e1',
+                  content: 'updated',
+                  is_error: false,
+                },
+              ],
+            },
           };
-          yield { type: 'result', subtype: 'success', session_id: 's', result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'ok',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const events: EngineEvent[] = [];
-    await core.run({ engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' }, richStream: true, onEvent: (e) => events.push(e) });
+    await core.run({
+      engine: 'claude',
+      task: agentMessage('x'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+      richStream: true,
+      onEvent: (e) => events.push(e),
+    });
 
-    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
+    const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<
+      EngineEvent,
+      { kind: 'tool_result' }
+    >;
     expect(toolResult.structuredPatch).toEqual(hunks);
+  });
+
+  it('surfaces an SDK-native api_retry system frame as an api_retry EngineEvent (mid-turn, no turn end)', async () => {
+    const sdk = {
+      query: () =>
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'system',
+            subtype: 'api_retry',
+            attempt: 2,
+            max_retries: 10,
+            retry_delay_ms: 4000,
+            error_status: 529,
+            error: 'overloaded_error',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'ok',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
+    const events: EngineEvent[] = [];
+    await core.run({
+      engine: 'claude',
+      task: agentMessage('x'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+      onEvent: (e) => events.push(e),
+    });
+    const retryEvent = events.find((e) => e.kind === 'api_retry') as Extract<
+      EngineEvent,
+      { kind: 'api_retry' }
+    >;
+    expect(retryEvent).toMatchObject({
+      kind: 'api_retry',
+      attempt: 2,
+      maxRetries: 10,
+      retryDelayMs: 4000,
+      errorStatus: 529,
+      reason: 'overloaded_error',
+    });
   });
 
   it('non-success result: throw carries the subtype AND the SDKResultError detail + stderr tail', async () => {
     const sdk = {
-      query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+      query: ({
+        options,
+      }: {
+        prompt: string;
+        options: Record<string, unknown>;
+      }) => {
         // The SDK routes subprocess stderr through options.stderr; the real cause lives here.
-        (options.stderr as (d: string) => void)?.('API Error: 529 overloaded_error\n');
+        (options.stderr as (d: string) => void)?.(
+          'API Error: 529 overloaded_error\n',
+        );
         return (async function* () {
           yield { type: 'system', subtype: 'init', session_id: 's' };
           yield {
@@ -522,15 +809,29 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
         })();
       },
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await expect(
-      core.run({ engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } }),
-    ).rejects.toThrow(/Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s);
+      core.run({
+        engine: 'claude',
+        task: agentMessage('x'),
+        cwd: '/tmp/wt',
+        systemPrompt: agentMessage('p'),
+        sandboxKey: TEST_KEY,
+        mode: 'execute',
+        auth: { secret: 'tok' },
+      }),
+    ).rejects.toThrow(
+      /Claude engine ended: error_during_execution.*stop_reason=refusal.*errors=boom: upstream failed.*stderr\(tail\)=.*529 overloaded_error/s,
+    );
   });
 
   it('without richStream: no partial stream; tool stays name-only; no thinking/tool_result', async () => {
     const { sdk, captured } = fakeRichClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const events: EngineEvent[] = [];
     await core.run({
       engine: 'claude',
@@ -555,7 +856,11 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
   it('steerable: runs streaming-input mode — delivers the task, then injects a steer with priority:now', async () => {
     // A fake SDK that CONSUMES the prompt iterable (streaming-input mode): reads the task, finishes a
     // round-trip, then reads a second message (the injected steer) and finishes a steered round-trip.
-    const seen: Array<{ type?: string; message?: { content?: unknown }; priority?: string }> = [];
+    const seen: Array<{
+      type?: string;
+      message?: { content?: unknown };
+      priority?: string;
+    }> = [];
     const sdk = {
       query: ({ prompt }: { prompt: AsyncIterable<{ type: string }> }) =>
         (async function* () {
@@ -565,12 +870,28 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
           yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
           // First committed assistant message ⇒ the engine flushes any HELD steer (a steer that arrives
           // before this point is buffered — injecting priority:'now' pre-stream aborts the turn).
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] }, session_id: 'sess-1' };
-          yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'ok' }] },
+            session_id: 'sess-1',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 'sess-1',
+            result: 'r1',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
           const second = await iter.next(); // the steer, injected once the turn is streaming
           if (!second.done) {
-            seen.push(second.value as (typeof seen)[number]);
-            yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
+            seen.push(second.value);
+            yield {
+              type: 'result',
+              subtype: 'success',
+              session_id: 'sess-1',
+              result: 'r2',
+              usage: { input_tokens: 1, output_tokens: 1 },
+            };
           }
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
@@ -582,7 +903,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       },
     };
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'claude',
       task: agentMessage('do the thing'),
@@ -596,8 +919,15 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     });
 
     // The initial prompt message is the task; the second is the steer, tagged priority:'now'.
-    expect(seen[0]).toMatchObject({ type: 'user', message: { role: 'user', content: 'do the thing' } });
-    expect(seen[1]).toMatchObject({ type: 'user', message: { role: 'user', content: 'focus on the API layer' }, priority: 'now' });
+    expect(seen[0]).toMatchObject({
+      type: 'user',
+      message: { role: 'user', content: 'do the thing' },
+    });
+    expect(seen[1]).toMatchObject({
+      type: 'user',
+      message: { role: 'user', content: 'focus on the API layer' },
+      priority: 'now',
+    });
     // The steered continuation's result wins.
     expect(res.result).toBe('r2');
   });
@@ -607,19 +937,48 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // injected steer. The steer's redelivery is gated to arrive AFTER injection (a lost-ack re-drive).
     const pushed: unknown[] = [];
     const sdk = {
-      query: ({ prompt }: { prompt: AsyncIterable<{ type: string; message?: { content?: unknown } }> }) =>
+      query: ({
+        prompt,
+      }: {
+        prompt: AsyncIterable<{
+          type: string;
+          message?: { content?: unknown };
+        }>;
+      }) =>
         (async function* () {
           const iter = prompt[Symbol.asyncIterator]();
           const first = await iter.next();
-          pushed.push((first.value as { message?: { content?: unknown } }).message?.content);
+          pushed.push(
+            (first.value as { message?: { content?: unknown } }).message
+              ?.content,
+          );
           yield { type: 'system', subtype: 'init', session_id: 's' };
           // First assistant message ⇒ flush the held steer so it injects (subtype=success regime).
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] }, session_id: 's' };
-          yield { type: 'result', subtype: 'success', session_id: 's', result: 'r1', usage: { input_tokens: 1, output_tokens: 1 } };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'ok' }] },
+            session_id: 's',
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'r1',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
           // The injected steer (id S1) is read exactly once; the redelivery is a no-op push (still re-acks).
           const a = await iter.next();
-          if (!a.done) pushed.push((a.value as { message?: { content?: unknown } }).message?.content);
-          yield { type: 'result', subtype: 'success', session_id: 's', result: 'r2', usage: { input_tokens: 1, output_tokens: 1 } };
+          if (!a.done)
+            pushed.push(
+              (a.value as { message?: { content?: unknown } }).message?.content,
+            );
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'r2',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 
@@ -638,7 +997,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     };
 
     const acks: string[] = [];
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('the task'),
@@ -668,26 +1029,52 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // message aborts the turn. So a steer arriving pre-stream must be HELD (not pushed, not acked) until the
     // first `assistant` message; only then is it injected + acked. Here the steer is available immediately,
     // but the SDK reads the injected message (and emits the ack) ONLY after the assistant message is yielded.
-    const pushedAfterEachStage: { beforeAssistant: unknown[]; afterAssistant: unknown[] } = {
+    const pushedAfterEachStage: {
+      beforeAssistant: unknown[];
+      afterAssistant: unknown[];
+    } = {
       beforeAssistant: [],
       afterAssistant: [],
     };
     const acks: string[] = [];
     let sawAssistant = false;
     const sdk = {
-      query: ({ prompt }: { prompt: AsyncIterable<{ type: string; message?: { content?: unknown } }> }) =>
+      query: ({
+        prompt,
+      }: {
+        prompt: AsyncIterable<{
+          type: string;
+          message?: { content?: unknown };
+        }>;
+      }) =>
         (async function* () {
           const iter = prompt[Symbol.asyncIterator]();
           await iter.next(); // the task
           yield { type: 'system', subtype: 'init', session_id: 's' };
           // The steer is present on steerInput already, but must be HELD — no ack yet.
           await new Promise((r) => setTimeout(r, 5));
-          if (acks.length !== 0) throw new Error('steer was acked BEFORE the first assistant message (not held)');
-          yield { type: 'assistant', message: { content: [{ type: 'text', text: 'thinking' }] }, session_id: 's' };
+          if (acks.length !== 0)
+            throw new Error(
+              'steer was acked BEFORE the first assistant message (not held)',
+            );
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'thinking' }] },
+            session_id: 's',
+          };
           sawAssistant = true;
           const injected = await iter.next(); // now the flushed steer arrives
-          pushedAfterEachStage.afterAssistant.push((injected.value as { message?: { content?: unknown } }).message?.content);
-          yield { type: 'result', subtype: 'success', session_id: 's', result: 'done', usage: { input_tokens: 1, output_tokens: 1 } };
+          pushedAfterEachStage.afterAssistant.push(
+            (injected.value as { message?: { content?: unknown } }).message
+              ?.content,
+          );
+          yield {
+            type: 'result',
+            subtype: 'success',
+            session_id: 's',
+            result: 'done',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 
@@ -697,7 +1084,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       },
     };
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('the task'),
@@ -721,7 +1110,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('surfaces per-call context occupancy (NOT the cumulative billing sum) across multiple round-trips', async () => {
     const { sdk } = fakeMultiTurnClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'claude',
       task: agentMessage('x'),
@@ -747,7 +1138,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     const prior = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'should-be-stripped';
     try {
-      const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+      const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+        homeRoot: HOME_ROOT,
+      });
       await core.run({
         engine: 'claude',
         task: agentMessage('x'),
@@ -768,7 +1161,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('throws an EngineAuthError with the no-credential marker when no subscription secret is passed', async () => {
     const { sdk } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     // A missing credential is a clean, resumable auth halt (not a plain Error that fails the job opaquely):
     // it throws EngineAuthError carrying NO_ENGINE_CREDENTIAL_MARKER so the driver renders actionable copy.
     const err = await core
@@ -793,11 +1188,24 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('tool bridge: server registered under options.mcpServers (not a stray top-level key); names auto-approved', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const mcpServers = { 'atlas-host-bridge': { __fake: 'server' } };
-    const names = ['mcp__atlas-host-bridge__submit_plan', 'mcp__atlas-host-bridge__get_pipeline_state'];
+    const names = [
+      'mcp__atlas-host-bridge__submit_plan',
+      'mcp__atlas-host-bridge__get_pipeline_state',
+    ];
     await core.runWithExtras(
-      { engine: 'claude', task: agentMessage('x'), cwd: '/tmp/wt', systemPrompt: agentMessage('p'), sandboxKey: TEST_KEY, mode: 'execute', auth: { secret: 'tok' } },
+      {
+        engine: 'claude',
+        task: agentMessage('x'),
+        cwd: '/tmp/wt',
+        systemPrompt: agentMessage('p'),
+        sandboxKey: TEST_KEY,
+        mode: 'execute',
+        auth: { secret: 'tok' },
+      },
       { mcpServers },
       names,
     );
@@ -807,12 +1215,16 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     expect(opts.mcpServers).toBe(mcpServers);
     expect(opts).not.toHaveProperty('atlas-host-bridge');
     // Qualified MCP tool names are auto-approved alongside the read tools.
-    expect(opts.allowedTools).toEqual(expect.arrayContaining(['Read', 'Glob', 'Grep', ...names]));
+    expect(opts.allowedTools).toEqual(
+      expect.arrayContaining(['Read', 'Glob', 'Grep', ...names]),
+    );
   });
 
   it('no bridge: allowedTools is the static auto-approve set and no mcpServers leak (worker invariant)', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('x'),
@@ -847,7 +1259,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 describe('EngineCore — Codex mode/home/credential wiring', () => {
   it('execute mode: danger-full-access sandbox, subscription auth.json home, NO apiKey on the client', async () => {
     const { sdk, ctorCalls, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'codex',
       task: agentMessage('do it'),
@@ -870,7 +1284,9 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
 
   it('plan mode: danger-full-access sandbox (network for doc-checking; no-edit is prompt-enforced)', async () => {
     const { sdk, threadCalls } = fakeCodexSdk();
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'codex',
       task: agentMessage('plan it'),
@@ -887,7 +1303,8 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
     const wt = join(tmpdir(), `atlas-engine-core-codex-diff-${process.pid}`);
     rmSync(wt, { recursive: true, force: true });
     mkdirSync(wt, { recursive: true });
-    const git = (...cmdArgs: string[]) => execFileSync('git', cmdArgs, { cwd: wt });
+    const git = (...cmdArgs: string[]) =>
+      execFileSync('git', cmdArgs, { cwd: wt });
     git('init', '-q');
     git('config', 'user.email', 'a@b.c');
     git('config', 'user.name', 'a');
@@ -907,16 +1324,28 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
               yield { type: 'thread.started', job_id: 'thread-1' };
               yield {
                 type: 'item.completed',
-                item: { id: 'fc1', type: 'file_change', status: 'completed', changes: [{ path: 'x.md', kind: 'update' }] },
+                item: {
+                  id: 'fc1',
+                  type: 'file_change',
+                  status: 'completed',
+                  changes: [{ path: 'x.md', kind: 'update' }],
+                },
               };
-              yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } };
+              yield {
+                type: 'turn.completed',
+                usage: { input_tokens: 1, output_tokens: 1 },
+              };
             })(),
           }),
         };
       }
     }
-    const sdk = { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk');
-    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, { homeRoot: HOME_ROOT });
+    const sdk = {
+      Codex: FakeCodex,
+    } as unknown as typeof import('@openai/codex-sdk');
+    const core = new EngineCore(fakeClaudeSdk().sdk, sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const events: EngineEvent[] = [];
     try {
       await core.run({
@@ -931,9 +1360,14 @@ describe('EngineCore — Codex mode/home/credential wiring', () => {
         onEvent: (e) => events.push(e),
       });
 
-      const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<EngineEvent, { kind: 'tool_use' }>;
+      const toolUse = events.find((e) => e.kind === 'tool_use') as Extract<
+        EngineEvent,
+        { kind: 'tool_use' }
+      >;
       expect(toolUse.input).toEqual({ file_path: 'x.md', kind: 'update' });
-      const toolResult = events.find((e) => e.kind === 'tool_result') as Extract<EngineEvent, { kind: 'tool_result' }>;
+      const toolResult = events.find(
+        (e) => e.kind === 'tool_result',
+      ) as Extract<EngineEvent, { kind: 'tool_result' }>;
       expect(toolResult.structuredPatch?.length).toBeGreaterThan(0);
       const lines = toolResult.structuredPatch!.flatMap((h) => h.lines);
       expect(lines).toContain('-line2');
@@ -950,9 +1384,13 @@ describe('EngineCore — Codex auth-refresh readback', () => {
     persistAuthRefresh?: boolean;
     sandboxKey: EngineHomeKey;
   }) => {
-    const core = new EngineCore(fakeClaudeSdk().sdk, fakeRefreshingCodexSdk(opts.refreshedBlob), {
-      homeRoot: HOME_ROOT,
-    });
+    const core = new EngineCore(
+      fakeClaudeSdk().sdk,
+      fakeRefreshingCodexSdk(opts.refreshedBlob),
+      {
+        homeRoot: HOME_ROOT,
+      },
+    );
     return core.run({
       engine: 'codex',
       task: agentMessage('do it'),
@@ -967,30 +1405,48 @@ describe('EngineCore — Codex auth-refresh readback', () => {
 
   it('relays the refreshed auth.json when Codex rewrote it AND persistAuthRefresh is set', async () => {
     const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a2');
-    const res = await runCodex({ refreshedBlob: refreshed, persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-hit' } });
+    const res = await runCodex({
+      refreshedBlob: refreshed,
+      persistAuthRefresh: true,
+      sandboxKey: { ...TEST_KEY, jobId: 'rb-hit' },
+    });
     expect(res.refreshedAuthSecret).toBe(refreshed);
   });
 
   it('does NOT relay when the overlay is unchanged (no real refresh)', async () => {
-    const res = await runCodex({ refreshedBlob: VALID_CODEX_AUTH, persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-same' } });
+    const res = await runCodex({
+      refreshedBlob: VALID_CODEX_AUTH,
+      persistAuthRefresh: true,
+      sandboxKey: { ...TEST_KEY, jobId: 'rb-same' },
+    });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 
   it('does NOT relay when persistAuthRefresh is unset (env-fallback gate) even though the file changed', async () => {
     const refreshed = codexAuthBlob('2026-07-02T00:00:00.000Z', 'a3');
-    const res = await runCodex({ refreshedBlob: refreshed, sandboxKey: { ...TEST_KEY, jobId: 'rb-gated' } });
+    const res = await runCodex({
+      refreshedBlob: refreshed,
+      sandboxKey: { ...TEST_KEY, jobId: 'rb-gated' },
+    });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 
   it('does NOT relay a corrupt refreshed overlay (never propagates an invalid blob)', async () => {
-    const res = await runCodex({ refreshedBlob: '{not valid json', persistAuthRefresh: true, sandboxKey: { ...TEST_KEY, jobId: 'rb-corrupt' } });
+    const res = await runCodex({
+      refreshedBlob: '{not valid json',
+      persistAuthRefresh: true,
+      sandboxKey: { ...TEST_KEY, jobId: 'rb-corrupt' },
+    });
     expect(res.refreshedAuthSecret).toBeUndefined();
   });
 });
 
 describe('EngineCore — unresumable session detection', () => {
   it('claudeSessionExists is true only when the transcript is present under the config dir', () => {
-    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', { ...TEST_KEY, jobId: 'resume-present' });
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', {
+      ...TEST_KEY,
+      jobId: 'resume-present',
+    });
     expect(claudeSessionExists(dir, 'sess-x')).toBe(false); // no projects dir yet
     mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
     writeFileSync(join(dir, 'projects', '-tmp-wt', 'sess-x.jsonl'), '{}');
@@ -999,13 +1455,21 @@ describe('EngineCore — unresumable session detection', () => {
   });
 
   it('isUnresumableSessionMessage matches the marker', () => {
-    expect(isUnresumableSessionMessage(`${UNRESUMABLE_SESSION_MARKER}: nope`)).toBe(true);
-    expect(isUnresumableSessionMessage('Claude engine ended: error_during_execution')).toBe(false);
+    expect(
+      isUnresumableSessionMessage(`${UNRESUMABLE_SESSION_MARKER}: nope`),
+    ).toBe(true);
+    expect(
+      isUnresumableSessionMessage(
+        'Claude engine ended: error_during_execution',
+      ),
+    ).toBe(false);
   });
 
   it('run() throws a marked, specific error (and never calls the SDK) when the session is unresumable', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await expect(
       core.run({
         engine: 'claude',
@@ -1023,10 +1487,15 @@ describe('EngineCore — unresumable session detection', () => {
 
   it('run() resumes normally when the transcript exists', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', { ...TEST_KEY, jobId: 'resume-ok' });
+    const dir = atlasEngineHomeDir(HOME_ROOT, 'claude', {
+      ...TEST_KEY,
+      jobId: 'resume-ok',
+    });
     mkdirSync(join(dir, 'projects', '-tmp-wt'), { recursive: true });
     writeFileSync(join(dir, 'projects', '-tmp-wt', 'live-session.jsonl'), '{}');
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('resume me'),
@@ -1050,7 +1519,13 @@ describe('extractClaudeUsage — per-model breakdown', () => {
         cacheReadTokens: 4,
         costUsd: 1,
         modelUsage: {
-          opus: { inputTokens: 8, outputTokens: 2, cacheReadTokens: 4, cacheWriteTokens: 0, costUsd: 8 },
+          opus: {
+            inputTokens: 8,
+            outputTokens: 2,
+            cacheReadTokens: 4,
+            cacheWriteTokens: 0,
+            costUsd: 8,
+          },
           haiku: {
             inputTokens: 1,
             outputTokens: 0,
@@ -1075,12 +1550,24 @@ describe('extractClaudeUsage — per-model breakdown', () => {
             costUsd: 12,
             webSearchRequests: 2,
           },
-          sonnet: { inputTokens: 6, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 6 },
+          sonnet: {
+            inputTokens: 6,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            costUsd: 6,
+          },
         },
       },
     );
 
-    expect(usage).toMatchObject({ inputTokens: 30, outputTokens: 7, cacheReadTokens: 4, cacheWriteTokens: 3, costUsd: 3 });
+    expect(usage).toMatchObject({
+      inputTokens: 30,
+      outputTokens: 7,
+      cacheReadTokens: 4,
+      cacheWriteTokens: 3,
+      costUsd: 3,
+    });
     expect(usage.modelUsage).toEqual({
       opus: {
         inputTokens: 20,
@@ -1098,14 +1585,25 @@ describe('extractClaudeUsage — per-model breakdown', () => {
         costUsd: 1,
         webSearchRequests: 1,
       },
-      sonnet: { inputTokens: 6, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 6 },
+      sonnet: {
+        inputTokens: 6,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        costUsd: 6,
+      },
     });
   });
 
   it('preserves the FULL modelUsage map (all models), normalizing SDK field names', () => {
     const usage = extractClaudeUsage(
       {
-        usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 900, cache_creation_input_tokens: 50 },
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_read_input_tokens: 900,
+          cache_creation_input_tokens: 50,
+        },
         total_cost_usd: 1.5,
         modelUsage: {
           'claude-opus-4-8': {
@@ -1129,7 +1627,10 @@ describe('extractClaudeUsage — per-model breakdown', () => {
     );
     expect(usage?.costUsd).toBe(1.5);
     // Both models survive (the old code kept only Object.keys(modelUsage)[0]).
-    expect(Object.keys(usage?.modelUsage ?? {})).toEqual(['claude-opus-4-8', 'claude-sonnet-5']);
+    expect(Object.keys(usage?.modelUsage ?? {})).toEqual([
+      'claude-opus-4-8',
+      'claude-sonnet-5',
+    ]);
     expect(usage?.modelUsage?.['claude-sonnet-5']).toEqual({
       inputTokens: 5,
       outputTokens: 5,
@@ -1142,7 +1643,10 @@ describe('extractClaudeUsage — per-model breakdown', () => {
   });
 
   it('omits modelUsage when the SDK reported none', () => {
-    const usage = extractClaudeUsage({ usage: { input_tokens: 10, output_tokens: 2 } }, 'claude-opus-4-8');
+    const usage = extractClaudeUsage(
+      { usage: { input_tokens: 10, output_tokens: 2 } },
+      'claude-opus-4-8',
+    );
     expect(usage?.modelUsage).toBeUndefined();
   });
 
@@ -1161,7 +1665,10 @@ describe('extractClaudeUsage — per-model breakdown', () => {
     );
     expect(usage?.model).toBe('opus');
     // modelUsage is untouched — the full per-model breakdown (incl. the Haiku helper) still survives.
-    expect(Object.keys(usage?.modelUsage ?? {})).toEqual(['claude-haiku-4-5', 'claude-opus-4-8']);
+    expect(Object.keys(usage?.modelUsage ?? {})).toEqual([
+      'claude-haiku-4-5',
+      'claude-opus-4-8',
+    ]);
   });
 });
 

@@ -28,6 +28,7 @@ import {
   DB_WRITE_APPROVE_ACTION_ID,
   DB_WRITE_DENY_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
   type WebApprovalCard,
@@ -59,11 +60,11 @@ export function ApprovalCardView({
   onOpenPlan?: () => void;
   onSelectNode?: (node: string) => void;
 }) {
-  // The ship-review gate and the brain's "Amend build?" proposal reuse this same `approval_card` payload
-  // (discriminated by `kind: 'ship' | 'amend'`) but are a much smaller card — a title/summary + gate
-  // buttons, rendered generically off `card.actions` (never a hardcoded action id, so the card doesn't
-  // drift from whatever the backend sends).
-  if (card.kind === "ship" || card.kind === "amend") {
+  // The ship-review gate, the brain's "Amend build?" proposal, and the merge gate reuse this same
+  // `approval_card` payload (discriminated by `kind: 'ship' | 'amend' | 'merge'`) but are a much smaller
+  // card — a title/summary + gate buttons, rendered generically off `card.actions` (never a hardcoded
+  // action id, so the card doesn't drift from whatever the backend sends).
+  if (card.kind === "ship" || card.kind === "amend" || card.kind === "merge") {
     return <ShipCardView card={card} jobRef={jobRef} />;
   }
   if (card.kind === "db_write") {
@@ -204,7 +205,13 @@ function PlanApprovalCardView({
  * The inline ship-review card — the SECOND human gate (after the plan-approval card above), posted once
  * the build + master review finish. Just a title/summary and the backend-provided ship-gate actions.
  */
-function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef }) {
+function ShipCardView({
+  card,
+  jobRef,
+}: {
+  card: WebApprovalCard;
+  jobRef: JobRef;
+}) {
   return (
     <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
       <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
@@ -236,7 +243,11 @@ function ShipCardView({ card, jobRef }: { card: WebApprovalCard; jobRef: JobRef 
 
       <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {card.actions.map((action) => (
-          <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
+          <ShipActionButton
+            key={action.actionId}
+            jobRef={jobRef}
+            action={action}
+          />
         ))}
         {card.kind === "ship" ? (
           <ShipCardPreviewButton jobRef={jobRef} card={card} />
@@ -261,7 +272,9 @@ function ShipCardPreviewButton({
 }) {
   const pipeline = usePipeline(jobRef);
   const preview = useSpinUpPreview(jobRef);
-  if (!shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)) {
+  if (
+    !shouldShowSpinUpPreview(pipeline.data?.status, card.previewRequestedAt)
+  ) {
     return null;
   }
   return (
@@ -308,11 +321,13 @@ function ShipActionButton({
         ? "Dismissing…"
         : action.actionId === RETRACT_SHIP_ACTION_ID
           ? "Retracting…"
-          : action.actionId === DB_WRITE_APPROVE_ACTION_ID
-            ? "Executing…"
-            : action.actionId === DB_WRITE_DENY_ACTION_ID
-              ? "Denying…"
-              : "Shipping…";
+          : action.actionId === MERGE_ACTION_ID
+            ? "Merging…"
+            : action.actionId === DB_WRITE_APPROVE_ACTION_ID
+              ? "Executing…"
+              : action.actionId === DB_WRITE_DENY_ACTION_ID
+                ? "Denying…"
+                : "Shipping…";
   return (
     <div className="flex flex-col gap-2">
       <Button
@@ -331,9 +346,7 @@ function ShipActionButton({
         {action.label}
       </Button>
       {approve.isError ? (
-        <p className="text-[11.5px] text-red">
-          Could not submit. Try again.
-        </p>
+        <p className="text-[11.5px] text-red">Could not submit. Try again.</p>
       ) : null}
     </div>
   );

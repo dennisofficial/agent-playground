@@ -179,6 +179,8 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       .send({ repoUrl: 'https://github.com/atlas-it/repo-one.git' });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ slug: 'repo-one', name: 'repo-one', accessOk: true });
+    // Repo-level merge defaults — a freshly-connected repo gets the built-in default ('squash' + delete branch).
+    expect(res.body).toMatchObject({ defaultAutoMergeMethod: 'squash', defaultAutoMergeDeleteBranch: true });
     const repoId = res.body.id as string;
     expect(repoId).toBeTruthy();
 
@@ -189,17 +191,29 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
     expect(row).toMatchObject({ slug: 'repo-one', threadCount: 0 });
     expect(row?.accessCheckedAt).toBeTruthy();
 
-    // UPDATE — metadata only
+    // UPDATE — metadata + repo-level merge defaults
     res = await request(server)
       .patch(`${reposPath(ORG1)}/${repoId}`)
       .set('Cookie', ownerCookie)
-      .send({ name: 'Renamed by IT', defaultBranch: 'develop' });
+      .send({
+        name: 'Renamed by IT',
+        defaultBranch: 'develop',
+        defaultAutoMergeMethod: 'rebase',
+        defaultAutoMergeDeleteBranch: false,
+      });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ name: 'Renamed by IT', defaultBranch: 'develop' });
+    expect(res.body).toMatchObject({
+      name: 'Renamed by IT',
+      defaultBranch: 'develop',
+      defaultAutoMergeMethod: 'rebase',
+      defaultAutoMergeDeleteBranch: false,
+    });
 
     // UPDATE persisted
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
-    expect((res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId)?.name).toBe('Renamed by IT');
+    const updatedRow = (res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId);
+    expect(updatedRow?.name).toBe('Renamed by IT');
+    expect(updatedRow).toMatchObject({ defaultAutoMergeMethod: 'rebase', defaultAutoMergeDeleteBranch: false });
 
     // REVALIDATE
     res = await request(server).post(`${reposPath(ORG1)}/${repoId}/revalidate`).set('Cookie', ownerCookie);

@@ -4,6 +4,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
+import type { AutoMergeMethod } from '@workspace/shared';
 import { GithubPrService, parseGithubRepoUrl, WORK_EVENTS, STATE_EVENTS } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -65,6 +66,10 @@ export interface ConnectedRepo {
   defaultBranch: string;
   /** Per-repo feature-branch prefix override; null uses the built-in default. */
   branchPrefix: string | null;
+  /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
+  defaultAutoMergeMethod: AutoMergeMethod;
+  /** Whether to delete the head branch after a merge, for this repo's jobs. */
+  defaultAutoMergeDeleteBranch: boolean;
   accessOk: boolean;
   reason?: string;
 }
@@ -156,6 +161,8 @@ export class OnboardingService {
         gitUrl: repoUrl,
         defaultBranch: args.baseBranch ?? 'main',
         branchPrefix: null,
+        defaultAutoMergeMethod: 'squash',
+        defaultAutoMergeDeleteBranch: true,
         accessOk: false,
         reason: `not an HTTPS GitHub URL: ${repoUrl}`,
       };
@@ -204,6 +211,8 @@ export class OnboardingService {
       gitUrl: repoUrl,
       defaultBranch: baseBranch,
       branchPrefix: repo.branch_prefix ?? null,
+      defaultAutoMergeMethod: repo.default_auto_merge_method,
+      defaultAutoMergeDeleteBranch: repo.default_auto_merge_delete_branch,
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
@@ -343,6 +352,8 @@ export class OnboardingService {
       gitUrl: repo.git_url,
       defaultBranch: repo.default_branch,
       branchPrefix: repo.branch_prefix ?? null,
+      defaultAutoMergeMethod: repo.default_auto_merge_method,
+      defaultAutoMergeDeleteBranch: repo.default_auto_merge_delete_branch,
       accessOk: validation.ok,
       ...(validation.reason ? { reason: validation.reason } : {}),
     };
@@ -355,7 +366,13 @@ export class OnboardingService {
   async updateRepo(
     orgId: string,
     repoId: string,
-    patch: { name?: string; defaultBranch?: string; branchPrefix?: string },
+    patch: {
+      name?: string;
+      defaultBranch?: string;
+      branchPrefix?: string;
+      defaultAutoMergeMethod?: AutoMergeMethod;
+      defaultAutoMergeDeleteBranch?: boolean;
+    },
   ): Promise<ConnectedRepo> {
     const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
     if (!repo) throw new NotFoundException('repo not found');
@@ -368,6 +385,12 @@ export class OnboardingService {
     if (patch.branchPrefix !== undefined) {
       next.branch_prefix = patch.branchPrefix.trim() || null;
     }
+    if (patch.defaultAutoMergeMethod !== undefined) {
+      next.default_auto_merge_method = patch.defaultAutoMergeMethod;
+    }
+    if (patch.defaultAutoMergeDeleteBranch !== undefined) {
+      next.default_auto_merge_delete_branch = patch.defaultAutoMergeDeleteBranch;
+    }
     if (Object.keys(next).length) await this.repos.update({ id: repo.id }, next);
     const fresh = await this.repos.findOneOrFail({ where: { id: repo.id } });
     return {
@@ -377,6 +400,8 @@ export class OnboardingService {
       gitUrl: fresh.git_url,
       defaultBranch: fresh.default_branch,
       branchPrefix: fresh.branch_prefix ?? null,
+      defaultAutoMergeMethod: fresh.default_auto_merge_method,
+      defaultAutoMergeDeleteBranch: fresh.default_auto_merge_delete_branch,
       accessOk: fresh.access_ok,
     };
   }

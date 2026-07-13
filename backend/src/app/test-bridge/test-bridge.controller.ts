@@ -5,6 +5,7 @@ import {
   Controller,
   Get,
   Header,
+  Inject,
   Logger,
   NotFoundException,
   Param,
@@ -22,13 +23,17 @@ import {
   parseApprovalMeta,
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
-import { ThreadDriver } from '../driver';
+import { ThreadDriver, LANE_SEEDER, type LaneSeeder } from '../driver';
+import { laneFor } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
   RepoEntity,
   JobEntity,
   OrganizationEntity,
+  ThreadEntity,
+  ActiveTurnEntity,
+  StimulusEntity,
 } from '../persistence/entities';
 import type {
   ApproveRequest,
@@ -37,17 +42,23 @@ import type {
   SayReply,
   SayRequest,
   SayResponse,
+  SeedLaneRequest,
+  SeedLaneResponse,
   SeedRequest,
   SeedResponse,
+  StimulusView,
   ThreadLine,
+  ThreadView,
+  TurnView,
 } from './test-bridge.dto';
 
 /** How long `/test/say` waits for Atlas to post something on the thread before returning. */
 const SAY_WAIT_MS = 60_000;
 /** Poll cadence for the wait loop (cheap in-memory outbox scan). */
 const SAY_POLL_MS = 200;
-/** The simulated operator id stamped on injected messages + approvals. */
-const TESTER_ID = 'tester';
+/** The simulated operator id stamped on injected messages + approvals — a real seeded dev user's uuid
+ *  (`decision_records.approved_by` is a uuid FK; the literal `'tester'` fails `QueryFailedError`). */
+const TESTER_ID = '1e512337-cd7e-41bb-8485-565eed283139';
 
 /**
  * THE HTTP TEST-BRIDGE — a dev/test-only edge that lets an external driver have a REAL conversation with
@@ -72,6 +83,8 @@ export class TestBridgeController {
     private readonly surface: AgentChatSurface,
     private readonly approvals: DecisionApprovalService,
     private readonly driver: ThreadDriver,
+    @Inject(LANE_SEEDER)
+    private readonly laneSeeder: LaneSeeder,
     @InjectRepository(OrganizationEntity, DB_CONNECTION)
     private readonly orgs: Repository<OrganizationEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
@@ -80,6 +93,12 @@ export class TestBridgeController {
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(ActiveTurnEntity, DB_CONNECTION)
+    private readonly turns: Repository<ActiveTurnEntity>,
+    @InjectRepository(StimulusEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<StimulusEntity>,
   ) {}
 
   /**
@@ -194,6 +213,88 @@ export class TestBridgeController {
     await this.driver.resumePaused(body.jobId);
     this.logger.log(`resume (ping) job=${body.jobId}`);
     return { ok: true };
+  }
+
+  /**
+   * `POST /test/seed-lane` — inject a HOST SEED directly into a build lane, the ONLY way content reaches an
+   * operator-read-only builder (d1). Drives `LANE_SEEDER.seedLane` exactly as production host-seed producers
+   * do: `now` steers a live steerable Leg, `queue`/`later` fold into the next Leg. This is the entry point the
+   * live-validation gate exercises against a running builder (there is no operator route to a build lane).
+   */
+  @Post('seed-lane')
+  async seedLane(@Body() body: SeedLaneRequest): Promise<SeedLaneResponse> {
+    this.assertEnabled();
+    const job = await this.jobs.findOne({ where: { id: body.jobId } });
+    if (!job) throw new NotFoundException(`No job ${body.jobId}`);
+
+    const threadId = body.threadId ?? (await this.resolveBuilderThreadId(body.jobId));
+    if (!threadId) {
+      throw new NotFoundException(`No builder thread for job ${body.jobId} — dispatch a build first.`);
+    }
+
+    await this.laneSeeder.seedLane(
+      { jobId: job.id, orgId: job.org_id, repoId: job.repo_id, threadId },
+      body.message,
+      body.priority,
+    );
+    const lane = laneFor('builder', threadId);
+    this.logger.log(`seed-lane job=${job.id} thread=${threadId} priority=${body.priority ?? 'default'}`);
+    return { ok: true, threadId, lane };
+  }
+
+  /** `GET /test/turns?jobId=...` — the job's `active_turns` rows, so a driver can see when a builder Leg is
+   *  live + `steerable` (the window a `now` seed steers). */
+  @Get('turns')
+  async turnsFor(@Query('jobId') jobId: string): Promise<TurnView[]> {
+    this.assertEnabled();
+    const rows = await this.turns.find({ where: { job_id: jobId } });
+    return rows.map((t) => ({
+      turnId: t.turn_id,
+      lane: t.lane,
+      kind: t.kind,
+      status: t.status,
+      steerable: t.steerable,
+    }));
+  }
+
+  /** `GET /test/threads?jobId=...` — the job's `threads` rows, so a driver can discover the build lane's
+   *  `threadId` (and its kind/status/ordinal). */
+  @Get('threads')
+  async threadsFor(@Query('jobId') jobId: string): Promise<ThreadView[]> {
+    this.assertEnabled();
+    const rows = await this.threads.find({
+      where: { job_id: jobId },
+      order: { ordinal: 'ASC' },
+    });
+    return rows.map((t) => ({ id: t.id, kind: t.kind, status: t.status, ordinal: t.ordinal }));
+  }
+
+  /** `GET /test/stimuli?jobId=...` — the job's `stimuli` delivery ledger (lane/priority/body + the
+   *  `delivered_at`/`attempted_at` stamps), so a driver can watch a host seed drain. */
+  @Get('stimuli')
+  async stimuliFor(@Query('jobId') jobId: string): Promise<StimulusView[]> {
+    this.assertEnabled();
+    const rows = await this.stimuli.find({
+      where: { job_id: jobId },
+      order: { created_at: 'ASC' },
+    });
+    return rows.map((s) => ({
+      id: s.id,
+      lane: s.lane,
+      priority: s.reply_route?.priority ?? null,
+      body: s.body,
+      deliveredAt: s.delivered_at ? s.delivered_at.toISOString() : null,
+      attemptedAt: s.attempted_at ? s.attempted_at.toISOString() : null,
+    }));
+  }
+
+  /** Resolve a job's sole/first `builder` thread (the build lane a bare `/test/seed-lane` targets). */
+  private async resolveBuilderThreadId(jobId: string): Promise<string | null> {
+    const builders = await this.threads.find({
+      where: { job_id: jobId, kind: 'builder' },
+      order: { ordinal: 'ASC' },
+    });
+    return builders[0]?.id ?? null;
   }
 
   /** `GET /test/job?jobId=...` — the thread (build unit) row (status/title/prUrl/kind) for the driver to poll. */

@@ -32,54 +32,62 @@ import { TestBridgeController } from './test-bridge';
  */
 describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
   it('boots the real composition root via NestFactory.create({ rawBody: true }), resolves the W2 graph, and closes', async () => {
+    const prevSurface = process.env.SURFACE;
+    delete process.env.SURFACE;
+    let app: NestExpressApplication | undefined;
     // Silence the boot banners; we only care that init() doesn't throw.
-    const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-      logger: false,
-      rawBody: true,
-      abortOnError: false,
-    });
-    app.enableShutdownHooks();
-    await app.init();
+    try {
+      app = await NestFactory.create<NestExpressApplication>(AppModule, {
+        logger: false,
+        rawBody: true,
+        abortOnError: false,
+      });
+      app.enableShutdownHooks();
+      await app.init();
 
-    // The intake seam + both ingress controllers resolved — proves the W2 wiring (adapters →
-    // routing → store → intake → consumer) is DI-complete.
-    expect(app.get(StimulusIntake)).toBeDefined();
-    expect(app.get(GithubEventsWebhookController)).toBeDefined();
-    expect(app.get(GithubStateWebhookController)).toBeDefined();
+      // The intake seam + both ingress controllers resolved — proves the W2 wiring (adapters →
+      // routing → store → intake → consumer) is DI-complete.
+      expect(app.get(StimulusIntake)).toBeDefined();
+      expect(app.get(GithubEventsWebhookController)).toBeDefined();
+      expect(app.get(GithubStateWebhookController)).toBeDefined();
 
-    // R3 brain services resolved — proves the brain graph (store, classifier + memory deps) is
-    // DI-complete, the guard against shipping a typecheck-only DI bug.
-    expect(app.get(AgentSessionManager)).toBeDefined();
-    expect(app.get(DecisionApprovalService)).toBeDefined();
+      // R3 brain services resolved — proves the brain graph (store, classifier + memory deps) is
+      // DI-complete, the guard against shipping a typecheck-only DI bug.
+      expect(app.get(AgentSessionManager)).toBeDefined();
+      expect(app.get(DecisionApprovalService)).toBeDefined();
 
-    // The INPUT seam: BRAIN_SINK is the brain adapter (chat → its session, event → a harness delivery).
-    // There is no more StimulusRouter demux / EventTriageService — one brain per thread.
-    const sink = app.get<BrainSink>(BRAIN_SINK);
-    expect(typeof sink.handleChat).toBe('function');
-    expect(typeof sink.deliverEvent).toBe('function');
+      // The INPUT seam: BRAIN_SINK is the brain adapter (chat → its session, event → a harness delivery).
+      // There is no more StimulusRouter demux / EventTriageService — one brain per thread.
+      const sink = app.get<BrainSink>(BRAIN_SINK);
+      expect(typeof sink.handleChat).toBe('function');
+      expect(typeof sink.deliverEvent).toBe('function');
 
-    // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real ThreadDriver (the no-op is OVERRIDDEN —
-    // BrainModule no longer binds it; DriverModule's @Global useExisting: ThreadDriver wins). This is
-    // the exact DI-wiring guard a prior workstream's typecheck-only ship missed.
-    const driver = app.get(ThreadDriver);
-    expect(driver).toBeDefined();
-    expect(app.get<JobDispatcher>(JOB_DISPATCHER)).toBe(driver);
+      // The OUTPUT seam: JOB_DISPATCHER resolves to W4's real ThreadDriver (the no-op is OVERRIDDEN —
+      // BrainModule no longer binds it; DriverModule's @Global useExisting: ThreadDriver wins). This is
+      // the exact DI-wiring guard a prior workstream's typecheck-only ship missed.
+      const driver = app.get(ThreadDriver);
+      expect(driver).toBeDefined();
+      expect(app.get<JobDispatcher>(JOB_DISPATCHER)).toBe(driver);
 
-    // Default (no SURFACE) binds the web SSE/REST adapter — the production surface.
-    const boundDefault = app.get<ChatSurface>(CHAT_SURFACE);
-    expect(boundDefault).toBe(app.get(WebSurface));
-    expect(boundDefault.name).toBe('web');
+      // Default (no SURFACE) binds the web SSE/REST adapter — the production surface.
+      const boundDefault = app.get<ChatSurface>(CHAT_SURFACE);
+      expect(boundDefault).toBe(app.get(WebSurface));
+      expect(boundDefault.name).toBe('web');
 
-    // The HTTP routes are registered (the notification HTTP edge the headless context lacked).
-    const server = app.getHttpServer();
-    await new Promise<void>((resolve, reject) => {
-      server.listen(0, (err?: Error) => (err ? reject(err) : resolve()));
-    });
-    const routes = collectRoutePaths(app);
-    expect(routes).toContain('/webhooks/github/events');
-    expect(routes).toContain('/webhooks/github/state');
+      // The HTTP routes are registered (the notification HTTP edge the headless context lacked).
+      const server = app.getHttpServer();
+      await new Promise<void>((resolve, reject) => {
+        server.listen(0, (err?: Error) => (err ? reject(err) : resolve()));
+      });
+      const routes = collectRoutePaths(app);
+      expect(routes).toContain('/webhooks/github/events');
+      expect(routes).toContain('/webhooks/github/state');
 
-    await app.close();
+    } finally {
+      await app?.close();
+      if (prevSurface === undefined) delete process.env.SURFACE;
+      else process.env.SURFACE = prevSurface;
+    }
   }, 60_000);
 });
 

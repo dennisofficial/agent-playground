@@ -270,7 +270,12 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       const env = {
         get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
       } as unknown as EnvService;
-      const liveTurns = { push: vi.fn(), end: vi.fn(), snapshot: vi.fn(() => null) } as unknown as LiveTurnStore;
+      const liveTurns = {
+        push: vi.fn(),
+        end: vi.fn(),
+        snapshot: vi.fn(() => null),
+        retry: vi.fn(),
+      } as unknown as LiveTurnStore;
       const blockSink = {
         appendBlock: vi.fn(async () => undefined),
         appendBlockOnce: vi.fn(async () => undefined),
@@ -363,6 +368,10 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         } as unknown as import('./job-lifecycle.service').JobLifecycleService,
         new BuildShipService(git, pr, store, brainGateway),
         {
+          maybeAutoMerge: async () => undefined,
+          mergeNow: async () => false,
+        } as unknown as import('./auto-merge.service').AutoMergeService,
+        {
           appendMarker: async () => undefined,
           drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
         } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
@@ -372,6 +381,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         } as unknown as LeaderElectionService,
         turnHarness,
         blockSink,
+        liveTurns,
         { listRunning: async () => [] } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
         brainGateway,
         judge,

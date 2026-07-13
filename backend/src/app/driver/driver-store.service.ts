@@ -42,7 +42,8 @@ import {
 } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
-import { webAmendProposalCard, webVerdictCard } from '../surface/web-approval-card';
+import { webAmendProposalCard, webMergeReadyCard, webVerdictCard } from '../surface/web-approval-card';
+import { prMergeReady } from './auto-merge.service';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '../prompt-kit/message';
 
@@ -302,6 +303,21 @@ export class DriverStoreService {
     );
   }
 
+  /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
+  async clearRetrySessionResume(
+    jobId: string,
+    lane: 'main' | 'build',
+  ): Promise<void> {
+    await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_resume_at: null, session_resume: null })
+      .where('id = :jobId', { jobId })
+      .andWhere("session_resume->>'kind' = 'retry'")
+      .andWhere("session_resume->>'lane' = :lane", { lane })
+      .execute();
+  }
+
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(jobId: string, branch: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { feature_branch: branch });
@@ -502,6 +518,54 @@ export class DriverStoreService {
       row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
       await this.messages.save(row);
     }
+  }
+
+  // ── merge-ready gate (the third human gate: GitHub-mergeable → post the "Merge PR" card) ──────────────
+
+  /** Post (or refresh) the durable "Merge PR" card — keyed on a FIXED `ts` so repeated calls (the
+   *  reconciler re-evaluates on every poll) UPDATE the same row instead of stacking duplicates. Does NOT
+   *  touch job status: the job stays wherever it is, this is purely an informational/actionable card. */
+  async postMergeCard(jobId: string): Promise<void> {
+    const ts = `merge-ready:${jobId}`;
+    const card = webMergeReadyCard(jobId) as unknown as Record<string, unknown>;
+    const existing = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    if (existing) {
+      existing.card = card;
+      await this.messages.save(existing);
+      return;
+    }
+    await this.messages.save(
+      this.messages.create({
+        job_id: jobId,
+        author: 'Atlas',
+        author_id: 'atlas',
+        author_bot_id: 'atlas',
+        text: 'This PR is ready to merge.',
+        kind: 'card',
+        ts,
+        card,
+      }),
+    );
+  }
+
+  /** Neutralize the "Merge PR" card once it's no longer actionable — rewrites it to a verdict card so a
+   *  stale button can't be clicked. `outcome` distinguishes an actual merge (`'merged'` → '✅ Merged.')
+   *  from the PR merely leaving the merge-ready state (`'not-ready'` → 'No longer ready to merge.'): the
+   *  latter fires whenever the PR turns dirty / CI regresses / it closes unmerged, so it must NOT claim
+   *  success. Best-effort: a missing or already-neutralized row is a silent no-op. */
+  async neutralizeMergeCard(jobId: string, outcome: 'merged' | 'not-ready' = 'merged'): Promise<void> {
+    const ts = `merge-ready:${jobId}`;
+    const row = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    if (!row) return;
+    const card = row.card as Record<string, unknown> | null;
+    if (card?.['type'] !== 'approval_card') return;
+    const title = String(card?.['title'] ?? 'Merge PR');
+    const [verdict, verdictLine] =
+      outcome === 'merged'
+        ? (['merged', '✅ Merged.'] as const)
+        : (['expired', 'No longer ready to merge.'] as const);
+    row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
+    await this.messages.save(row);
   }
 
   /** Clear the ship-review approval marker so the NEXT build cycle re-gates. Called when a fresh build is
@@ -1353,6 +1417,9 @@ export class DriverStoreService {
         mainDefaultFooter: laneDefaultFooter('main'),
         createdBy: thread.created_by ?? null,
         autoApproveMode: thread.auto_approve_mode ?? 'off',
+        autoMerge: thread.auto_merge ?? false,
+        mergeReady: prMergeReady(thread),
+        mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
         blockedBy,
         blockedSeedMessage,
       };
@@ -1492,6 +1559,11 @@ export class DriverStoreService {
       // Per-job auto-approve mode — surfaced so the console can render + toggle it (also on the no_job
       // shape above, so the toggle works pre-plan while the job is still `open`).
       autoApproveMode: thread.auto_approve_mode ?? 'off',
+      autoMerge: thread.auto_merge ?? false,
+      // GitHub-mergeable, independent of the auto_merge toggle (a human can always click Merge PR) — the
+      // manual Merge PR card/button reads this same gate the auto-merge evaluator uses.
+      mergeReady: prMergeReady(thread),
+      mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
       // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
       // opens the `codex-review:<jobId>` lane. Null when no review has run.
       planReview,
@@ -1625,6 +1697,8 @@ function toJob(row: JobEntity): Job {
     shipReviewApprovedAt: row.ship_review_approved_at,
     autoApproveMode: row.auto_approve_mode ?? 'off',
     autoApproveBy: row.auto_approve_by ?? null,
+    autoMerge: row.auto_merge ?? false,
+    autoMergeBy: row.auto_merge_by ?? null,
     createdBy: row.created_by ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

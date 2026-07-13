@@ -44,6 +44,7 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never,
+    {} as never, // autoMerge
     {} as never,
     jobs as never,
     {} as never,
@@ -64,6 +65,7 @@ function makeController(thread: {
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, mocks };
 }

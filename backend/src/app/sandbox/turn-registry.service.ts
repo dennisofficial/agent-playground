@@ -40,6 +40,8 @@ export interface RegisterTurnInput {
   lane: string;
   kind: ActiveTurnEntity['kind'];
   containerId?: string | null;
+  /** Mirrors the turn spec's `steerable` flag (whether the entrypoint opened the input stream). */
+  steerable?: boolean;
   ctx: TurnContext;
 }
 
@@ -99,6 +101,7 @@ export class TurnRegistry {
           kind: input.kind,
           container_id: input.containerId ?? null,
           status: 'running',
+          steerable: input.steerable ?? false,
           events_last_id: '0-0',
           last_heartbeat_at: null,
           ctx: input.ctx,
@@ -212,6 +215,19 @@ export class TurnRegistry {
    */
   async runningBrainTurn(jobId: string): Promise<ActiveTurnEntity | null> {
     return this.turns.findOne({ where: { job_id: jobId, kind: 'brain', status: 'running' } });
+  }
+
+  /**
+   * The running turn on `lane` (brain `main` OR a build thread `thread:<id>`) that actually opened
+   * mid-turn steering (`steerable:true` at start) — else null. `steerable` is exactly "did the
+   * in-container entrypoint subscribe to `turn:{T}:input`", so this is the authoritative "a host seed
+   * will be consumed" check, independent of `kind`: it EXCLUDES a non-steerable compaction turn on `main`
+   * and Codex master-review / Codex builder legs, and INCLUDES a Claude capped final Leg (still a live
+   * steerable Claude session; "capped" only means it won't rotate again). The host steer/stop path resolves
+   * the live turnId through this — durable, so it survives a host restart mid-turn.
+   */
+  async runningSteerableTurn(jobId: string, lane: string): Promise<ActiveTurnEntity | null> {
+    return this.turns.findOne({ where: { job_id: jobId, lane, status: 'running', steerable: true } });
   }
 
   /** True if any turn for this thread is still running (guards a duplicate dispatch). */

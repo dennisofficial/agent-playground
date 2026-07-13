@@ -39,6 +39,12 @@ import {
   type ToolImpl,
 } from '../engine';
 import type { GitAuth } from '../engine/engine.types';
+import {
+  HOST_RETRY_BACKOFF_MS,
+  HOST_TRANSPORT_TRANSIENT_RE,
+  MAX_HOST_RETRIES,
+  isTransientAuthError,
+} from '../engine/engine.types';
 import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
@@ -52,6 +58,7 @@ import {
   laneFor,
   webShipReviewCard,
 } from '../surface';
+import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { CredentialResolver } from '../onboarding';
 import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -89,8 +96,14 @@ import {
   RECORD_LEG_HANDOFF_STOP,
   renderCommitTurnTask,
 } from '../prompt-kit';
-import { chunkKey } from '../prompt-kit/harness';
+import { chunkKey, composeTurn } from '../prompt-kit/harness';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
+import {
+  StimulusStoreService,
+  userChunkFor,
+  CHAT_DELIVERY_LEASE_MS,
+} from '../stimulus';
+import { JitHostExecutor } from '../brain/jit-host-executor';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
 import { isDriverExecutableKind, threadKindSpec, type ThreadRowKind } from '../thread-kind';
@@ -134,6 +147,7 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { AutoMergeService } from './auto-merge.service';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -196,7 +210,7 @@ function isTransientDriveError(err: unknown): boolean {
   // conservative: an UNRECOGNISED error is NOT retried (it may be a real bug), so we never mask a genuine
   // failure as transient — we only paper over the connection/sandbox hiccups that produced the phantom
   // "errors" a plain retry cleared (ADR 0004, failure #1).
-  return TRANSIENT_ERROR_RE.test(msg);
+  return HOST_TRANSPORT_TRANSIENT_RE.test(msg);
 }
 
 /**
@@ -207,30 +221,10 @@ function isTransientDriveError(err: unknown): boolean {
  */
 const REVIEW_LENS_CONCURRENCY = 8;
 
-/**
- * A Claude auth halt whose selected credential was refreshed THIS recently is treated as a lost rotation
- * race (another turn/keep-alive just rotated the token, so the DB already holds a fresh one) rather than a
- * dead login — the turn is auto-retried instead of flipped to `needs_reauth`. Kept comfortably above a
- * single turn's refresh-then-fail window.
- */
-const AUTH_ROTATION_RACE_MS = 2 * 60_000;
-
-/** How many times a single job may auto-retry a lost-rotation-race auth halt before it's surfaced as a
- *  genuine `needs_reauth` failure. */
-const AUTH_MAX_AUTO_RETRIES = 2;
-
-/** Short delay before a lost-rotation-race auto-retry re-drives, so the fresh token has settled. The leader
- *  `SessionResumeSweep` fires the actual resume once this clock is due. */
-const AUTH_RETRY_BACKOFF_MS = 10_000;
-
 /** The model the read-only review-lens FINDER turns run on — Sonnet, not the default Opus worker. The
  *  finding task is well within Sonnet's capability and moving the N per-thread finder turns off Opus is the
  *  dominant token win for the review fan-out. The post_review FIX turn keeps the default worker model. */
 const REVIEW_LENS_MODEL = 'claude-sonnet-5';
-
-/** Infra-blip signatures a bounded silent retry papers over (see {@link isTransientDriveError}). */
-const TRANSIENT_ERROR_RE =
-  /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
 @Injectable()
 export class ThreadDriver implements JobDispatcher {
@@ -262,6 +256,9 @@ export class ThreadDriver implements JobDispatcher {
     private readonly skills: SkillResolver,
     private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
+    // The ONE merge resolution path — the manual "Merge PR" click lands here (resolveMergeApprovalDurably)
+    // exactly like the auto path.
+    private readonly autoMerge: AutoMergeService,
     private readonly awareness: PipelineAwarenessStore,
     // Lets the terminal-error catch tell a shutdown-induced abort (leave the job resumable) apart from a
     // real failure — so a graceful restart mid-build no longer self-marks the job `failed`.
@@ -270,6 +267,9 @@ export class ThreadDriver implements JobDispatcher {
     // renders a full transcript (thinking/prose/tool calls), exactly like a subagent run.
     private readonly turnHarness: TurnHarnessFactory,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
+    // The live in-memory transcript fan (@Global via SurfaceModule) — fans the best-effort `turn_retry`
+    // indicator frame alongside the durable quiet notice on a host auto-retry (never the source of truth).
+    private readonly liveTurns: LiveTurnStore,
     // The durable registry of in-flight Redis-transport turns — lets a build batch RE-ATTACH its still-live
     // engine stream after a restart (like the brain) instead of re-running. @Global via SandboxModule.
     private readonly turnRegistry: TurnRegistry,
@@ -298,6 +298,15 @@ export class ThreadDriver implements JobDispatcher {
     // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
     @Optional() private readonly claudeCreds?: ClaudeCredentialStore,
+    // The durable inbound ledger — stamps a build-lane host seed `delivered_at` at the engine `input_ack`
+    // (live steer) and at the Leg-kick hand-off (fresh-turn drain). StimulusModule is plain-imported into
+    // DriverModule.imports (not @Global). @Optional so the direct-construction unit test constructs without
+    // it (undefined → no host-seed drain, byte-identical).
+    @Optional() private readonly stimulusStore?: StimulusStoreService,
+    // The host-side JIT turn-prefix rail — a build-lane fresh-turn drain composes host seeds through the SAME
+    // `composeTurn` + `collectOperatorPrepends` rail the brain uses (d4). @Global BrainModule. @Optional so the
+    // unit test constructs without it (undefined → the inert empty memory rail, byte-identical framing).
+    @Optional() private readonly jit?: JitHostExecutor,
   ) {}
 
   /**
@@ -307,6 +316,10 @@ export class ThreadDriver implements JobDispatcher {
    * terminal `needs_reauth` surfacing.
    */
   private readonly authRetryAttempts = new Map<string, number>();
+
+  /** In-process 10s re-drive timers for host auth/transport retries (per job). The durable session_resume
+   *  clock (kind:'retry') is the restart backstop; whichever fires first clears the clock. */
+  private readonly hostRetryTimers = new Map<string, NodeJS.Timeout>();
 
   /** The repo's attached house-style, or null when none. Best-effort: a resolver hiccup never sinks a build. */
   private async repoConventionsFor(job: Job): Promise<ResolvedConventions | null> {
@@ -368,14 +381,6 @@ export class ThreadDriver implements JobDispatcher {
     const raw = Number(this.env.get('PHASE_TIMEOUT_MS'));
     if (Number.isFinite(raw) && raw > 0) return raw;
     return 60 * 60_000;
-  }
-
-  /** Base backoff between transient-error drive retries (ADR 0004). Grows linearly per attempt. Default 2s;
-   *  the tests set it near-zero. */
-  private get transientRetryMs(): number {
-    const raw = Number(this.env.get('DRIVER_TRANSIENT_RETRY_MS'));
-    if (Number.isFinite(raw) && raw >= 0) return raw;
-    return 2_000;
   }
 
   /**
@@ -768,6 +773,16 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     this.active.add(jobId);
+    // A fresh drive supersedes any parked host-retry timer for this job (e.g. an operator retry/resumePaused
+    // re-entering while a 10s backstop wait was still pending).
+    const pendingTimer = this.hostRetryTimers.get(jobId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.hostRetryTimers.delete(jobId);
+    }
+    await this.store.clearRetrySessionResume(jobId, 'build').catch((err) =>
+      this.logger.warn(`clearRetrySessionResume(${jobId}) failed: ${err}`),
+    );
     try {
       await this.runJobWithTransientRetry(jobId);
       // A clean drive clears the lost-rotation-race auto-retry budget so a future, unrelated auth halt on
@@ -805,13 +820,8 @@ export class ThreadDriver implements JobDispatcher {
         this.logger.warn(
           `job=${jobId} halted on credential error: ${err.message}`,
         );
-        await this.store
-          .setJobHalt(jobId, {
-            kind: 'blocked_credentials',
-            reason: cleanAuthHaltReason(err.message, err.engine),
-            at: new Date().toISOString(),
-          })
-          .catch(() => undefined);
+        // NOTE: no `setJobHalt` here — a job the classifier decides to RETRY must show no paused banner (d1:
+        // quiet-only retry, no human action pending). The halt is set ONLY in the classifier's SURFACE branch.
         await this.classifyAndSurfaceAuthHalt(jobId, err);
       } else if (isSessionLimitError(err)) {
         // A Claude subscription SESSION/USAGE limit — PARK (don't fail): the phase is preserved and the
@@ -887,14 +897,15 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
-   * Run the job, silently retrying a bounded number of times on TRANSIENT infra errors (ADR 0004, failure
-   * #1). `runJob` is resumable — a re-entry fast-forwards completed threads/batches and resumes the
-   * interrupted turn — so a retry is safe. Non-transient errors and an exhausted budget propagate to
+   * Run the job, retrying a bounded number of times on TRANSIENT infra errors (ADR 0004, failure #1; d1-B
+   * host backstop). `runJob` is resumable — a re-entry fast-forwards completed threads/batches and resumes
+   * the interrupted turn — so a retry is safe. Non-transient errors and an exhausted budget propagate to
    * `drive()`'s classification (paused / detached / failed). Skipped entirely while draining (a shutdown is
-   * not a retryable error — drive() leaves the job running for boot-resume).
+   * not a retryable error — drive() leaves the job running for boot-resume). Quiet + visible, not silent: each
+   * retry posts a durable notice and fans a best-effort live indicator (see `relayRetrying`).
    */
   private async runJobWithTransientRetry(jobId: string): Promise<void> {
-    const maxRetries = 2;
+    const maxRetries = MAX_HOST_RETRIES;
     for (let attempt = 0; ; attempt++) {
       try {
         await this.runJob(jobId);
@@ -907,21 +918,35 @@ export class ThreadDriver implements JobDispatcher {
         ) {
           throw err;
         }
-        const backoffMs = this.transientRetryMs * (attempt + 1);
+        const n = attempt + 1;
         this.logger.warn(
-          `job=${jobId} transient drive error (attempt ${attempt + 1}/${maxRetries}) — retrying in ${backoffMs}ms: ${
+          `job=${jobId} transient drive error (attempt ${n}/${maxRetries}) — retrying in ${HOST_RETRY_BACKOFF_MS}ms: ${
             err instanceof Error ? err.message : err
           }`,
         );
-        await new Promise((r) => setTimeout(r, backoffMs));
+        await this.relayRetrying(jobId, n, maxRetries);
+        const job = await this.store.loadJob(jobId).catch(() => null);
+        const lane = await this.retryLaneForJob(jobId);
+        try {
+          this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
+            attempt: n,
+            max: maxRetries,
+            nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
+          });
+        } catch {
+          // live-only fan — never let a UI-indicator hiccup break the retry loop.
+        }
+        await new Promise((r) => setTimeout(r, HOST_RETRY_BACKOFF_MS));
       }
     }
   }
 
   /**
-   * Classify a Claude auth halt and either AUTO-RETRY it (a lost rotation race — the selected credential was
-   * refreshed by a concurrent actor an instant ago, so the DB already holds a fresh token) or SURFACE it as a
-   * genuine `needs_reauth` failure. The halt is already set by the caller; this only decides recovery.
+   * Classify a Claude/Codex auth halt and either AUTO-RETRY it (any transient auth error — a lost token
+   * rotation race, a blip the SDK's own `ensureFresh` may clear on the next attempt — up to the unified
+   * `MAX_HOST_RETRIES` budget at a flat `HOST_RETRY_BACKOFF_MS`) or SURFACE it as a genuine `needs_reauth`
+   * failure (deterministic-fatal, or the retry budget is spent). The halt is set ONLY on the surface path —
+   * a retrying job shows no paused banner (d1: quiet-only retry, no human action pending).
    */
   private async classifyAndSurfaceAuthHalt(
     jobId: string,
@@ -934,40 +959,43 @@ export class ThreadDriver implements JobDispatcher {
       isClaudeAuthHalt && orgId && this.claudeCreds
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
-    const refreshedAgoMs =
-      selected?.lastRefreshedAt != null
-        ? Date.now() - selected.lastRefreshedAt.getTime()
-        : Number.POSITIVE_INFINITY;
-    const lostRotationRace = refreshedAgoMs <= AUTH_ROTATION_RACE_MS;
     const attempts = this.authRetryAttempts.get(jobId) ?? 0;
 
-    if (lostRotationRace && attempts < AUTH_MAX_AUTO_RETRIES) {
-      // Park on the auto-resume clock so the leader `SessionResumeSweep` re-drives the preserved session via
-      // `resumePaused` after a short backoff — no scary "paused" notice, since this self-heals in seconds.
-      this.authRetryAttempts.set(jobId, attempts + 1);
-      const resumeAt = new Date(Date.now() + AUTH_RETRY_BACKOFF_MS).toISOString();
-      await this.store
-        .setSessionResume(jobId, resumeAt, {
-          lane: 'build',
-          reason: err.message,
-          resetSource: 'usage_api',
-        })
-        .catch(() => undefined);
+    if (isTransientAuthError(err) && attempts < MAX_HOST_RETRIES) {
+      // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
+      // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
+      const n = attempts + 1;
+      this.authRetryAttempts.set(jobId, n);
+      await this.relayRetrying(jobId, n, MAX_HOST_RETRIES);
+      const lane = await this.retryLaneForJob(jobId);
+      try {
+        this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
+          attempt: n,
+          max: MAX_HOST_RETRIES,
+          nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
+        });
+      } catch {
+        // live-only fan — never let a UI-indicator hiccup break the retry.
+      }
+      await this.scheduleBuildHostRetry(jobId, err.message);
       this.logger.warn(
-        `job=${jobId} auth halt but selected cred refreshed ${Math.round(
-          refreshedAgoMs / 1000,
-        )}s ago — lost the rotation race; auto-retry ${
-          attempts + 1
-        }/${AUTH_MAX_AUTO_RETRIES} at ${resumeAt}`,
+        `job=${jobId} transient auth halt — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms`,
       );
       return;
     }
 
-    // Genuine failure (or the retry budget is spent): flip the selected cred to `needs_reauth` so Settings
-    // shows a reconnect affordance, then post a pause notice and wait for the human. Only claim the login is
-    // dead (the actionable reconnect copy) when we actually marked it; otherwise fall back to the generic
-    // credential-pause notice.
+    // SURFACE (deterministic-fatal, or the retry budget is spent): set the halt HERE (renders the paused
+    // banner), flip the selected cred to `needs_reauth` so Settings shows a reconnect affordance, then post a
+    // pause notice and wait for the human. Only claim the login is dead (the actionable reconnect copy) when
+    // we actually marked it; otherwise fall back to the generic credential-pause notice.
     this.authRetryAttempts.delete(jobId);
+    await this.store
+      .setJobHalt(jobId, {
+        kind: 'blocked_credentials',
+        reason: cleanAuthHaltReason(err.message, err.engine),
+        at: new Date().toISOString(),
+      })
+      .catch(() => undefined);
     let markedReauth = false;
     if (orgId && selected && this.claudeCreds) {
       markedReauth = await this.claudeCreds
@@ -982,6 +1010,83 @@ export class ThreadDriver implements JobDispatcher {
         ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
         : cleanAuthHaltReason(err.message, err.engine),
     );
+  }
+
+  /** Best-effort live lane for a build host retry: current/next executable thread, else the Main fallback. */
+  private async retryLaneForJob(jobId: string): Promise<string> {
+    const threads = await this.store.threadsForJob(jobId).catch(() => []);
+    const thread = threads.find(
+      (t) => isDriverExecutableKind(t.kind) && t.status !== 'done',
+    );
+    return thread ? laneFor('builder', thread.id) : MAIN_LANE;
+  }
+
+  /**
+   * Arm the precise 10s host-retry re-drive for the build lane (d1-B). Writes the durable `kind:'retry'`
+   * resume clock FIRST (awaited — the restart-only backstop: if the process dies before the in-process timer
+   * fires, the leader `SessionResumeSweep` still re-drives once this clock is due), then arms an in-process
+   * `setTimeout` that at 10s clears the clock and re-drives via `resumeRetry`. Per-job, so a superseding drive
+   * cancels a stale timer.
+   */
+  private async scheduleBuildHostRetry(jobId: string, reason: string): Promise<void> {
+    const resumeAt = new Date(Date.now() + HOST_RETRY_BACKOFF_MS).toISOString();
+    await this.store
+      .setSessionResume(jobId, resumeAt, {
+        lane: 'build',
+        reason,
+        resetSource: 'usage_api',
+        kind: 'retry',
+      })
+      .catch(() => undefined);
+    const existing = this.hostRetryTimers.get(jobId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      this.hostRetryTimers.delete(jobId);
+      void this.resumeRetry(jobId).catch((e) =>
+        this.logger.error(`host-retry re-drive job=${jobId} crashed: ${e instanceof Error ? e.stack : e}`),
+      );
+    }, HOST_RETRY_BACKOFF_MS);
+    if (typeof t.unref === 'function') t.unref();
+    this.hostRetryTimers.set(jobId, t);
+  }
+
+  /**
+   * Re-drive a job parked on a host-retry clock (NO halt to clear — a retry park sets none). Clears the
+   * resume clock (so the leader sweep never double-fires), ensures `running`, and re-enters the SAME drive
+   * (fast-forwards completed work, resumes the interrupted step's engine session). Used by BOTH the
+   * in-process timer above and the resume sweep's `kind:'retry'` branch.
+   */
+  async resumeRetry(jobId: string): Promise<void> {
+    if (this.active.has(jobId)) {
+      this.logger.warn(`resumeRetry job=${jobId}: already driving — ignoring`);
+      return;
+    }
+    const t = this.hostRetryTimers.get(jobId);
+    if (t) {
+      clearTimeout(t);
+      this.hostRetryTimers.delete(jobId);
+    }
+    await this.store.setSessionResume(jobId, null, null).catch(() => undefined);
+    await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    void this.drive(jobId).catch((err) =>
+      this.logger.error(`resumeRetry job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`),
+    );
+  }
+
+  /**
+   * Post the durable QUIET "Reconnecting … auto-retry n/m…" notice (a `system_notice` row, not the scary
+   * paused/failed operator box) — the real backstop deliverable; the live indicator fan is best-effort on
+   * top. Durable-first via the block sink, mirroring `relayPaused`/`relayFailure`.
+   */
+  private async relayRetrying(jobId: string, n: number, max: number): Promise<void> {
+    const text = `Reconnecting to Claude — auto-retry ${n}/${max}…`;
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text,
+        meta: { source: 'system_notice' },
+      })
+      .catch((e) => this.logger.warn(`could not record retry notice for job=${jobId}: ${e}`));
   }
 
   /** Post a "paused on a credential error" notice so the human fixes creds + pings resume. Durable: writes
@@ -1343,6 +1448,24 @@ export class ThreadDriver implements JobDispatcher {
       ),
     );
     return true;
+  }
+
+  /**
+   * MERGE-GATE APPROVAL (the "Merge PR" click, routed here by the web surface bridge). Posts a durable
+   * note then merges through the ONE host merge path (`AutoMergeService.mergeNow`) — unlike
+   * {@link resolveShipApprovalDurably} this does NOT re-drive: a merge is terminal, there is nothing left
+   * to build. Returns whether the PR was actually merged, so the synchronous HTTP merge path can surface
+   * a non-2xx when the merge did not complete.
+   */
+  async resolveMergeApprovalDurably(jobId: string, ruledBy: string): Promise<boolean> {
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text: ':twisted_rightwards_arrows: Merging the pull request.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
+    return await this.autoMerge.mergeNow(jobId, ruledBy);
   }
 
   /**
@@ -2760,7 +2883,6 @@ export class ThreadDriver implements JobDispatcher {
     // fresh here and at every Leg re-kick below so each turn sees CURRENT state, not a batch-start snapshot.
     const servicesBlock =
       thread.kind === 'builder' ? await this.renderLiveServicesBlock(job.id) : '';
-    const task = foldLegTurn(legSeed, baseTask, servicesBlock);
 
     // RESTART-SAFE SHORT-CIRCUIT (ADR 0004 rider 3): the orchestrator may have ALREADY asserted `done` on a
     // prior attempt (its `complete_thread` call persisted a terminal record) before a crash/restart hit
@@ -2809,6 +2931,18 @@ export class ThreadDriver implements JobDispatcher {
         this.turn.canReattach() && anchor.sessionId
           ? await this.findReattachableTurn(job.id, lane, anchor.id, (ctx) => ctx.commitNudge == null)
           : null;
+      // Compose the fresh-turn task — and DRAIN + LEASE the build lane's pending host seeds into it — ONLY when
+      // we're about to kick a fresh turn. `foldLegTaskWithSeeds` stamps `attempted_at` on the drained rows, but a
+      // live reattach reuses the already-running turn (this composed `task`/`seedIds` is discarded and never wired
+      // to a delivery stamp), so folding here would strand those seeds for a full CHAT_DELIVERY_LEASE_MS window —
+      // long enough for a halt/done to skip them and lose them. A null container means we fall through to a kick.
+      let task: AgentMessage = baseTask;
+      let initialSeedIds: string[] = [];
+      if (!reattachRow?.container_id) {
+        ({ task, seedIds: initialSeedIds } = await this.foldLegTaskWithSeeds(
+          job, thread, anchor.id, legSeed, baseTask, servicesBlock,
+        ));
+      }
       // A batch that has never started (no persisted session, no live turn) is a FRESH start — emit its START
       // markers (the :gear: milestone + the synthetic build_anchor the in-conversation BuildStepCard latches
       // onto) exactly ONCE. On a resume/reattach they already exist (durable), so re-emitting would duplicate.
@@ -2850,6 +2984,9 @@ export class ThreadDriver implements JobDispatcher {
       // that seed and kick a FRESH Leg. Loops until a turn completes WITHOUT rotating (the normal case: one
       // Leg, no rotation). Bounded so a pathological rotate-every-turn thread can't spin forever.
       let legTask = task;
+      // The host seeds folded into THIS Leg's task — stamped delivered on the Leg turn's durable registration
+      // (crash re-drives, never double-runs). Re-collected at each rotation so newly-arrived seeds join.
+      let legSeedIds = initialSeedIds;
       for (let leg = 0; ; leg++) {
         if (!result) {
           // Fresh per-Leg run state (the prior Leg's handoff/latch/peak must not leak into this one).
@@ -2859,6 +2996,7 @@ export class ThreadDriver implements JobDispatcher {
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
             rotationArmed ? { state: rotationState, thresholds: rotationThresholds } : null,
+            legSeedIds,
           );
         }
         // After the turn ends, rotate ONLY if the builder self-authored a handoff via `record_leg_handoff`.
@@ -2877,7 +3015,9 @@ export class ThreadDriver implements JobDispatcher {
           );
           result = null;
           const seed = await this.store.getPendingLegSeed(anchor.id);
-          legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+          ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
+            job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
+          ));
           // Kick the final Leg but do NOT loop again (fall through after this kick).
           rotationState.handoff = null;
           rotationState.softReached = false;
@@ -2885,13 +3025,16 @@ export class ThreadDriver implements JobDispatcher {
           result = await this.kickBatchTurn(
             job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
             null, // disarm rotation for the capped final Leg
+            legSeedIds,
           );
           break;
         }
         // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
         result = null;
         const seed = await this.store.getPendingLegSeed(anchor.id);
-        legTask = foldLegTurn(seed, baseTask, await this.renderLiveServicesBlock(job.id));
+        ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
+          job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
+        ));
       }
       report = result!.report;
 
@@ -3197,6 +3340,47 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
+   * Fold the next Leg's task, DRAINING the build lane's eligible pending HOST SEEDS into it (spec step 4/4a).
+   * A build lane rides the SAME `composeTurn` + turn-prefix rail the brain uses (d4): the pending rows compose
+   * as chronological `<user>` chunks behind the (inert) `collectOperatorPrepends` memory rail, and that
+   * composed block is combined with the rotation `legSeed` into one fold seed. Only a STEERABLE Claude builder
+   * drains (Codex master_review is non-steerable — skipped). The drained rows are LEASED so a crash between
+   * here and the durable Leg-turn registration re-drives them (never double-runs); the caller stamps each
+   * `delivered_at` via `onTurnRegistered` on the kick.
+   *
+   * PARITY: with nothing pending (the common case, and every existing golden test) the returned task is
+   * byte-identical to `foldLegTurn(legSeed, baseTask, servicesBlock)` and `seedIds` is empty.
+   */
+  private async foldLegTaskWithSeeds(
+    job: Job,
+    thread: DriverThread,
+    _anchorId: string,
+    legSeed: string | null,
+    baseTask: AgentMessage,
+    servicesBlock: string,
+  ): Promise<{ task: AgentMessage; seedIds: string[] }> {
+    const drainable = thread.kind === 'builder' && threadKindSpec(thread.kind).engine === 'claude';
+    if (!drainable || !this.stimulusStore) {
+      return { task: foldLegTurn(legSeed, baseTask, servicesBlock), seedIds: [] };
+    }
+    const lane = laneFor('builder', thread.id);
+    const pending = await this.stimulusStore
+      .eligiblePendingChat(job.id, CHAT_DELIVERY_LEASE_MS, lane)
+      .catch(() => []);
+    if (pending.length === 0) {
+      return { task: foldLegTurn(legSeed, baseTask, servicesBlock), seedIds: [] };
+    }
+    const seedIds = pending.map((p) => p.id);
+    await this.stimulusStore.leaseChatStimuli(seedIds).catch(() => undefined);
+    const composed = composeTurn({
+      prefixChunks: this.jit?.collectOperatorPrepends({ jobId: job.id }) ?? [],
+      userChunks: pending.map((p) => userChunkFor(p)),
+    });
+    const combinedSeed = [legSeed, String(composed)].filter(Boolean).join('\n\n---\n\n');
+    return { task: foldLegTurn(combinedSeed, baseTask, servicesBlock), seedIds };
+  }
+
+  /**
    * KICK a fresh engine turn for the batch — a first run, or a resume that reopens the persisted session on
    * the thread lane. Registers the turn (`turnMeta`) so a later restart can RE-ATTACH it (see `runBatch`), and
    * bounds it with the per-batch wall-clock circuit breaker. Owns its harness lifecycle.
@@ -3218,6 +3402,9 @@ export class ThreadDriver implements JobDispatcher {
     // thresholds to steer at. Null ⇒ rotation disarmed (Codex, review children, or the capped final Leg) —
     // the watch stays observe-only and the turn is not steerable.
     rotation: { state: LegRotationRunState; thresholds: LegRotationThresholds } | null,
+    // The build-lane host seeds folded into this Leg's `task` — each stamped `delivered_at` the instant the
+    // turn is durably registered (the restart-survivable hand-off, mirroring the brain). Empty ⇒ no drain.
+    seedIds: string[] = [],
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
     const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
@@ -3227,6 +3414,11 @@ export class ThreadDriver implements JobDispatcher {
     // ignored by MASTER_REVIEW's fragments, so passing it uniformly is byte-identical for both.
     const spec = threadKindSpec(thread.kind);
     const engine: SessionEngine = spec.engine;
+    // Mid-turn steering is armed for EVERY Claude builder Leg — INCLUDING the capped final Leg (where
+    // `rotation` is null: a capped Leg is still a live steerable Claude session, it just won't rotate again).
+    // Decoupled from `rotation` so a host seed can steer any live builder Leg; `rotationNudge` stays gated on
+    // `rotation`. Codex builder / master-review turns stay non-steerable (no streaming-input steer).
+    const steerable = engine === 'claude' && thread.kind === 'builder';
     // The repo's house-style, folded into the builder's system prompt AND forwarded on the run args so the
     // FAN_OUT writer subagents this turn spawns in-container render the same envelope (Layer B).
     const repoConventions = await this.repoConventionsFor(job);
@@ -3299,13 +3491,15 @@ export class ThreadDriver implements JobDispatcher {
             repo.projectRepo.gitUrl,
           ),
           richStream: true, // full transcript (thinking + tool calls/results + subagent forwarding)
-          // Mid-turn steering — armed for Claude builder turns so operator steers AND the engine-local
-          // Leg-rotation SOFT/REMINDER nudges land in the LIVE turn (`priority:'now'`). Never for Codex (no
-          // streaming-input steering there). `rotationNudge` gives the engine the threshold + seed prompts so
-          // it injects the nudge itself the instant its own occupancy crosses — race-free vs the input close.
+          // Mid-turn steering — armed for every Claude builder Leg (including the capped final Leg) so
+          // operator steers AND the engine-local Leg-rotation SOFT/REMINDER nudges land in the LIVE turn
+          // (`priority:'now'`). Never for Codex (no streaming-input steering there). `rotationNudge` gives
+          // the engine the threshold + seed prompts so it injects the nudge itself the instant its own
+          // occupancy crosses — race-free vs the input close; it stays gated on `rotation` (disarmed on the
+          // capped final Leg, which won't rotate again).
+          ...(steerable ? { steerable: true } : {}),
           ...(rotation
             ? {
-                steerable: true,
                 rotationNudge: {
                   softTokens: rotation.thresholds.softTokens,
                   reminderDeltaTokens: rotation.thresholds.reminderDeltaTokens,
@@ -3333,6 +3527,19 @@ export class ThreadDriver implements JobDispatcher {
               batchOrdinal: anchor.batchOrdinal ?? null,
             },
           },
+          // Stamp each folded host seed delivered the instant the Leg turn is durably registered (the
+          // restart-survivable hand-off — a later crash resumes THIS turn rather than re-draining the seeds).
+          ...(seedIds.length
+            ? {
+                onTurnRegistered: () => {
+                  for (const id of seedIds) {
+                    void this.stimulusStore?.markChatDelivered(id).catch((err) =>
+                      this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
+                    );
+                  }
+                },
+              }
+            : {}),
           onEvent: (e) => {
             if (e.kind === 'usage') {
               rotationWatch.observe(e);
@@ -3340,6 +3547,14 @@ export class ThreadDriver implements JobDispatcher {
               if (rotation && e.contextTokens != null) {
                 rotation.state.peakTokens = Math.max(rotation.state.peakTokens ?? 0, e.contextTokens);
               }
+            }
+            // A `now` host seed steered mid-turn into this live Leg is consumed at the engine `input_ack` — the
+            // shared `steerPending` only LEASES, so stamp delivered HERE (idempotent) or it re-drains at lease
+            // expiry. A rotation-nudge steer carries a throwaway id (no matching row) → a harmless no-op stamp.
+            if (e.kind === 'input_ack' && e.id) {
+              void this.stimulusStore?.markChatDelivered(e.id).catch((err) =>
+                this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
+              );
             }
             if (e.kind === 'tool') this.logger.debug(`batch tool: ${e.name}`);
             harness.onEvent(e);

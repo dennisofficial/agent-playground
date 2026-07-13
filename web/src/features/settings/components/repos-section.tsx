@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import { AUTO_MERGE_METHODS, type AutoMergeMethod } from "@workspace/shared";
 import { cn } from "@/lib/cn";
 import { threadHref, type SettingsSection } from "@/lib/routes";
 import { BranchPicker } from "@/components/branch-picker";
@@ -849,6 +850,12 @@ function RepoEditRow({
   const [name, setName] = useState(repo.name);
   const [branch, setBranch] = useState(repo.defaultBranch);
   const [branchPrefix, setBranchPrefix] = useState(repo.branchPrefix ?? "");
+  const [mergeMethod, setMergeMethod] = useState<AutoMergeMethod>(
+    repo.defaultAutoMergeMethod,
+  );
+  const [deleteBranch, setDeleteBranch] = useState(
+    repo.defaultAutoMergeDeleteBranch,
+  );
 
   async function save() {
     if (update.isPending) return;
@@ -860,6 +867,8 @@ function RepoEditRow({
           defaultBranch: branch.trim() || repo.defaultBranch,
           // Empty clears the override back to the neutral default.
           branchPrefix: branchPrefix.trim(),
+          defaultAutoMergeMethod: mergeMethod,
+          defaultAutoMergeDeleteBranch: deleteBranch,
         },
       });
       onClose();
@@ -908,6 +917,67 @@ function RepoEditRow({
           />
         </div>
       </div>
+
+      <div className="mt-3.5 flex flex-col gap-3 border-t border-dashed border-border-2 pt-3.5">
+        <div className="w-48">
+          <label
+            htmlFor="repo-edit-merge-method"
+            className="mb-1.5 block text-[11.5px] font-medium text-dim"
+          >
+            Merge method
+          </label>
+          <select
+            id="repo-edit-merge-method"
+            data-testid="repo-edit-merge-method"
+            value={mergeMethod}
+            onChange={(e) => setMergeMethod(e.target.value as AutoMergeMethod)}
+            className="w-full rounded-md border border-border-2 bg-surface px-3 py-2.5 text-[13px] capitalize text-text outline-none transition focus:border-accent"
+          >
+            {AUTO_MERGE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center justify-between gap-2.5">
+          <div>
+            <label
+              htmlFor="repo-edit-delete-branch"
+              className="mb-0.5 block text-[11.5px] font-medium text-dim"
+            >
+              Delete branch after merge
+            </label>
+            <p className="text-[10.5px] leading-snug text-faint">
+              Removes the head branch once Atlas merges the PR.
+            </p>
+          </div>
+          <button
+            id="repo-edit-delete-branch"
+            type="button"
+            role="switch"
+            aria-checked={deleteBranch}
+            aria-label="Delete branch after merge"
+            data-testid="repo-edit-delete-branch"
+            onClick={() => setDeleteBranch((v) => !v)}
+            className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
+            style={{
+              background: deleteBranch ? "var(--green)" : "var(--surface-3)",
+              borderColor: deleteBranch ? "var(--green)" : "var(--border-2)",
+            }}
+          >
+            <span
+              className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
+              style={{
+                transform: deleteBranch ? "translateX(13px)" : "translateX(0)",
+                boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+              }}
+            />
+          </button>
+        </div>
+      </div>
+
       <div className="mt-3 flex gap-2.5">
         <button
           type="button"

@@ -58,6 +58,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // liveTurns
     {} as never, // driverStore
     { rehydrateThread: m.rehydrateThread } as never, // threadLifecycle
+    {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
     m.messages as never,
@@ -88,6 +89,7 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, m };
 }

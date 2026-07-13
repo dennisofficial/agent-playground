@@ -15,6 +15,7 @@ import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import {
   formatElapsed,
   MAIN_LANE,
+  retryCountdownSeconds,
   summarizeLiveTurn,
   useElapsedSeconds,
   type LiveBlock,
@@ -699,17 +700,24 @@ export function LiveIndicator({
 }) {
   const elapsed = useElapsedSeconds(turn?.startedAt);
   const { openTools, statusWord } = summarizeLiveTurn(turn);
-  const label = !turn
-    ? text
-    : [
-        formatElapsed(elapsed),
-        openTools > 0
-          ? `${openTools} running task${openTools === 1 ? "" : "s"}`
-          : null,
-        `${statusWord}…`,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+  // Hook called UNCONDITIONALLY (rules of hooks); returns null when no retry is in flight.
+  const retrySecs = useRetryCountdown(turn?.retrying?.nextAttemptAt);
+  const retrying = turn?.retrying;
+  const label = retrying
+    ? `Reconnecting to Claude — auto-retry ${retrying.attempt}/${retrying.max}${
+        retrySecs != null ? ` · retrying in ${retrySecs}s` : "…"
+      }`
+    : !turn
+      ? text
+      : [
+          formatElapsed(elapsed),
+          openTools > 0
+            ? `${openTools} running task${openTools === 1 ? "" : "s"}`
+            : null,
+          `${statusWord}…`,
+        ]
+          .filter(Boolean)
+          .join(" · ");
   return (
     <div className="anim-fadeUp flex items-center gap-2.5 text-[11.5px] text-accent">
       <span
@@ -722,6 +730,23 @@ export function LiveIndicator({
       <span className="tabular-nums">{label}</span>
     </div>
   );
+}
+
+/**
+ * Whole seconds until a retry's next attempt (`targetMs`, absolute epoch-ms), ticking every second — for
+ * the "Reconnecting to Claude — … · retrying in Xs" indicator. Called UNCONDITIONALLY (rules of hooks):
+ * returns `null` when `targetMs` is undefined (no retry in flight) or already past. The target is a STABLE
+ * absolute instant (resolved once in the reducer), never recomputed per render, so it actually counts down.
+ */
+function useRetryCountdown(targetMs: number | undefined): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (targetMs == null) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [targetMs]);
+  return retryCountdownSeconds(targetMs, now);
 }
 
 /** Compact countdown label ("12m", "1h 4m", "45s") for the session-limit auto-resume clock. */

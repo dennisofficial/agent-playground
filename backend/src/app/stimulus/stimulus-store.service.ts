@@ -45,6 +45,10 @@ export class DuplicateStimulusError extends Error {
 /** Postgres unique-violation SQLSTATE. */
 const PG_UNIQUE_VIOLATION = '23505';
 
+/** The System scope a build-lane HOST SEED is authored by — never an operator (matches the `U-SYSTEM`/`System`
+ *  convention used for host-authored rows elsewhere). Kept local to avoid a stimulus→surface import edge. */
+const HOST_SEED_AUTHOR = { id: 'U-SYSTEM', displayName: 'System' } as const;
+
 /**
  * Persistence for the intake seam — the single place stimuli/threads/messages land on the 'atlas'
  * connection. Realizes "notification-seeds-a-thread":
@@ -288,6 +292,9 @@ export class StimulusStoreService {
     card?: Record<string, unknown>;
     /** Delivery priority (d18: `now` | `queue` | `later`); absent = `now`. Piggybacked into `reply_route` jsonb. */
     priority?: 'now' | 'queue' | 'later';
+    /** The routing coordinate (`'main'` | `'thread:<threadId>'`); absent = `'main'`. Brain callers omit it,
+     *  so their rows are byte-identical to before this field existed. */
+    lane?: string;
     /**
      * SEED RENDER COMMAND (see `SeedRow`) — when present, this is a system seed: a descriptor writes a
      * deduped curated pill INSTEAD of the plain operator `messages` bubble; `'skip'` writes NEITHER (the
@@ -362,6 +369,7 @@ export class StimulusStoreService {
           source: null,
           dedupe_key: null,
           severity: null,
+          ...(input.lane ? { lane: input.lane } : {}),
         }),
       );
     });
@@ -385,6 +393,57 @@ export class StimulusStoreService {
     };
   }
 
+  /**
+   * Persist a HOST SEED continuing a build lane — the durable `stimuli` row ONLY, no operator `messages`
+   * bubble. Unlike {@link recordChatStimulus} (which atomically writes an operator-visible bubble + the
+   * stimulus, so a build-lane seed would render as a main-thread OPERATOR message — wrong: build lanes are
+   * operator-read-only), this writes just the delivery-ledger row so the at-least-once pump still drives it,
+   * authored by the System scope (never an operator). The VISIBLE read-only build-lane row is emitted
+   * separately by the caller via `recordBuildSystemChunk`. `priority` is piggybacked into `reply_route`
+   * exactly as {@link recordChatStimulus} does; `lane` is the build lane (`thread:<threadId>`).
+   */
+  async recordHostSeed(input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+    lane: string;
+    body: string;
+    priority?: 'now' | 'queue' | 'later';
+  }): Promise<ChatStimulus> {
+    const replyRoute = { surfaceId: 'web', jobRef: input.jobId };
+    const row = await this.stimuli.save(
+      this.stimuli.create({
+        org_id: input.orgId,
+        repo_id: input.repoId,
+        kind: 'chat',
+        trust: 'trusted',
+        body: input.body,
+        job_id: input.jobId,
+        author_id: HOST_SEED_AUTHOR.id,
+        author_name: HOST_SEED_AUTHOR.displayName,
+        reply_route: input.priority ? { ...replyRoute, priority: input.priority } : replyRoute,
+        source: null,
+        dedupe_key: null,
+        severity: null,
+        lane: input.lane,
+      }),
+    );
+
+    return {
+      id: row.id,
+      orgId: input.orgId,
+      repoId: input.repoId,
+      kind: 'chat',
+      trust: 'trusted',
+      body: input.body,
+      jobId: input.jobId,
+      author: { id: HOST_SEED_AUTHOR.id, displayName: HOST_SEED_AUTHOR.displayName },
+      replyRoute,
+      receivedAt: row.created_at,
+      ...(input.priority ? { priority: input.priority } : {}),
+    };
+  }
+
   // ── Durable operator-message delivery: the chat-inbox queries ─────────────────────────────────────
   //
   // These back the brain's durable-delivery pump (AgentSessionManager). They live here — not inline on
@@ -392,13 +451,23 @@ export class StimulusStoreService {
   // full constructor. Chat rows ARE the durable operator-message inbox; see StimulusEntity.{delivered_at,
   // attempted_at}.
 
-  /** A thread's eligible pending chat stimuli (undelivered + lease-free), oldest first, as ChatStimulus. */
-  async eligiblePendingChat(jobId: string, leaseMs: number): Promise<ChatStimulus[]> {
+  /**
+   * A lane's eligible pending chat stimuli (undelivered + lease-free), oldest first, as ChatStimulus.
+   * `lane` is a trailing optional param defaulting `'main'` so every existing (jobId, leaseMs) brain
+   * caller keeps working unchanged; a build-lane caller passes its `'thread:<id>'` lane explicitly.
+   * Legacy NULL `lane` rows (written before this column existed) are treated as `'main'`.
+   */
+  async eligiblePendingChat(
+    jobId: string,
+    leaseMs: number,
+    lane: string = 'main',
+  ): Promise<ChatStimulus[]> {
     const cutoff = new Date(Date.now() - leaseMs);
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .where('s.kind = :k', { k: 'chat' })
       .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere("COALESCE(s.lane, 'main') = :lane", { lane })
       .andWhere('s.delivered_at IS NULL')
       .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
       .orderBy('s.created_at', 'ASC')
@@ -415,6 +484,37 @@ export class StimulusStoreService {
   /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
   async markChatDelivered(id: string): Promise<void> {
     await this.stimuli.update({ id, delivered_at: IsNull() }, { delivered_at: new Date() });
+  }
+
+  /**
+   * Every still-undelivered chat stimulus on a lane, ignoring the delivery lease. Used only at terminal
+   * lane teardown, where a leased-but-unacked build-lane seed must not be stranded just because the normal
+   * retry window has not expired yet.
+   */
+  async undeliveredChatForLane(jobId: string, lane: string): Promise<ChatStimulus[]> {
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere("COALESCE(s.lane, 'main') = :lane", { lane })
+      .andWhere('s.delivered_at IS NULL')
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
+    return rows.map((r) => this.rowToChatStimulus(r));
+  }
+
+  /**
+   * Re-key a still-undelivered chat stimulus onto the `main` lane, replacing its body — the build-lane
+   * thread-end escalation backstop (see `AgentSessionManager.escalateBuildLaneLeftovers`). Leaves
+   * `delivered_at` NULL and clears any old delivery lease so the brain's existing main pump/sweep can pick
+   * it up immediately; only touches a still-null row (idempotent alongside a racing sweep that already
+   * delivered it under its old lane).
+   */
+  async rekeyLaneToMain(id: string, labeledBody: string): Promise<void> {
+    await this.stimuli.update(
+      { id, delivered_at: IsNull() },
+      { lane: 'main', body: labeledBody, attempted_at: null },
+    );
   }
 
   /** Reconstruct a single chat stimulus by id (the durable stimuli.id), or null. Used by the brain to
@@ -456,6 +556,18 @@ export class StimulusStoreService {
     return (await qb.getCount()) > 0;
   }
 
+  /** True when the job has at least one durable undelivered chat stimulus (excluding `later`-priority rows,
+   *  same filter as {@link undeliveredChatThreads}) — the auto-merge brain-settled guard's queue check. */
+  async hasUndeliveredChat(jobId: string): Promise<boolean> {
+    return this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .getExists();
+  }
+
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
   async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli
@@ -472,6 +584,32 @@ export class StimulusStoreService {
       .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
       .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
     return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id }));
+  }
+
+  /**
+   * Distinct (thread, org, repo, lane) tuples with at least one undelivered chat stimulus — the lane-aware
+   * sweep worklist. A NEW method (rather than widening {@link undeliveredChatThreads}) so its existing
+   * job-keyed caller keeps compiling unchanged; a lane-generic sweep calls this one instead. Legacy NULL
+   * `lane` rows are grouped under `'main'`.
+   */
+  async undeliveredChatLanes(): Promise<
+    Array<{ jobId: string; orgId: string; repoId: string; lane: string }>
+  > {
+    const rows = await this.stimuli
+      .createQueryBuilder('s')
+      .select('s.job_id', 'job_id')
+      .addSelect('s.org_id', 'org_id')
+      .addSelect('s.repo_id', 'repo_id')
+      .addSelect("COALESCE(s.lane, 'main')", 'lane')
+      .distinct(true)
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere('s.job_id IS NOT NULL')
+      // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
+      // along a turn that runs for some other reason (d18).
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .getRawMany<{ job_id: string; org_id: string; repo_id: string; lane: string }>();
+    return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id, lane: r.lane }));
   }
 
   /** Clear the lease on every undelivered chat row (boot reconcile — re-drive anything mid-attempt at crash). */
