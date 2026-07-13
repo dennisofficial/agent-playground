@@ -54,7 +54,7 @@ import {
   type RepoView,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
+import type { AutoApproveMode } from "@workspace/shared";
 import type {
   JobBlocker,
   WebAttachmentsCard,
@@ -399,15 +399,22 @@ export function useSendReviewComments(ref: JobRef) {
 }
 
 /**
- * Submit a plan verdict (approve / request changes / deny). Every verdict flips the job status
- * (→ running / planning / cancelled), which the WAL realtime stream (`useAllJobsRealtime`) delivers
- * race-free on the DB commit and uses to invalidate this thread's pipeline + messages. So NO
- * `onSuccess` refetch here — an immediate one would race the async status flip and re-cache stale
- * state (the flip happens in the brain after the gate resolves, not in this request).
+ * Submit a plan/ship/merge verdict (approve / request changes / deny). For plan and ship, every verdict
+ * flips the job status (→ running / planning / cancelled), which the WAL realtime stream
+ * (`useAllJobsRealtime`) delivers race-free on the DB commit and uses to invalidate this thread's
+ * pipeline + messages — so there's no `onSuccess`/`onSettled` refetch race there (the mutation resolves
+ * instantly, well before the async status flip happens).
+ *
+ * The MERGE action is different: the backend now AWAITS the merge before responding, so this request's
+ * promise doesn't resolve until the merge has fully succeeded or failed — the status flip has already
+ * happened server-side by the time we get a response. An `onSettled` invalidate is therefore safe (it
+ * can't race the flip) and desired: it lets the Merge PR card unmount promptly on either outcome.
  */
 export function useApprove(ref: JobRef) {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ApproveBody) => approveThread(ref, body),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
 }
 
@@ -629,11 +636,7 @@ export function useSetAutoApprove(ref: JobRef) {
 export function useSetAutoMerge(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      autoMerge: boolean;
-      method?: AutoMergeMethod;
-      deleteBranch?: boolean;
-    }) => setAutoMerge(ref, body),
+    mutationFn: (body: { autoMerge: boolean }) => setAutoMerge(ref, body),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
