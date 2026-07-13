@@ -2470,7 +2470,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       spy.mockRestore();
     });
 
-    it('notifyThreadHalted escalates undelivered build-lane host seeds into the wake body + stamps them delivered', async () => {
+    it('notifyThreadHalted re-keys undelivered build-lane host seeds onto the main lane (never stamps delivered, never mutates the wake body)', async () => {
       fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
       fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
       fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
@@ -2478,26 +2478,37 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         summary: 'response format undecided',
         blocked: { reason: 'decision', detail: 'JSON vs plain text' },
       });
-      // A still-undelivered host seed on the halting thread's build lane (`thread:th-x`) must ride the wake.
+      // A still-undelivered host seed on the halting thread's build lane (`thread:th-x`) must be re-keyed
+      // onto `main` — NOT stamped delivered, NOT appended to the wake body — so a dropped wake (draining /
+      // blocked job) can't lose it: the brain's main pump/sweep re-drives it at-least-once.
       const store = (manager as unknown as {
         stimulusStore: {
           eligiblePendingChat: (j: string, l: number, lane?: string) => Promise<Array<{ id: string; body: string }>>;
+          rekeyLaneToMain: (id: string, labeledBody: string) => Promise<void>;
           markChatDelivered: (id: string) => Promise<void>;
         };
       }).stimulusStore;
+      const rekeyed: Array<{ id: string; labeledBody: string }> = [];
       const stamped: string[] = [];
       store.eligiblePendingChat = async (_j, _l, lane) =>
         lane === 'thread:th-x' ? [{ id: 'seed-1', body: 'leftover host seed body' }] : [];
+      store.rekeyLaneToMain = async (id, labeledBody) => {
+        rekeyed.push({ id, labeledBody });
+      };
       store.markChatDelivered = async (id) => {
         stamped.push(id);
       };
       const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
       await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
 
+      expect(rekeyed).toHaveLength(1);
+      expect(rekeyed[0].id).toBe('seed-1');
+      expect(rekeyed[0].labeledBody).toContain('Undelivered host seed from build thread th-x'); // origin label
+      expect(rekeyed[0].labeledBody).toContain('leftover host seed body'); // original body preserved
+      expect(stamped).toHaveLength(0); // never speculatively stamped delivered
+
       const stim = spy.mock.calls[0][0] as ChatStimulus;
-      expect(stim.body).toContain('Undelivered host seeds'); // the labeled escalation section
-      expect(stim.body).toContain('leftover host seed body'); // the seed body carried to the brain
-      expect(stamped).toContain('seed-1'); // stamped so the sweep won't re-drive a now-dead lane
+      expect(stim.body).not.toContain('leftover host seed body'); // wake body stays untouched
       spy.mockRestore();
     });
 

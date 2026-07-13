@@ -221,4 +221,29 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     const input = new ThreadInputService();
     expect(input.canPost(lane)).toBe(false);
   });
+
+  it('(e) pump() re-drives a pending `now` seed into a live steerable Leg — the build-lane sweep backstop', async () => {
+    const job = await makeJob();
+    // Seed with NO live turn yet — a `now` seed whose original steer was swallowed stays pending, exactly
+    // the shape the sweep must recover.
+    await seeder.seedLane({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID }, 'swallowed steer', 'now');
+    expect(steerCalls).toHaveLength(0);
+
+    // A Leg goes live AFTER the seed — the sweep tick's re-drive, not the original seedLane call, must steer it.
+    await registry.register({
+      turnId: '5cccccc1-2222-4222-8222-222222222222',
+      jobId: job.id,
+      orgId: ORG_ID,
+      channel: repoId,
+      lane,
+      kind: 'step',
+      steerable: true,
+      ctx: {},
+    });
+
+    await seeder.pump({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID });
+
+    expect(steerCalls).toHaveLength(1);
+    expect(steerCalls[0].body).toBe('swallowed steer');
+  });
 });

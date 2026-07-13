@@ -838,30 +838,25 @@ export class AgentSessionManager
    * (`retry_thread`) or escalates. A no-op if the thread is no longer owed a wake (already re-driven / done).
    */
   /**
-   * ESCALATE any still-undelivered build-lane host seed into the brain done/halt wake (spec step 6, d2). When
-   * a thread reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host
-   * seeds — `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Append their
-   * bodies to the wake body (so the brain reads them) and stamp each delivered (so the at-least-once sweep
-   * won't re-drive them into a now-dead lane). The sweep stays the backstop if this stamp races a crash.
+   * ESCALATE any still-undelivered build-lane host seed at thread end (spec step 6, d2). When a thread
+   * reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host seeds —
+   * `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Re-key each onto the
+   * `main` lane (leaving `delivered_at` NULL, never stamped here) with its origin labeled, so the brain's
+   * existing main pump/sweep (`sweepUndeliveredChat`) delivers them at-least-once. Deliberately does NOT touch
+   * the done/halt wake body: a wake is dropped whenever `handleChatTurn` early-returns (draining / blocked
+   * job), and a body mutation would then be lost right alongside a premature delivered-stamp — re-keying is
+   * durable on its own and needs no wake to succeed.
    */
-  private async escalateBuildLaneLeftovers(
-    jobId: string,
-    threadId: string,
-    wakeBody: AgentMessage,
-  ): Promise<AgentMessage> {
+  private async escalateBuildLaneLeftovers(jobId: string, threadId: string): Promise<void> {
     const leftovers = await this.stimulusStore
       .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, laneFor('builder', threadId))
       .catch(() => [] as ChatStimulus[]);
-    if (leftovers.length === 0) return wakeBody;
     for (const s of leftovers) {
-      void this.stimulusStore.markChatDelivered(s.id).catch((err) =>
-        this.logger.debug(`build-lane escalation stamp for ${s.id} failed (sweep will retry): ${err}`),
+      const labeled = `Undelivered host seed from build thread ${threadId}: ${s.body}`;
+      await this.stimulusStore.rekeyLaneToMain(s.id, labeled).catch((err) =>
+        this.logger.warn(`build-lane escalation re-key for ${s.id} failed (thread=${threadId}): ${err}`),
       );
     }
-    const section = leftovers.map((s) => s.body).join('\n\n');
-    return agentMessage(
-      `${wakeBody}\n\n---\n\nUndelivered host seeds for this build thread (escalated at thread end):\n\n${section}`,
-    );
   }
 
   async notifyThreadHalted(
@@ -885,15 +880,12 @@ export class AgentSessionManager
     const anchor = await this.driverStore
       .resolveSessionAnchor(threadId)
       .catch(() => undefined);
+    await this.escalateBuildLaneLeftovers(jobId, threadId);
     const stimulus = haltDeliveryStimulus({
       jobId,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: await this.escalateBuildLaneLeftovers(
-        jobId,
-        threadId,
-        renderHaltDelivery(thread, outcome, term, anchor),
-      ),
+      body: renderHaltDelivery(thread, outcome, term, anchor),
       seedHaltWake: { threadId, gen },
       // The halted thread's own (untrusted) record → a visible `untrusted` pill; keyed by thread+gen.
       seedRow: {
@@ -948,15 +940,12 @@ export class AgentSessionManager
       );
       perThreadGaps = withGaps.filter((g): g is { brief: string; gaps: string[] } => g != null);
     }
+    await this.escalateBuildLaneLeftovers(jobId, threadId);
     const stimulus = doneDeliveryStimulus({
       jobId,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: await this.escalateBuildLaneLeftovers(
-        jobId,
-        threadId,
-        renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
-      ),
+      body: renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
       seedDoneWake: { threadId, reason, gen },
       // The completed thread's own (untrusted) record → a visible `untrusted` pill.
       seedRow: {

@@ -308,8 +308,9 @@ export class ThreadDriver implements JobDispatcher {
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
     @Optional() private readonly claudeCreds?: ClaudeCredentialStore,
     // The durable inbound ledger — stamps a build-lane host seed `delivered_at` at the engine `input_ack`
-    // (live steer) and at the Leg-kick hand-off (fresh-turn drain). @Global StimulusModule. @Optional so the
-    // direct-construction unit test constructs without it (undefined → no host-seed drain, byte-identical).
+    // (live steer) and at the Leg-kick hand-off (fresh-turn drain). StimulusModule is plain-imported into
+    // DriverModule.imports (not @Global). @Optional so the direct-construction unit test constructs without
+    // it (undefined → no host-seed drain, byte-identical).
     @Optional() private readonly stimulusStore?: StimulusStoreService,
     // The host-side JIT turn-prefix rail — a build-lane fresh-turn drain composes host seeds through the SAME
     // `composeTurn` + `collectOperatorPrepends` rail the brain uses (d4). @Global BrainModule. @Optional so the

@@ -427,6 +427,19 @@ export class StimulusStoreService {
     await this.stimuli.update({ id, delivered_at: IsNull() }, { delivered_at: new Date() });
   }
 
+  /**
+   * Re-key a still-undelivered chat stimulus onto the `main` lane, replacing its body — the build-lane
+   * thread-end escalation backstop (see `AgentSessionManager.escalateBuildLaneLeftovers`). Leaves
+   * `delivered_at` NULL so the brain's existing main pump/sweep picks it up at-least-once; only touches a
+   * still-null row (idempotent alongside a racing sweep that already delivered it under its old lane).
+   */
+  async rekeyLaneToMain(id: string, labeledBody: string): Promise<void> {
+    await this.stimuli.update(
+      { id, delivered_at: IsNull() },
+      { lane: 'main', body: labeledBody },
+    );
+  }
+
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
   async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli

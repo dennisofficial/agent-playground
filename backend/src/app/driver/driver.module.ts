@@ -29,9 +29,10 @@ import {
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
-import { StimulusModule } from '../stimulus';
+import { StimulusModule, StimulusStoreService } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { descriptorForLane } from '../surface/thread-registry';
 import { GitStateReconciler } from './git-state-reconciler.service';
 import { SessionResumeSweep } from './session-resume-sweep.service';
 import { JobUnblockSweep } from './job-unblock-sweep.service';
@@ -62,6 +63,7 @@ const SESSION_RESUME_INTERVAL = 'driver:session-resume';
 const JOB_UNBLOCK_INTERVAL = 'driver:job-unblock';
 const PREVIEW_INTERVAL = 'driver:preview';
 const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
+const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
 
 /**
  * W4 — the SECTION/PHASE DRIVER module. Composes the deterministic, resumable `async` pipeline that
@@ -161,6 +163,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   private jobUnblockInFlight = false; // skip a tick if the prior job-unblock sweep is still running
   private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private tokenRefreshInFlight = false; // skip a token-refresh tick if the prior sweep is still running
+  private buildLaneSweepInFlight = false; // skip a tick if the prior build-lane sweep is still running
   private readonly logger = new Logger(DriverModule.name);
   private bootReconciled = false; // crash-recovery sweep runs ONCE per process, not on every re-promote
   private webhooksBackfilled = false; // per-repo webhook backfill runs ONCE per process on leadership
@@ -187,6 +190,12 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // so the leader watchdog can re-drive an orphaned-but-alive build turn. @Optional so the module's
     // direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly reattachRegistry?: TurnReattachRegistry,
+    // The build-lane at-least-once sweep backstop — re-drives a lane's pending host seed(s) the way
+    // {@link BuildLaneDeliveryService.seedLane}'s inline pump would, on a periodic cadence so a `now` seed
+    // whose live-turn steer was dropped isn't stuck until the next Leg drain. @Optional so the module's
+    // direct-construction unit test compiles without a trailing argument.
+    @Optional() private readonly buildLaneDelivery?: BuildLaneDeliveryService,
+    @Optional() private readonly stimulusStore?: StimulusStoreService,
   ) {}
 
   /**
@@ -257,6 +266,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.startJobUnblockTimer(); // backstop: wake blocked jobs whose blockers are all terminal (leader-only)
       this.startPreviewTimer(); // the marker → Caddy-route reconciler (leader-only, exposure-gated)
       this.startTokenRefreshTimer(); // app-mode in-sandbox git token-file refresh sweep (leader-only)
+      this.startBuildLaneSweepTimer(); // build-lane host-seed at-least-once re-drive backstop (leader-only)
     });
     this.demoteSub = this.election.onDemote(() => {
       this.stopReapTimer();
@@ -266,6 +276,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       this.stopJobUnblockTimer();
       this.stopPreviewTimer();
       this.stopTokenRefreshTimer();
+      this.stopBuildLaneSweepTimer();
     });
   }
 
@@ -492,6 +503,57 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     }
   }
 
+  /**
+   * The build-lane at-least-once sweep (~30s, matching the brain's `CHAT_SWEEP_INTERVAL`) — re-drives every
+   * build lane (`thread:<threadId>`) still carrying an undelivered host seed. Mirrors the brain's
+   * `sweepUndeliveredChat`: `undeliveredChatLanes()` is the worklist, `BuildLaneDeliveryService.pump` is the
+   * re-drive (a live steerable Leg's `now` seed steers; otherwise it's a no-op — the row already waits for the
+   * next Leg's `foldLegTaskWithSeeds` drain). This only tightens that backstop's latency; thread-END leftovers
+   * are covered independently by `AgentSessionManager.escalateBuildLaneLeftovers` re-keying onto `main`.
+   * Leader-only (mutates shared turn state); `unref` so it never keeps the process alive; `buildLaneSweepInFlight`
+   * guards against overlap when a tick runs long. Absent `buildLaneDelivery`/`stimulusStore` (the module's
+   * direct-construction unit test) → no-op.
+   */
+  private startBuildLaneSweepTimer(): void {
+    if (!this.buildLaneDelivery || !this.stimulusStore) return;
+    if (this.scheduler.doesExist('interval', BUILD_LANE_SWEEP_INTERVAL)) return;
+    const everyMs = 30 * 1000; // 30s — matches the brain's CHAT_SWEEP_INTERVAL cadence.
+    const iv = setInterval(() => {
+      if (this.buildLaneSweepInFlight) return;
+      this.buildLaneSweepInFlight = true;
+      void this.buildLaneSweepTick().finally(() => {
+        this.buildLaneSweepInFlight = false;
+      });
+    }, everyMs);
+    iv.unref?.();
+    this.scheduler.addInterval(BUILD_LANE_SWEEP_INTERVAL, iv);
+  }
+
+  private stopBuildLaneSweepTimer(): void {
+    if (this.scheduler.doesExist('interval', BUILD_LANE_SWEEP_INTERVAL)) {
+      this.scheduler.deleteInterval(BUILD_LANE_SWEEP_INTERVAL);
+    }
+  }
+
+  private async buildLaneSweepTick(): Promise<void> {
+    let lanes: Array<{ jobId: string; orgId: string; repoId: string; lane: string }>;
+    try {
+      lanes = await this.stimulusStore!.undeliveredChatLanes();
+    } catch (err) {
+      this.logger.debug(`build-lane sweep query failed (will retry): ${err}`);
+      return;
+    }
+    for (const l of lanes) {
+      const owner = descriptorForLane(l.lane);
+      if (owner?.descriptor.kind !== 'builder') continue; // only build lanes; `main` rides the brain's own sweep
+      const threadId = owner.ids[0];
+      if (!threadId) continue;
+      void this.buildLaneDelivery!
+        .pump({ jobId: l.jobId, orgId: l.orgId, repoId: l.repoId, threadId })
+        .catch((err) => this.logger.debug(`build-lane sweep pump failed for thread=${threadId}: ${err}`));
+    }
+  }
+
   onApplicationShutdown(): void {
     this.resumeSub?.unsubscribe();
     this.promoteSub?.unsubscribe();
@@ -503,5 +565,6 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     this.stopJobUnblockTimer();
     this.stopPreviewTimer();
     this.stopTokenRefreshTimer();
+    this.stopBuildLaneSweepTimer();
   }
 }

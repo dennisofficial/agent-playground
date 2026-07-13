@@ -104,7 +104,9 @@ export class BuildLaneDeliveryService implements LaneSeeder {
     // thread's current anchor step + Leg so the web slices it under the right thread node. Display-only, so a
     // thread with no step yet (never planned) simply skips the visible row; delivery still rides the pump.
     const steps = await this.driverStore.stepsForThread(target.threadId).catch(() => []);
-    const anchor = steps.find((s) => s.sessionId != null) ?? steps[steps.length - 1];
+    // Reverse-find (steps are ordinal ASC) so this prefers the LATEST session-bearing step — the ACTIVE one —
+    // not the oldest; same idiom as `DriverStoreService.resolveSessionAnchor`.
+    const anchor = [...steps].reverse().find((s) => s.sessionId != null) ?? steps[steps.length - 1];
     if (anchor) {
       await this.driverStore
         .recordBuildSystemChunk({
@@ -120,6 +122,15 @@ export class BuildLaneDeliveryService implements LaneSeeder {
         );
     }
 
+    await this.deliveryPump.pump(this.laneDescriptor(target));
+  }
+
+  /**
+   * Re-drive a build lane's pending host seeds without seeding a new one — the at-least-once sweep backstop
+   * (driver module timer roster). A no-op when nothing is pending; steers a live steerable Leg's `now` seed,
+   * otherwise leaves `queue`/`later` rows pending for the next `kickBatchTurn` drain (same as {@link seedLane}).
+   */
+  async pump(target: LaneSeedTarget): Promise<void> {
     await this.deliveryPump.pump(this.laneDescriptor(target));
   }
 }
