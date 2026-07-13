@@ -56,8 +56,9 @@ import type {
 const SAY_WAIT_MS = 60_000;
 /** Poll cadence for the wait loop (cheap in-memory outbox scan). */
 const SAY_POLL_MS = 200;
-/** The simulated operator id stamped on injected messages + approvals. */
-const TESTER_ID = 'tester';
+/** The simulated operator id stamped on injected messages + approvals — a real seeded dev user's uuid
+ *  (`decision_records.approved_by` is a uuid FK; the literal `'tester'` fails `QueryFailedError`). */
+const TESTER_ID = '1e512337-cd7e-41bb-8485-565eed283139';
 
 /**
  * THE HTTP TEST-BRIDGE — a dev/test-only edge that lets an external driver have a REAL conversation with
