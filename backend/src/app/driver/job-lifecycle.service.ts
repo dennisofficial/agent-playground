@@ -22,6 +22,7 @@ import {
 } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { computeFeatureBranchName } from './branch-naming';
+import { DriverStoreService } from './driver-store.service';
 import { DRIVER_REPO, type DriverRepoResolver } from './repo-resolver';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -134,6 +135,10 @@ export class JobLifecycleService {
     // `useExisting: AgentSessionManager` port (the brain constructs this service → DI deadlock).
     private readonly brainGateway: BrainGateway,
     private readonly skillUpdater: SkillUpdaterService,
+    // Neutralize any live "Merge PR" card on a terminal PR state — this is the single shared entry point
+    // for every terminal path (webhook fast path + poll backstop), so it also catches a PR merged/closed
+    // outside `AutoMergeService.mergeNow`. No DI cycle: DriverStoreService doesn't depend on this service.
+    private readonly driverStore: DriverStoreService,
   ) {}
 
   /**
@@ -604,6 +609,11 @@ export class JobLifecycleService {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
+    // Retire any live "Merge PR" card now the PR is terminal — the shared point every terminal path funnels
+    // through, so a PR merged/closed by any means (github.com, a click, a poll) can't leave a stale button.
+    await this.driverStore
+      .neutralizeMergeCard(job.id, prState === 'merged' ? 'merged' : 'not-ready')
+      .catch(() => undefined);
     await this.jobDeps
       .onBlockerResolved(job.id, prState === 'merged' ? 'merged' : 'closed_unmerged')
       .catch((err) => this.logger.warn(`applyGithubPrState: wake funnel failed for blocker ${job.id}: ${err}`));

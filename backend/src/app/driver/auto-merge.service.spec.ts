@@ -308,7 +308,7 @@ describe('AutoMergeService.maybeAutoMerge', () => {
       job: makeJobEntity({ pr_mergeable: 'dirty' }),
     });
     await svc.maybeAutoMerge(job.id);
-    expect(neutralizeMergeCard).toHaveBeenCalledWith(job.id);
+    expect(neutralizeMergeCard).toHaveBeenCalledWith(job.id, 'not-ready');
     expect(postMergeCard).not.toHaveBeenCalled();
     expect(mergePullRequest).not.toHaveBeenCalled();
   });

@@ -534,17 +534,23 @@ export class DriverStoreService {
     );
   }
 
-  /** Neutralize the "Merge PR" card once it's no longer actionable (merged, or the PR left the ready
-   *  state) — rewrites it to a verdict card so a stale button can't be clicked. Best-effort: a missing
-   *  or already-neutralized row is a silent no-op. */
-  async neutralizeMergeCard(jobId: string): Promise<void> {
+  /** Neutralize the "Merge PR" card once it's no longer actionable — rewrites it to a verdict card so a
+   *  stale button can't be clicked. `outcome` distinguishes an actual merge (`'merged'` → '✅ Merged.')
+   *  from the PR merely leaving the merge-ready state (`'not-ready'` → 'No longer ready to merge.'): the
+   *  latter fires whenever the PR turns dirty / CI regresses / it closes unmerged, so it must NOT claim
+   *  success. Best-effort: a missing or already-neutralized row is a silent no-op. */
+  async neutralizeMergeCard(jobId: string, outcome: 'merged' | 'not-ready' = 'merged'): Promise<void> {
     const ts = `merge-ready:${jobId}`;
     const row = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
     if (!row) return;
     const card = row.card as Record<string, unknown> | null;
     if (card?.['type'] !== 'approval_card') return;
     const title = String(card?.['title'] ?? 'Merge PR');
-    row.card = webVerdictCard(jobId, title, 'merged', '✅ Merged.') as unknown as Record<string, unknown>;
+    const [verdict, verdictLine] =
+      outcome === 'merged'
+        ? (['merged', '✅ Merged.'] as const)
+        : (['expired', 'No longer ready to merge.'] as const);
+    row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
     await this.messages.save(row);
   }
 

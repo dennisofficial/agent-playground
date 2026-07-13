@@ -88,7 +88,7 @@ export class AutoMergeService {
     const job = await this.jobs.findOneBy({ id: jobId });
     if (!job) return;
     if (!prMergeReady(job)) {
-      await this.driverStore.neutralizeMergeCard(jobId).catch(() => undefined);
+      await this.driverStore.neutralizeMergeCard(jobId, 'not-ready').catch(() => undefined);
       return;
     }
     // GitHub-mergeable → the manual Merge PR card appears regardless of auto_merge (a human can always click).
