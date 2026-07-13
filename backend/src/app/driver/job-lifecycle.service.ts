@@ -338,6 +338,13 @@ export class JobLifecycleService {
     return this.rowToSandbox(row);
   }
 
+  /** Resolve the job's base branch (base_branch ?? repo default_branch ?? 'main') — for diffing vs base. */
+  async resolveBaseBranch(jobId: string, orgId: string): Promise<string> {
+    const thread = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
+    const project = thread ? await this.projects.findOne({ where: { id: thread.repo_id } }) : null;
+    return thread?.base_branch ?? project?.default_branch ?? 'main';
+  }
+
   /**
    * Force an immediate re-hydration of a thread's RUNNING sandbox — called right after the operator
    * provides a secret/file, so the newly-granted value is on disk BEFORE the masked-confirmation turn

@@ -42,6 +42,8 @@ interface RealtimeRow {
   ciStatus?: string | null;
   /** Per-category CI check counts (`jobs.ci_counts`) — parallel to `ciStatus`; null when no checks. */
   ciCounts?: CiCounts | null;
+  /** Sidebar port badge tri-state (`jobs.port_state`) — a pure display field on the WAL row. */
+  portState?: "exposed" | "internal" | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
   shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
@@ -155,6 +157,9 @@ export function useAllJobsRealtime(): void {
             : null,
           ci: nextCi,
           ciCounts: nextCounts,
+          // Pure display field — the badge doesn't gate any detail refresh, and thread 1 always maps it,
+          // so set it explicitly rather than relying on the spread to preserve a prior value.
+          portState: row.portState ?? null,
           halt,
         };
         return next;

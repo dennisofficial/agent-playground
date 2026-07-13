@@ -52,6 +52,24 @@ export interface JobDispatcher {
     cap?: number,
   ): Promise<{ ok: boolean; attempt?: number; reason?: string }>;
   /**
+   * "Retry now" operator lever for a thread held on a verification-judge outage (`judge_unavailable`). Re-arms
+   * the (judge-cap) re-drive budget and re-drives — bounded by a fresh judge budget. Refuses a thread not held
+   * on a judge outage. Returns promptly.
+   */
+  operatorRetryStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }>;
+  /**
+   * "Skip & accept" operator lever for a thread held on a verification-judge outage. Sets a durable marker and
+   * re-enters the drive, which finalizes the thread `done` with the live sandbox. Safety-gated: the hold must
+   * be `judge_unavailable` AND the static checks must have passed. Returns promptly.
+   */
+  operatorAcceptStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }>;
+  /**
    * Deliver any OWED thread-halt brain wakes (ADR 0004 rider 4) — fired from `drive()` once the job leaves the
    * active window (so a re-drive can re-enter cleanly) and from the leader boot sweep (crash recovery). For
    * each owed thread it wakes the job brain to triage the halt, then stamps the dedup marker. Scoped to one
@@ -99,6 +117,26 @@ export class LoggingJobDispatcher implements JobDispatcher {
       `[no-op redriveThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will re-drive this`,
     );
     return { ok: true, attempt: 0 };
+  }
+
+  async operatorRetryStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    this.logger.log(
+      `[no-op operatorRetryStuckThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will re-drive this`,
+    );
+    return { ok: true };
+  }
+
+  async operatorAcceptStuckThread(
+    jobId: string,
+    threadId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    this.logger.log(
+      `[no-op operatorAcceptStuckThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will finalize this`,
+    );
+    return { ok: true };
   }
 
   async deliverOwedHaltWakes(jobId?: string): Promise<void> {

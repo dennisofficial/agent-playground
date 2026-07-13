@@ -74,9 +74,10 @@ export function renderBatchTask(
       `\nThread: ${thread.brief}`,
       `\nYour grounding is \`/context/specs/\` — read its \`plan.md\` index, this thread's \`sections/NN-*.md\`` +
         ` file, and \`data-model.md\`; treat \`/context/specs\` and \`/context/generated\` as READ-ONLY. Make ALL` +
-        ` code changes under \`/workspace\`. The one \`/context\` bucket you may write is \`/context/artifacts/\`:` +
-        ` leave your live-validation evidence there (logs, screenshots, a \`RESULTS.md\` index) so it surfaces in` +
-        ` the operator's ARTIFACTS panel.`,
+        ` code changes under \`/workspace\`. You may write TWO \`/context\` buckets: \`$ATLAS_EVIDENCE_DIR\`` +
+        ` (this thread's evidence folder — leave your live-run proof there: logs, screenshots, a \`RESULTS.md\`` +
+        ` index, surfaced in the operator's EVIDENCE panel) and \`/context/artifacts/\` (human-facing DELIVERABLES` +
+        ` only — HTML mockups, reports). Live-run evidence goes to \`$ATLAS_EVIDENCE_DIR\`, NOT \`artifacts/\`.`,
       // Advisory orientation cheat-sheet, when a prior pass captured one (may be absent — the fresh session
       // then orients off the repo docs itself). Kept subordinate to the code + specs (authoritative).
       ...(thread.orientation

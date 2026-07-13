@@ -66,8 +66,8 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
   "  - `/.atlas` — the ENGINE's own home, a SEPARATE mount OUTSIDE the worktree: session transcripts, atlas-svc",
   '    supervisor markers/logs, pnpm/fnm/mcp-hub state. Host-owned. git NEVER sees it — its files are EXPECTED,',
   '    not a leak, and must NEVER be added to a `.gitignore`. Also not yours to write into.',
-  '  - `/context` — plan/spec/validation artifacts (e.g. `RESULTS.md`, smoke logs). Separate mount, OUTSIDE the',
-  '    worktree, never in git.',
+  '  - `/context` — shared context buckets: specs/generated/artifacts/evidence. Live-run proof such as',
+  '    `RESULTS.md` and smoke logs belongs under evidence. Separate mount, OUTSIDE the worktree, never in git.',
   '  - `/playground` — throwaway scratch. Separate mount, OUTSIDE the worktree, never in git.',
   'RULE: never add `/.atlas`, `/context`, or `/playground` to a `.gitignore` "to keep the tree clean" — they are',
   'not in the tree. If `git status` in `/workspace` is clean, it already is clean. A `.gitignore` edit is',
@@ -502,6 +502,30 @@ export const PREVIEW_PREP_SEED_BODY = [
   'WHEN DONE (or if declined), free the RAM: `atlas-svc stop-all`.',
 ].join('\n');
 
+const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
+
+/** Compose the Spin-up-preview seed: the standing procedure, then the Atlas-managed recipe as a
+ *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
+ *  stale one — the "stop re-discovering" memory loop (d4). */
+export function composePreviewPrepSeed(instructions: string | null): string {
+  const recipe = instructions?.trim() ? instructions : null;
+  const recipeBody = recipe ?? PREVIEW_RECIPE_NONE;
+  const block =
+    'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):\n' +
+    '```md\n' +
+    recipeBody +
+    (recipeBody.endsWith('\n') ? '' : '\n') +
+    '```';
+  const footer = recipe
+    ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
+      'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
+      '`read_preview_instructions` first to amend). To edit it any time, use those two tools.'
+    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable steps (envs to set, ' +
+      'ports, docker compose / migrate / seed commands, the deep-link) with `write_preview_instructions` so the ' +
+      'NEXT Spin up preview is instant instead of re-discovered.';
+  return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
+}
+
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────
 // Spliced in by the brain's `behavioral.group` tail and by the worker group.
 
@@ -551,25 +575,29 @@ export const RUNNABLE_WORKSPACE_NOTE =
  * EVIDENCE ARTIFACTS — the human-facing PROOF that live-validation actually happened. Shared by the build
  * agents that own capture (EVIDENCE_OWNERS = the WORKER orchestrator + the `validate` subagent). Complements
  * {@link VALIDATE_BY_RUNNING_NOTE} (which says "actually run it"): this says "and leave the proof on disk."
- * `/context/artifacts/` is the ONE `/context` bucket builders write; `specs/` + `generated/` are read-only
- * grounding. The web ARTIFACTS panel lists this folder and renders logs/markdown as text and screenshots
- * (PNG/JPG) inline — so what you write here is exactly what the operator sees as evidence the app runs.
- * NOTE: this is prompt-level discipline, not a mount guarantee — write ONLY under `/context/artifacts/`.
+ * Live-run evidence goes under `$ATLAS_EVIDENCE_DIR` (surfaced in the web's EVIDENCE panel); `/context/artifacts/`
+ * is reserved for human-facing DELIVERABLES (mockups, reports), and `specs/` + `generated/` stay read-only
+ * grounding. The panel lists the evidence folder and renders logs/markdown as text and screenshots (PNG/JPG)
+ * inline — so what you write here is exactly what the operator sees as evidence the app runs.
+ * NOTE: this is prompt-level discipline, not a mount guarantee — write live-run evidence ONLY under
+ * `$ATLAS_EVIDENCE_DIR`.
  */
 export const EVIDENCE_ARTIFACTS_NOTE =
   'CAPTURE EVIDENCE ARTIFACTS — once you have live-validated (see VALIDATE BY RUNNING), leave the PROOF on ' +
-  'disk in `/context/artifacts/` so the operator can see the work actually runs. This is the ONE `/context` ' +
-  'bucket you may write (treat `/context/specs` and `/context/generated` as READ-ONLY grounding, and put all ' +
-  "CODE under `/workspace`); everything you drop in `/context/artifacts/` surfaces in the operator's ARTIFACTS " +
-  'panel — logs and markdown render as text, screenshots (`.png`) render inline. Capture, per scenario you ' +
-  'validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of a REAL running app you drove ' +
-  'in a browser (Playwright `page.screenshot`), any report the run produced, and a top-level `RESULTS.md` ' +
-  'that INDEXES what you validated, HOW (the exact commands/flows), the OBSERVED result, and links to each ' +
-  'evidence file. Name files by scenario so the panel reads cleanly (e.g. ' +
+  'disk under `$ATLAS_EVIDENCE_DIR` (this turn\'s own evidence folder; falls back to `/context/evidence` if ' +
+  'the var is unset) so the operator can see the work actually runs. Evidence (logs, screenshots, ' +
+  '`RESULTS.md`) goes under `$ATLAS_EVIDENCE_DIR`; `/context/artifacts/` is reserved for human-facing ' +
+  'DELIVERABLES (HTML mockups, reports), not evidence. Treat `/context/specs` and `/context/generated` as ' +
+  "READ-ONLY grounding, and put all CODE under `/workspace`; everything you drop under `$ATLAS_EVIDENCE_DIR` " +
+  "surfaces in the operator's EVIDENCE panel — logs and markdown render as text, screenshots (`.png`) render " +
+  'inline. Capture, per scenario you validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of a ' +
+  'REAL running app you drove in a browser (Playwright `page.screenshot`), any report the run produced, and a ' +
+  'top-level `RESULTS.md` that INDEXES what you validated, HOW (the exact commands/flows), the OBSERVED result, ' +
+  'and links to each evidence file. Name files by scenario so the panel reads cleanly (e.g. ' +
   '`server-presence/jest-integration.log`, `boot.png`). A screenshot EARNS its place ONLY when it shows ' +
   'something the HTML cannot — a REAL running app or its live output. NEVER screenshot a static `.html` ' +
-  'file you AUTHORED (a mockup, a spike, a report page): reference the `.html` itself — the ARTIFACTS ' +
-  'panel renders it full-bleed and higher-fidelity than any raster, so a duplicate `.png` is only ' +
+  'file you AUTHORED (a mockup, a spike, a report page): reference the `.html` itself — the console ' +
+  'renders it full-bleed and higher-fidelity than any raster, so a duplicate `.png` is only ' +
   'heavier, lower-quality, and wasted. INSPECT WHAT YOU CAPTURED — capturing an artifact is NOT the same as validating: a ' +
   'screenshot or log is not proof until you have actually LOOKED at it. Open every screenshot you take ' +
   '(Read it back — images render visually) and read the tail of every log, and confirm it shows the ' +
@@ -581,7 +609,9 @@ export const EVIDENCE_ARTIFACTS_NOTE =
   'it — or fall back to a stand-in like a bundle-string grep — as if it proved the change works. EVIDENCE, ' +
   'NOT CLAIMS: prefer a captured artifact you have inspected over prose, and where something genuinely ' +
   'cannot be validated in this Linux sandbox (a Windows GUI app, real device hardware), SAY SO plainly in ' +
-  'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result.';
+  'RESULTS.md — validate everything you can and mark the honest remainder, never fabricate a result. NOTE: this ' +
+  'is prompt-level discipline, not a mount guarantee — route live-run evidence under `$ATLAS_EVIDENCE_DIR`, and ' +
+  'keep `/context/artifacts/` for human deliverables.';
 
 /**
  * SPIKE FIRST — for planning + workers. Prove a risky/unverified assumption (especially an SDK or library

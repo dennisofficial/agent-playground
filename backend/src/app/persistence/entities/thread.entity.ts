@@ -289,6 +289,9 @@ export interface ThreadTerminalRecord {
     reason: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable';
     detail: string;
   };
+  /** Operator "Skip & accept" marker for a judge_unavailable hold (jsonb, no migration): set by
+   *  `operatorAcceptStuckThread`, consumed + cleared by `finalizeAcceptedThread` inside the drive. */
+  acceptRequested?: boolean;
   /** Set when status='failed' — the structured failure the driver relays. */
   failure?: {
     kind: 'build' | 'verification';

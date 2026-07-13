@@ -36,6 +36,7 @@ export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
   start_direct_build: "Direct build",
   finalize_build: "Finalize build",
   create_job: "Create job",
+  list_jobs: "List jobs",
   link_job_dependency: "Link job dependency",
   reset_sandbox: "Reset sandbox",
   finish_onboarding: "Finish onboarding",

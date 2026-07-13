@@ -547,6 +547,35 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(env.env.GIT_CONFIG_COUNT).toBeUndefined();
   });
 
+  it('emits ATLAS_EVIDENCE_DIR in the exec env when target.evidenceDir is set', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run({
+      ...baseArgs(() => {}),
+      target: { containerId: 'c1', worktreeHost: '/wt', evidenceDir: '/context/evidence/010-backend' },
+    });
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.ATLAS_EVIDENCE_DIR).toBe('/context/evidence/010-backend');
+  });
+
+  it('does NOT emit ATLAS_EVIDENCE_DIR when target.evidenceDir is absent', async () => {
+    const redis = new InMemoryRedisStream();
+    const frames = [{ t: 'final', r: { result: 'DONE' } }];
+    const containers = fakeContainers(redis, frames);
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+
+    await runner.run(baseArgs(() => {})); // baseArgs.target has no evidenceDir
+
+    const env = (containers.execDetached as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][2] as { env: Record<string, string> };
+    expect(env.env.ATLAS_EVIDENCE_DIR).toBeUndefined();
+  });
+
   it('steer() XADDs the operator message onto the turn input stream (mid-turn steering)', async () => {
     const redis = new InMemoryRedisStream();
     const runner = new RedisEngineRunner(fakeContainers(redis, []), redis, fakeEnv, fakeActivity, fakeRegistry());

@@ -11,6 +11,7 @@ import type { LeaderElectionService } from '../cluster';
 import type { EnvService } from '@core/config/env/env.service';
 import type { ChatSurface } from '../surface';
 import type { OnboardingService } from '../onboarding';
+import type { ExposureService } from '../exposure';
 
 /**
  * The promote/demote wiring is the load-bearing pair for the leadership-fenced drive: because a fenced drive
@@ -18,7 +19,7 @@ import type { OnboardingService } from '../onboarding';
  * lock that contract at the module seam.
  */
 describe('DriverModule — promote wiring re-drives yielded jobs (leadership fence pairing)', () => {
-  function harness() {
+  function harness(options: { exposure?: ExposureService } = {}) {
     const driver = {
       resume: vi.fn(async () => undefined),
     } as unknown as ThreadDriver;
@@ -70,6 +71,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
       surface,
       onboarding,
       scheduler,
+      options.exposure,
     );
     return {
       mod,
@@ -171,6 +173,22 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     h.demote();
     await vi.advanceTimersByTimeAsync(60 * 1000);
     expect((h.reconciler.tick as ReturnType<typeof vi.fn>).mock.calls.length).toBe(afterOne);
+
+    h.mod.onApplicationShutdown();
+  });
+
+  it('starts the preview reconcile timer even when public preview URLs are disabled', async () => {
+    vi.useFakeTimers();
+    const exposure = {
+      enabled: false,
+      reconcileAll: vi.fn(async () => undefined),
+    } as unknown as ExposureService;
+    const h = harness({ exposure });
+    await h.mod.onApplicationBootstrap();
+    await h.promote();
+
+    await vi.advanceTimersByTimeAsync(10 * 1000);
+    expect(exposure.reconcileAll).toHaveBeenCalled();
 
     h.mod.onApplicationShutdown();
   });

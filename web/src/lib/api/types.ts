@@ -13,6 +13,7 @@ import type {
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
+  ThreadBlockReason,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -249,6 +250,17 @@ export interface WebReviewCommentItem {
   file: string;
   quote: string;
   note?: string;
+  /** Present when the comment anchors to a diff line range (the GitHub-style gutter flow) rather than a
+   *  free-text selection. Carries the old-file and/or new-file spans covered (both when the selection
+   *  straddles deletions and additions) plus the signed diff `fragment` the operator selected. */
+  lines?: {
+    path: string;
+    oldStart?: number;
+    oldEnd?: number;
+    newStart?: number;
+    newEnd?: number;
+    fragment: string;
+  };
 }
 
 /**
@@ -302,7 +314,7 @@ export interface WebMcpProposalServer {
   env?: { name: string; secret?: boolean; value?: string }[];
   /**
    * `"static"` (default when absent) = header/env credential slots. `"oauth"` = interactive OAuth 2.1 the
-   * owner completes after approving by clicking Connect in MCP settings (no secret slot to fill).
+   * owner completes after approving by clicking Connect on the proposal card or in MCP settings (no secret slot to fill).
    */
   authKind?: "static" | "oauth";
   /** Non-secret OAuth knobs; only meaningful when `authKind==="oauth"`. */
@@ -325,6 +337,10 @@ export interface WebMcpProposalCard {
   jobId: string;
   requestId: string;
   repoId: string;
+  /** Registration scope: `'org'` (every repo) or `'repo'` (this repo only). Absent on legacy cards ⇒ `'repo'`. */
+  scope?: "org" | "repo";
+  /** `register` new servers (default) or `remove` existing ones. Absent on legacy cards ⇒ `register`. */
+  mode?: "register" | "remove";
   servers: WebMcpProposalServer[];
   approved_at?: string;
   committed?: string[];
@@ -475,6 +491,18 @@ export interface PipelineThread {
   status: ThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
   condition: ThreadCondition;
+  /**
+   * Why this lane is held on its `blocked` terminal record (`condition==='paused'`); `null` otherwise.
+   * Mirrors backend `terminal_record.blocked.reason`. `'judge_unavailable'` drives the operator
+   * escape-hatch banner ("Retry now" / "Skip & accept").
+   */
+  blockReason?: ThreadBlockReason | null;
+  /**
+   * True only when the LIVE judge was the outage AND the static build+tests already passed — gates the
+   * "Skip & accept" button (mirrors the backend accept guard, so the UI never offers an unsafe accept).
+   * "Retry now" shows for ANY `judge_unavailable` hold; accept only when this is true.
+   */
+  acceptableOnJudgeOutage?: boolean;
   /** The thread KIND (`builder` | `master_review`) — the single differentiator. */
   kind?: string;
   /** True for the whole-diff Codex master-review thread (derived from `kind`) — rendered "Master review"
@@ -626,14 +654,16 @@ export interface ContextFile {
 }
 
 /**
- * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams) and
- * `artifacts` (outputs — preview HTML, screenshots). A bucket is `[]` before the agent writes anything.
+ * The thread's `/context` listing: `specs` (the plan — plan.md, decision-record.md, diagrams),
+ * `artifacts` (human-facing deliverables — preview HTML, mockups, reports), and `evidence` (live-run proof —
+ * logs, screenshots, RESULTS.md). A bucket is `[]` before the agent writes anything.
  */
 export interface JobContext {
   specs: ContextFile[];
   /** System-GENERATED, read-only files (e.g. decision-record.md) — written by tool calls, never by hand. */
   generated: ContextFile[];
   artifacts: ContextFile[];
+  evidence: ContextFile[];
 }
 
 /** One `/context` file's content for the viewer (`…/context/file?path=…`). Mirrors the backend shape. */
@@ -648,6 +678,36 @@ export interface ContextFileContent {
   /** Best-effort mime by extension (e.g. `text/markdown`, `image/png`). */
   mime: string;
   content: string;
+}
+
+// ── Job diff (`…/jobs/:jobId/diff`) ───────────────────────────────────────────────────────────────
+/** One hunk of a file's unified diff — mirrors the backend `JobDiffHunk` (`app/surface/job-diff.ts`).
+ *  `lines` are sign-prefixed (`' '` context / `'+'` add / `'-'` del), offsets are 1-based file lines. */
+export interface JobDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+/** One file's change in the accumulated job diff — mirrors the backend `JobDiffFile`. */
+export interface JobDiffFile {
+  path: string;
+  /** Prior path for a rename; absent otherwise. */
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: JobDiffHunk[];
+}
+
+/** The accumulated multi-file diff for a job — mirrors the backend `JobDiff`. `truncated` when the diff
+ *  exceeded the surface's size cap and some files/hunks were dropped. */
+export interface JobDiff {
+  files: JobDiffFile[];
+  truncated: boolean;
 }
 
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────

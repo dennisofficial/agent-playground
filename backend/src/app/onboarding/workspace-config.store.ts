@@ -45,6 +45,24 @@ export class WorkspaceConfigStore {
     );
   }
 
+  /** The repo's preview recipe (`repos.preview_instructions`), or null when unset. Spliced into the
+   *  Spin-up-preview seed (see `previewPrepRule`). */
+  async getPreviewInstructions(orgId: string, repoId: string): Promise<string | null> {
+    const row = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    return row?.preview_instructions ?? null;
+  }
+
+  /** Set (or clear, when empty/blank) the repo's preview recipe. Live for every future job's next
+   *  Spin-up-preview — no PR. */
+  async setPreviewInstructions(orgId: string, repoId: string, instructions: string | null): Promise<void> {
+    const trimmed = instructions?.trim() ? instructions : null;
+    await this.repos.update({ id: repoId, org_id: orgId }, { preview_instructions: trimmed });
+    this.logger.log(
+      `${trimmed ? 'set' : 'cleared'} preview instructions org=${orgId} repo=${repoId}` +
+        (trimmed ? ` (${trimmed.length} chars)` : ''),
+    );
+  }
+
   /** The dependency manifests the Workspace Profile has acknowledged (`repos.profile_seen_manifests`),
    *  or null when never seeded — see {@link RepoEntity.profile_seen_manifests}. */
   async getSeenManifests(orgId: string, repoId: string): Promise<string[] | null> {

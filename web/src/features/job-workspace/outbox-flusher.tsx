@@ -57,6 +57,7 @@ export function OutboxFlusher(): null {
                 file: c.file.label,
                 quote: c.quote,
                 note: c.note || undefined,
+                ...(c.lines ? { lines: c.lines } : {}),
               })),
               message: msg.text || undefined,
             });

@@ -390,17 +390,19 @@ export class SandboxManager implements SandboxProvider {
     mkdirSync(managedGitSkillsDir, { recursive: true });
     binds.push(`${managedGitSkillsDir}:${CONTAINER_SKILLS_MANAGED_GIT}:ro`);
     // The thread's durable SHARED CONTEXT folder at /context — lives OUTSIDE the worktree (keyed by
-    // jobId so it survives container recreate; the host reads it via contextDirHost()). THREE buckets,
+    // jobId so it survives container recreate; the host reads it via contextDirHost()). FOUR buckets,
     // pre-created so all always list cleanly:
     //   • specs/     — hand-authored by the brain (plan.md, diagrams). Read/write.
     //   • generated/ — SYSTEM-owned (decision-record.md, …), written ONLY by host tool calls. Mounted
     //                  READ-ONLY here (a nested :ro bind over the rw /context parent — Docker honors the
     //                  more-specific child mount) so no in-sandbox agent can edit a generated file.
     //   • artifacts/ — outputs for the human.
+    //   • evidence/  — live-run PROOF (logs, screenshots, RESULTS.md), agent-written per-thread subfolders. Read/write.
     const contextDir = this.contextDirHost(orgId, jobId, name);
     mkdirSync(join(contextDir, 'specs'), { recursive: true });
     mkdirSync(join(contextDir, 'generated'), { recursive: true });
     mkdirSync(join(contextDir, 'artifacts'), { recursive: true });
+    mkdirSync(join(contextDir, 'evidence'), { recursive: true }); // read-write like artifacts (no nested :ro bind; inherits the /context rw parent)
     binds.push(`${contextDir}:${CONTAINER_CONTEXT}`);
     binds.push(`${join(contextDir, 'generated')}:${CONTAINER_CONTEXT}/generated:ro`);
 

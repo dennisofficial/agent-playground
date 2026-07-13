@@ -3,7 +3,11 @@
 import { Pencil } from "lucide-react";
 import { MessageTime, UserBubble } from "./bubbles";
 import { Markdown } from "./markdown";
-import type { WebReviewCommentsCard } from "@/lib/api/types";
+import { anchorLabel } from "./diff-anchor";
+import type {
+  WebReviewCommentItem,
+  WebReviewCommentsCard,
+} from "@/lib/api/types";
 
 /**
  * A sent review-comment bundle ("Atlas Workspace HiFi") — the styled card an operator's queued
@@ -17,7 +21,7 @@ export function ReviewCommentsCardView({
   card: WebReviewCommentsCard;
   time?: string;
 }) {
-  const byFile = new Map<string, { quote: string; note?: string }[]>();
+  const byFile = new Map<string, WebReviewCommentItem[]>();
   for (const item of card.items) {
     const list = byFile.get(item.file);
     if (list) list.push(item);
@@ -54,9 +58,23 @@ export function ReviewCommentsCardView({
                   className="border-l-2 pl-[9px]"
                   style={{ borderColor: "var(--accent-line)" }}
                 >
-                  <div className="font-mono text-[10px] leading-relaxed text-accent-2">
-                    &ldquo;{it.quote}&rdquo;
-                  </div>
+                  {it.lines ? (
+                    <>
+                      <div className="font-mono text-[10px] leading-relaxed text-accent-2">
+                        {it.lines.path} · {anchorLabel(it.lines)}
+                      </div>
+                      <pre
+                        className="mt-1 overflow-x-auto rounded px-2 py-1 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-text"
+                        style={{ background: "rgba(0,0,0,0.05)" }}
+                      >
+                        {it.quote}
+                      </pre>
+                    </>
+                  ) : (
+                    <div className="font-mono text-[10px] leading-relaxed text-accent-2">
+                      &ldquo;{it.quote}&rdquo;
+                    </div>
+                  )}
                   {it.note ? (
                     <div className="mt-0.5 text-[12px] leading-relaxed text-text [&_p]:my-0 [&_p]:text-[12px] [&_p]:leading-relaxed">
                       <Markdown>{it.note}</Markdown>
