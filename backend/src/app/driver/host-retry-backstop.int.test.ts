@@ -1,21 +1,18 @@
 /**
- * Live-infra proof for commit 8ba531d6 ("Harden engine turn loop against 'Stream closed' storms"): when the
- * IN-SANDBOX engine circuit-breaker trips mid-turn, `redis-engine-runner` rewraps it as
- * `in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn
- * (circuit-breaker)` and throws it out of `TurnRunnerService.runTurn`. That throw is NOT an HTTP-visible
- * event — it severs the stdin control channel, so it can only be faithfully reproduced by a FAKE engine
- * seam that throws the exact wrapped message, exactly like `thread-driver.service.spec.ts`'s "SILENTLY
- * RE-DRIVES the lane on the d1 stream-closed circuit-breaker throw" unit test does.
+ * Live-infra proof for the build-lane HOST BACKSTOP (`runJobWithTransientRetry`, `thread-driver.service.ts`
+ * ~885-919): when a build turn throws a transient host-transport/infra error (matching
+ * `HOST_TRANSPORT_TRANSIENT_RE`), the driver retries the SAME job on a FRESH turn up to `MAX_HOST_RETRIES`
+ * (10) at a fixed `HOST_RETRY_BACKOFF_MS` (10s) backoff, and on EACH attempt (a) posts a durable quiet
+ * `system_notice` block via `relayRetrying` and (b) fans a best-effort live `turn_retry` indicator via
+ * `LiveTurnStore.retry(...)`.
  *
- * This test boots the REAL `ThreadDriver` + the REAL `DriverStoreService` against LIVE Postgres (this
- * project's atlas_test schema — every job/thread/step row below is a genuine TypeORM write/read), with a
- * FAKE `TurnRunnerService` standing in for the engine seam (git/GitHub/sandbox/docker collaborators are
- * canned fakes, mirroring the unit spec's `assemble()` harness — the point under test is the driver's
- * `TRANSIENT_ERROR_RE` classification + `runJobWithTransientRetry` retry loop, driven over REAL DB rows, not
- * docker/git plumbing). It proves the lane SELF-HEALS: the first orchestrator turn throws the wrapped
- * stream-closed error, the driver classifies it transient (never `failed`), silently re-drives on a FRESH
- * turn (read back from Postgres — the retried run resumes the SAME persisted step/thread rows), and the job
- * reaches `done`, all readable from the live `jobs`/`threads`/`steps` tables.
+ * This test boots the REAL `ThreadDriver` + the REAL `DriverStoreService` against LIVE Postgres (every
+ * job/thread/message row below is a genuine TypeORM write/read), with a FAKE `TurnRunnerService` standing in
+ * for the engine seam (throws a transient transport error 3 times, then completes) — mirroring
+ * `stream-closed-recovery.int.test.ts`'s structure. Unlike that sibling test, THIS one also wires the REAL
+ * `MessageBlockSink` (over the live `messages` table) and the REAL `LiveTurnStore` in place of fakes, so it
+ * proves the retry notice actually lands in Postgres and the retry indicator actually fans on the real RxJS
+ * subject — not just that fake spies were called.
  */
 import { Test, type TestingModule } from '@nestjs/testing';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
@@ -25,7 +22,7 @@ import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity, ThreadEntity, DecisionRecordEntity } from '../persistence/entities';
+import { ENTITIES, JobEntity, ThreadEntity, DecisionRecordEntity, MessageEntity } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
@@ -35,9 +32,10 @@ import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
 import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
 import type { TurnRunnerService } from '../runner';
-import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
-import { TurnHarnessFactory } from '../surface';
+import type { ChatSurface, TaskEventSink } from '../surface';
+import { LiveTurnStore, MessageBlockSink, TurnHarnessFactory } from '../surface';
 import type { ToolBridgeOptions } from '../engine';
+import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '../engine';
 import type { CredentialResolver } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
@@ -56,38 +54,40 @@ function dbOpts() {
     entities: ENTITIES,
     namingStrategy: new CustomNamingStrategy(),
     synchronize: false,
-    connectTimeoutMS: 10_000,
+    // Deliberately NOT 10_000: this test clamps every `setTimeout(..., HOST_RETRY_BACKOFF_MS)` (10_000) call
+    // to 0ms for speed (see `clampHostRetryBackoff`) — a colliding connectTimeoutMS would get clamped too and
+    // make pg's own connection-timeout timer fire instantly.
+    connectTimeoutMS: 20_000,
     ssl: false as const,
   };
 }
 
-const ORG_ID = '31111111-1111-4111-8111-111111111111';
+const ORG_ID = '32222222-2222-4222-8222-222222222222';
 const REPO: ProjectRepo = {
-  repoId: 'stream-closed-proj',
-  gitUrl: 'https://github.com/acme/stream-closed',
+  repoId: 'host-retry-backstop-proj',
+  gitUrl: 'https://github.com/acme/host-retry-backstop',
   defaultBranch: 'main',
-  repoPath: '/repos/stream-closed-proj',
+  repoPath: '/repos/host-retry-backstop-proj',
 };
 const RESOLVED: ResolvedRepo = {
   projectRepo: REPO,
   owner: 'acme',
-  repo: 'stream-closed',
+  repo: 'host-retry-backstop',
   defaultBranch: 'main',
   token: 'ghtok',
 };
 
-/** The EXACT wrapped shape the engine circuit-breaker produces (commit 8ba531d6's own error text). */
-const STREAM_CLOSED_THROW =
-  'in-sandbox engine turn failed: Error: engine stream closed: control channel severed mid-turn (circuit-breaker)';
+/** A transient host-transport error — matches `HOST_TRANSPORT_TRANSIENT_RE` ("connection reset", "exec
+ *  failed") — the exact shape a sandbox exec hiccup produces. */
+const TRANSIENT_THROW = 'sandbox exec failed: connection reset by peer';
 
-/** A fake `TurnRunnerService`: throws the wrapped stream-closed error on the FIRST `runTurn` (the "storm"),
- *  then completes the thread cleanly via `complete_thread` on the retried, fresh turn. Mirrors
- *  `thread-driver.service.spec.ts`'s `makeTurn({ transientFailures: 1, transientMessage })`. */
-function makeStreamClosedTurn(): {
+/** A fake `TurnRunnerService`: throws the transient transport error on the first `remainingFailures` calls,
+ *  then completes the thread cleanly via `complete_thread` on the next (fresh) turn. */
+function makeTransientTurn(remainingFailuresAtStart: number): {
   turn: TurnRunnerService;
   calls: Array<{ mode: string; stepId?: string | null }>;
 } {
-  let remainingFailures = 1;
+  let remainingFailures = remainingFailuresAtStart;
   const calls: Array<{ mode: string; stepId?: string | null }> = [];
   const turn = {
     runTurn: vi.fn(
@@ -100,8 +100,7 @@ function makeStreamClosedTurn(): {
         calls.push({ mode: input.mode, stepId: input.stepId });
         if (remainingFailures > 0) {
           remainingFailures -= 1;
-          // The circuit-breaker throw — the "stream closed" storm this test proves the driver self-heals.
-          throw new Error(STREAM_CLOSED_THROW);
+          throw new Error(TRANSIENT_THROW);
         }
         if (input.toolBridge?.tools?.['complete_thread']) {
           await input.toolBridge.tools['complete_thread']({
@@ -131,7 +130,8 @@ function makeStreamClosedTurn(): {
 }
 
 /** Canned collaborators for every OTHER `ThreadDriver` dependency — no docker/git/GitHub touched. Mirrors
- *  `thread-driver.service.spec.ts`'s `assemble()` fakes verbatim; only `store` is REAL (live Postgres). */
+ *  `stream-closed-recovery.int.test.ts`'s fakes; only `store`, the block sink, and the live-turn store are
+ *  REAL (live Postgres + the real in-memory RxJS subject). */
 function makeGit(): { git: LocalGitService } {
   const git = {
     createFeatureSandbox: vi.fn(async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
@@ -154,12 +154,12 @@ function makeGit(): { git: LocalGitService } {
 function makePr(): { pr: GithubPrService } {
   const pr = {
     openPullRequest: vi.fn(async (_token: string, args: { head: string }) => ({
-      url: 'https://github.com/acme/stream-closed/pull/1',
+      url: 'https://github.com/acme/host-retry-backstop/pull/1',
       number: 1,
       existing: false,
     })),
     findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
-      url: 'https://github.com/acme/stream-closed/pull/1',
+      url: 'https://github.com/acme/host-retry-backstop/pull/1',
       number: 1,
       head: args.head,
     })),
@@ -167,7 +167,19 @@ function makePr(): { pr: GithubPrService } {
   return { pr };
 }
 
-describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-breaker throw (live Postgres)', () => {
+/** Run `fn` with ONLY the fixed `HOST_RETRY_BACKOFF_MS` host-retry backoff collapsed to 0ms, on REAL timers
+ *  — everything else keeps its true duration. Modeled on `thread-driver.service.spec.ts`'s
+ *  `withInstantHostRetryBackoff`; a 3-retry drive at the real 10s backoff would otherwise burn ~30s. */
+function clampHostRetryBackoff(): { restore: () => void } {
+  const realSetTimeout = globalThis.setTimeout;
+  const spy = vi
+    .spyOn(globalThis, 'setTimeout')
+    .mockImplementation(((cb: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
+      realSetTimeout(cb, delay === HOST_RETRY_BACKOFF_MS ? 0 : delay, ...args)) as unknown as typeof setTimeout);
+  return { restore: () => spy.mockRestore() };
+}
+
+describe('ThreadDriver — the host backstop RETRIES a transient drive error over LIVE Postgres, posting a durable notice + live indicator each attempt', () => {
   let mod: TestingModule;
   let store: DriverStoreService;
   let ds: DataSource;
@@ -187,11 +199,8 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
       ],
     }).compile();
-    // `Test.createTestingModule(...).compile()` globally silences Nest's `Logger` (routes every
-    // instance through `TestingLogger`, which no-ops log/warn/debug — see
-    // `@nestjs/testing/services/testing-logger.service.js`). Restore a real console logger so the
-    // driver's OWN `this.logger.warn(...)` retry line (asserted/captured below) actually prints —
-    // this is a global static override, so it also re-enables it for the driver instantiated below.
+    // See `stream-closed-recovery.int.test.ts` — `.compile()` silences Nest's `Logger`; restore a real one so
+    // the driver's own `this.logger.warn(...)` retry line prints in the run log.
     Logger.overrideLogger(new ConsoleLogger());
 
     store = mod.get(DriverStoreService);
@@ -203,11 +212,11 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-      [ORG_ID, 'Stream Closed Org', 'stream-closed-org'],
+      [ORG_ID, 'Host Retry Backstop Org', 'host-retry-backstop-org'],
     );
     const repoRows = await ds.query(
       `INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
-       VALUES ($1, 'stream-closed-repo', 'Stream Closed Repo', $2, 'main', NULL, true)
+       VALUES ($1, 'host-retry-backstop-repo', 'Host Retry Backstop Repo', $2, 'main', NULL, true)
        ON CONFLICT (org_id, slug) DO UPDATE SET git_url = EXCLUDED.git_url RETURNING id`,
       [ORG_ID, REPO.gitUrl],
     );
@@ -219,9 +228,9 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
   });
 
   it(
-    'boots the real ThreadDriver + real DriverStoreService over LIVE Postgres rows; the fake engine throws ' +
-      'the wrapped circuit-breaker message on turn 1; the driver classifies it TRANSIENT and re-drives a ' +
-      'fresh turn (turn 2) that completes — the job reaches `done` in Postgres, never `failed`',
+    'boots the real ThreadDriver + real DriverStoreService + real MessageBlockSink + real LiveTurnStore over ' +
+      'LIVE Postgres; the fake engine throws a transient transport error 3 times, then completes on the 4th ' +
+      'turn — the job reaches `done`, and Postgres + the live store both carry 3 auto-retry notices/frames',
     async () => {
       // ── seed a real job + decision record + builder thread ─────────────────────────────────────────
       const job = await jobs.save(
@@ -229,7 +238,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           org_id: ORG_ID,
           repo_id: repoId,
           origin: 'control',
-          title: 'Stream-closed self-heal',
+          title: 'Host retry backstop',
           kind: 'feature',
           build_path: 'plan',
           status: 'running',
@@ -243,7 +252,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           repo_id: repoId,
           job_id: job.id,
           status: 'approved',
-          overview: 'Prove the stream-closed circuit-breaker throw self-heals.',
+          overview: 'Prove the host backstop self-heals a 3x transient error and instruments both retry channels.',
           decisions: [],
           thread_titles: ['Backend'],
           approved_at: new Date(),
@@ -256,7 +265,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           org_id: ORG_ID,
           kind: 'builder',
           ordinal: 10,
-          brief: 'Backend — stream-closed self-heal',
+          brief: 'Backend — host retry backstop',
           status: 'pending',
           condition: 'none',
           decision_record_id: record.id,
@@ -264,22 +273,21 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       );
 
       // ── assemble the real driver ────────────────────────────────────────────────────────────────────
-      const { turn, calls } = makeStreamClosedTurn();
+      const { turn, calls } = makeTransientTurn(3);
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
         get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
       } as unknown as EnvService;
-      const liveTurns = {
-        push: vi.fn(),
-        end: vi.fn(),
-        snapshot: vi.fn(() => null),
-        retry: vi.fn(),
-      } as unknown as LiveTurnStore;
-      const blockSink = {
-        appendBlock: vi.fn(async () => undefined),
-        appendBlockOnce: vi.fn(async () => undefined),
-      } as unknown as BlockSink;
+      // REAL live-turn store — the actual RxJS subject the retry loop fans `turn_retry` frames onto.
+      const liveTurns = new LiveTurnStore();
+      const retryFrames: Array<{ attempt: number; max: number; [k: string]: unknown }> = [];
+      const liveTurnsSub = liveTurns.stream$.subscribe((f) => {
+        if (f.event?.kind === 'turn_retry') retryFrames.push(f.event as never);
+      });
+      // REAL block sink — the actual `MessageEntity` repository, so the durable retry notice lands in
+      // live Postgres `messages`.
+      const blockSink = new MessageBlockSink(mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION)));
       const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
       const usage = {
         getResetAt: () => undefined,
@@ -334,7 +342,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           supervisorDirHost: () => null,
           probeLiveness: async () => ({ status: 'unknown' as const }),
           stopAllServices: vi.fn().mockResolvedValue({ ok: true }),
-          sandboxContainerName: () => 'atlas-sbx-stream-closed-test',
+          sandboxContainerName: () => 'atlas-sbx-host-retry-backstop-test',
           bridgeCaddyToSandbox: async () => undefined,
           unbridgeCaddyFromSandbox: async () => undefined,
           listLiveThreadJobIds: async () => [],
@@ -354,8 +362,8 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           ensureContainer: async () => ({
             sandbox: {
               repoId: REPO.repoId,
-              branch: 'atlas/feature-stream-closed',
-              worktreePath: '/wt/atlas/feature-stream-closed',
+              branch: 'atlas/feature-host-retry-backstop',
+              worktreePath: '/wt/atlas/feature-host-retry-backstop',
               gitUrl: REPO.gitUrl,
               token: 'ghtok',
             },
@@ -388,38 +396,42 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         undefined,
       );
 
-      // Spy on the REAL store's setJobHalt so we can assert a `failed` halt was NEVER stamped, while the
-      // real Postgres write still goes through (no mockImplementation override — call-through). Job failure
-      // is signaled via `JobHalt.kind === 'failed'`, not the `JobStatus` phase.
+      // Spy on the REAL store's setJobHalt (call-through, real Postgres write still goes through) so we can
+      // assert a `failed` halt was NEVER stamped during the drive.
       const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
 
-      // ── drive it ─────────────────────────────────────────────────────────────────────────────────────
+      // ── drive it, with ONLY the fixed host-retry backoff collapsed to 0ms ───────────────────────────────
       const domainJob = await store.loadJob(job.id);
-      await driver.dispatch(domainJob);
-
-      // Poll the LIVE `jobs` row for the terminal state; auto-click "Ship it" the instant the ship-review
-      // gate parks (mirrors `assemble()`'s `autoShipApprove` default), driven off REAL DB reads throughout.
-      const deadline = Date.now() + 60_000;
-      let shipApproved = false;
+      const clamp = clampHostRetryBackoff();
       let finalStatus = '';
-      while (Date.now() < deadline) {
-        const row = await jobs.findOneOrFail({ where: { id: job.id } });
-        finalStatus = row.status;
-        if (row.status === 'done' || row.status === 'failed') break;
-        if (row.status === 'awaiting_ship_review' && !shipApproved) {
-          shipApproved = true;
-          await driver.resolveShipApprovalDurably(job.id, 'auto-test');
-        }
-        await new Promise((r) => setTimeout(r, 25));
-      }
+      try {
+        await driver.dispatch(domainJob);
 
-      // ── assertions — the lane SELF-HEALED, read back from live Postgres ────────────────────────────────
+        // Poll the LIVE `jobs` row for the terminal state; auto-click "Ship it" the instant the ship-review
+        // gate parks, driven off REAL DB reads throughout.
+        const deadline = Date.now() + 60_000;
+        let shipApproved = false;
+        while (Date.now() < deadline) {
+          const row = await jobs.findOneOrFail({ where: { id: job.id } });
+          finalStatus = row.status;
+          if (row.status === 'done' || row.status === 'failed') break;
+          if (row.status === 'awaiting_ship_review' && !shipApproved) {
+            shipApproved = true;
+            await driver.resolveShipApprovalDurably(job.id, 'auto-test');
+          }
+          await new Promise((r) => setTimeout(r, 25));
+        }
+      } finally {
+        clamp.restore();
+      }
+      liveTurnsSub.unsubscribe();
+
+      // ── assertions — the lane SELF-HEALED, read back from live Postgres + the live store ───────────────
       expect(finalStatus).toBe('done');
 
       const execCalls = calls.filter((c) => c.mode === 'execute');
-      expect(execCalls.length).toBeGreaterThanOrEqual(2); // turn 1 (stream-closed throw) + turn 2 (fresh, completed)
+      expect(execCalls.length).toBeGreaterThanOrEqual(4); // 3 transient throws + 1 fresh completing turn
 
-      // Never stamped a `failed` halt at any point in the drive.
       expect(
         setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
       ).toBe(false);
@@ -431,6 +443,27 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
 
       const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, kind: 'builder' } });
       expect(threadRow.status).toBe('done');
+
+      // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.
+      const noticeRows: Array<{ text: string }> = await ds.query(
+        `SELECT text FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
+        [job.id],
+      );
+      expect(noticeRows.length).toBeGreaterThanOrEqual(3);
+      const noticeTexts = noticeRows.map((r) => r.text);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 1/${MAX_HOST_RETRIES}`))).toBe(true);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`))).toBe(true);
+      expect(noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`))).toBe(true);
+
+      // The best-effort live `turn_retry` indicator — fanned on the REAL `LiveTurnStore` subject.
+      expect(retryFrames.length).toBeGreaterThanOrEqual(3);
+      expect(retryFrames.slice(0, 3).map((f) => f.attempt)).toEqual([1, 2, 3]);
+      expect(retryFrames.every((f) => f.max === MAX_HOST_RETRIES)).toBe(true);
+
+      // eslint-disable-next-line no-console
+      console.log('OBSERVED system_notice texts (live Postgres `messages`):', noticeTexts);
+      // eslint-disable-next-line no-console
+      console.log('OBSERVED turn_retry frames (live LiveTurnStore.stream$):', retryFrames);
     },
     90_000,
   );
