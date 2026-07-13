@@ -102,6 +102,7 @@ import {
   renderWorkOwedNudge,
   renderRequestChangesDelivery,
   renderEventDelivery,
+  renderFollowUpJobSeed,
   haltWakeFraming,
   renderHaltDelivery,
   haltRecordBody,
@@ -7374,11 +7375,18 @@ export class AgentSessionManager
       jobId,
       `🔗 Follow-up started from a prior thread:\n\n${firstMessage}`,
     );
+    // Frame the engine-facing seed with the spawning job's provenance (already snapshotted on the child at
+    // create time) so the child brain knows this thread came from ANOTHER Atlas job, not from the operator.
+    const job = await this.store.loadJob(jobId);
+    const seed = renderFollowUpJobSeed({
+      firstMessage,
+      parent: job?.createdBy ?? null,
+    });
     const stimulus: ChatStimulus = {
       id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
       orgId,
       repoId,
-      body: firstMessage,
+      body: seed,
       receivedAt: new Date(),
       kind: 'chat',
       trust: 'trusted',

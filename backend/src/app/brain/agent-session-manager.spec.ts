@@ -5237,9 +5237,11 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
 
   function makeManager(storeOverrides: Record<string, unknown> = {}) {
     const store = {
-      loadJob: vi
-        .fn()
-        .mockResolvedValue({ baseBranch: 'main', title: 'Parent job' }),
+      loadJob: vi.fn().mockResolvedValue({
+        baseBranch: 'main',
+        title: 'Parent job',
+        createdBy: { jobId: 'th-parent', title: 'Parent job' },
+      }),
       createFollowUpJob: vi.fn().mockResolvedValue('th-followup'),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemNotice: vi.fn().mockResolvedValue(undefined),
@@ -5391,13 +5393,13 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       expect.stringContaining('kick off the follow-up'),
     );
     expect(turn).toHaveBeenCalledOnce();
-    const ran = turn.mock.calls[0][0];
-    expect(ran).toMatchObject({
-      jobId: 'th-followup',
-      orgId: ORG,
-      repoId: REPO,
-      body: 'kick off the follow-up',
-    });
+    const ran = (turn.mock.calls[0][0] as ChatStimulus);
+    expect(ran).toMatchObject({ jobId: 'th-followup', orgId: ORG, repoId: REPO });
+    // The engine-facing seed is FRAMED with the spawning job's provenance (title + id) so the child brain
+    // knows another Atlas job created it, and still carries the opening intent verbatim.
+    expect(ran.body).toContain('spawned by ANOTHER Atlas job');
+    expect(ran.body).toContain('"Parent job" (job th-parent)');
+    expect(ran.body).toContain('kick off the follow-up');
   });
 });
 
