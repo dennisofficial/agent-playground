@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { cleanAuthHaltReason, NO_ENGINE_CREDENTIAL_MARKER } from './engine.types';
+import {
+  cleanAuthHaltReason,
+  isRetryableTransientError,
+  EngineAuthError,
+  EngineSessionLimitError,
+  EngineDetachedError,
+  NO_ENGINE_CREDENTIAL_MARKER,
+} from './engine.types';
 
 describe('cleanAuthHaltReason', () => {
   it('maps a no-credential marker message to the "connect an account" copy', () => {
@@ -26,5 +33,54 @@ describe('cleanAuthHaltReason', () => {
     expect(cleanAuthHaltReason('401 Unauthorized', 'codex')).toBe(
       'Your Codex login needs to be reconnected — reconnect the account in Settings, then resume.',
     );
+  });
+});
+
+describe('isRetryableTransientError', () => {
+  it('retries a TRANSIENT auth hiccup (a self-healing "not logged in"/401)', () => {
+    expect(
+      isRetryableTransientError(new EngineAuthError('Not logged in')),
+    ).toBe(true);
+  });
+
+  it('retries host↔container transport / infra blips', () => {
+    for (const msg of [
+      'read ECONNRESET',
+      'no such container: sandbox-abc',
+      'Error: 502 Bad Gateway on the host hop',
+      'redis connection lost',
+    ]) {
+      expect(isRetryableTransientError(new Error(msg))).toBe(true);
+    }
+  });
+
+  it("does NOT retry SDK-owned API errors (overloaded / 529) — those are the SDK's own retry loop", () => {
+    expect(isRetryableTransientError(new Error('overloaded_error'))).toBe(
+      false,
+    );
+    expect(isRetryableTransientError(new Error('529 overloaded'))).toBe(false);
+  });
+
+  it('does NOT retry a deterministic-fatal or no-credential auth error', () => {
+    expect(
+      isRetryableTransientError(
+        new EngineAuthError('Not logged in', undefined, undefined, true),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableTransientError(
+        new EngineAuthError(`${NO_ENGINE_CREDENTIAL_MARKER}: no claude secret`),
+      ),
+    ).toBe(false);
+  });
+
+  it('does NOT retry a session limit, a detached turn, or an unrecognized error', () => {
+    expect(
+      isRetryableTransientError(new EngineSessionLimitError('limit')),
+    ).toBe(false);
+    expect(isRetryableTransientError(new EngineDetachedError('detached'))).toBe(
+      false,
+    );
+    expect(isRetryableTransientError(new Error('kaboom'))).toBe(false);
   });
 });

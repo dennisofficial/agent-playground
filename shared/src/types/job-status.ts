@@ -75,7 +75,7 @@ export type JobHalt = {
  *  - `master_review` — the driver is running the whole-diff master review.
  *  - `base_check`    — post-approval, pre-build: rebasing/checking the base branch before starting.
  */
-export const JOB_ACTIVITIES = ['idle', 'turn', 'plan_review', 'build', 'master_review', 'base_check'] as const;
+export const JOB_ACTIVITIES = ['idle', 'turn', 'plan_review', 'build', 'master_review', 'base_check', 'retrying'] as const;
 export type JobActivity = (typeof JOB_ACTIVITIES)[number];
 
 /**

@@ -27,6 +27,9 @@ const NON_IDLE_ACTIVITIES: JobActivity[] = [
   'plan_review',
   'build',
   'master_review',
+  // A host-backstop retry parks the job on `retrying` during the 10s backoff — the system is still
+  // "working" (reconnecting), so it must NOT light the operator dot.
+  'retrying',
 ];
 
 describe('deriveNeedsYou', () => {
@@ -85,9 +88,9 @@ describe('deriveNeedsYou', () => {
   });
 
   it('soft-gates (awaiting secret) light the dot when idle, but are suppressed while working', () => {
-    expect(deriveNeedsYou(at({ status: 'running', awaitingSecret: true }))).toBe(
-      true,
-    );
+    expect(
+      deriveNeedsYou(at({ status: 'running', awaitingSecret: true })),
+    ).toBe(true);
     expect(deriveNeedsYou(at({ status: 'open', awaitingSecret: true }))).toBe(
       true,
     );
@@ -107,7 +110,9 @@ describe('deriveNeedsYou', () => {
     // A halt means the system STOPPED — it must surface even if a failed build left `activity` non-idle
     // (defense in depth behind the halt writers that also clear activity).
     expect(
-      deriveNeedsYou(at({ status: 'running', halted: true, activity: 'build' })),
+      deriveNeedsYou(
+        at({ status: 'running', halted: true, activity: 'build' }),
+      ),
     ).toBe(true);
     expect(
       deriveNeedsYou(
@@ -116,7 +121,9 @@ describe('deriveNeedsYou', () => {
     ).toBe(true);
     // But never for a terminal job.
     expect(
-      deriveNeedsYou(at({ status: 'deleting', halted: true, activity: 'build' })),
+      deriveNeedsYou(
+        at({ status: 'deleting', halted: true, activity: 'build' }),
+      ),
     ).toBe(false);
   });
 });
