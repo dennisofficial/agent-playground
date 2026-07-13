@@ -1,10 +1,18 @@
 "use client";
 
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import {
+  AUTO_MERGE_METHODS,
   type AutoApproveMode,
+  type AutoMergeMethod,
   modeApprovesPlan,
   modeApprovesShip,
 } from "@workspace/shared";
@@ -17,14 +25,19 @@ const MIN_WIDTH = 180;
 
 /**
  * The header "Auto" pill's popover — two independent switches (Plan gate / Ship gate) that compose into
- * one `AutoApproveMode`. Modeled on {@link SelectionCommentPopover}'s portal + `position:fixed` + dismiss
- * pattern, but anchored under the pill instead of a text selection.
+ * one `AutoApproveMode`, plus a separate Merge section (a plain boolean, orthogonal to the approve mode).
+ * Modeled on {@link SelectionCommentPopover}'s portal + `position:fixed` + dismiss pattern, but anchored
+ * under the pill instead of a text selection.
  */
 export function AutoApprovePopover({
   anchorRect,
   triggerRef,
   mode,
   onSelect,
+  autoMerge,
+  autoMergeMethod,
+  autoMergeDeleteBranch,
+  onSetMerge,
   onClose,
 }: {
   anchorRect: DOMRect;
@@ -33,6 +46,14 @@ export function AutoApprovePopover({
   triggerRef: RefObject<HTMLElement | null>;
   mode: AutoApproveMode;
   onSelect: (mode: AutoApproveMode) => void;
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+  onSetMerge: (body: {
+    autoMerge: boolean;
+    method?: AutoMergeMethod;
+    deleteBranch?: boolean;
+  }) => void;
   onClose: () => void;
 }) {
   const popRef = useRef<HTMLDivElement>(null);
@@ -114,7 +135,7 @@ export function AutoApprovePopover({
       ref={popRef}
       data-testid="auto-approve-popover"
       role="dialog"
-      aria-label="Auto-approve settings"
+      aria-label="Automation settings"
       className="fixed z-[90] rounded-xl border border-border-2 bg-panel p-3 pb-3.5"
       style={{
         left,
@@ -126,7 +147,7 @@ export function AutoApprovePopover({
       <div className="mb-0.5 flex items-center gap-1.5">
         <ShieldCheck size={12} className="text-accent" strokeWidth={2.25} />
         <span className="font-mono text-[9.5px] font-semibold tracking-[0.06em] uppercase text-accent-2">
-          Auto-approve
+          Automation
         </span>
         <span className="flex-1" />
         <button
@@ -158,9 +179,82 @@ export function AutoApprovePopover({
         onChange={setShip}
       />
 
+      <div className="border-t border-border pt-2.5">
+        <SwitchRow
+          title="Merge"
+          description="Merge the PR automatically once it's green & mergeable"
+          checked={autoMerge}
+          first
+          testId="auto-merge-toggle"
+          onChange={(next) => onSetMerge({ autoMerge: next })}
+        />
+
+        <div className="flex items-center justify-between gap-2 pb-1">
+          <label
+            htmlFor="auto-merge-method"
+            className="font-mono text-[9.5px] uppercase tracking-[0.04em] text-faint"
+          >
+            Method
+          </label>
+          <select
+            id="auto-merge-method"
+            data-testid="auto-merge-method"
+            value={autoMergeMethod}
+            onChange={(e) =>
+              onSetMerge({
+                autoMerge,
+                method: e.target.value as AutoMergeMethod,
+              })
+            }
+            className="rounded-md border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[11px] text-text outline-none focus:border-accent"
+          >
+            {AUTO_MERGE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-[10.5px] leading-snug text-faint">
+            Delete branch after merge
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoMergeDeleteBranch}
+            aria-label="Delete branch after merge"
+            data-testid="auto-merge-delete-branch"
+            onClick={() =>
+              onSetMerge({ autoMerge, deleteBranch: !autoMergeDeleteBranch })
+            }
+            className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
+            style={{
+              background: autoMergeDeleteBranch
+                ? "var(--green)"
+                : "var(--surface-3)",
+              borderColor: autoMergeDeleteBranch
+                ? "var(--green)"
+                : "var(--border-2)",
+            }}
+          >
+            <span
+              className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
+              style={{
+                transform: autoMergeDeleteBranch
+                  ? "translateX(13px)"
+                  : "translateX(0)",
+                boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+              }}
+            />
+          </button>
+        </div>
+      </div>
+
       <div className="mt-2.5 border-t border-border pt-2.5 text-[10px] leading-relaxed text-faint">
-        Applies to this job only — you can flip either gate back at any time
-        before it fires.
+        Applies to this job only — you can flip any gate back at any time before
+        it fires.
       </div>
     </div>,
     document.body,

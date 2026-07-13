@@ -9,6 +9,7 @@
 
 import type {
   AutoApproveMode,
+  AutoMergeMethod,
   JobActivity as WireJobActivity,
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
@@ -88,6 +89,9 @@ export const RETRACT_SHIP_ACTION_ID = "atlas_approval:retract_ship";
  *  retract AND wakes the brain; `Dismiss` just clears the card. Must match `approval-blocks.ts`. */
 export const AMEND_APPROVE_ACTION_ID = "atlas_approval:amend_approve";
 export const AMEND_DISMISS_ACTION_ID = "atlas_approval:amend_dismiss";
+/** The MERGE gate's "Merge PR" button — the THIRD human gate (after Approve/Ship). Auto-merge auto-clicks
+ *  the same gate. POSTs to the SAME `/approve` endpoint with a `value` of just `{ jobId }`. */
+export const MERGE_ACTION_ID = "atlas_approval:merge";
 
 export type ApprovalActionId =
   | typeof APPROVE_ACTION_ID
@@ -96,7 +100,8 @@ export type ApprovalActionId =
   | typeof SHIP_ACTION_ID
   | typeof RETRACT_SHIP_ACTION_ID
   | typeof AMEND_APPROVE_ACTION_ID
-  | typeof AMEND_DISMISS_ACTION_ID;
+  | typeof AMEND_DISMISS_ACTION_ID
+  | typeof MERGE_ACTION_ID;
 
 export interface ApprovalDecision {
   decisionClass: string;
@@ -124,9 +129,10 @@ export interface WebApprovalCard {
    * `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval, labels the list "Sections"
    * vs "Changes". `ship` — the ship-review gate (`Ship it` + `Back to building`;
    * `threads`/`decisions` empty). `amend` — the brain's "Amend build?" proposal at the ship gate
-   * (`Approve amend` + `Dismiss`); the gate stays parked until approved.
+   * (`Approve amend` + `Dismiss`); the gate stays parked until approved. `merge` — the merge gate
+   * (`Merge PR`), posted once the PR is GitHub-mergeable; `threads`/`decisions` empty.
    */
-  kind?: "plan" | "direct" | "ship" | "amend";
+  kind?: "plan" | "direct" | "ship" | "amend" | "merge";
   title: string;
   summary: string;
   decisions: ApprovalDecision[];
@@ -543,6 +549,16 @@ export interface PipelineJob {
    *  the card is still posted for audit, then immediately resolved). Settable any time from job creation
    *  onward — so the `no_job` (open) shape carries it too. */
   autoApproveMode: AutoApproveMode;
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the Merge gate). Orthogonal to autoApproveMode. */
+  autoMerge: boolean;
+  /** GitHub merge strategy used when merging (auto or manual click). */
+  autoMergeMethod: AutoMergeMethod;
+  /** Delete the head branch after a successful merge. */
+  autoMergeDeleteBranch: boolean;
+  /** True when the PR is GitHub-mergeable right now (open + clean + CI not failing/pending) — gates the manual "Merge PR" button/card. */
+  mergeReady: boolean;
+  /** The Merge gate's verbatim `{ jobId }` value when mergeReady, else null. */
+  mergeValue: string | null;
   decisionRecordId: string | null;
   /**
    * The MAIN brain session's own task list (folded from its `main`-lane task-tool calls) — the

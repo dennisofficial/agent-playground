@@ -56,6 +56,11 @@ export class AutoMergeService {
     private readonly messages: Repository<MessageEntity>,
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
+    // forwardRef for the same file-cycle reason as `driverStore` below: job-lifecycle.service.ts imports
+    // driver-store.service.ts, which imports `prMergeReady` from THIS file — so at decorator-run time
+    // `JobLifecycleService`'s class binding can still be `undefined`, leaving this `design:paramtypes` slot
+    // unresolved unless the injection is deferred.
+    @Inject(forwardRef(() => JobLifecycleService))
     private readonly lifecycle: JobLifecycleService,
     private readonly turns: TurnRegistry,
     private readonly stimulusStore: StimulusStoreService,

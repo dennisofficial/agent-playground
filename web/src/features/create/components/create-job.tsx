@@ -55,7 +55,10 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const [prNumber, setPrNumber] = useState("");
   // Per-job auto-approve armed at creation — two independent gates (Plan / Ship) composing one mode.
   // Default "off": both gates wait for a human, unchanged from before this control existed.
-  const [autoApproveMode, setAutoApproveMode] = useState<AutoApproveMode>("off");
+  const [autoApproveMode, setAutoApproveMode] =
+    useState<AutoApproveMode>("off");
+  // Per-job auto-merge armed at creation — a separate boolean, orthogonal to autoApproveMode.
+  const [autoMerge, setAutoMerge] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -122,7 +125,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     // first message so the brain has an instruction and the backend's "firstMessage or attachment" gate passes.
     if (isReview && !text) text = `Review PR #${pr}.`;
     if (!text && attachments.length === 0) {
-      return setError("Add a first message or an attachment — it starts the job.");
+      return setError(
+        "Add a first message or an attachment — it starts the job.",
+      );
     }
     setError(null);
     // Seed a title from the first line of the message so the thread isn't "Untitled" before the
@@ -136,6 +141,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
         ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
+        ...(autoMerge ? { autoMerge: true } : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -262,7 +268,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 className="w-full rounded-md border border-border-2 bg-surface px-3 py-2 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <p className="mt-1 text-[11px] text-faint">
-                Atlas fetches this PR and reviews the diff — no build, no PR of its own.
+                Atlas fetches this PR and reviews the diff — no build, no PR of
+                its own.
               </p>
             </div>
           ) : null}
@@ -271,7 +278,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
 
       {repos.length > 0 ? (
         <div>
-          <p className="text-[12px] font-medium text-dim">Auto-approve</p>
+          <p className="text-[12px] font-medium text-dim">Automation</p>
           <div className="mt-1.5 rounded-md border border-border-2 px-3 pt-1.5 pb-1">
             <p className="mb-1 text-[11px] leading-relaxed text-faint">
               Choose which gates this job clears without you.
@@ -299,6 +306,13 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 )
               }
             />
+            <SwitchRow
+              title="Merge"
+              description="Merge the PR automatically once it's green & mergeable"
+              checked={autoMerge}
+              testId="create-auto-merge"
+              onChange={setAutoMerge}
+            />
           </div>
         </div>
       ) : null}
@@ -307,7 +321,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         <p className="text-[12px] font-medium text-dim">
           First message
           {kind === "review" ? (
-            <span className="ml-1 font-normal text-faint">(optional — the PR is already set)</span>
+            <span className="ml-1 font-normal text-faint">
+              (optional — the PR is already set)
+            </span>
           ) : null}
         </p>
         <textarea

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AutoApproveMode } from "@workspace/shared";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import { env } from "@/lib/env";
 import { fetchWithRefresh } from "./refresh";
 import type {
@@ -501,6 +501,27 @@ export function setAutoApprove(
   });
 }
 
+/** Set the job's per-job auto-merge settings (`PATCH …/jobs/:jobId/auto-merge`). Enabling on an already
+ *  merge-ready PR immediately evaluates/merges (backend). */
+export function setAutoMerge(
+  ref: JobRef,
+  body: {
+    autoMerge: boolean;
+    method?: AutoMergeMethod;
+    deleteBranch?: boolean;
+  },
+): Promise<{
+  ok: boolean;
+  autoMerge: boolean;
+  autoMergeMethod: AutoMergeMethod;
+  autoMergeDeleteBranch: boolean;
+}> {
+  return webJson(threadPath(ref, "/auto-merge"), {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 // ── Job relationships (created-by / created jobs / manual block & unblock) ─────────────────────────
 /** A child job spawned FROM this one (`GET …/jobs/:jobId/created`) — the "Created jobs" navigator row +
  *  detail pane. */
@@ -629,6 +650,8 @@ export interface CreateThreadBody {
   prNumber?: string;
   /** Arm auto-approve at creation; omit (or "off") to leave the job's gates waiting for a human. */
   autoApproveMode?: AutoApproveMode;
+  /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
+  autoMerge?: boolean;
 }
 
 export function createJob(
@@ -655,7 +678,9 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
-  if (body.autoApproveMode) form.append("autoApproveMode", body.autoApproveMode);
+  if (body.autoApproveMode)
+    form.append("autoApproveMode", body.autoApproveMode);
+  if (body.autoMerge) form.append("autoMerge", "true");
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

@@ -833,7 +833,7 @@ export class WebSurfaceController {
           : {}),
         // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
         // also records who armed it; an unknown/absent method defaults to 'squash', deleteBranch to true.
-        ...(body.autoMerge === true
+        ...(body.autoMerge === true || (body.autoMerge as unknown) === 'true'
           ? {
               auto_merge: true,
               auto_merge_method: isAutoMergeMethod(body.autoMergeMethod) ? body.autoMergeMethod : 'squash',

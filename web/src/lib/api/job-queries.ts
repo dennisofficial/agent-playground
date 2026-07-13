@@ -35,6 +35,7 @@ import {
   removeJobDependency,
   renameJob,
   setAutoApprove,
+  setAutoMerge,
   acceptThread,
   retryJob,
   retryTurn,
@@ -53,7 +54,7 @@ import {
   type RepoView,
   type ReviewCommentItemBody,
 } from "./job-api";
-import type { AutoApproveMode } from "@workspace/shared";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import type {
   JobBlocker,
   WebAttachmentsCard,
@@ -619,6 +620,20 @@ export function useSetAutoApprove(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (mode: AutoApproveMode) => setAutoApprove(ref, mode),
+    onSuccess: () =>
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+  });
+}
+
+/** Flip the job's auto-merge settings. Invalidate the pipeline so the popover reflects immediately. */
+export function useSetAutoMerge(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      autoMerge: boolean;
+      method?: AutoMergeMethod;
+      deleteBranch?: boolean;
+    }) => setAutoMerge(ref, body),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
   });
