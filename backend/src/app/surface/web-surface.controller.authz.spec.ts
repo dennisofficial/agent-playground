@@ -50,6 +50,7 @@ function makeController(threadOrgId: string) {
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
+    {} as never, // moduleRef (ModuleRef)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }
