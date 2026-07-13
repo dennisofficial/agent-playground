@@ -89,7 +89,7 @@ export function ServiceLogView({ jobRef, id }: { jobRef: JobRef; id: string }) {
         onScroll={tail.onScroll}
         onPointerOver={tail.onPointerOver}
         onPointerLeave={tail.onPointerLeave}
-        className="h-full overflow-y-auto overscroll-contain px-4 py-3"
+        className="h-full overflow-y-auto overscroll-contain [overflow-anchor:none] px-4 py-3"
         style={{ background: "var(--term)" }}
       >
         {log === undefined ? (
