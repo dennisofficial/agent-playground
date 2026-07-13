@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -19,13 +19,12 @@ import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
-  BuildLegEntity,
   DecisionRecordEntity,
   MessageEntity,
-  StepEntity,
+  StageEntity,
+  TaskEntity,
   ThreadEntity,
   JobEntity,
-  CodexReviewEntity,
 } from '../persistence/entities';
 import type {
   DeviationEntry,
@@ -34,12 +33,7 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import {
-  coerceThreadType,
-  isDriverExecutableKind,
-  laneDefaultFooter,
-  threadKindSpec,
-} from '../thread-kind';
+import { coerceThreadType, laneDefaultFooter } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webAmendProposalCard, webMergeReadyCard, webVerdictCard } from '../surface/web-approval-card';
@@ -101,14 +95,14 @@ export class DriverStoreService {
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StepEntity, DB_CONNECTION)
-    private readonly steps: Repository<StepEntity>,
+    @InjectRepository(StageEntity, DB_CONNECTION)
+    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(TaskEntity, DB_CONNECTION)
+    private readonly tasks: Repository<TaskEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
-    @InjectRepository(CodexReviewEntity, DB_CONNECTION)
-    private readonly codexReviews: Repository<CodexReviewEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly jobDeps: JobDependencyService,
@@ -618,10 +612,17 @@ export class DriverStoreService {
    */
   async threadsForJob(jobId: string): Promise<DriverThread[]> {
     const job = await this.jobs.findOne({ where: { id: jobId } });
-    const rows = await this.threads.find({
-      where: { job_id: jobId, decision_record_id: job?.decision_record_id ?? IsNull() },
-      order: { ordinal: 'ASC' },
-    });
+    const activeRecordId = job?.decision_record_id ?? null;
+    // Plan-revision scoping moved off the thread onto its stage (d7). Join through `stages` and match the
+    // job's active revision so a superseded revision's threads (browsable history) are never re-driven.
+    const qb = this.threads
+      .createQueryBuilder('t')
+      .innerJoin(StageEntity, 's', 's.id = t.stage_id')
+      .where('t.job_id = :jobId', { jobId })
+      .orderBy('t.ordinal', 'ASC');
+    if (activeRecordId) qb.andWhere('s.decision_record_id = :activeRecordId', { activeRecordId });
+    else qb.andWhere('s.decision_record_id IS NULL');
+    const rows = await qb.getMany();
     return rows.map(toThread);
   }
 
@@ -655,64 +656,37 @@ export class DriverStoreService {
    * means the caller must NOT rotate. This polarity is deliberately INVERTED vs the brain's compaction gate
    * (`latestBrainOccupancy`, which compacts on unknown occupancy): a builder never rotates an unknown turn.
    */
-  async latestStepOccupancy(
-    stepId: string,
-  ): Promise<{ contextTokens: number | null; contextLimit: number | null } | null> {
-    const rows: Array<{ context_tokens: number | null; context_limit: number | null }> =
-      await this.dataSource.query(
-        `SELECT context_tokens, context_limit FROM turn_stats
-           WHERE step_id = $1 AND context_tokens IS NOT NULL
-           ORDER BY created_at DESC
-           LIMIT 1`,
-        [stepId],
-      );
-    const row = rows[0];
-    if (!row) return null;
-    return { contextTokens: row.context_tokens ?? null, contextLimit: row.context_limit ?? null };
-  }
-
-  // ── Leg rotation (context-rot mitigation: one build thread → many sequential engine sessions) ────────
+  // ── Leg rotation (context-rot mitigation: one build stage → many sequential builder-thread legs) ─────
+  // A "Leg" is now a builder-thread row under a build stage (d1): rotation inserts the next builder row
+  // rather than mutating one step. The `anchorStepId` the driver passes is the CURRENT builder thread's id
+  // (steps are gone; the thread is the atomic unit). Leg-scoped params (the pending seed, the peak
+  // occupancy) live in `threads.config` — no per-leg satellite table.
 
   /**
-   * Record/refresh the CURRENT (active) Leg row for a thread's anchor step — a `build_legs` projection used
-   * by the UI. Idempotent upsert keyed by (thread_id, ordinal=leg_ordinal): the first call (leg 1) inserts it,
-   * later calls refresh the live session id + peak occupancy. Safe to call after every batch turn; never
-   * touches resume-critical state (that lives on the step). No-op-safe if the anchor step is gone.
+   * Record the CURRENT builder thread's live session id (display-only; the caller swallows errors). Also
+   * folds the peak context occupancy into `config.contextTokensPeak` (max-of, for parity with the old
+   * `build_legs.context_tokens_peak`). No-op-safe if the thread is gone; a null session is left untouched
+   * so a display refresh never clobbers a live session.
    */
   async recordActiveLeg(
     anchorStepId: string,
     sessionId: string | null,
     contextTokensPeak?: number | null,
   ): Promise<void> {
-    const step = await this.steps.findOne({ where: { id: anchorStepId } });
-    if (!step) return;
-    const legs = this.dataSource.getRepository(BuildLegEntity);
-    const existing = await legs.findOne({
-      where: { thread_id: step.thread_id, ordinal: step.leg_ordinal },
+    const thread = await this.threads.findOne({
+      where: { id: anchorStepId },
+      select: { id: true, config: true },
     });
-    if (existing) {
-      await legs.update(
-        { id: existing.id },
-        {
-          session_id: sessionId,
-          ...(contextTokensPeak != null
-            ? { context_tokens_peak: Math.max(existing.context_tokens_peak ?? 0, contextTokensPeak) }
-            : {}),
-        },
-      );
-      return;
-    }
-    await legs.save(
-      legs.create({
-        org_id: step.org_id,
-        job_id: step.job_id,
-        thread_id: step.thread_id,
-        ordinal: step.leg_ordinal,
-        session_id: sessionId,
-        status: 'active',
-        context_tokens_peak: contextTokensPeak ?? null,
-      }),
-    );
+    if (!thread) return;
+    const config = isRecord(thread.config) ? thread.config : {};
+    const priorPeak = typeof config.contextTokensPeak === 'number' ? config.contextTokensPeak : null;
+    const nextPeak = contextTokensPeak != null ? Math.max(priorPeak ?? 0, contextTokensPeak) : null;
+    const patch = {
+      ...(sessionId != null ? { session_id: sessionId } : {}),
+      ...(nextPeak != null ? { config: { ...config, contextTokensPeak: nextPeak } } : {}),
+    };
+    if (Object.keys(patch).length === 0) return;
+    await this.threads.update({ id: anchorStepId }, patch);
   }
 
   /**
@@ -746,16 +720,11 @@ export class DriverStoreService {
   }
 
   /**
-   * ROTATE the anchor step's build session in ONE transaction (the analog of the brain's `completeCompaction`,
-   * applied to a build step). Reads the current fat session off the step, then atomically:
-   *   • sets `steps.rotating_session_id` = the fat session (abandon marker + restart signal),
-   *   • NULLs `steps.session_id` (so the next turn starts FRESH — resume reads null),
-   *   • stores `steps.pending_leg_seed` = the seed (folded into the next Leg's task),
-   *   • increments `steps.leg_ordinal`,
-   *   • closes the current `build_legs` row (status='rotated', handoff_md, peak, ended_at),
-   *   • opens the next `build_legs` row (ordinal+1, status='active').
-   * `commit_sha` / `batch_ordinal` are DELIBERATELY untouched — a rotation must never look like a committed
-   * batch to the atomic-resume fast-forward. Returns null (no-op) when there is no live session to rotate.
+   * ROTATE a builder thread's build session (d1): insert the NEXT builder-thread row under the SAME stage,
+   * carrying the handoff forward as `handoff_in` and the continuation seed as `config.pendingLegSeed`, on a
+   * fresh (null) session. The `anchorStepId` is the CURRENT builder thread's id. `fromLeg` is that thread's
+   * 1-based position among the stage's builder threads (ORDER BY ordinal); the new row is `toLeg = fromLeg+1`
+   * at the next gap-numbered ordinal. Returns null (no-op) when there is no live session to rotate.
    */
   async completeLegRotation(input: {
     anchorStepId: string;
@@ -764,105 +733,79 @@ export class DriverStoreService {
     contextTokensPeak?: number | null;
   }): Promise<{ fromLeg: number; toLeg: number; abandonedSessionId: string } | null> {
     return this.dataSource.transaction(async (m) => {
-      const steps = m.getRepository(StepEntity);
-      const legs = m.getRepository(BuildLegEntity);
-      const step = await steps.findOne({ where: { id: input.anchorStepId } });
-      if (!step || !step.session_id) return null; // nothing live to rotate
-      const abandonedSessionId = step.session_id;
-      const fromLeg = step.leg_ordinal;
+      const threads = m.getRepository(ThreadEntity);
+      const current = await threads.findOne({ where: { id: input.anchorStepId } });
+      if (!current || !current.session_id) return null; // nothing live to rotate
+      const abandonedSessionId = current.session_id;
+      const siblings = await threads.find({
+        where: { stage_id: current.stage_id, role: 'builder' },
+        order: { ordinal: 'ASC' },
+      });
+      const position = siblings.findIndex((s) => s.id === current.id);
+      const fromLeg = position >= 0 ? position + 1 : siblings.length;
       const toLeg = fromLeg + 1;
-
-      await steps.update(
-        { id: step.id },
-        {
-          rotating_session_id: abandonedSessionId,
+      const maxOrdinal = siblings.reduce((mx, s) => Math.max(mx, s.ordinal), 0);
+      await threads.save(
+        threads.create({
+          job_id: current.job_id,
+          stage_id: current.stage_id,
+          org_id: current.org_id,
+          parent_thread_id: current.parent_thread_id,
+          role: 'builder',
+          ordinal: maxOrdinal + ORDINAL_GAP,
+          brief: current.brief,
+          type: current.type,
+          handoff_in: input.handoff,
           session_id: null,
-          pending_leg_seed: input.seed,
-          leg_ordinal: toLeg,
-        },
-      );
-
-      // Close the outgoing Leg's projection row (upsert — create it if leg 1 never got a live row).
-      const current = await legs.findOne({ where: { thread_id: step.thread_id, ordinal: fromLeg } });
-      const closed = {
-        status: 'rotated',
-        handoff_md: input.handoff,
-        session_id: abandonedSessionId,
-        ended_at: new Date(),
-        ...(input.contextTokensPeak != null ? { context_tokens_peak: input.contextTokensPeak } : {}),
-      };
-      if (current) await legs.update({ id: current.id }, closed);
-      else
-        await legs.save(
-          legs.create({
-            org_id: step.org_id,
-            job_id: step.job_id,
-            thread_id: step.thread_id,
-            ordinal: fromLeg,
-            ...closed,
-          }),
-        );
-
-      // Open the incoming Leg (session id fills in when the fresh turn is born).
-      await legs.save(
-        legs.create({
-          org_id: step.org_id,
-          job_id: step.job_id,
-          thread_id: step.thread_id,
-          ordinal: toLeg,
-          status: 'active',
-          session_id: null,
+          status: 'pending',
+          config: { pendingLegSeed: input.seed },
         }),
       );
-
       return { fromLeg, toLeg, abandonedSessionId };
     });
   }
 
-  /** Read the anchor step's pending Leg seed (the handoff folded into the next turn's task), or null. */
+  /** Read a builder thread's pending Leg seed (the handoff folded into the next turn's task) from its
+   *  `config.pendingLegSeed`, or null. */
   async getPendingLegSeed(anchorStepId: string): Promise<string | null> {
-    const step = await this.steps.findOne({ where: { id: anchorStepId } });
-    return step?.pending_leg_seed ?? null;
+    const thread = await this.threads.findOne({
+      where: { id: anchorStepId },
+      select: { id: true, config: true },
+    });
+    const seed = isRecord(thread?.config) ? thread!.config.pendingLegSeed : null;
+    return typeof seed === 'string' ? seed : null;
   }
 
-  /** All Legs of a thread, oldest first — the read model behind the UI's per-Leg rows + handoff pills. */
-  async getLegs(threadId: string): Promise<BuildLegEntity[]> {
-    return this.dataSource
-      .getRepository(BuildLegEntity)
-      .find({ where: { thread_id: threadId }, order: { ordinal: 'ASC' } });
-  }
-
-  /** Every Leg of a JOB, oldest first — the batched read `getPipelineState` groups by thread (avoids N+1). */
-  async getLegsForJob(jobId: string): Promise<BuildLegEntity[]> {
-    return this.dataSource
-      .getRepository(BuildLegEntity)
-      .find({ where: { job_id: jobId }, order: { ordinal: 'ASC' } });
-  }
-
-  /** A thread's durable LLM-authored task list (`threads.tasks`) — read when rotating so the fresh Leg's seed
-   *  carries the open/in-progress items (the SDK's in-memory todo dies with the session; this persists). */
+  /** A thread's stage-owned task checklist (`tasks WHERE stage_id = X`, d6), mapped to the `TaskItem` shape
+   *  — read when rotating so the fresh Leg's seed carries the open/in-progress items. */
   async getThreadTasks(threadId: string): Promise<TaskItem[]> {
-    const row = await this.threads.findOne({ where: { id: threadId }, select: { id: true, tasks: true } });
-    return Array.isArray(row?.tasks) ? row!.tasks : [];
+    const thread = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, stage_id: true },
+    });
+    if (!thread) return [];
+    const rows = await this.tasksForStage(thread.stage_id);
+    return rows.map(toTaskItem);
   }
 
   /** Host backstop for a thread that reached `done` with an unreconciled checklist: flip every still-open task
-   *  (`pending`/`in_progress`) to `dropped` — NOT `completed` (the host must not claim work it did not verify;
-   *  a `dropped` row renders struck-through / drops out of the live navigator checklist).
-   *  Returns how many were flipped. A plain read-modify-write is safe here: this runs at the done transition,
-   *  after the thread's turn(s) have finished, so no concurrent task fold races it. */
+   *  (`pending`/`in_progress`) in its stage to `dropped` — NOT `completed` (the host must not claim work it did
+   *  not verify; a `dropped` row renders struck-through / drops out of the live navigator checklist).
+   *  Returns how many were flipped. */
   async dropOpenThreadTasks(threadId: string): Promise<number> {
-    const tasks = await this.getThreadTasks(threadId);
-    let dropped = 0;
-    const next = tasks.map((t) => {
-      if (t.status === 'pending' || t.status === 'in_progress') {
-        dropped++;
-        return { ...t, status: 'dropped' as const };
-      }
-      return t;
+    const thread = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, stage_id: true },
     });
-    if (dropped > 0) await this.threads.update({ id: threadId }, { tasks: next });
-    return dropped;
+    if (!thread) return 0;
+    const res = await this.tasks
+      .createQueryBuilder()
+      .update(TaskEntity)
+      .set({ status: 'dropped' })
+      .where('stage_id = :stageId', { stageId: thread.stage_id })
+      .andWhere("status IN ('pending', 'in_progress')")
+      .execute();
+    return res.affected ?? 0;
   }
 
   /** Live single-thread read (not the run-start snapshot). Used to detect a thread a concurrent/stale drive
@@ -1113,7 +1056,7 @@ export class DriverStoreService {
    *  job has none (yet). */
   async masterReviewThreadId(jobId: string): Promise<string | null> {
     const row = await this.threads.findOne({
-      where: { job_id: jobId, kind: 'master_review' },
+      where: { job_id: jobId, role: 'master_review' },
       select: { id: true },
     });
     return row?.id ?? null;
@@ -1254,12 +1197,21 @@ export class DriverStoreService {
   ): Promise<ReviewChildThread[]> {
     const existing = await this.reviewChildren(parent.id);
     if (existing.length > 0) return existing;
+    // A review child belongs to the SAME stage as its parent builder (`threads.stage_id` NOT NULL). Derive
+    // it from the parent row rather than requiring the caller to pass it — the caller (thread-driver) supplies
+    // only `{id, jobId, orgId}`.
+    const parentRow = await this.threads.findOne({
+      where: { id: parent.id },
+      select: { id: true, stage_id: true },
+    });
+    if (!parentRow) return [];
     const rows = childSpecs.map((c, i) =>
       this.threads.create({
         job_id: parent.jobId,
         org_id: parent.orgId,
+        stage_id: parentRow.stage_id,
         parent_thread_id: parent.id,
-        kind: c.kind,
+        role: c.kind,
         ordinal: (i + 1) * ORDINAL_GAP,
         brief: c.brief,
         config: c.config,
@@ -1294,99 +1246,93 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { review_findings: findings });
   }
 
-  // ── steps ───────────────────────────────────────────────────────────────────────────────────
+  // ── steps (now 1:1 with the thread row — steps table is gone) ─────────────────────────────────
+  // `lockSteps` always created exactly one planned step per thread, so a thread's "steps" collapse to a
+  // single synthetic Step derived from the thread row itself. The `stepId` the driver passes back is always
+  // the thread's own id, so the step writers below target the thread row directly.
 
-  /** A thread's steps in execution order. */
+  /** A thread's steps in execution order — a single synthetic step derived 1:1 from the thread row. */
   async stepsForThread(threadId: string): Promise<Step[]> {
-    const rows = await this.steps.find({
-      where: { thread_id: threadId },
-      order: { ordinal: 'ASC' },
-    });
-    return rows.map(toStep);
+    const thread = await this.threads.findOne({ where: { id: threadId } });
+    if (!thread) return [];
+    return [await this.toSyntheticStep(thread)];
   }
 
   /**
    * The AUTHORITATIVE transcript anchor for a thread — the engine `sessionId` (+ Leg ordinal) the wake hands
-   * the brain to read the halted/completed lane's raw JSONL (`atlas-tx show <sessionId>`). Resolved from the
-   * most-recent `build_legs` row with a non-null `session_id` (preferred — carries the Leg ordinal), else the
-   * latest `steps.session_id`. Read from steps/legs — which exist for EVERY thread that ran a turn — NOT from
-   * `terminal_record`, so it works even for an `incomplete` halt whose record is null. The host has ground
-   * truth here; a builder-written value is never trusted. `undefined` only when the thread never got a session
-   * (e.g. halted in provisioning).
+   * the brain to read the halted/completed lane's raw JSONL (`atlas-tx show <sessionId>`). Reads the thread's
+   * own `session_id` directly (relocated off the old `steps`/`build_legs`), so it works even for an
+   * `incomplete` halt whose `terminal_record` is null. `undefined` when the thread never got a session.
    */
   async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
-    const legs = await this.getLegs(threadId);
-    const legWithSession = [...legs]
-      .reverse()
-      .find((l) => l.session_id != null);
-    if (legWithSession?.session_id) {
-      return {
-        sessionId: legWithSession.session_id,
-        legOrdinal: legWithSession.ordinal,
-      };
-    }
-    const steps = await this.stepsForThread(threadId);
-    const stepWithSession = [...steps]
-      .reverse()
-      .find((s) => s.sessionId != null);
-    if (stepWithSession?.sessionId) {
-      return {
-        sessionId: stepWithSession.sessionId,
-        legOrdinal: stepWithSession.legOrdinal,
-      };
-    }
-    return undefined;
+    const thread = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, stage_id: true, session_id: true },
+    });
+    if (!thread?.session_id) return undefined;
+    return { sessionId: thread.session_id, legOrdinal: await this.builderLegOrdinal(thread) };
   }
 
   /**
-   * Lock a thread's steps: persist the planned step list as `steps` rows (gap-numbered,
-   * `pending`/step `build`). Idempotent across a resume — if rows already exist (the plan locked before
-   * the restart) the existing rows are returned untouched, so steps never double-create.
+   * Lock a thread's steps — a no-op now that a thread's single step IS the thread row (the row was created
+   * upstream when the thread was materialized). Returns the synthetic step, so callers keep the same shape.
    */
-  async lockSteps(thread: DriverThread, planned: PlannedStep[]): Promise<Step[]> {
-    const existing = await this.stepsForThread(thread.id);
-    if (existing.length > 0) return existing;
-    const rows = planned.map((p, i) =>
-      this.steps.create({
-        thread_id: thread.id,
-        job_id: thread.jobId,
-        org_id: thread.orgId,
-        ordinal: (i + 1) * ORDINAL_GAP,
-        title: p.title,
-        brief: p.brief,
-        stage: 'build',
-        status: 'pending',
-      }),
-    );
-    await this.steps.save(rows);
-    return rows.map(toStep);
+  async lockSteps(thread: DriverThread, _planned: PlannedStep[]): Promise<Step[]> {
+    return this.stepsForThread(thread.id);
   }
 
-  /** Advance a step's explicit cursor (`step` + `status`) — the resumable transition. */
+  /** Advance the (synthetic) step's cursor — maps the `StepStatus` back to the owning thread's `status`. The
+   *  `stage` intra-step cursor has no durable home anymore and is ignored. */
   async setStepState(
     stepId: string,
-    stage: string,
+    _stage: string,
     status: StepStatus,
   ): Promise<void> {
-    await this.steps.update({ id: stepId }, { stage, status });
+    await this.threads.update({ id: stepId }, { status: stepStatusToThreadStatus(status) });
   }
 
-  /** Stamp the batch ANCHOR step's commit marker the instant its batch commits — written BEFORE the
-   *  per-step done writes so a crash in between fast-forwards on resume instead of re-running (#6). */
+  /** Stamp the thread's commit marker (the review-diff head) the instant its batch commits. */
   async setStepCommit(stepId: string, commitSha: string): Promise<void> {
-    await this.steps.update({ id: stepId }, { commit_sha: commitSha });
+    await this.threads.update({ id: stepId }, { commit_sha: commitSha });
   }
 
-  /**
-   * Persist the batch grouping for a thread's steps — the resumable batching cursor. Assigned ONCE,
-   * the first time a thread executes (all its steps have null `batch_ordinal`); after this a restart
-   * reads the stored ordinals and re-groups identically, so a resumed engine session keeps the SAME
-   * batch membership (no second `batchSteps` call, no drift). Each tuple is `[stepId, batchOrdinal]`.
-   */
-  async setBatchOrdinals(assignments: Array<[string, number]>): Promise<void> {
-    for (const [stepId, batchOrdinal] of assignments) {
-      await this.steps.update({ id: stepId }, { batch_ordinal: batchOrdinal });
-    }
+  /** No-op: a thread has a single batch (batchOrdinal is always 1 today), so there is nothing durable to
+   *  persist for batch grouping. Kept for signature compatibility with the driver's batching seam. */
+  async setBatchOrdinals(_assignments: Array<[string, number]>): Promise<void> {
+    // Intentionally empty — see the method doc.
+  }
+
+  /** The 1-based position of a builder thread among its stage's builder threads (ORDER BY ordinal) — the
+   *  "Leg N" ordinal. Non-builder threads (or a thread with no siblings) resolve to 1. */
+  private async builderLegOrdinal(thread: {
+    id: string;
+    stage_id: string;
+  }): Promise<number> {
+    const siblings = await this.threads.find({
+      where: { stage_id: thread.stage_id, role: 'builder' },
+      order: { ordinal: 'ASC' },
+      select: { id: true },
+    });
+    const idx = siblings.findIndex((s) => s.id === thread.id);
+    return idx >= 0 ? idx + 1 : 1;
+  }
+
+  /** Project a thread row to the single synthetic {@link Step} the driver + build-lane delivery read. */
+  private async toSyntheticStep(thread: ThreadEntity): Promise<Step> {
+    return {
+      id: thread.id,
+      threadId: thread.id,
+      jobId: thread.job_id,
+      ordinal: thread.ordinal,
+      title: null,
+      brief: thread.brief,
+      stage: 'build',
+      status: threadStatusToStepStatus(thread.status),
+      sessionId: thread.session_id,
+      batchOrdinal: 1,
+      legOrdinal: await this.builderLegOrdinal(thread),
+      commitSha: thread.commit_sha,
+    };
   }
 
   // ── brain read helpers ───────────────────────────────────────────────────────────────────────
@@ -1397,139 +1343,129 @@ export class DriverStoreService {
    * AgentSessionManager brain session.
    */
   async getPipelineState(jobId: string, orgId: string): Promise<unknown> {
-    const thread = await this.jobs.findOne({
-      where: { id: jobId, org_id: orgId },
-    });
-    if (!thread) return { status: 'no_job' };
-    const blockedBy = thread.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
+    const job = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
+    if (!job) return { status: 'no_job' };
+    const blockedBy = job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
     // The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message,
     // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
-    const blockedSeedMessage = thread.status === 'blocked' ? (thread.blocked_seed_message ?? null) : null;
-    // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its
-    // brain can already be keeping a task list, and the navigator's Main row shows it. Ride the no_job
-    // payload so the web isn't blind to it before a plan exists.
-    if (thread.status === 'open') {
+    const blockedSeedMessage = job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
+    // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
+    // already be keeping a task list on its (always-present) planning stage, and the navigator's Main row shows
+    // it. Ride the no_job payload so the web isn't blind to it before a plan exists.
+    if (job.status === 'open') {
+      const planningStage = await this.stages.findOne({
+        where: { job_id: job.id, kind: 'planning' },
+        order: { ordinal: 'ASC' },
+      });
+      const mainTasks = planningStage
+        ? (await this.tasksForStage(planningStage.id)).map(toTaskItem)
+        : [];
       return {
         status: 'no_job',
-        mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
-        // The Main (brain) lane's pre-turn footer default — so a planning job shows "Opus 4.8" before
-        // its first brain turn completes (no `turn_meta` to derive from yet).
-        mainDefaultFooter: laneDefaultFooter('main'),
-        createdBy: thread.created_by ?? null,
-        autoApproveMode: thread.auto_approve_mode ?? 'off',
-        autoMerge: thread.auto_merge ?? false,
-        mergeReady: prMergeReady(thread),
-        mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
+        mainTasks,
+        // The planning lane's pre-turn footer default — so a planning job shows "Opus 4.8" before its first
+        // brain turn completes (no `turn_meta` to derive from yet).
+        mainDefaultFooter: laneDefaultFooter('planning'),
+        createdBy: job.created_by ?? null,
+        autoApproveMode: job.auto_approve_mode ?? 'off',
+        autoMerge: job.auto_merge ?? false,
+        mergeReady: prMergeReady(job),
+        mergeValue: prMergeReady(job) ? JSON.stringify({ jobId: job.id }) : null,
         blockedBy,
         blockedSeedMessage,
       };
     }
+    // The pipeline is now the job's ordinal-ordered STAGES; each stage owns its threads (root + review
+    // children) and its task checklist. Batch the threads + tasks in one query each and group by stage.
+    const stages = await this.stagesForJob(job.id);
     const allThreads = await this.threads.find({
-      where: { job_id: thread.id },
+      where: { job_id: job.id },
       order: { ordinal: 'ASC' },
     });
-    // Split root threads (main/builder/master_review) from a builder's review children (review_lens /
-    // post_review, `parent_thread_id` set). The top-level `threads` array is the ROOT rows; each builder's
-    // `reviewAgents` is DERIVED from its review_lens child rows (each carries its own status + findings) —
-    // no shared jsonb. (Step 5 rewrites the web to render the full tree from `(kind, parent_id)` directly;
-    // this keeps the existing per-thread `reviewAgents` contract working until then.)
-    const childrenByParent = new Map<string, ThreadEntity[]>();
-    for (const t of allThreads) {
-      if (t.parent_thread_id) {
-        const list = childrenByParent.get(t.parent_thread_id) ?? [];
-        list.push(t);
-        childrenByParent.set(t.parent_thread_id, list);
-      }
-    }
-    // The top-level `threads` array is the driver-EXECUTABLE roots (builder + master_review) FOR THE ACTIVE
-    // PLAN REVISION. `main` renders as the navigator's always-first Main row (from `main_tasks`);
-    // `plan_review` renders as its own Codex review row (below) — both from their own sources, so they're
-    // excluded from this build-lane list. Prior revisions' roots are surfaced separately as `priorRevisions`
-    // (browsable history) — see below.
-    const activeRecordId = thread.decision_record_id;
-    const rootExecutable = allThreads.filter(
-      (t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind),
-    );
-    const threads = rootExecutable.filter((t) => t.decision_record_id === activeRecordId);
-    // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with). It's
-    // its own thread (`kind='plan_review'`), but its runtime + transcript live on the `codex-review:<jobId>`
-    // lane + the `codex_reviews` row (the authoritative status). Surface it when EITHER exists (a new job has
-    // the thread row; a job reviewed before plan_review became a row still has the codex_reviews row). The web
-    // renders a row that opens the `codex-review:<jobId>` lane. Null → no review ran, no row.
-    const planReviewThread = allThreads.find((t) => t.kind === 'plan_review') ?? null;
-    const codexRow = await this.codexReviews
-      .findOne({ where: { job_id: thread.id }, select: { id: true, status: true } })
-      .catch(() => null);
-    const planReview =
-      codexRow || planReviewThread
-        ? {
-            status: codexRow?.status ?? planReviewThread?.status ?? 'reviewing',
-            // The Codex-review lane's pre-turn footer default ("Codex · xHigh").
-            defaultFooter: laneDefaultFooter('plan_review'),
-          }
-        : null;
-    // All the thread's steps in one query (avoid N+1), grouped by thread for the nav folder tree.
-    const steps = await this.steps.find({
-      where: { job_id: thread.id },
-      order: { ordinal: 'ASC' },
-    });
-    const stepsByThread = new Map<string, StepEntity[]>();
-    for (const p of steps) {
-      const list = stepsByThread.get(p.thread_id) ?? [];
-      list.push(p);
-      stepsByThread.set(p.thread_id, list);
-    }
-    // The thread's BUILD LEGS (context-rot rotation read model) — one query, grouped by thread. A thread with
-    // no rotation has 0 rows (the UI shows a single implicit Leg); a rotated thread has one row per Leg with
-    // the handoff pill text between them. Fetched all-at-once to avoid an N+1 across threads.
-    const legs = await this.getLegsForJob(thread.id).catch(() => [] as BuildLegEntity[]);
-    const legsByThread = new Map<string, BuildLegEntity[]>();
-    for (const l of legs) {
-      const list = legsByThread.get(l.thread_id) ?? [];
-      list.push(l);
-      legsByThread.set(l.thread_id, list);
-    }
-    // The per-root-thread → pipeline-node mapper, shared by the ACTIVE lanes and every historical revision's
-    // lanes (so history renders identically, just read-only in the web).
-    const mapPipelineThread = (s: ThreadEntity) => ({
-      id: s.id,
-      ordinal: s.ordinal,
-      brief: s.brief,
-      type: coerceThreadType(s.type),
-      status: s.status,
-      condition: s.condition,
-      blockReason: s.terminal_record?.blocked?.reason ?? null,
+    const threadsByStage = groupBy(allThreads, (t) => t.stage_id);
+    const stageIds = stages.map((s) => s.id);
+    const allTasks = stageIds.length
+      ? await this.tasks.find({ where: { stage_id: In(stageIds) }, order: { ordinal: 'ASC' } })
+      : [];
+    const tasksByStage = groupBy(allTasks, (t) => t.stage_id);
+
+    const mapThread = (t: ThreadEntity, siblings: ThreadEntity[]) => ({
+      id: t.id,
+      role: t.role,
+      ordinal: t.ordinal,
+      brief: t.brief,
+      type: coerceThreadType(t.type),
+      status: t.status,
+      condition: t.condition,
+      hasPlan: t.plan != null,
+      sessionId: t.session_id,
+      commitSha: t.commit_sha,
+      blockReason: t.terminal_record?.blocked?.reason ?? null,
       // True only when the LIVE judge was the outage and static build+tests passed — gates the "Skip & accept"
       // button (mirrors operatorAcceptStuckThread's server-side guard, so the UI never offers an unsafe accept).
       acceptableOnJudgeOutage:
-        s.terminal_record?.blocked?.reason === 'judge_unavailable' &&
-        s.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
-      // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's kind.
-      defaultFooter: laneDefaultFooter(s.kind),
-      // Derived from `kind` (the `is_master_review` column is gone) — the web keys "Master review"
-      // rendering off this field. `kind` is also surfaced directly for the data-driven tree.
-      kind: s.kind,
-      isMasterReview: s.kind === 'master_review',
-      hasPlan: s.plan != null,
-      // The builder's review CHILD threads (review_lens × N + post_review) — each a first-class row with
-      // its own status + findings + streaming lane. The web renders the review sub-tree directly from
-      // these (bare child-thread nodes). A master-review thread has no children (it IS the review).
-      children: pipelineReviewChildren(s, childrenByParent.get(s.id) ?? []),
-      // The thread's own LLM-authored task list — no fallback default, same rationale as the job-level
-      // field above.
-      tasks: Array.isArray(s.tasks) ? s.tasks : [],
-      // Build Legs (context-rot rotation): one navigable row per engine session, with the handoff pill each
-      // rotated Leg authored. Empty for a thread that never rotated (the web renders a single implicit Leg).
-      legs: pipelineLegs(legsByThread.get(s.id) ?? []),
-      steps: mapBatchedSteps(stepsByThread.get(s.id) ?? []),
+        t.terminal_record?.blocked?.reason === 'judge_unavailable' &&
+        t.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
+      // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's role.
+      defaultFooter: laneDefaultFooter(t.role),
+      isMasterReview: t.role === 'master_review',
+      // A builder's review CHILD threads (review_agent × N + review_fix) live in the SAME stage, related by
+      // `parent_thread_id`. Each is a first-class row with its own status + findings + streaming lane.
+      children:
+        t.role === 'builder'
+          ? siblings
+              .filter(
+                (c) =>
+                  c.parent_thread_id === t.id &&
+                  (c.role === 'review_agent' || c.role === 'review_fix'),
+              )
+              .map((c) => toPipelineChild(c, t.id))
+          : [],
     });
+
+    const mapStage = (s: StageEntity) => {
+      const stageThreads = threadsByStage.get(s.id) ?? [];
+      const roots = stageThreads.filter((t) => t.parent_thread_id == null);
+      return {
+        id: s.id,
+        kind: s.kind,
+        title: s.title,
+        type: s.type,
+        ordinal: s.ordinal,
+        status: s.status,
+        condition: s.condition,
+        decisionRecordId: s.decision_record_id,
+        threads: roots.map((t) => mapThread(t, stageThreads)),
+        tasks: (tasksByStage.get(s.id) ?? []).map(toTaskItem),
+      };
+    };
+
+    // The ACTIVE pipeline is the stages under the job's current revision (plus the revision-agnostic
+    // singletons like planning/plan_review, whose stage carries a null record). Prior revisions' stages are
+    // surfaced separately as browsable history.
+    const activeRecordId = job.decision_record_id;
+    const activeStages = stages.filter(
+      (s) => s.decision_record_id == null || s.decision_record_id === activeRecordId,
+    );
+    // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
+    // derived from the plan_review stage's single thread's status. Null when no plan_review stage exists.
+    const planReviewStage = stages.find((s) => s.kind === 'plan_review');
+    const planReviewThread = planReviewStage
+      ? (threadsByStage.get(planReviewStage.id) ?? [])[0]
+      : undefined;
+    const planReview = planReviewThread
+      ? {
+          status: planReviewThread.status,
+          // The Codex-review lane's pre-turn footer default ("Codex · xHigh").
+          defaultFooter: laneDefaultFooter('plan_review'),
+        }
+      : null;
+
     // PRIOR PLAN REVISIONS (browsable, immutable history). Only present once a re-propose over already-DONE
-    // work has forged a new revision (see `persistPlan`); the common single-revision job returns `[]`. Each
-    // record maps to its own root executable lanes; the ACTIVE record is excluded (it's `threads` above).
-    // Revision numbers are derived by `created_at` order (oldest = v1). Only revisions that actually
-    // materialized build lanes are surfaced (a bare superseded planning-loop draft has none → skipped).
+    // work has forged a new revision; the common single-revision job returns `[]`. Revision numbers are
+    // derived by `created_at` order (oldest = v1). Only revisions that actually materialized stages surface.
     const records = await this.records
-      .find({ where: { job_id: thread.id }, order: { created_at: 'ASC' } })
+      .find({ where: { job_id: job.id }, order: { created_at: 'ASC' } })
       .catch(() => [] as DecisionRecordEntity[]);
     const priorRevisions = records
       .map((rec, i) => ({ rec, revision: i + 1 }))
@@ -1538,62 +1474,45 @@ export class DriverStoreService {
         decisionRecordId: rec.id,
         revision,
         status: rec.status,
-        threads: rootExecutable
-          .filter((t) => t.decision_record_id === rec.id)
-          .map(mapPipelineThread),
+        stages: stages.filter((s) => s.decision_record_id === rec.id).map(mapStage),
       }))
-      .filter((r) => r.threads.length > 0);
+      .filter((r) => r.stages.length > 0);
+
     return {
-      jobId: thread.id,
-      title: thread.title,
-      kind: thread.kind,
-      status: thread.status,
-      halt: thread.halt ?? null,
-      createdBy: thread.created_by ?? null,
+      jobId: job.id,
+      title: job.title,
+      status: job.status,
+      halt: job.halt ?? null,
+      createdBy: job.created_by ?? null,
       blockedBy,
       blockedSeedMessage,
       // Which build path was committed at approval: 'direct' (fast, brain-implemented) | 'plan' (driver) |
-      // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders
-      // (build lanes / plan.md / generated docs) for a direct build, where they never apply.
-      buildPath: thread.build_path ?? null,
-      // Per-job auto-approve mode — surfaced so the console can render + toggle it (also on the no_job
-      // shape above, so the toggle works pre-plan while the job is still `open`).
-      autoApproveMode: thread.auto_approve_mode ?? 'off',
-      autoMerge: thread.auto_merge ?? false,
-      // GitHub-mergeable, independent of the auto_merge toggle (a human can always click Merge PR) — the
-      // manual Merge PR card/button reads this same gate the auto-merge evaluator uses.
-      mergeReady: prMergeReady(thread),
-      mergeValue: prMergeReady(thread) ? JSON.stringify({ jobId: thread.id }) : null,
-      // The plan-review (Codex) thread's presence + live status — the navigator renders a dedicated row that
-      // opens the `codex-review:<jobId>` lane. Null when no review has run.
+      // null (never approved). The navigator reads this to hide the plan-oriented empty-state placeholders.
+      buildPath: job.build_path ?? null,
+      autoApproveMode: job.auto_approve_mode ?? 'off',
+      autoMerge: job.auto_merge ?? false,
+      // GitHub-mergeable, independent of the auto_merge toggle (a human can always click Merge PR).
+      mergeReady: prMergeReady(job),
+      mergeValue: prMergeReady(job) ? JSON.stringify({ jobId: job.id }) : null,
+      // The plan-review (Codex) thread's presence + live status. Null when no review has run.
       planReview,
-      decisionRecordId: thread.decision_record_id,
-      prUrl: thread.pr_url,
-      prNumber: thread.pr_number,
+      decisionRecordId: job.decision_record_id,
+      prUrl: job.pr_url,
+      prNumber: job.pr_number,
       // Observed PR lifecycle (`open | merged | closed`) + merge-conflict signal — the SAME reconciler-owned
-      // columns the sidebar's PR glyph reads. Surfaced here so the navigator's PR row mirrors the sidebar
-      // instead of hardcoding "open" (it would otherwise show a stale green "open" after a merge/close).
-      prState: thread.pr_state,
-      prMergeable: thread.pr_mergeable,
-      // The observed CI/CD aggregate for the PR head (`success|failure|pending|skipped|null`) — drives the
-      // navigator PR-row CI glyph, kept fresh by the webhook CI-sync + the 30-min reconciler backstop.
-      ciStatus: thread.ci_status,
-      ciCounts: thread.ci_counts,
-      featureBranch: thread.feature_branch,
-      // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge
-      // when it diverges from the host-named featureBranch. Null until first sampled / on detached HEAD.
-      currentBranch: thread.current_branch,
-      baseBranch: thread.base_branch,
-      // The Main brain session's own task list (folded from its `main`-lane task-tool calls) — the
-      // navigator's Main row renders it. No fallback default (tasks are pure LLM output — there's no
-      // fixed/expected set the way there is for review agents). The old job-level PR-review fields
-      // (`reviewAgents`/`tasks`/`prReviewStatus`) are gone — master review is now a normal build thread.
-      mainTasks: Array.isArray(thread.main_tasks) ? thread.main_tasks : [],
-      // The Main (brain) lane's pre-turn footer default — the web renders Main from `mainTasks` (it's not in
-      // the `threads` array), so it needs its own default carrier for the pre-first-turn footer.
-      mainDefaultFooter: laneDefaultFooter('main'),
-      threads: threads.map(mapPipelineThread),
-      // Prior plan revisions' lanes as read-only history (empty for the common single-revision job).
+      // columns the sidebar's PR glyph reads.
+      prState: job.pr_state,
+      prMergeable: job.pr_mergeable,
+      // The observed CI/CD aggregate for the PR head (`success|failure|pending|skipped|null`).
+      ciStatus: job.ci_status,
+      ciCounts: job.ci_counts,
+      featureBranch: job.feature_branch,
+      // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge.
+      currentBranch: job.current_branch,
+      baseBranch: job.base_branch,
+      // The whole pipeline as ordinal-ordered stages, each carrying its threads + task checklist.
+      stages: activeStages.map(mapStage),
+      // Prior plan revisions' stages as read-only history (empty for the common single-revision job).
       priorRevisions,
     };
   }
@@ -1618,6 +1537,142 @@ export class DriverStoreService {
     };
   }
 
+  // ── stage / thread / task CRUD (d6/d7 — the orchestration write surface) ───────────────────────
+
+  /** Every stage of a job, in pipeline order (ORDER BY ordinal). */
+  async stagesForJob(jobId: string): Promise<StageEntity[]> {
+    return this.stages.find({ where: { job_id: jobId }, order: { ordinal: 'ASC' } });
+  }
+
+  /** Every thread of a stage, in execution order (ORDER BY ordinal). */
+  async threadsForStage(stageId: string): Promise<ThreadEntity[]> {
+    return this.threads.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+  }
+
+  /** Every task of a stage's checklist, in display/credit order (ORDER BY ordinal). */
+  async tasksForStage(stageId: string): Promise<TaskEntity[]> {
+    return this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+  }
+
+  /**
+   * Append a STAGE at the END of a job's append-only pipeline (d7) — always the next gap-numbered ordinal
+   * (`MAX(ordinal)+ORDINAL_GAP`, or `ORDINAL_GAP` for the first). Never renumbers earlier stages, so a
+   * re-plan round just adds fresh stages after the prior ones. {@link appendStage} is an alias — the
+   * "append-only" semantics ARE `createStage`'s only behavior (there is no insert-in-the-middle).
+   */
+  async createStage(input: {
+    jobId: string;
+    orgId: string;
+    kind: string;
+    title?: string | null;
+    type?: string | null;
+    decisionRecordId?: string | null;
+    config?: Record<string, unknown>;
+  }): Promise<StageEntity> {
+    const ordinal = (await this.maxStageOrdinal(input.jobId)) + ORDINAL_GAP;
+    return this.stages.save(
+      this.stages.create({
+        job_id: input.jobId,
+        org_id: input.orgId,
+        ordinal,
+        kind: input.kind,
+        title: input.title ?? null,
+        type: input.type ?? null,
+        decision_record_id: input.decisionRecordId ?? null,
+        config: input.config ?? {},
+      }),
+    );
+  }
+
+  /** Alias for {@link createStage} — the pipeline is append-only, so "append" and "create" are one op. */
+  async appendStage(input: Parameters<DriverStoreService['createStage']>[0]): Promise<StageEntity> {
+    return this.createStage(input);
+  }
+
+  /** Insert a THREAD into a stage. Gap-numbers the ordinal within the stage when omitted. */
+  async createThreadInStage(input: {
+    stageId: string;
+    jobId: string;
+    orgId: string;
+    role: string;
+    brief: string;
+    ordinal?: number;
+    type?: string;
+    config?: Record<string, unknown>;
+    parentThreadId?: string | null;
+  }): Promise<ThreadEntity> {
+    const ordinal = input.ordinal ?? (await this.maxThreadOrdinal(input.stageId)) + ORDINAL_GAP;
+    return this.threads.save(
+      this.threads.create({
+        stage_id: input.stageId,
+        job_id: input.jobId,
+        org_id: input.orgId,
+        role: input.role,
+        brief: input.brief,
+        ordinal,
+        ...(input.type != null ? { type: input.type } : {}),
+        config: input.config ?? {},
+        parent_thread_id: input.parentThreadId ?? null,
+      }),
+    );
+  }
+
+  /** Insert a TASK into a stage's checklist. Gap-numbers the ordinal within the stage when omitted. */
+  async createTask(input: {
+    stageId: string;
+    orgId: string;
+    title: string;
+    brief?: string | null;
+    activeForm?: string | null;
+    ordinal?: number;
+    blockedBy?: string[];
+  }): Promise<TaskEntity> {
+    const ordinal = input.ordinal ?? (await this.maxTaskOrdinal(input.stageId)) + ORDINAL_GAP;
+    return this.tasks.save(
+      this.tasks.create({
+        stage_id: input.stageId,
+        org_id: input.orgId,
+        title: input.title,
+        brief: input.brief ?? null,
+        active_form: input.activeForm ?? null,
+        ordinal,
+        blocked_by: input.blockedBy ?? [],
+      }),
+    );
+  }
+
+  /** Set a task's status (`pending | in_progress | completed | dropped`). */
+  async updateTaskStatus(taskId: string, status: string): Promise<void> {
+    await this.tasks.update({ id: taskId }, { status });
+  }
+
+  private async maxStageOrdinal(jobId: string): Promise<number> {
+    const row = await this.stages
+      .createQueryBuilder('s')
+      .select('MAX(s.ordinal)', 'max')
+      .where('s.job_id = :jobId', { jobId })
+      .getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
+  }
+
+  private async maxThreadOrdinal(stageId: string): Promise<number> {
+    const row = await this.threads
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.stage_id = :stageId', { stageId })
+      .getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
+  }
+
+  private async maxTaskOrdinal(stageId: string): Promise<number> {
+    const row = await this.tasks
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.stage_id = :stageId', { stageId })
+      .getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
+  }
+
   // ── routing ──────────────────────────────────────────────────────────────────────────────────
 
   /** Resolve where to post a thread's chatter: the repo coordinate + the real thread id. */
@@ -1626,54 +1681,60 @@ export class DriverStoreService {
   }
 }
 
-/**
- * Map a thread's step rows for the `/pipeline` read model, resolving each step's BATCH so the web can find
- * the batch's transcript. A batch runs as ONE engine turn whose transcript is tagged with the ANCHOR step
- * id (the first/lowest-ordinal step in the batch), so a non-anchor step page must remap to `anchorStepId`
- * before filtering durable phase blocks / choosing the live `phase:<id>` lane. Steps not yet batched
- * (`batch_ordinal` null) anchor to themselves.
- */
-function mapBatchedSteps(list: StepEntity[]): Array<{
-  id: string;
-  ordinal: number;
-  title: string | null;
-  brief: string;
-  stage: string;
-  status: string;
-  batchOrdinal: number | null;
-  anchorStepId: string;
-  batchStepIds: string[];
-}> {
-  const anchorByBatch = new Map<number, string>();
-  const idsByBatch = new Map<number, string[]>();
-  for (const p of list) {
-    if (p.batch_ordinal == null) continue;
-    if (!anchorByBatch.has(p.batch_ordinal))
-      anchorByBatch.set(p.batch_ordinal, p.id);
-    const arr = idsByBatch.get(p.batch_ordinal) ?? [];
-    arr.push(p.id);
-    idsByBatch.set(p.batch_ordinal, arr);
+// ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────
+
+/** Group a flat row list by a key selector, preserving input order within each bucket. */
+function groupBy<T, K>(list: readonly T[], key: (item: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const item of list) {
+    const k = key(item);
+    const bucket = out.get(k);
+    if (bucket) bucket.push(item);
+    else out.set(k, [item]);
   }
-  return list.map((p) => ({
-    id: p.id,
-    ordinal: p.ordinal,
-    title: p.title,
-    brief: p.brief,
-    stage: p.stage,
-    status: p.status,
-    batchOrdinal: p.batch_ordinal ?? null,
-    anchorStepId:
-      p.batch_ordinal != null
-        ? (anchorByBatch.get(p.batch_ordinal) ?? p.id)
-        : p.id,
-    batchStepIds:
-      p.batch_ordinal != null
-        ? (idsByBatch.get(p.batch_ordinal) ?? [p.id])
-        : [p.id],
-  }));
+  return out;
 }
 
-// ── row ⇄ domain mappers ─────────────────────────────────────────────────────────────────────────
+/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape. */
+function toTaskItem(row: TaskEntity): TaskItem {
+  return {
+    id: row.id,
+    subject: row.title,
+    status: row.status as TaskItem['status'],
+    ...(row.brief != null ? { description: row.brief } : {}),
+    ...(row.active_form != null ? { activeForm: row.active_form } : {}),
+    ...(row.blocked_by?.length ? { blockedBy: row.blocked_by } : {}),
+  };
+}
+
+/** Map a driver `StepStatus` onto the owning thread's `status` cursor (the synthetic step IS the thread). */
+function stepStatusToThreadStatus(status: StepStatus): ThreadStatus {
+  switch (status) {
+    case 'building':
+      return 'executing';
+    case 'reviewing':
+      return 'reviewing';
+    case 'done':
+      return 'done';
+    default:
+      return 'pending';
+  }
+}
+
+/** Map a thread's `status` onto the synthetic step's `StepStatus` (the inverse of the above). */
+function threadStatusToStepStatus(status: string): StepStatus {
+  switch (status) {
+    case 'done':
+      return 'done';
+    case 'executing':
+      return 'building';
+    case 'reviewing':
+    case 'auto_fixing':
+      return 'reviewing';
+    default:
+      return 'pending';
+  }
+}
 
 function toJob(row: JobEntity): Job {
   return {
@@ -1718,7 +1779,7 @@ function toThread(row: ThreadEntity): DriverThread {
     handoffOut: row.handoff_out,
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
-    kind: row.kind,
+    kind: row.role,
     type: coerceThreadType(row.type),
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
@@ -1738,7 +1799,7 @@ function haltBudgetReasonFromConfig(config: unknown): HaltBudgetReason | null {
 function toReviewChild(row: ThreadEntity): ReviewChildThread {
   return {
     id: row.id,
-    kind: row.kind,
+    kind: row.role,
     brief: row.brief,
     ordinal: row.ordinal,
     config: (row.config as Record<string, unknown>) ?? {},
@@ -1748,86 +1809,23 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
   };
 }
 
-/** The `/pipeline` wire shape of a builder's review child (a `review_lens` / `post_review`). */
+/** The `/pipeline` wire shape of a builder's review child (a `review_agent` / `review_fix`). */
 interface PipelineReviewChild {
   id: string;
-  kind: string;
+  role: string;
   brief: string;
   status: string;
   condition: string;
   lensId?: string;
   findings: number | null;
   lane: string;
-  /** The lane's pre-turn composer-footer default (`model · effort`), keyed off the child's kind. */
+  /** The lane's pre-turn composer-footer default (`model · effort`), keyed off the child's role. */
   defaultFooter: ReturnType<typeof laneDefaultFooter>;
 }
 
-/** One build Leg on the `/pipeline` wire (context-rot rotation read model): a navigable session row under the
- *  thread fold, plus the structured handoff it authored on rotation (the pill shown to the next Leg). */
-interface PipelineLeg {
-  ordinal: number;
-  status: string;
-  contextTokensPeak: number | null;
-  handoffMd: string | null;
-  endedAt: string | null;
-}
-
 /**
- * A builder's review children for the `/pipeline` read model. Once the driver materializes review rows,
- * reflects the persisted `review_lens` × N + `post_review` children. Before that, shows only the
- * statically-known `post_review` preview; diff-dependent lens rows appear after `runReviewChildren`
- * computes the selected lenses. Master-review threads have no review children (they ARE the review).
- */
-function pipelineReviewChildren(
-  parent: ThreadEntity,
-  materialized: ThreadEntity[],
-): PipelineReviewChild[] {
-  if (materialized.length > 0) return materialized.map((c) => toPipelineChild(c, parent.id));
-  if (parent.kind !== 'builder') return [];
-  const spec = threadKindSpec('builder');
-  if (!spec.children) return [];
-  // A done builder was reviewed (auto-fix ran before it completed) → show the synthesized rows `done`; an
-  // in-flight/pending builder shows them queued at `pending` (the review preview). Review-lens selection is
-  // now type-routed and diff-dependent (`reviewAgentsForThread`), so the registry's `children` factory only
-  // declares the statically-known `post_review` child — the lens preview rows appear once the driver
-  // materializes them (no static list to synthesize ahead of the diff).
-  const status = parent.status === 'done' ? 'done' : 'pending';
-  return spec.children({ id: parent.id, config: {} }).map((c) => {
-    const lensId = (c.config as { lensId?: string }).lensId;
-    return {
-      // A deterministic synthetic id (no real row exists) — a bare LEFT-pane node the web can resolve.
-      id: `${parent.id}~${c.kind}${lensId ? `~${lensId}` : ''}`,
-      kind: c.kind,
-      brief: c.brief,
-      status,
-      condition: 'none',
-      ...(lensId ? { lensId } : {}),
-      findings: null,
-      lane:
-        c.kind === 'review_lens'
-          ? laneFor('autofix-lens', parent.id, lensId ?? 'review')
-          : laneFor('autofix-fix', parent.id),
-      defaultFooter: laneDefaultFooter(c.kind),
-    };
-  });
-}
-
-/** Map a thread's `build_legs` rows to the `/pipeline` wire shape — one navigable row per Leg (engine session),
- *  carrying the handoff pill each rotated Leg authored + its peak occupancy. `handoffMd` is the structured
- *  handoff seeded into the NEXT Leg (null for the current/live Leg). Empty in ⇒ empty out (never rotated). */
-function pipelineLegs(list: BuildLegEntity[]): PipelineLeg[] {
-  return list.map((l) => ({
-    ordinal: l.ordinal,
-    status: l.status,
-    contextTokensPeak: l.context_tokens_peak,
-    handoffMd: l.handoff_md,
-    endedAt: l.ended_at ? l.ended_at.toISOString() : null,
-  }));
-}
-
-/**
- * Map a materialized review CHILD row (`review_lens` / `post_review`) to the `/pipeline` wire shape: its id +
- * kind + status + (for a lens) its `lensId`/finding count, plus the streaming lane the web renders it on —
+ * Map a materialized review CHILD row (`review_agent` / `review_fix`) to the `/pipeline` wire shape: its id +
+ * role + status + (for a lens) its `lensId`/finding count, plus the streaming lane the web renders it on —
  * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
  * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
  */
@@ -1835,34 +1833,17 @@ function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild
   const lensId = (c.config as { lensId?: string })?.lensId;
   return {
     id: c.id,
-    kind: c.kind,
+    role: c.role,
     brief: c.brief,
     status: c.status,
     condition: c.condition,
     ...(lensId ? { lensId } : {}),
     findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
     lane:
-      c.kind === 'review_lens'
+      c.role === 'review_agent'
         ? laneFor('autofix-lens', parentId, lensId ?? 'review')
         : laneFor('autofix-fix', parentId),
-    defaultFooter: laneDefaultFooter(c.kind),
-  };
-}
-
-function toStep(row: StepEntity): Step {
-  return {
-    id: row.id,
-    threadId: row.thread_id,
-    jobId: row.job_id,
-    ordinal: row.ordinal,
-    title: row.title,
-    brief: row.brief,
-    stage: row.stage,
-    status: row.status as StepStatus,
-    sessionId: row.session_id,
-    batchOrdinal: row.batch_ordinal ?? null,
-    legOrdinal: row.leg_ordinal ?? 1,
-    commitSha: row.commit_sha ?? null,
+    defaultFooter: laneDefaultFooter(c.role),
   };
 }
 

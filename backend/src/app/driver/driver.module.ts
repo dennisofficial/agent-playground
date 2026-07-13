@@ -19,13 +19,13 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  StepEntity,
+  StageEntity,
+  TaskEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
-  CodexReviewEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
@@ -94,14 +94,14 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     TypeOrmModule.forFeature(
       [
         ThreadEntity,
-        StepEntity,
+        StageEntity,
+        TaskEntity,
         DecisionRecordEntity,
         JobEntity,
         RepoEntity,
         JobSandboxEntity,
         MessageEntity,
         StimulusEntity,
-        CodexReviewEntity,
       ],
       DB_CONNECTION,
     ),
