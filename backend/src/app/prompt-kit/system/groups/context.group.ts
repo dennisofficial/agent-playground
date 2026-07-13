@@ -1,6 +1,6 @@
 /**
  * prompt-kit / groups / context — the durable authoring surfaces the normal brain writes into: the
- * `/context` shared folder (specs/generated/artifacts).
+ * `/context` shared folder (specs/generated/artifacts/evidence).
  *
  * TOPIC bucket: context / authored artifacts (normal brain only).
  */
@@ -15,7 +15,7 @@ export class ContextGroup {
   contextFolder(): string {
     return [
       'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
-      'build sessions. THREE buckets, split by who authors them:',
+      'build sessions. FOUR buckets, split by who authors them:',
       '  • `/context/specs/` — HAND-AUTHORED by you, live as you work (NOT in one burst at the end), as CONTEXT',
       '    for the operator + the build engines. (The build orchestrates off the structured plan you submit; these',
       '    files are the HANDOFF a fresh, context-less engine reads to build AND review — capture the WHY and the',
@@ -37,7 +37,9 @@ export class ContextGroup {
       '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
       '    decisions you lock via `create_decision` are rendered here as `decision-record.md`, live, on every call.',
       '    Do NOT try to author or edit anything here — it is maintained for you through your tool calls.',
-      '  • `/context/artifacts/` — OUTPUTS for the human: preview HTML, screenshots, reports (never the repo).',
+      '  • `/context/artifacts/` — human-facing DELIVERABLES: preview HTML, mockups, reports (never the repo, never logs).',
+      '  • `/context/evidence/` — live-run PROOF (verification logs, screenshots, `RESULTS.md`), AGENT-written by',
+      '    the build/validate turns into per-thread subfolders. You do not author it while planning.',
       'Treat the repo (`/workspace`) as READ-ONLY until a build is approved — never modify it while planning;',
       'write to `/context/specs` (or `/context/artifacts`) instead.',
     ].join('\n');

@@ -140,6 +140,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     decisions: [decisionItemPayload],
   },
   create_job: { firstMessage: 'Please fix the flaky test.', title: 'Fix flaky test' },
+  list_jobs: { status: 'all', query: 'auth', limit: 10 },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
   propose_convention_profile_change: {
     slug: 'backend-style',
@@ -167,6 +168,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
   read_setup_script: {},
+  write_preview_instructions: { instructions: 'docker compose up -d && pnpm migrate && pnpm seed' },
+  read_preview_instructions: {},
   derive_secret: {
     name: 'DERIVED_KEY',
     path: '.derived/key',

@@ -33,6 +33,9 @@ export const WORKSPACE_PROFILE_TOOL_NAMES = [
   // Setup script
   'write_setup_script',
   'read_setup_script',
+  // Preview recipe
+  'write_preview_instructions',
+  'read_preview_instructions',
   // Skills
   'list_skills',
   'propose_skill',

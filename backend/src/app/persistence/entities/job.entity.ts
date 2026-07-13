@@ -200,6 +200,11 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   current_branch!: string | null;
 
+  /** Tri-state sidebar port badge, written change-gated by ExposureService.reconcile:
+   *  'exposed' (≥1 running service with a public URL) | 'internal' (running, none exposed) | null. */
+  @Column({ type: 'text', nullable: true })
+  port_state!: 'exposed' | 'internal' | null;
+
   /** The opened PR url; null until the PR-tail stage opens one. */
   @Column({ type: 'text', nullable: true })
   pr_url!: string | null;

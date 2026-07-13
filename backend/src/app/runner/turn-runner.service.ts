@@ -73,6 +73,12 @@ export interface RunTurnInput {
    */
   gitAuth?: GitAuth;
   /**
+   * Container path this turn's writers send live-run evidence to (thread leg → its per-thread subfolder,
+   * brain/direct-build → the evidence root). A DERIVED → target field like `gitAuth`; the runner puts it
+   * on the docker `target` as `ATLAS_EVIDENCE_DIR`. Absent → writers fall back to `/context/evidence`.
+   */
+  evidenceDir?: string;
+  /**
    * Opt into RICH token-level streaming (thinking + tool calls/results + subagent forwarding). Build turns
    * pass this so they ride the shared transcript spine (a full transcript, not coarse text/tool/result).
    */
@@ -120,7 +126,7 @@ export interface RunTurnInput {
 // TURN_INPUT_FORWARD_KEYS — the exhaustiveness check below fails the build if a new optional field is added
 // to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
 type TurnInputDerivedOrRequiredKey =
-  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target / sandboxKey) / host-only
+  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' | 'evidenceDir' // derived (→ target / sandboxKey) / host-only
   | 'onEvent' | 'signal' // host-wrapped, set explicitly
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
@@ -244,6 +250,7 @@ export class TurnRunnerService {
                 worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
                 ...(input.gitAuth ? { gitAuth: input.gitAuth } : {}),
+                ...(input.evidenceDir ? { evidenceDir: input.evidenceDir } : {}),
               },
             }
           : {}),

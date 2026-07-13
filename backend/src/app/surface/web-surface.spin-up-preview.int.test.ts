@@ -36,6 +36,7 @@ import {
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { WebSurface } from './web-surface';
 import { webShipReviewCard } from './web-approval-card';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
@@ -64,6 +65,7 @@ const PASSWORD = 'spin-up-preview-it-pw-12345';
 let app: NestExpressApplication;
 let ds: DataSource;
 let surface: WebSurface;
+let configStore: WorkspaceConfigStore;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
@@ -148,6 +150,7 @@ beforeAll(async () => {
   server = app.getHttpServer();
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
   surface = app.get(WebSurface);
+  configStore = app.get(WorkspaceConfigStore);
 
   await purge();
   const owner = await register(OWNER_EMAIL);
@@ -175,6 +178,8 @@ beforeEach(async () => {
   // Fresh cards/jobs per test — each `it` seeds the exact status it needs.
   await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
+  // No stored preview recipe by default — each `it` that needs one sets it explicitly.
+  await configStore.setPreviewInstructions(ORG, REPO, null);
 });
 
 afterAll(async () => {
@@ -218,6 +223,36 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     const seedRow = seed.seedRow as SeedRowObject;
     expect(seedRow.chunkKey).toBe(`seed:preview:${GATE_JOB}`);
     expect(seedRow.label).toBe('Spin up preview requested');
+  });
+
+  it('with a stored recipe: the seed splices the saved body in a ```md fence + the "update it" footer', async () => {
+    const recipe = 'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
+    await configStore.setPreviewInstructions(ORG, REPO, recipe);
+    await seedGateJob();
+
+    const seeds = await captureSeeds(async () => {
+      await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+    });
+
+    expect(seeds).toHaveLength(1);
+    const text = seeds[0].text;
+    expect(text).toContain(PREVIEW_PREP_SEED_BODY);
+    expect(text).toContain('```md\n' + recipe + '\n```');
+    expect(text).toContain('UPDATE it with `write_preview_instructions`');
+  });
+
+  it('with no stored recipe: the seed nudges saving one', async () => {
+    await seedGateJob();
+
+    const seeds = await captureSeeds(async () => {
+      await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+    });
+
+    expect(seeds).toHaveLength(1);
+    const text = seeds[0].text;
+    expect(text).toContain(PREVIEW_PREP_SEED_BODY);
+    expect(text).toContain('(no preview recipe saved yet)');
+    expect(text).toContain('SAVE the exact repeatable steps');
   });
 
   it('second click: 200 {ok:true,ts:""} idempotent — no second seed, stamp unchanged', async () => {

@@ -303,6 +303,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       );
       expect(out, String(agent)).toContain('/context/artifacts');
       expect(out, String(agent)).toContain('RESULTS.md');
+      expect(out, String(agent)).toContain('$ATLAS_EVIDENCE_DIR');
+      expect(out, String(agent)).toContain('/context/evidence');
     }
     // NOT the writer (it implements a slice and reports up) nor the planning brain.
     for (const agent of [Agent.FAN_OUT, Agent.ATLAS_MAIN]) {
@@ -334,8 +336,8 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     const out = renderAgentPrompt(Agent.VALIDATE);
     expect(out.length).toBeGreaterThan(0);
     expect(out).toContain('LIVE VALIDATION');
-    expect(out).toContain('EXACT artifact paths'); // the report-back contract
-    expect(out).toContain('/context/artifacts');
+    expect(out).toContain('EXACT evidence paths'); // the report-back contract
+    expect(out).toContain('$ATLAS_EVIDENCE_DIR');
   });
 
   it('RUNNABLE_WORKSPACE_NOTE reaches the build-touching lanes (brain, worker, master review) once, not the advisories', () => {

@@ -165,6 +165,11 @@ export interface Message {
  */
 export const HALT_FIX_ATTEMPT_CAP = 2;
 
+/** Separate, higher re-drive budget for a judge_unavailable hold (transient infra, NOT a work defect —
+ *  see Decision d2). The 2-try HALT_FIX_ATTEMPT_CAP bounds fixes for real defects; a judge blip must
+ *  self-heal patiently, then rest for the operator. The ~30s owed-wake sweep paces each re-drive. */
+export const JUDGE_UNAVAILABLE_REDRIVE_CAP = 20;
+
 /** A thread's PURE LINEAR STEP — explicit, resumable. The driver `await`s each transition. Pause/failure/
  *  skip are NOT steps; they live on the orthogonal {@link ThreadCondition} overlay. */
 export type ThreadStatus =

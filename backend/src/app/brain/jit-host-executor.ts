@@ -24,6 +24,8 @@ export type JitLifecycleFireCtx = {
   baseBranch?: string;
   /** The approved decision record id (lifecycle:plan-approved) — seeds the once-per-approval dedup key. */
   decisionRecordId?: string;
+  /** The repo's stored preview recipe (lifecycle:preview-requested) — spliced into the seed's managed block. */
+  previewInstructions?: string | null;
 };
 
 /**
@@ -50,6 +52,7 @@ export class JitHostExecutor {
       ...(ctx.buildPath !== undefined ? { buildPath: ctx.buildPath } : {}),
       ...(ctx.baseBranch !== undefined ? { baseBranch: ctx.baseBranch } : {}),
       ...(ctx.decisionRecordId !== undefined ? { decisionRecordId: ctx.decisionRecordId } : {}),
+      ...(ctx.previewInstructions !== undefined ? { previewInstructions: ctx.previewInstructions } : {}),
     };
     const body = rule.render(fireCtx);
     const surface = ctx.surface ?? this.surface;

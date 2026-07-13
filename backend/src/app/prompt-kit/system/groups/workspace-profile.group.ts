@@ -207,6 +207,20 @@ export class WorkspaceProfileGroup {
     ].join('\n');
   }
 
+  /** PREVIEW RECIPE (write_preview_instructions; injected into the Spin-up-preview seed). */
+  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2106, condition: isOnboarding })
+  previewRecipe(): string {
+    return [
+      'PREVIEW RECIPE — how to stand up THIS repo\'s demo-ready preview stack (envs to set, ports, docker',
+      'compose / migrate / seed commands, the deep-link into the changed area). It is injected straight into',
+      'the "Spin up preview" seed for every future job on this repo, so a build never has to re-discover the',
+      'stack from scratch. Author it via write_preview_instructions({ instructions }) once you have gotten a',
+      'preview actually working — do not guess it up front. write_preview_instructions REPLACES the whole',
+      'recipe, so to AMEND an existing one call read_preview_instructions FIRST to get the current body, edit',
+      'it, then write the full new recipe back. Keep it to the exact repeatable stand-up steps, not narration.',
+    ].join('\n');
+  }
+
   /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108, condition: isOnboarding })
   mcpServers(): string {

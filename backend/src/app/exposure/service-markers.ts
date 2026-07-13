@@ -136,3 +136,16 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
   }
   return markers;
 }
+
+export type PortState = 'exposed' | 'internal' | null;
+/** Tri-state for the sidebar badge. `hasUrl` answers "would this marker get a public preview URL"
+ *  (ExposureService.urlFor != null), so exposure being globally disabled collapses to internal/null. */
+export function derivePortState(
+  markers: ReadServiceMarker[],
+  probe: ServiceLivenessProbe,
+  hasUrl: (m: ReadServiceMarker) => boolean,
+): PortState {
+  const running = markers.filter((m) => serviceStatus(m, probe) === 'running');
+  if (running.length === 0) return null;
+  return running.some((m) => m.port != null && m.expose && hasUrl(m)) ? 'exposed' : 'internal';
+}

@@ -100,6 +100,13 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedFileId?: string;
   /**
+   * DELIVERY SEED (secret variant): the `requestId` of the `request_secret` card whose provided value
+   * THIS seed confirms. The delivery turn stamps that card `delivered_at` on its success tail
+   * (at-least-once, tied to the exact confirmation-carrying seed) and clears the secret gate on
+   * consumption. In-memory only — never persisted. Undefined otherwise.
+   */
+  seedSecretId?: string;
+  /**
    * RESET-VERIFY SEED: a synthetic continuation kicked by `maybeHonorSandboxReset` after a `reset_sandbox`
    * teardown, whose sole job is to guarantee a turn happens so Atlas verifies on the fresh container. The
    * actual verify instruction rides the reset-notice (consumed by whichever turn cold-attaches first), so

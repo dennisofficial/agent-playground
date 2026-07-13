@@ -22,6 +22,7 @@ import {
   deleteThread,
   fetchContextFile,
   fetchCreatedJobs,
+  fetchJobDiff,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -34,8 +35,10 @@ import {
   removeJobDependency,
   renameJob,
   setAutoApprove,
+  acceptThread,
   retryJob,
   retryTurn,
+  retryVerification,
   sayMessage,
   sayMessageWithFiles,
   spinUpPreview,
@@ -133,6 +136,16 @@ export function useContextFile(ref: JobRef, path: string | null) {
     queryFn: () => fetchContextFile(ref, path!),
     enabled: hasRef(ref) && Boolean(path),
     staleTime: 5_000,
+  });
+}
+
+/** The job's accumulated multi-file diff. Lazy — only fetched while the Changes pane is open (`enabled`).
+ *  SSE invalidates it on repo-file writes + turn end (`useJobEvents`), so it refreshes live as the build edits. */
+export function useJobDiff(ref: JobRef, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.jobDiff(ref),
+    queryFn: () => fetchJobDiff(ref),
+    enabled: enabled && hasRef(ref),
   });
 }
 
@@ -403,6 +416,34 @@ export function useRetryJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => retryJob(ref),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive of the live judge. Refreshes
+ *  the pipeline (the lane flips back to running) + messages + the job list. */
+export function useRetryVerification(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: string) => retryVerification(ref, threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete it (bypassing only the live
+ *  judge) and advance the job. Refreshes the pipeline (the lane flips to done) + messages + the job list. */
+export function useAcceptThread(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (threadId: string) => acceptThread(ref, threadId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });

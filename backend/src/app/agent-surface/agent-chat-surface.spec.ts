@@ -2,6 +2,7 @@ import { firstValueFrom } from 'rxjs';
 import { take, toArray } from 'rxjs/operators';
 import { describe, expect, it } from 'vitest';
 import { decisionApprovalBlocks } from '../surface';
+import { agentMessage } from '../prompt-kit/message';
 import {
   AgentChatSurface,
   parseApprovalMeta,
@@ -33,6 +34,21 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     expect(msg.threadTs).toBe('root.001');
     expect(msg.authorId).toBe('U9');
     expect(msg.priority).toBe('queue');
+  });
+
+  it('seedSystemNotification forwards seedRow metadata for durable seed rendering', async () => {
+    const surface = new AgentChatSurface();
+    const next = firstValueFrom(surface.inbound$.pipe(take(1)));
+
+    surface.seedSystemNotification('C1', 'thread-1', agentMessage('answer delivered'), {
+      seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' },
+      deliveredQuestionId: 'q1',
+    });
+
+    const msg = await next;
+    expect(msg.seed).toBe(true);
+    expect(msg.seedQuestionId).toBe('q1');
+    expect(msg.seedRow).toEqual({ label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' });
   });
 
   it('post records into the outbox, emits on outbound$, and returns a synthetic ts', async () => {

@@ -144,6 +144,7 @@ import { ConventionProfileResolver } from '../conventions';
 import { SkillFileWriter, SkillInstallerService, SkillResolver, WorkspaceSkillStore } from '../skills';
 import { WorkspaceProfileService, detectRepoManifests } from '../workspace-profile';
 import {
+  CONTAINER_CONTEXT,
   isExternalMountPath,
   isReservedContainerPath,
   isReservedMountPath,
@@ -613,21 +614,30 @@ export class AgentSessionManager
       this.logger.warn(`compaction reconcile failed: ${err}`);
     }
 
-    // 2) Re-deliver any question the operator ANSWERED (durably stamped) but whose delivery turn a host
-    //    crash dropped before it reached the brain. Drives each straight through the serialized
-    //    `handleChatTurn`; the turn stamps `deliveredAt` on success → at-least-once across restarts.
+    // 2) Backfill any question the operator ANSWERED (durably stamped) but whose delivery turn a host crash
+    //    dropped before it reached the brain — onto the DURABLE pump: create the `stimuli` row (unless one is
+    //    already live) and let the 30 s chat sweep own recovery. One owner (the sweep) removes the old
+    //    boot-vs-sweep double-delivery window; pre-deploy stuck cards get pulled onto the durable path.
     try {
       const pending = await this.store.findUndeliveredAnsweredQuestions();
       if (pending.length > 0) {
         this.logger.log(
-          `Leader: re-delivering ${pending.length} answered-but-undelivered question(s)`,
+          `Leader: backfilling ${pending.length} answered-but-undelivered question(s) onto the durable pump`,
         );
         for (const q of pending) {
-          const stimulus = bootDeliveryStimulus(q);
-          void this.handleChatTurn(stimulus).catch((err) =>
-            this.logger.warn(
-              `boot re-delivery failed for thread=${q.jobId}: ${err}`,
-            ),
+          void this.backfillSeedDelivery({
+            jobId: q.jobId,
+            orgId: q.orgId,
+            repoId: q.repoId,
+            body: frameAnswer(q.question, q.answer),
+            // Same content-stable key + label as the live `/answer-question` path ⇒ one visible pill.
+            seedRow: {
+              label: `The operator answered your question ${JSON.stringify(q.question)}: ${q.answer}`,
+              chunkKey: chunkKey.qa(q.jobId, q.questionId),
+            },
+            seedQuestionId: q.questionId,
+          }).catch((err) =>
+            this.logger.warn(`question backfill failed for thread=${q.jobId}: ${err}`),
           );
         }
       }
@@ -638,14 +648,15 @@ export class AgentSessionManager
       this.logger.warn(`question-delivery reconciliation failed: ${err}`);
     }
 
-    // 2b) Re-deliver any secret the operator PROVIDED (value durably stored + granted) but whose masked
-    //     confirmation turn a crash dropped before it reached the brain. Same at-least-once shape as the
-    //     answered-question sweep. The value is NOT carried — only the masked name/path notice.
+    // 2b) Backfill any secret the operator PROVIDED (value durably stored + granted) but whose masked
+    //     confirmation turn a crash dropped before it reached the brain — onto the durable pump, same shape as
+    //     the answered-question backfill. The value is NOT carried, only the masked name/path notice.
+    //     `seedSecretId` ties the delivery to stamping THAT secret card delivered + clearing the gate.
     try {
       const pendingSecrets = await this.store.findUndeliveredProvidedSecrets();
       if (pendingSecrets.length > 0) {
         this.logger.log(
-          `Leader: re-delivering ${pendingSecrets.length} provided-but-undelivered secret(s)`,
+          `Leader: backfilling ${pendingSecrets.length} provided-but-undelivered secret(s) onto the durable pump`,
         );
         for (const s of pendingSecrets) {
           const notice = maskedSecretNotice(s.name, {
@@ -653,18 +664,16 @@ export class AgentSessionManager
             ...(s.ephemeral ? { ephemeral: true } : {}),
             ...(s.mcp ? { mcp: s.mcp } : {}),
           });
-          const stimulus = harnessDeliveryStimulus({
+          void this.backfillSeedDelivery({
             jobId: s.jobId,
             orgId: s.orgId,
             repoId: s.repoId,
-            body: notice,
-            // Same content-stable key as the live provide-secret path ⇒ one visible row.
+            body: wrapSystemNotification(notice),
+            // Same content-stable key as the live provide-secret path ⇒ one visible pill.
             seedRow: { label: notice, chunkKey: chunkKey.secret(s.jobId, s.name) },
-          });
-          void this.handleChatTurn(stimulus).catch((err) =>
-            this.logger.warn(
-              `boot secret re-delivery failed for thread=${s.jobId}: ${err}`,
-            ),
+            seedSecretId: s.requestId,
+          }).catch((err) =>
+            this.logger.warn(`secret backfill failed for thread=${s.jobId}: ${err}`),
           );
         }
       }
@@ -672,30 +681,27 @@ export class AgentSessionManager
       this.logger.warn(`secret-delivery reconciliation failed: ${err}`);
     }
 
-    // 2c) Re-deliver any FILE the operator uploaded (contents durably stored + granted) but whose masked
-    //     confirmation turn a crash dropped. Per-card (no thread pointer), so the seed MUST carry the file
-    //     card id (`seedFileId`) for the delivery tail to stamp exactly that card delivered.
+    // 2c) Backfill any FILE the operator uploaded (contents durably stored + granted) but whose masked
+    //     confirmation turn a crash dropped — onto the durable pump. Per-card (no thread pointer), so the seed
+    //     MUST carry the file card id (`seedFileId`) for the delivery tail to stamp exactly that card delivered.
     try {
       const pendingFiles = await this.store.findUndeliveredProvidedFiles();
       if (pendingFiles.length > 0) {
         this.logger.log(
-          `Leader: re-delivering ${pendingFiles.length} provided-but-undelivered file(s)`,
+          `Leader: backfilling ${pendingFiles.length} provided-but-undelivered file(s) onto the durable pump`,
         );
         for (const f of pendingFiles) {
           const notice = maskedFileNotice(f.path);
-          const stimulus = harnessDeliveryStimulus({
+          void this.backfillSeedDelivery({
             jobId: f.jobId,
             orgId: f.orgId,
             repoId: f.repoId,
-            body: notice,
-            seedFileId: f.requestId,
-            // Same content-stable key as the live provide-file path ⇒ one visible row.
+            body: wrapSystemNotification(notice),
+            // Same content-stable key as the live provide-file path ⇒ one visible pill.
             seedRow: { label: notice, chunkKey: chunkKey.file(f.jobId, f.path) },
-          });
-          void this.handleChatTurn(stimulus).catch((err) =>
-            this.logger.warn(
-              `boot file re-delivery failed for thread=${f.jobId}: ${err}`,
-            ),
+            seedFileId: f.requestId,
+          }).catch((err) =>
+            this.logger.warn(`file backfill failed for thread=${f.jobId}: ${err}`),
           );
         }
       }
@@ -1184,7 +1190,26 @@ export class AgentSessionManager
       );
       return true;
     }
-    await this.stampSteeredSeedCard(stimulus);
+    // Legacy IN-MEMORY seeds (no durable `stimuli` row) stamp their card here on XADD success. A DURABLE
+    // seed-card row must NOT — the steer id equals its `stimuli.id`, so the engine `input_ack` → `stampInputAck`
+    // → markCardDeliveredForStimulus + markChatDelivered stamps BOTH card and row on real consumption, and if
+    // the turn dies before the ack both stay un-stamped so the sweep re-drives (this is the bfe355ae fix — never
+    // stamp a durable card on the XADD).
+    if (isSeedCardDelivery(stimulus)) {
+      const durableRow = await this.stimulusStore
+        .findChatStimulusById(stimulus.id)
+        .catch((err) => {
+          this.logger.warn(
+            `seed-card durability lookup failed for ${stimulus.id}; deferring stamp to ack/sweep: ${err}`,
+          );
+          return undefined;
+        });
+      if (durableRow === null) {
+        await this.stampLegacySeedCard(stimulus);
+      }
+    } else {
+      await this.stampLegacySeedCard(stimulus);
+    }
     // A completion/halt wake steered into a live turn is only marked delivered when the engine ACKS it (see
     // `stampInputAck`) — stamping here on the XADD would drop the wake if the turn dies before injecting it,
     // and a synthetic wake seed has no `stimuli` row to recover from. Record the payload keyed by the steer id
@@ -1244,7 +1269,7 @@ export class AgentSessionManager
    * an answered/provided, not-yet-delivered card is stamped. A plain chat message or bare nudge (no card id)
    * is a no-op.
    */
-  private async stampSteeredSeedCard(stimulus: ChatStimulus): Promise<void> {
+  private async stampLegacySeedCard(stimulus: ChatStimulus): Promise<void> {
     if (stimulus.seedQuestionId) {
       const card = await this.store
         .getQuestionCard(stimulus.jobId, stimulus.seedQuestionId)
@@ -1254,6 +1279,25 @@ export class AgentSessionManager
           .markQuestionDelivered(stimulus.jobId, stimulus.seedQuestionId)
           .catch((err) =>
             this.logger.warn(`markQuestionDelivered (steer) failed: ${err}`),
+          );
+      }
+    }
+    if (stimulus.seedSecretId) {
+      const card = await this.store
+        .getSecretCard(stimulus.jobId, stimulus.seedSecretId)
+        .catch(() => null);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store
+            .markSecretDelivered(stimulus.jobId, stimulus.seedSecretId)
+            .catch((err) =>
+              this.logger.warn(`markSecretDelivered (legacy seed) failed: ${err}`),
+            );
+        }
+        await this.store
+          .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
+          .catch((err) =>
+            this.logger.warn(`clearAwaitingSecret (legacy seed) failed: ${err}`),
           );
       }
     }
@@ -1269,6 +1313,133 @@ export class AgentSessionManager
           );
       }
     }
+  }
+
+  /**
+   * Stamp the question/secret/file card a DURABLE stimulus row points at, resolving the target from the row's
+   * `reply_route` (read via the store) — the restart-safe, per-stimulus equivalent of `runChatTurnInner`'s
+   * fresh-turn success-tail card stamps. Keyed on the durable `stimuli.id`, so it works from both the STEER
+   * ack path (`stampInputAck`) and the reattach tail. Best-effort + idempotent: each kind is guarded on the
+   * card's own delivered state, so a redundant call (sweep re-drive, double ack) never re-stamps. A row with no
+   * seed target (a plain operator message or pure notice) is a no-op.
+   */
+  private async markCardDeliveredForStimulus(id: string): Promise<boolean> {
+    // A genuinely-missing row is a clean no-op (null); a TRANSIENT lookup error must PROPAGATE so the caller
+    // (stampSeedCardSuccessTails / stampInputAck) skips the trailing stimulus-row stamp and the sweep re-drives
+    // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
+    const stimulus = await this.stimulusStore.findChatStimulusById(id);
+    if (!stimulus) return false;
+    const { jobId, seedQuestionId, seedSecretId, seedFileId } = stimulus;
+
+    if (seedQuestionId) {
+      // No .catch here: getQuestionCard returns null for a genuinely-absent card, and a THROWN error is
+      // transient — it must PROPAGATE so the caller skips the trailing markChatDelivered and the sweep re-drives
+      // (never stamping the row delivered while its card stays stranded, per this function's stated invariant).
+      const card = await this.store.getQuestionCard(jobId, seedQuestionId);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store.markQuestionDelivered(jobId, seedQuestionId);
+      }
+    }
+
+    if (seedSecretId) {
+      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
+      const card = await this.store.getSecretCard(jobId, seedSecretId);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store.markSecretDelivered(jobId, seedSecretId);
+        }
+        // Clear even if the card was already marked delivered by a prior partial tail: the row must not be
+        // delivered until both the card stamp and the gate clear have succeeded.
+        await this.store.clearAwaitingSecret(jobId, seedSecretId);
+      }
+    }
+
+    if (seedFileId) {
+      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
+      const card = await this.store.getFileCard(jobId, seedFileId);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store.markFileDelivered(jobId, seedFileId);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * SUCCESS-TAIL seed stamp: mark the durable stimulus row delivered AND stamp its question/secret/file card,
+   * together, so a seed's `stimuli.delivered_at` and its card `deliveredAt` commit as one on consumption (never
+   * on steer-dispatch/registration). Keyed on the durable `stimuli.id` passed EXPLICITLY — on the reattach path
+   * the reconstructed `ChatStimulus.id` is the engine turn id, not the row. Best-effort: a failed stamp leaves
+   * BOTH owed for the sweep (at-least-once).
+   */
+  private async stampSeedCardSuccessTails(stimulusRowId: string): Promise<SeedCardStampResult> {
+    // CARD first, ROW last: the sweep re-drives on `stimuli.delivered_at IS NULL`, so the row (its key) MUST
+    // be the final write — a crash mid-tail then leaves the row un-stamped and the whole idempotent sequence
+    // re-runs. If the card stamp fails, the row stamp is skipped (the throw propagates from
+    // markCardDeliveredForStimulus), so a card is never stranded behind a delivered row. Best-effort overall.
+    try {
+      const found = await this.markCardDeliveredForStimulus(stimulusRowId);
+      if (!found) return 'missing';
+      await this.stimulusStore.markChatDelivered(stimulusRowId);
+      return 'stamped';
+    } catch (err) {
+      this.logger.warn(`stampSeedCardSuccessTails failed (sweep will re-drive): ${err}`);
+      return 'failed';
+    }
+  }
+
+  /**
+   * TERMINAL delivery stamp for a pending chat being permanently dropped this turn (thread closed / provisioning
+   * permanently failed) after we posted the explanatory notice — marks it delivered so the at-least-once sweep
+   * won't re-post the identical notice every lease cycle. A solo seed-card delivery deferred its stamp from
+   * `onRegistered`, so stamp its durable row + card here (the answer can never reach the dead thread, and this
+   * also stops the edit-6 boot backfill from recreating the row); operator chat keeps the `onRegistered` path.
+   */
+  private async markTerminallyDelivered(
+    stimulus: ChatStimulus,
+    opts?: TurnDeliveryOpts,
+  ): Promise<void> {
+    if (isSeedCardDelivery(stimulus)) {
+      const result = await this.stampSeedCardSuccessTails(stimulus.id);
+      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
+      return;
+    }
+    opts?.onRegistered?.();
+  }
+
+  /**
+   * BOOT one-time backfill: for an answered/provided-but-undelivered card with NO live undelivered `stimuli`
+   * row, persist the durable row (+ its curated pill) and hand it to the pump — steady-state recovery is then
+   * the 30 s chat sweep, not a boot-only re-drive through `handleChatTurn`. Skips when a matching undelivered
+   * row already exists so boot and the sweep never double-deliver one card, and backfills pre-deploy stuck
+   * cards onto the durable path. Idempotent (the pill dedups on `chunkKey`; the guard blocks a duplicate row).
+   */
+  private async backfillSeedDelivery(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    body: string;
+    seedRow: SeedRow;
+    seedQuestionId?: string;
+    seedSecretId?: string;
+    seedFileId?: string;
+  }): Promise<void> {
+    const target = {
+      ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
+      ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
+      ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+    };
+    if (await this.stimulusStore.hasChatStimulusForSeedTarget(input.jobId, target)) return;
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: input.body,
+      systemChunk: input.seedRow,
+      ...target,
+    });
+    await this.enqueueChat(recorded);
   }
 
   // ── Durable operator-message delivery (the pump) ─────────────────────────────────────────────────
@@ -1351,10 +1522,25 @@ export class AgentSessionManager
         return [] as ChatStimulus[];
       });
     if (pending.length === 0) return null;
+    // Never coalesce a system seed with operator rows: a seed batched as a `<user>` chunk would render named
+    // "System" and mis-decide the batch's awareness drain. Partition on the HEAD row's authorship — an operator
+    // head takes the leading run of operator rows (coalesced as before); a seed head takes ONLY that one seed
+    // (each seed delivers solo, keeping its `<system_notice>` framing + awareness-drain semantics). The
+    // remainder stays pending and drains via the turn-end re-pump, so no 30 s stall.
+    const operatorHead = isOperatorAuthored(pending[0]);
+    const batch: ChatStimulus[] = [];
+    for (const p of pending) {
+      if (isOperatorAuthored(p) !== operatorHead) break;
+      batch.push(p);
+      if (!operatorHead) break; // seeds deliver one-at-a-time
+    }
     return {
-      pending,
-      userChunks: pending.map((p) => userChunkFor(p)),
-      ids: pending.map((p) => p.id),
+      pending: batch,
+      userChunks: batch.map((p) => userChunkFor(p)),
+      ids: batch.map((p) => p.id),
+      // Wake is computed over the FULL eligible-pending set, not just `batch`: a wake-eligible row excluded by the
+      // author partition (e.g. a `now` seed behind a `later` operator head) must still start a turn — otherwise no
+      // turn runs, no turn-end re-pump reconsiders the remainder, and the thread stalls until an unrelated wake.
       wake: pending.some(isWakeEligible),
     };
   }
@@ -1400,10 +1586,15 @@ export class AgentSessionManager
       // is the clean fallback (used for logging + when `chunks` is absent on a replay).
       chunks: collected.userChunks,
     };
+    // A solo seed-card delivery defers its stimulus stamp to the SUCCESS tail (stamped together with the card)
+    // so a register-then-fail turn leaves BOTH unstamped and the sweep re-drives it (at-least-once atomicity).
+    // Operator chat keeps the looser at-registration bar — its input rides the prompt the instant it registers.
+    const deferStimulusStamp = isSeedCardDelivery(combined);
     await this.runChatTurn(combined, {
       // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
       // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
       onRegistered: () => {
+        if (deferStimulusStamp) return;
         for (const id of ids) {
           void this.stimulusStore.markChatDelivered(id).catch((err) =>
             this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
@@ -1432,7 +1623,15 @@ export class AgentSessionManager
    *  whose steer was never injected (turn died, held pre-stream) stays owed for the sweep to re-fire. */
   private stampInputAck(e: EngineEvent): void {
     if (e.kind !== 'input_ack' || !e.id) return;
-    void this.stimulusStore.markChatDelivered(e.id).catch((err) =>
+    // A steered seed's card is stamped on the SAME ack that stamps its stimulus row — the ack is the real
+    // consumption signal. Order matters: stamp the CARD first, the stimulus ROW last (the sweep re-drives on
+    // `stimuli.delivered_at IS NULL`, so the row must be the final write). If the card stamp fails, the row is
+    // left un-stamped so the sweep re-drives. For a plain operator/wake ack the card stamp is a harmless no-op.
+    // Closes the secret-wedge: markCardDeliveredForStimulus also clears `awaiting_secret_id`.
+    void (async () => {
+      await this.markCardDeliveredForStimulus(e.id);
+      await this.stimulusStore.markChatDelivered(e.id);
+    })().catch((err) =>
       this.logger.debug(`input_ack stamp for ${e.id} failed (sweep will retry): ${err}`),
     );
     const wake = this.pendingWakeAcks.get(e.id);
@@ -1727,6 +1926,11 @@ export class AgentSessionManager
         body?: string;
         seed?: boolean;
         seedQuestionId?: string;
+        seedSecretId?: string;
+        seedFileId?: string;
+        // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
+        // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
+        deliveryStimulusId?: string;
         seedHaltWake?: { threadId: string; gen: number };
         seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
       };
@@ -1758,6 +1962,8 @@ export class AgentSessionManager
         receivedAt: new Date(),
         ...(ctx.seed ? { seed: true } : {}),
         ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
+        ...(ctx.seedSecretId ? { seedSecretId: ctx.seedSecretId } : {}),
+        ...(ctx.seedFileId ? { seedFileId: ctx.seedFileId } : {}),
         // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
         // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
         ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
@@ -1838,6 +2044,12 @@ export class AgentSessionManager
         // (the same shared helper), else a reattached halt/done wake never stamps and the sweeps re-wake it
         // forever. (This also makes the `seedHaltWake`/`seedDoneWake` preserve-comments above actually true.)
         await this.stampWakeSuccessTails(stimulus);
+        // SUCCESS TAIL — same for a seed-card delivery that completed via reattach: stamp its durable stimulus
+        // row + card together, keyed on the `stimuli.id` carried in ctx (the reconstructed `stimulus.id` is the
+        // engine turn id here, not the row). Else the sweep re-delivers an already-consumed answer (exactly-once).
+        if (ctx.deliveryStimulusId) {
+          await this.stampSeedCardSuccessTails(ctx.deliveryStimulusId);
+        }
         void this.usageProjector?.record(
           {
             jobId: row.job_id,
@@ -1975,48 +2187,10 @@ export class AgentSessionManager
     // old prose-linkage that opportunistically stamped the latest unanswered card was the bug where a
     // queued chat message got consumed as the answer to a later question.)
 
-    // Human-input gate delivery: a turn carrying a `seedQuestionId` IS the delivery turn for that exact
-    // `ask_question` card — the `/answer-question` endpoint (and the boot sweep) seed the answer via
-    // `seedSystemNotification` with `deliveredQuestionId`, which rides onto the stimulus. We stamp THAT card
-    // `deliveredAt` ONLY on the successful tail below — never on an early return / error — so a failed turn
-    // re-delivers (at-least-once). Tying the stamp to the answer-carrying seed (rather than scanning a shared
-    // pointer) means an unrelated operator turn can never prematurely mark a card delivered.
-    let deliveredQuestionId: string | null = null;
-    if (stimulus.seedQuestionId) {
-      const card = await this.store.getQuestionCard(
-        stimulus.jobId,
-        stimulus.seedQuestionId,
-      );
-      if (card?.answer != null && card.deliveredAt == null)
-        deliveredQuestionId = stimulus.seedQuestionId;
-    }
-
-    // Secret-gate delivery (same at-least-once shape): if the gate points at a PROVIDED, not-yet-DELIVERED
-    // secret card, THIS turn is its masked-confirmation delivery turn. Stamped + cleared only on the success
-    // tail below, so a failed turn re-delivers. The VALUE is never read here (it isn't on the card).
-    let deliveredSecretId: string | null = null;
-    const awaitingSecret = await this.store.awaitingSecretId(stimulus.jobId);
-    if (awaitingSecret) {
-      const card = await this.store.getSecretCard(
-        stimulus.jobId,
-        awaitingSecret,
-      );
-      if (card?.provided_at != null && card.delivered_at == null)
-        deliveredSecretId = awaitingSecret;
-    }
-
-    // File-gate delivery (per-card, so keyed on the seed's `seedFileId`, NOT a thread pointer): if this
-    // seed confirms a PROVIDED, not-yet-DELIVERED `request_file` card, THIS turn is its masked-confirmation
-    // delivery turn. Stamped only on the success tail below, so a failed turn re-delivers (at-least-once).
-    let deliveredFileId: string | null = null;
-    if (stimulus.seedFileId) {
-      const card = await this.store.getFileCard(
-        stimulus.jobId,
-        stimulus.seedFileId,
-      );
-      if (card?.provided_at != null && card.delivered_at == null)
-        deliveredFileId = stimulus.seedFileId;
-    }
+    // Seed-card delivery stamps are resolved at the SUCCESS tail from the exact durable stimulus row
+    // (`reply_route.seedQuestionId`/`seedSecretId`/`seedFileId`), with a legacy fallback for internal
+    // in-memory seeds. Do not precompute from mutable thread pointers here: an unrelated operator turn must
+    // never clear a provided secret gate or mark a card delivered.
 
     // Lazily provision the thread's sandbox on its FIRST turn — the live create/seed paths insert bare
     // thread rows (no sandbox/branch). Subsequent turns no-op (the row already exists). Tell the operator
@@ -2048,8 +2222,10 @@ export class AgentSessionManager
         // Treat this pending chat as DELIVERED — else the 2-min at-least-once delivery sweep re-drives it and
         // re-posts this identical "closed" notice every lease cycle (the endless spam). A closed sandbox is a
         // terminal state for this message, not a transient un-delivery — mirror the ProvisioningNotReadyError
-        // branch below.
-        opts?.onRegistered?.();
+        // branch below. A solo seed-card delivery defers its stamp from `onRegistered`, so stamp it terminally
+        // here (row + card) — the answer can never reach the closed thread, and this also stops the edit-6 boot
+        // backfill from recreating the row forever.
+        await this.markTerminallyDelivered(stimulus, opts);
         return;
       }
     } catch (err) {
@@ -2060,7 +2236,8 @@ export class AgentSessionManager
         // connected" message every lease cycle (the incident's 3× spam). A permanent precondition failure is
         // not a transient un-delivery. The operator re-messages once access is fixed (the auto-heal in
         // ensureProvisioned already handles the common stale-`access_ok` case before we ever get here).
-        opts?.onRegistered?.();
+        // Seed-card deliveries defer their stamp from `onRegistered`, so stamp terminally here (row + card).
+        await this.markTerminallyDelivered(stimulus, opts);
       } else {
         this.logger.error(
           `provisioning failed for thread=${stimulus.jobId}: ${err}`,
@@ -2432,6 +2609,7 @@ export class AgentSessionManager
               containerId: sandbox.containerId,
               worktreeHost: sandbox.worktreePath,
               ...(gitAuth ? { gitAuth } : {}),
+              evidenceDir: `${CONTAINER_CONTEXT}/evidence`,
             },
           }
         : {}),
@@ -2459,6 +2637,12 @@ export class AgentSessionManager
           ...(stimulus.seedQuestionId
             ? { seedQuestionId: stimulus.seedQuestionId }
             : {}),
+          ...(stimulus.seedSecretId ? { seedSecretId: stimulus.seedSecretId } : {}),
+          ...(stimulus.seedFileId ? { seedFileId: stimulus.seedFileId } : {}),
+          // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
+          // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
+          // Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag their id through the tail.
+          ...(isSeedCardDelivery(stimulus) ? { deliveryStimulusId: stimulus.id } : {}),
           // Halt-wake key: a reattached wake turn must still stamp `halt_waked_at` on success (Medium-1).
           ...(stimulus.seedHaltWake ? { seedHaltWake: stimulus.seedHaltWake } : {}),
           // Done-wake key (decision d1): same reasoning, for `done_waked_at`.
@@ -2771,17 +2955,6 @@ export class AgentSessionManager
       result.usage,
     );
 
-    // SUCCESS TAIL ONLY: the brain consumed this seed's answer this turn, so stamp the card `deliveredAt`
-    // (the boot sweep won't re-deliver it). Reached only on the happy path; every early return / error above
-    // leaves the card undelivered for a re-seed by the boot sweep (at-least-once). Best-effort.
-    if (deliveredQuestionId) {
-      await this.store
-        .markQuestionDelivered(stimulus.jobId, deliveredQuestionId)
-        .catch((err) =>
-          this.logger.warn(`markQuestionDelivered failed: ${err}`),
-        );
-    }
-
     // SUCCESS TAIL — ADR 0004 Phase 3 halt wake + decision d1 completion wake: the brain actually TRIAGED /
     // reviewed this wake this turn, so stamp its (generation-keyed) dedup marker now. Reached only on the
     // happy path — a swallowed engine error / single-turn-guard hit / detach all `return` above WITHOUT
@@ -2789,22 +2962,13 @@ export class AgentSessionManager
     // success path (which runs outside this method) so both stamp identically.
     await this.stampWakeSuccessTails(stimulus);
 
-    // SUCCESS TAIL — same for the secure-secret gate: the masked confirmation reached the brain this turn.
-    if (deliveredSecretId) {
-      await this.store
-        .markSecretDelivered(stimulus.jobId, deliveredSecretId)
-        .catch((err) => this.logger.warn(`markSecretDelivered failed: ${err}`));
-      await this.store
-        .clearAwaitingSecret(stimulus.jobId, deliveredSecretId)
-        .catch((err) => this.logger.warn(`clearAwaitingSecret failed: ${err}`));
-    }
-
-    // SUCCESS TAIL — the file upload's masked confirmation reached the brain this turn (per-card gate; no
-    // pointer to clear). Boot sweep re-delivers if this turn never lands.
-    if (deliveredFileId) {
-      await this.store
-        .markFileDelivered(stimulus.jobId, deliveredFileId)
-        .catch((err) => this.logger.warn(`markFileDelivered failed: ${err}`));
+    // SUCCESS TAIL — a solo seed-card fresh turn stamps its DURABLE stimulus row + exact card together here
+    // (its `onRegistered` deferred the row stamp) so a register-then-fail turn leaves both unstamped and the
+    // sweep re-drives it. On this path `stimulus.id === stimuli.id` (seeds deliver solo). Internal legacy
+    // in-memory seeds have no row, so fall back to the old best-effort direct card stamp.
+    if (isSeedCardDelivery(stimulus)) {
+      const result = await this.stampSeedCardSuccessTails(stimulus.id);
+      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
     }
 
     // SUCCESS TAIL — honor a pending `reset_sandbox`: tear the container down NOW (safe here — the engine
@@ -3650,7 +3814,7 @@ export class AgentSessionManager
         return {
           ok: true,
           attempt: r.attempt,
-          message: `Thread re-driven with your guidance (attempt ${r.attempt}/${HALT_FIX_ATTEMPT_CAP}).`,
+          message: `Thread re-driven with your guidance (attempt ${r.attempt}).`,
         };
       },
 
@@ -4053,6 +4217,24 @@ export class AgentSessionManager
         };
       },
 
+      // List this repo's sibling jobs so the brain can discover real same-repo ids to wire peer
+      // dependencies (create_job dependsOn / link_job_dependency). Repo-scoped from the CLOSURE, never
+      // from tool args — the same tenant-safety invariant as create_job.
+      list_jobs: async (args) => {
+        try {
+          const jobs = await this.jobDeps.listJobs({
+            orgId: stimulus.orgId,
+            repoId: stimulus.repoId,
+            status: optStr(args['status']),
+            query: optStr(args['query']),
+            limit: typeof args['limit'] === 'number' ? args['limit'] : undefined,
+          });
+          return { ok: true, jobs };
+        } catch (err) {
+          return { ok: false, reason: errText(err) };
+        }
+      },
+
       link_job_dependency: async (args) => {
         const jobId = String(args['jobId'] ?? '').trim();
         const dependsOnJobId = String(args['dependsOnJobId'] ?? '').trim();
@@ -4095,6 +4277,8 @@ export class AgentSessionManager
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       read_setup_script: this.buildReadSetupScriptTool(stimulus),
+      write_preview_instructions: this.buildWritePreviewInstructionsTool(stimulus),
+      read_preview_instructions: this.buildReadPreviewInstructionsTool(stimulus),
       derive_secret: this.buildDeriveSecretTool(stimulus),
       reset_sandbox: this.buildResetSandboxTool(stimulus),
       // Skills + MCP servers are Workspace Profile dimensions like mounts/setup — maintainable INCREMENTALLY
@@ -4110,8 +4294,10 @@ export class AgentSessionManager
     };
 
     // Review threads get a curated, build-free subset (they review an EXISTING PR via `gh`/Read/subagents,
-    // never plan/build/ship) — no propose_plan/start_direct_build/create_job/decisions. Matches the
-    // `reviewTools` prompt fragment; the omission is enforced (un-callable, not just discouraged).
+    // never plan/build/ship) — no propose_plan/start_direct_build/decisions. They DO get the job tools
+    // (list_jobs/create_job/link_job_dependency): a review may legitimately spin up or relate sibling jobs
+    // even though it does not build its own PR. Matches the `reviewTools` prompt fragment; the omission of
+    // the build/plan/ship tools is enforced (un-callable, not just discouraged).
     if (review) {
       return {
         ask_question: tools.ask_question,
@@ -4119,6 +4305,9 @@ export class AgentSessionManager
         set_job_kind: tools.set_job_kind,
         recall: tools.recall,
         remember: tools.remember,
+        list_jobs: tools.list_jobs,
+        create_job: tools.create_job,
+        link_job_dependency: tools.link_job_dependency,
         ...intake,
       };
     }
@@ -4132,6 +4321,9 @@ export class AgentSessionManager
       withdraw_question: tools.withdraw_question,
       recall: tools.recall,
       remember: tools.remember,
+      list_jobs: tools.list_jobs,
+      create_job: tools.create_job,
+      link_job_dependency: tools.link_job_dependency,
       ...intake,
       list_convention_profiles: this.buildListConventionProfilesTool(stimulus),
       propose_convention_profile: this.buildProposeConventionProfileTool(stimulus),
@@ -4234,8 +4426,8 @@ export class AgentSessionManager
           return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
         }
         if (!key) return { ok: false, reason: 'mcp.key is required (the header/env key name)' };
-        // An OAuth server has NO fillable secret slot — its Authorization is minted by the console "Connect"
-        // flow (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
+        // An OAuth server has NO fillable secret slot — its Authorization is minted by the owner Connect flow
+        // (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
         // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
         // land on THIS repo's scope, so check the repo-scoped row.
         const oauthRow = await this.mcpStore
@@ -4244,7 +4436,7 @@ export class AgentSessionManager
         if (oauthRow?.auth_kind === 'oauth') {
           return {
             ok: false,
-            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
+            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER via the Connect button on the MCP proposal card or in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
           };
         }
         const requestId = `s-${randomUUID()}`;
@@ -4587,6 +4779,37 @@ export class AgentSessionManager
     };
   }
 
+  private buildWritePreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const instructions = String(args['instructions'] ?? '').trim() ? String(args['instructions']) : null;
+      try {
+        await this.configStore.setPreviewInstructions(stimulus.orgId, stimulus.repoId, instructions);
+        await this.store.appendSystemEvent(
+          stimulus.jobId,
+          instructions
+            ? '🎬 Saved the repo preview recipe — it is injected into the "Spin up preview" seed for every job on this repo. `read_preview_instructions` to amend (write REPLACES the whole recipe).'
+            : '🎬 Cleared the repo preview recipe — the Spin-up-preview seed will prompt to save a fresh one.',
+        );
+        return { ok: true, saved: !!instructions };
+      } catch (err) {
+        this.logger.warn(`write_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
+  private buildReadPreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+    return async () => {
+      try {
+        const instructions = await this.configStore.getPreviewInstructions(stimulus.orgId, stimulus.repoId);
+        return { ok: true, present: instructions !== null, instructions };
+      } catch (err) {
+        this.logger.warn(`read_preview_instructions failed for org=${stimulus.orgId} repo=${stimulus.repoId}: ${err}`);
+        return { ok: false, reason: errText(err) };
+      }
+    };
+  }
+
   /**
    * Record the worktree's current dependency manifests as ACKNOWLEDGED (`repos.profile_seen_manifests`) —
    * the baseline the new-stack gap diffs against (see `WorkspaceProfileService.computeGaps`). Seeded when
@@ -4682,7 +4905,7 @@ export class AgentSessionManager
         ).filter((x): x is McpSurface => VALID_SURFACES.has(x as McpSurface));
         const reason = String(s['reason'] ?? '').trim() || undefined;
         // Auth kind: 'static' (header/env slots filled via request_secret) or 'oauth' (interactive OAuth 2.1
-        // the OWNER completes in the console). OAuth is http/sse-only and owns the Authorization header itself,
+        // the OWNER completes via Connect). OAuth is http/sse-only and owns the Authorization header itself,
         // so a secret slot on an oauth server is invalid (it would read as an unfillable gap). Mirrors
         // McpServersController.assertShape.
         const authKind: McpAuthKind = s['authKind'] === 'oauth' ? 'oauth' : 'static';
@@ -4693,7 +4916,7 @@ export class AgentSessionManager
           if ((headers ?? []).some((h) => h.secret) || (env ?? []).some((e) => e.secret)) {
             return {
               ok: false,
-              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
+              reason: `server "${name}": an oauth server must NOT declare secret header/env slots — the OWNER completes OAuth with the proposal-card Connect button or in the console (MCP settings → Connect); OAuth manages the Authorization header itself`,
             };
           }
         }
@@ -4757,7 +4980,7 @@ export class AgentSessionManager
             (needSecrets.length ? `: ${needSecrets.join('; ')}.` : '.') +
             (oauthNames.length
               ? ` OAuth server(s) [${oauthNames.join(', ')}] have NO secret to fill — after approval the OWNER ` +
-                'must Connect them in the console (MCP settings → Connect) to complete consent. You cannot ' +
+                'must Connect them from the MCP proposal card or in the console (MCP settings → Connect) to complete consent. You cannot ' +
                 'consent yourself; do NOT try to inject an Authorization/Bearer header via request_secret.'
               : ''),
         };
@@ -4931,7 +5154,7 @@ export class AgentSessionManager
           enabled: s.enabled,
           secretKeys: s.secretKeys,
           // Auth model, so the brain reads a 401 correctly: `authKind:'oauth'` + `oauthConnected:false` means
-          // the OWNER must Connect it in the console (NOT a request_secret target); `'static'` uses secretKeys.
+          // the OWNER must Connect it (NOT a request_secret target); `'static'` uses secretKeys.
           authKind: s.authKind,
           oauthConnected: s.oauthConnected,
           // Secret-SAFE failure state so a brain that lists servers sees a broken one directly (not only
@@ -4947,7 +5170,7 @@ export class AgentSessionManager
               ? 'Existing MCP servers — propose_mcp_servers with the SAME name to REPLACE one, or a new name to add one.'
               : 'No MCP servers registered yet — propose_mcp_servers to add the first (owner-approved).') +
             (servers.some((s) => s.authKind === 'oauth' && !s.oauthConnected)
-              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
+              ? ' An oauth server with oauthConnected:false is NOT broken auth you can fix — the OWNER must Connect it from the MCP proposal card or in the console (MCP settings → Connect). Do not use request_secret / inject an Authorization header for it.'
               : ''),
         };
       } catch (err) {
@@ -6823,6 +7046,8 @@ interface TurnDeliveryOpts {
   onRegistered?: () => void;
 }
 
+type SeedCardStampResult = 'stamped' | 'missing' | 'failed';
+
 const ATLAS_AUTHOR_ID = 'atlas';
 
 /** True when a turn was authored by the operator — NOT a synthetic Atlas turn and NOT a host-originated
@@ -6838,6 +7063,13 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
 /** Wake-eligible (d18): `now`/`queue` (absent = `now`) may WAKE a fresh turn; `later` only rides along. */
 function isWakeEligible(s: ChatStimulus): boolean {
   return (s.priority ?? 'now') !== 'later';
+}
+
+/** A durable system seed that stamps a card (question/secret/file). Its stimulus row + card must be stamped
+ *  TOGETHER on the consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or
+ *  registration — so a register-then-fail turn re-drives instead of stranding a card behind a delivered row. */
+function isSeedCardDelivery(s: ChatStimulus): boolean {
+  return !!s.seed && (!!s.seedQuestionId || !!s.seedSecretId || !!s.seedFileId);
 }
 
 /** Steer-eligible (d18): only `now` (absent = `now`) steers mid-turn; `queue`/`later` never interrupt a live turn. */
@@ -7025,46 +7257,6 @@ function doneDeliveryStimulus(input: {
     // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
     seedDoneWake: input.seedDoneWake,
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
-  };
-}
-
-/**
- * Build the synthetic SYSTEM-SEED stimulus the boot sweep uses to re-deliver an answered-but-undelivered
- * question straight through `handleChatTurn` (bypassing the surface). A system seed (SYSTEM_SEED_AUTHOR +
- * `seed`), the SAME shape as the live `/answer-question` delivery (`seedSystemNotification`) — so recovery
- * matches steady-state: the framed body is a `<system_notice>` (via `frameAnswer`), NOT a human `<user>`
- * turn, so `engineBody` passes it through instead of re-wrapping/`stripTags`-mangling it. Being a system
- * seed it does NOT drain the passive-awareness buffer — that flush is deferred to the next genuine operator
- * turn (deferred, not lost). The framed body restates the Q&A since there is no natural inbound message to
- * carry it; `seedQuestionId` ties this turn to stamping exactly THIS card `deliveredAt` on success.
- */
-function bootDeliveryStimulus(q: {
-  jobId: string;
-  orgId: string;
-  repoId: string;
-  questionId: string;
-  question: string;
-  answer: string;
-}): ChatStimulus {
-  return {
-    id: randomUUID(),
-    orgId: q.orgId,
-    repoId: q.repoId,
-    body: frameAnswer(q.question, q.answer),
-    receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
-    jobId: q.jobId,
-    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', jobRef: q.jobId },
-    seed: true,
-    // Tie the re-delivery to its exact card so the delivery turn stamps THAT card `deliveredAt` on success.
-    seedQuestionId: q.questionId,
-    // Same content-stable key as the live `/answer-question` path ⇒ one visible row across live + boot.
-    seedRow: {
-      label: `The operator answered your question ${JSON.stringify(q.question)}: ${q.answer}`,
-      chunkKey: chunkKey.qa(q.jobId, q.questionId),
-    },
   };
 }
 
