@@ -461,6 +461,7 @@ export class TurnHarnessFactory {
                   resetsAt: e.resetsAt,
                   rateLimitType: e.rateLimitType,
                   utilization: e.utilization,
+                  credentialId: e.credentialId,
                 })
                 .catch(() => undefined);
             }

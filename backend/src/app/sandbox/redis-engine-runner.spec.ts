@@ -96,6 +96,72 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(reg.finalize).toHaveBeenCalledWith(expect.any(String), 'done');
   });
 
+  it('stamps rate-limit events with the dispatch credential on a fresh run', async () => {
+    const redis = new InMemoryRedisStream();
+    const events: EngineEvent[] = [];
+    const frames = [
+      {
+        t: 'event',
+        e: { kind: 'rate_limit', status: 'rejected', resetsAt: Date.now(), rateLimitType: 'five_hour' },
+      },
+      { t: 'final', r: { result: 'DONE', sessionId: 'sess-1' } },
+    ];
+    const reg = fakeRegistry();
+    const runner = new RedisEngineRunner(
+      fakeContainers(redis, frames),
+      redis,
+      fakeEnv,
+      fakeActivity,
+      reg,
+    );
+
+    await runner.run({
+      ...baseArgs((e) => events.push(e)),
+      auth: {
+        secret: 'oauth-json',
+        kind: 'personal',
+        refreshBack: { orgId: 'org1', engine: 'claude', credentialId: 'cred-1' },
+      },
+      turnMeta: { jobId: 'th1', orgId: 'org1', channel: 'repo1', lane: 'main', kind: 'step' },
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({ kind: 'rate_limit', credentialId: 'cred-1' }),
+    ]);
+    expect(reg.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: expect.objectContaining({ credentialId: 'cred-1' }),
+      }),
+    );
+  });
+
+  it('stamps replayed rate-limit events with the supplied credential on reattach', async () => {
+    const redis = new InMemoryRedisStream();
+    const turnId = 'turn-reattach';
+    await redis.xadd(turnKeys(turnId).events, {
+      t: 'event',
+      e: { kind: 'rate_limit', status: 'rejected', resetsAt: Date.now(), rateLimitType: 'five_hour' },
+    });
+    await redis.xadd(turnKeys(turnId).events, { t: 'final', r: { result: 'DONE', sessionId: 'sess-1' } });
+    const events: EngineEvent[] = [];
+    const runner = new RedisEngineRunner(
+      fakeContainers(redis, []),
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+    );
+
+    await runner.reattach(turnId, 'c1', {
+      onEvent: (e) => events.push(e),
+      credentialId: 'cred-reattach',
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({ kind: 'rate_limit', credentialId: 'cred-reattach' }),
+    ]);
+  });
+
   it('publishes a spec whose writableRoots include the durable /context and /playground mounts', async () => {
     const redis = new InMemoryRedisStream();
     const xadd = vi.spyOn(redis, 'xadd');

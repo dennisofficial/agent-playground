@@ -126,6 +126,8 @@ export type EngineEvent =
       resetsAt?: number;        // epoch ms, verbatim from the SDK
       rateLimitType?: string;
       utilization?: number;
+      /** Dispatch-time credential the turn runs on — stamped HOST-side, never set by the in-container engine. */
+      credentialId?: string;
     }
   /**
    * Lifecycle of an SDK `run_in_background` Bash task, surfaced to the operator. The engine holds the turn's
@@ -834,6 +836,8 @@ export interface EngineRunnerPort {
       onEvent?: (e: EngineEvent) => void;
       toolBridge?: ToolBridgeOptions;
       signal?: AbortSignal;
+      /** Dispatch-time Claude credential id, host-only; used to stamp replayed rate-limit events. */
+      credentialId?: string;
     },
   ): Promise<EngineRunResult>;
   /**
@@ -915,6 +919,7 @@ export class EngineSessionLimitError extends Error {
     readonly resetAt?: string,
     readonly rateLimitType?: string,
     readonly sessionId?: string,
+    readonly credentialId?: string,
   ) {
     super(message);
     this.name = 'EngineSessionLimitError';

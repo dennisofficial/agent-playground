@@ -43,4 +43,7 @@ export type ClaudeUsageWindowKey = 'fiveHour' | 'sevenDay' | 'sevenDayOpus' | 's
 export type ClaudeUsageSnapshot = {
   windows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>>;
   fetchedAt: number;
+  /** The Claude credential (claude_credentials.id) whose turn produced these windows.
+   *  Absent on legacy rows / reattach harvests — treated as untrusted by OauthUsageService.get(). */
+  credentialId?: string;
 };
