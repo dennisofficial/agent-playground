@@ -580,12 +580,12 @@ const ROW_ESTIMATE: Record<string, number> = {
   compaction: 48,
   // short bubbles
   user: 92,
-  thinking: 92,
+  thinking: 26,
   system_operator: 96,
   system_shared: 96,
   untrusted: 112,
   // assistant prose — usually the tallest ordinary row
-  claude: 168,
+  claude: 120,
   // interactive cards (button/input surfaces)
   approval: 240,
   question: 200,
@@ -607,10 +607,10 @@ function estimateForKind(kind: string): number {
   return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
 }
 
-/** Initial height guess for a folded tool-run group — grows with the number of calls (each collapsed tool
- *  row is short), capped so a huge run doesn't over-reserve. */
-function toolGroupEstimate(toolCount: number): number {
-  return Math.min(56 + toolCount * 40, 320);
+/** Initial height guess for a folded tool-run group — the collapsed `DisclosureRow` is a single line
+ *  regardless of how many calls it folds, so the estimate is flat. */
+function toolGroupEstimate(_toolCount: number): number {
+  return 40;
 }
 
 /** Message kinds whose height is dominated by free-form text (markdown / code / diagrams), so a flat
@@ -619,7 +619,6 @@ function toolGroupEstimate(toolCount: number): number {
 const TEXT_KINDS = new Set([
   "claude",
   "user",
-  "thinking",
   "untrusted",
   "system_shared",
   "compaction",
@@ -627,8 +626,16 @@ const TEXT_KINDS = new Set([
 ]);
 
 const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
+/** Any fenced code block (language tag optional) — used to reserve non-mermaid code at code line-height
+ *  instead of letting it fall through to the prose wrapped-line math below. Run AFTER {@link MERMAID_FENCE}
+ *  has already been stripped from the text, so a mermaid fence never double-matches here. */
+const CODE_FENCE = /```(\w*)\n([\s\S]*?)```/g;
 /** Card chrome (header bar + vertical margins) around a rendered Mermaid diagram body. */
 const MERMAID_CHROME_PX = 64;
+/** Rendered height of one line inside a `CodeBlock` (`text-[11.5px] leading-[1.7]` ≈ 19.5px/line) plus the
+ *  header-bar + padding chrome around the block. */
+const CODE_LINE_PX = 19;
+const CODE_CHROME_PX = 28;
 /** Approx chars per line at the ~800px content column, and the rendered height of one wrapped line. */
 const CHARS_PER_LINE = 92;
 const LINE_PX = 22;
@@ -637,9 +644,10 @@ const LINE_PX = 22;
  * Content-aware initial height guess for a free-form text row. A flat per-kind estimate mis-sizes long
  * markdown and (badly) diagram-bearing bubbles, which is what makes the row after a tall diagram briefly
  * overlap it before `measureElement` corrects. So estimate from the text: reserve each embedded Mermaid
- * diagram at the SAME size the diagram itself reserves ({@link mermaidReservePx}), then add wrapped-line
- * height for the remaining prose. Still only an estimate — the ResizeObserver sets the exact height; this
- * just makes the first guess close.
+ * diagram at the SAME size the diagram itself reserves ({@link mermaidReservePx}), reserve each other fenced
+ * code block at code line-height (code doesn't wrap like prose, so counting it as wrapped text under-counts
+ * it), then add wrapped-line height for the remaining prose. Still only an estimate — the ResizeObserver sets
+ * the exact height; this just makes the first guess close.
  */
 function estimateForMessage(message: JobMessage, kind: string): number {
   const base = estimateForKind(kind);
@@ -652,12 +660,21 @@ function estimateForMessage(message: JobMessage, kind: string): number {
     diagrams += mermaidReservePx(m[1]) + MERMAID_CHROME_PX;
   }
 
-  const prose = text.replace(MERMAID_FENCE, "");
+  let prose = text.replace(MERMAID_FENCE, "");
+
+  let code = 0;
+  CODE_FENCE.lastIndex = 0;
+  for (let m = CODE_FENCE.exec(prose); m !== null; m = CODE_FENCE.exec(prose)) {
+    const lineCount = m[2].split("\n").length;
+    code += lineCount * CODE_LINE_PX + CODE_CHROME_PX;
+  }
+  prose = prose.replace(CODE_FENCE, "");
+
   let lines = 0;
   for (const line of prose.split("\n")) lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
   const prosePx = 40 + lines * LINE_PX;
 
-  return Math.max(base, Math.round(prosePx + diagrams));
+  return Math.max(base, Math.round(prosePx + diagrams + code));
 }
 
 /**
@@ -905,7 +922,7 @@ function buildLogItems(
       nodes.push({
         key: message.ts,
         node: <TurnMetaDivider key={message.ts} message={message} />,
-        estimate: 52,
+        estimate: 38,
       });
       continue;
     }
