@@ -93,6 +93,11 @@ export interface IEnvConfig {
   SANDBOX_IMAGE?: string;
   WORKSPACE_IMAGE?: string;
   WORKSPACE_DOCKER_STORAGE_DRIVER?: string;
+  // Relative CPU weight (Docker CpuShares → cgroup v2 cpu.weight) applied to every per-job sandbox
+  // container so best-effort agent bursts (builds/tests) yield to the host control plane under
+  // contention. Low value ⇒ sandboxes lose CPU only when the backend/DB/web compete; idle box ⇒ agents
+  // still use 100% (no cap). UNSET ⇒ Docker default (no de-prioritization). See infra/README.md.
+  SANDBOX_CPU_SHARES?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
   // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
@@ -227,6 +232,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   SANDBOX_IMAGE: Joi.string().optional(),
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
+  SANDBOX_CPU_SHARES: Joi.number().integer().min(2).max(262144).optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),

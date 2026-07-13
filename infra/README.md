@@ -363,6 +363,30 @@ demand: `sudo /srv/atlas/scripts/docker-gc.sh`.
 
 ---
 
+## CPU governance — control plane guaranteed, sandboxes best-effort
+
+The box runs the control plane (backend blue/green, web, Caddy, **Postgres**, **Redis**) alongside every
+per-job **sandbox** container. Sandbox work is bursty best-effort compute — the agent SDKs shelling out to
+`pnpm install`, builds, typechecks, and test runs — which can peg the CPU and starve the control plane
+(dropped SSE/UI connections) if left uncontrolled.
+
+Isolation is by **relative CPU weight** (Docker `CpuShares` → cgroup v2 `cpu.weight`), not a hard cap:
+
+- **Sandboxes** are created with `SANDBOX_CPU_SHARES` (default `256`, set on the backend in
+  `docker-compose.prod.yml`; the backend stamps it on every sandbox container it creates). Because the
+  weight is proportional and only bites **under contention**, an idle box still lets a sandbox use 100%
+  of the CPU — there is no throughput cap. Unset ⇒ Docker default (no isolation).
+- **Control plane** keeps Docker's default weight (`1024`, ≈4:1 over sandboxes). **Postgres** and
+  **Redis** are pinned higher still (`cpu_shares: 2048`) since DB/cache starvation is the worst failure.
+
+Tuning: lower `SANDBOX_CPU_SHARES` (min `2`) to make sandboxes yield harder; raise it toward `1024` to
+give agents parity with the control plane. Memory is deliberately **not** limited (the box runs at ~12%).
+
+> The `cpu_shares:` keys are the **legacy top-level** Compose options, honored by `docker compose up`.
+> Do NOT switch them to a `deploy.resources` block — that is Swarm-only and silently ignored here.
+
+---
+
 ## Backups
 
 Install the backup cron:

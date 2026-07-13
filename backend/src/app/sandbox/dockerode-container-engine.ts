@@ -117,6 +117,7 @@ export class DockerodeContainerEngine implements ContainerEngine {
         ...(spec.binds ? { Binds: spec.binds } : {}),
         ...(spec.network ? { NetworkMode: spec.network } : {}),
         ...(spec.privileged ? { Privileged: true } : {}),
+        ...(spec.cpuShares ? { CpuShares: spec.cpuShares } : {}),
         ...(spec.volumes
           ? {
               Mounts: spec.volumes.map((v) => ({
