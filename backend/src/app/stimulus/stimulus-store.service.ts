@@ -456,6 +456,18 @@ export class StimulusStoreService {
     return (await qb.getCount()) > 0;
   }
 
+  /** True when the job has at least one durable undelivered chat stimulus (excluding `later`-priority rows,
+   *  same filter as {@link undeliveredChatThreads}) — the auto-merge brain-settled guard's queue check. */
+  async hasUndeliveredChat(jobId: string): Promise<boolean> {
+    return this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id = :j', { j: jobId })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .getExists();
+  }
+
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
   async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
     const rows = await this.stimuli

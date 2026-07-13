@@ -29,6 +29,7 @@ import type { DriverRepoResolver } from './repo-resolver';
 import { SandboxActivityRegistry, type SandboxProvider } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { JobLifecycleService } from './job-lifecycle.service';
+import type { DriverStoreService } from './driver-store.service';
 import type { JobDependencyService } from '../job-deps';
 import type { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -83,6 +84,7 @@ function makeService(
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
   );
 }
 
@@ -118,6 +120,7 @@ function makeServiceWithMocks(
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
   );
   return { svc, sandboxes, provisionAndAttach };
 }
@@ -163,6 +166,7 @@ function makeServiceForReset(
     { get: vi.fn() } as unknown as ModuleRef,
     { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
     { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+    { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
   );
   return { svc, sandboxes, teardown, activity, failRunningForJob };
 }
@@ -399,6 +403,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
         return { affected: 1 };
       }),
     } as unknown as Repository<JobEntity>;
+    const neutralizeMergeCard = vi.fn().mockResolvedValue(undefined);
     const svc = new JobLifecycleService(
       jobs,
       { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
@@ -416,11 +421,12 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard } as unknown as DriverStoreService,
     );
     svc.detachJobContainer = vi.fn(async () => {
       order.push('detach');
     });
-    return { svc, jobs, order };
+    return { svc, jobs, order, neutralizeMergeCard };
   }
 
   const job = { id: 'job-1', org_id: 'T1', repo_id: 'repo-1' } as JobEntity;
@@ -434,19 +440,21 @@ describe('JobLifecycleService.applyGithubPrState', () => {
   });
 
   it("state='merged' writes pr_state=merged, then DETACHES (frees RAM, keeps worktree) — in that order", async () => {
-    const { svc, jobs, order } = makeServiceForApply();
+    const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'merged');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'merged' });
     expect(order).toEqual(['update:merged', 'detach']);
+    expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'merged');
   });
 
   it("state='closed' writes pr_state=closed, then detaches", async () => {
-    const { svc, jobs, order } = makeServiceForApply();
+    const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'closed');
     expect(result).toBe('closed');
     expect(jobs.update).toHaveBeenCalledWith({ id: 'job-1' }, { pr_state: 'closed' });
     expect(order).toEqual(['update:closed', 'detach']);
+    expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'not-ready');
   });
 
   it("state='gone' folds to pr_state=closed and still detaches the job", async () => {
@@ -483,6 +491,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
     );
     return { svc, projects, closePullRequest, hostGithubToken };
   }
@@ -593,6 +602,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
     );
     return { svc, sandboxes, update, teardownByIdentity, removeSandbox };
   }
@@ -647,6 +657,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
     );
 
     const out = await svc.ensureProvisioned('thread-1', 'T1');
@@ -680,6 +691,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
     );
     return { svc, getPullState };
   }
@@ -724,6 +736,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { get: vi.fn() } as unknown as ModuleRef,
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
+      { neutralizeMergeCard: vi.fn().mockResolvedValue(undefined) } as unknown as DriverStoreService,
     );
     // Spy the two reclaim effects on the instance — we assert the DECISION, not closeJob/rmSync internals.
     const closeJob = vi.fn().mockResolvedValue(undefined);

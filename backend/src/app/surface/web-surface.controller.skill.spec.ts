@@ -40,6 +40,7 @@ function makeController(card: unknown, ctxRoot: string) {
     {} as never, // liveTurns
     {} as never, // driverStore
     { contextDirHost: () => ctxRoot } as never, // threadLifecycle
+    {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
     {} as never, // messages

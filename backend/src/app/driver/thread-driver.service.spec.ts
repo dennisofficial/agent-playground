@@ -799,6 +799,10 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     shipReviewApprovedAt: null,
     autoApproveMode: 'off',
     autoApproveBy: null,
+    autoMerge: false,
+    autoMergeMethod: 'squash',
+    autoMergeDeleteBranch: true,
+    autoMergeBy: null,
     createdBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -878,6 +882,8 @@ function assemble(
      *  `<worktree>/.atlas/threads/` (the halt-trail relocation regression guard). */
     worktreePath?: string;
     claudeCreds?: Pick<ClaudeCredentialStore, 'getSelectedRefreshMeta' | 'markNeedsReauth'>;
+    /** The manual "Merge PR" click's resolution path — defaults to a no-op resolve unless a test overrides it. */
+    autoMerge?: Pick<import('./auto-merge.service').AutoMergeService, 'mergeNow'>;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1070,6 +1076,9 @@ function assemble(
     // assertions hold. The open-PR step is now a SEEDED BRAIN TURN reached via the neutral BrainGateway (no
     // separate engine session), and the host latches the PR by branch discovery.
     new BuildShipService(git, pr, store, brainGateway),
+    // AutoMergeService: only `mergeNow` (the manual "Merge PR" click path) is called by the driver; default
+    // no-op resolve unless a test overrides it.
+    (opts.autoMerge ?? { mergeNow: async () => false }) as unknown as import('./auto-merge.service').AutoMergeService,
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,

@@ -19,6 +19,7 @@ import {
   useDeleteJob,
   useRenameJob,
   useSetAutoApprove,
+  useSetAutoMerge,
   useSay,
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
@@ -64,6 +65,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const del = useDeleteJob(ref);
   const rename = useRenameJob(ref);
   const autoApprove = useSetAutoApprove(ref);
+  const autoMerge = useSetAutoMerge(ref);
   useJobEvents(ref);
 
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
@@ -276,6 +278,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       onRename={onRename}
       onDelete={onDelete}
       onSetAutoApprove={(mode) => autoApprove.mutate(mode)}
+      onSetAutoMerge={(body) => autoMerge.mutate(body)}
       deleting={del.isPending}
       hasOpenPr={hasOpenPr}
       deleteReady={prStateKnown}

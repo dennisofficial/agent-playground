@@ -78,7 +78,9 @@ function make(over: {
     findOne: vi.fn(async () => ({ git_url: 'https://github.com/o/r.git' })),
   } as unknown as Repository<RepoEntity>;
 
-  const sync = new GithubCiStateSync(stimStore, creds, pr, repos, jobs);
+  // Fire-and-forget re-evaluation on every recompute — never asserted here, just must not throw.
+  const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as import('./auto-merge.service').AutoMergeService;
+  const sync = new GithubCiStateSync(stimStore, creds, pr, repos, jobs, autoMerge);
   return {
     sync,
     stimStore,

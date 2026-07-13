@@ -1,5 +1,5 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
-import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
+import type { AutoApproveMode, AutoMergeMethod, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
 import type { JobProvenance } from '../../domain/job';
@@ -379,4 +379,29 @@ export class JobEntity extends TimestampedEntity {
   @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'auto_approve_by' })
   autoApproveByUser?: UserEntity | null;
+
+  /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the
+   *  Merge gate). Orthogonal to auto_approve_mode — a human may still gate plan/ship while Atlas babysits
+   *  the PR to green and merges it. Strictly per-job (no repo/org default). */
+  @Column({ type: 'boolean', default: false })
+  auto_merge!: boolean;
+
+  /** The GitHub merge strategy used when auto-merge (or a manual Merge-PR click) merges — passed to
+   *  PUT /pulls/:n/merge as `merge_method`. Text-union per repo convention (no PG enum). */
+  @Column({ type: 'text', default: 'squash' })
+  auto_merge_method!: AutoMergeMethod;
+
+  /** Delete the head branch after a successful merge (a second host-side ref delete). */
+  @Column({ type: 'boolean', default: true })
+  auto_merge_delete_branch!: boolean;
+
+  /** Who most recently ENABLED auto-merge (FK → users.id, SET NULL) — the approver id stamped on an
+   *  auto-clicked merge. Null when never enabled / the user was deleted (falls back to org owner). Not
+   *  cleared on disable (kept for audit). */
+  @Column({ type: 'uuid', nullable: true })
+  auto_merge_by!: string | null;
+
+  @ManyToOne(() => UserEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'auto_merge_by' })
+  autoMergeByUser?: UserEntity | null;
 }

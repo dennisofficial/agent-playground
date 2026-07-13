@@ -2,6 +2,7 @@
 
 import { Check, ClipboardCheck, Globe, Lock, Undo2 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/components/ui/button";
 import {
   useApprove,
   usePipeline,
@@ -10,6 +11,7 @@ import {
 import type { JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
+  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -329,9 +331,45 @@ export function NavigatorShipButton({
         iconSize={11}
       />
       {error ? (
-        <p className="mt-1 text-[10px] text-red">
-          Couldn’t ship — try again.
-        </p>
+        <p className="mt-1 text-[10px] text-red">Couldn’t ship — try again.</p>
+      ) : null}
+    </>
+  );
+}
+
+// ── Navigator header merge button (just the button) ────────────────────────────────────────────────
+/** The bare full-width primary "Merge PR" button — pinned as the LAST item in the navigator's sticky
+ *  header once the PR is GitHub-mergeable (the THIRD human gate, after Approve/Ship). POSTs the merge
+ *  gate's {@link MERGE_ACTION_ID} verdict via the SAME `useApprove` mutation the merge approval card
+ *  uses (`ShipActionButton` in approval-card.tsx). */
+export function NavigatorMergeButton({
+  jobRef,
+  value,
+}: {
+  jobRef: JobRef;
+  value: string;
+}) {
+  const approve = useApprove(jobRef);
+  return (
+    <>
+      <Button
+        variant="primary"
+        loading={approve.isPending}
+        loadingText="Merging…"
+        onClick={() =>
+          approve.mutate({
+            actionId: MERGE_ACTION_ID,
+            value,
+            ruledBy: RULED_BY,
+          })
+        }
+        className="w-full justify-center text-[11px]"
+        style={{ borderRadius: "7px", padding: "7px 0" }}
+      >
+        Merge PR
+      </Button>
+      {approve.isError ? (
+        <p className="mt-1 text-[10px] text-red">Couldn’t merge — try again.</p>
       ) : null}
     </>
   );

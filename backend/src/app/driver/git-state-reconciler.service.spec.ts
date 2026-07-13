@@ -55,7 +55,10 @@ function make(over: {
     hostGithubToken: vi.fn(async () => 'tok'),
   } as unknown as CredentialResolver;
   const intake = { intakeEvent } as unknown as StimulusIntake;
-  const svc = new GitStateReconciler(jobs, repos, pr, creds, intake);
+  // Fire-and-forget re-evaluation on every reconcile — never asserted here, just must not throw (which
+  // would otherwise be swallowed by `tick()`'s catch-all and silently default the cadence tier to `active`).
+  const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as import('./auto-merge.service').AutoMergeService;
+  const svc = new GitStateReconciler(jobs, repos, pr, creds, intake, autoMerge);
   return { svc, job, update, intakeEvent, pr, findOpenPullByHead, jobs };
 }
 
