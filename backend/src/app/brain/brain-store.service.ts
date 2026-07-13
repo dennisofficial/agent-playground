@@ -1421,6 +1421,21 @@ export class BrainStoreService {
     );
   }
 
+  /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
+  async clearRetrySessionResume(
+    jobId: string,
+    lane: 'main' | 'build',
+  ): Promise<void> {
+    await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_resume_at: null, session_resume: null })
+      .where('id = :jobId', { jobId })
+      .andWhere("session_resume->>'kind' = 'retry'")
+      .andWhere("session_resume->>'lane' = :lane", { lane })
+      .execute();
+  }
+
   /**
    * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
    * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are

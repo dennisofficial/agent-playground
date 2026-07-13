@@ -147,6 +147,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     endTurnActivity: vi.fn().mockResolvedValue(undefined),
     setHalted: vi.fn().mockResolvedValue(undefined),
     resetAllActivity: vi.fn().mockResolvedValue(0),
+    clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -3701,6 +3702,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       setSessionResume: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
       jobTitle: vi.fn().mockResolvedValue(null),
     } as unknown as BrainStoreService;
     const lifecycle = {
@@ -5195,6 +5197,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       setActivity: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(
@@ -5381,6 +5384,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
       setActivity: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:

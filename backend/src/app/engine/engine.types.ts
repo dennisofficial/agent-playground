@@ -995,6 +995,10 @@ export const HOST_RETRY_BACKOFF_MS = 10_000;
 export const HOST_TRANSPORT_TRANSIENT_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
+/** API failures that already spent the SDK's own retry loop. Keep them out of the host retry allowlist. */
+const SDK_RETRY_EXHAUSTED_API_RE =
+  /\bapi error\b|\boverloaded(?:_error)?\b|\brate[ _-]?limit(?:ed|_error)?\b|\bserver[ _-]?error\b|\b(?:claude|anthropic)\b.*\b(?:api|502|503|504|529|bad gateway)\b|\b(?:api|502|503|504|529|bad gateway)\b.*\b(?:claude|anthropic)\b/;
+
 /**
  * Whether the HOST should auto-retry this error on the SAME session (d2 bucket 2): a transient
  * EngineAuthError, OR a host-transport/infra blip matching {@link HOST_TRANSPORT_TRANSIENT_RE}. Returns
@@ -1013,7 +1017,7 @@ export function isRetryableTransientError(err: unknown): boolean {
   // backoff. Its literal '502'/'503' would otherwise match HOST_TRANSPORT_TRANSIENT_RE and trigger ANOTHER
   // full host retry cycle (the double-retry the design forbids). Exclude these upstream-API messages so a
   // spent Layer-A error surfaces promptly instead of silently re-running host-side.
-  if (msg.includes('api error')) return false;
+  if (SDK_RETRY_EXHAUSTED_API_RE.test(msg)) return false;
   return HOST_TRANSPORT_TRANSIENT_RE.test(msg);
 }
 

@@ -232,6 +232,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       setActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
       getSecretCard: vi.fn().mockResolvedValue(null),
       getQuestionCard: vi.fn().mockResolvedValue(null),

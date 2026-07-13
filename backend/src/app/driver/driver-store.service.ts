@@ -302,6 +302,21 @@ export class DriverStoreService {
     );
   }
 
+  /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
+  async clearRetrySessionResume(
+    jobId: string,
+    lane: 'main' | 'build',
+  ): Promise<void> {
+    await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_resume_at: null, session_resume: null })
+      .where('id = :jobId', { jobId })
+      .andWhere("session_resume->>'kind' = 'retry'")
+      .andWhere("session_resume->>'lane' = :lane", { lane })
+      .execute();
+  }
+
   /** Record the feature branch all threads stack on (set once, when the sandbox is cut). */
   async setFeatureBranch(jobId: string, branch: string): Promise<void> {
     await this.jobs.update({ id: jobId }, { feature_branch: branch });

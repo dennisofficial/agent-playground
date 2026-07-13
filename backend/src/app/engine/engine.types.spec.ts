@@ -59,6 +59,18 @@ describe('isRetryableTransientError', () => {
       false,
     );
     expect(isRetryableTransientError(new Error('529 overloaded'))).toBe(false);
+    expect(
+      isRetryableTransientError(
+        new Error('Claude API request failed: 502 Bad Gateway'),
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableTransientError(
+        new Error(
+          'Claude engine ended: error_during_execution; stderr(tail)=API Error: 503 Service Unavailable',
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('does NOT retry a deterministic-fatal or no-credential auth error', () => {

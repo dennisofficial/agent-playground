@@ -423,6 +423,7 @@ function fakeStoreJobs() {
   return {
     _patches: () => patches,
     repo: {
+      findOne: vi.fn(async () => ({ id: 'job-1', session_resume: null })),
       update: vi.fn(async (_where: unknown, patch: Record<string, unknown>) => {
         patches.push(patch);
         return { affected: 1 };

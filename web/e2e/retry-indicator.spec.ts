@@ -27,7 +27,9 @@ const DEV_PASSWORD = process.env.ADMIN_SEED_PASSWORD;
 const ORG_ID = "e9af869c-309a-466e-ba1b-51b870106b3f";
 const REPO_ID = "63ad1635-966a-427f-8e52-9cc8a8ecfc8b";
 const RICH_JOB_ID = "da700000-0000-4000-8000-000000000104";
-const RICH_PATH = `/workspace/${ORG_ID}~${REPO_ID}~${RICH_JOB_ID}`;
+const RICH_BUILDER_THREAD_ID = "da700000-0000-4000-8000-000000002002";
+const RICH_BUILDER_LANE = `thread:${RICH_BUILDER_THREAD_ID}`;
+const RICH_PATH = `/workspace/${ORG_ID}~${REPO_ID}~${RICH_JOB_ID}?lane=${RICH_BUILDER_THREAD_ID}`;
 
 const EVIDENCE_DIR = process.env.ATLAS_EVIDENCE_DIR ?? "/context/evidence";
 const AUTH_FILE = path.join(__dirname, ".auth", "retry-user.json");
@@ -58,11 +60,12 @@ async function shot(page: Page, name: string) {
 async function injectFrame(
   page: Page,
   jobId: string,
+  lane: string,
   seq: number,
   event: Record<string, unknown>,
 ) {
   await page.evaluate(
-    ({ jobId, seq, event }) => {
+    ({ jobId, lane, seq, event }) => {
       const hook = (
         window as unknown as {
           __atlasLiveStream?: {
@@ -76,9 +79,9 @@ async function injectFrame(
         }
       ).__atlasLiveStream;
       if (!hook) throw new Error("__atlasLiveStream dev hook not present");
-      hook.applyStreamFrame(jobId, "main", seq, event);
+      hook.applyStreamFrame(jobId, lane, seq, event);
     },
-    { jobId, seq, event },
+    { jobId, lane, seq, event },
   );
 }
 
@@ -94,18 +97,18 @@ test.describe("live retry indicator (1440x900)", () => {
 
     // A high seq base so the injected frames always beat anything already applied for this lane.
     const base = 5_000_000;
-    // Open a live turn so the indicator mounts (turnActive = active && !realtimeIdle).
-    await injectFrame(page, RICH_JOB_ID, base, {
+    // Open a live build-thread turn so the indicator mounts on the selected builder transcript.
+    await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base, {
       kind: "turn_start",
       startedAt: Date.now(),
     });
-    await injectFrame(page, RICH_JOB_ID, base + 1, {
+    await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 1, {
       kind: "text_delta",
       text: "working…",
     });
 
     // Now a host-backstop retry: attempt 3/10, next attempt ~9s out.
-    await injectFrame(page, RICH_JOB_ID, base + 2, {
+    await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 2, {
       kind: "turn_retry",
       attempt: 3,
       max: 10,
@@ -132,7 +135,7 @@ test.describe("live retry indicator (1440x900)", () => {
     expect(later).toBeLessThan(first);
 
     // A real turn event (the retry succeeded) clears `retrying` → back to the normal working indicator.
-    await injectFrame(page, RICH_JOB_ID, base + 3, {
+    await injectFrame(page, RICH_JOB_ID, RICH_BUILDER_LANE, base + 3, {
       kind: "text_delta",
       text: "resumed",
     });

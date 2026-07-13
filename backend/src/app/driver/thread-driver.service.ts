@@ -761,6 +761,9 @@ export class ThreadDriver implements JobDispatcher {
       clearTimeout(pendingTimer);
       this.hostRetryTimers.delete(jobId);
     }
+    await this.store.clearRetrySessionResume(jobId, 'build').catch((err) =>
+      this.logger.warn(`clearRetrySessionResume(${jobId}) failed: ${err}`),
+    );
     try {
       await this.runJobWithTransientRetry(jobId);
       // A clean drive clears the lost-rotation-race auto-retry budget so a future, unrelated auth halt on
@@ -904,8 +907,9 @@ export class ThreadDriver implements JobDispatcher {
         );
         await this.relayRetrying(jobId, n, maxRetries);
         const job = await this.store.loadJob(jobId).catch(() => null);
+        const lane = await this.retryLaneForJob(jobId);
         try {
-          this.liveTurns.retry(job?.repoId ?? jobId, jobId, MAIN_LANE, {
+          this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
             attempt: n,
             max: maxRetries,
             nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
@@ -944,8 +948,9 @@ export class ThreadDriver implements JobDispatcher {
       const n = attempts + 1;
       this.authRetryAttempts.set(jobId, n);
       await this.relayRetrying(jobId, n, MAX_HOST_RETRIES);
+      const lane = await this.retryLaneForJob(jobId);
       try {
-        this.liveTurns.retry(job?.repoId ?? jobId, jobId, MAIN_LANE, {
+        this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
           attempt: n,
           max: MAX_HOST_RETRIES,
           nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
@@ -986,6 +991,15 @@ export class ThreadDriver implements JobDispatcher {
         ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
         : cleanAuthHaltReason(err.message, err.engine),
     );
+  }
+
+  /** Best-effort live lane for a build host retry: current/next executable thread, else the Main fallback. */
+  private async retryLaneForJob(jobId: string): Promise<string> {
+    const threads = await this.store.threadsForJob(jobId).catch(() => []);
+    const thread = threads.find(
+      (t) => isDriverExecutableKind(t.kind) && t.status !== 'done',
+    );
+    return thread ? laneFor('builder', thread.id) : MAIN_LANE;
   }
 
   /**

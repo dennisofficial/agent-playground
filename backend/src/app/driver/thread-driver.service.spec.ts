@@ -97,10 +97,14 @@ interface ReviewChildRow {
   reviewFindings: unknown[] | null;
 }
 
+interface StoreDriverThread extends DriverThread {
+  config?: Record<string, unknown>;
+}
+
 interface StoreState {
   job: Job;
   record: DecisionRecord | null;
-  threads: DriverThread[];
+  threads: StoreDriverThread[];
   steps: Step[];
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
@@ -138,6 +142,7 @@ function makeStore(state: StoreState): {
       return (state.systemNotices ?? []).includes(text);
     }),
     setSessionResume: vi.fn(async () => undefined),
+    clearRetrySessionResume: vi.fn(async () => undefined),
     setFeatureBranch: vi.fn(async (_id: string, branch: string) => {
       state.job.featureBranch = branch;
     }),
@@ -221,7 +226,7 @@ function makeStore(state: StoreState): {
         const kids = (state.reviewChildren ??= []);
         const existing = kids.filter((c) => c.parentId === parent.id);
         if (existing.length) return existing.map((c) => ({ ...c }));
-        const created = childSpecs.map((c, i) => ({
+        const created: ReviewChildRow[] = childSpecs.map((c, i) => ({
           id: `${parent.id}-child-${i}`,
           parentId: parent.id,
           kind: c.kind,

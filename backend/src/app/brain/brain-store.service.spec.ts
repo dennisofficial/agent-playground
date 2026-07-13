@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import { BrainStoreService } from './brain-store.service';
-import type { JobEntity } from '../persistence/entities';
+import type { CodexReviewEntity, JobEntity } from '../persistence/entities';
 import type { JobDependencyService } from '../job-deps';
 
 /**
@@ -23,7 +23,9 @@ function fakeJobsRepo() {
 function fakeReviewsRepo(running: boolean) {
   return {
     exists: vi.fn(async () => running),
-  } as unknown as Repository<unknown> & { exists: ReturnType<typeof vi.fn> };
+  } as unknown as Repository<CodexReviewEntity> & {
+    exists: ReturnType<typeof vi.fn>;
+  };
 }
 
 function makeStore(opts: {
@@ -84,6 +86,8 @@ describe('BrainStoreService.endTurnActivity', () => {
       session_resume: {
         at: '2026-07-13T00:10:00.000Z',
         lane: 'main',
+        reason: 'retry',
+        resetSource: 'usage_api',
         kind: 'retry',
       },
     });
@@ -105,6 +109,8 @@ describe('BrainStoreService.endTurnActivity', () => {
       session_resume: {
         at: '2026-07-13T00:10:00.000Z',
         lane: 'build',
+        reason: 'limit',
+        resetSource: 'parsed_string',
         kind: 'session_limit',
       },
     });

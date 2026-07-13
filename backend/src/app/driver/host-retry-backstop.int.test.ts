@@ -281,9 +281,22 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       } as unknown as EnvService;
       // REAL live-turn store — the actual RxJS subject the retry loop fans `turn_retry` frames onto.
       const liveTurns = new LiveTurnStore();
-      const retryFrames: Array<{ attempt: number; max: number; [k: string]: unknown }> = [];
+      const retryFrames: Array<{
+        lane: string;
+        attempt: number;
+        max: number;
+        [k: string]: unknown;
+      }> = [];
       const liveTurnsSub = liveTurns.stream$.subscribe((f) => {
-        if (f.event?.kind === 'turn_retry') retryFrames.push(f.event as never);
+        const event = f.event as {
+          kind?: string;
+          attempt: number;
+          max: number;
+          [k: string]: unknown;
+        };
+        if (event.kind === 'turn_retry') {
+          retryFrames.push({ lane: f.lane, ...event });
+        }
       });
       // REAL block sink — the actual `MessageEntity` repository, so the durable retry notice lands in
       // live Postgres `messages`.
@@ -459,6 +472,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       expect(retryFrames.length).toBeGreaterThanOrEqual(3);
       expect(retryFrames.slice(0, 3).map((f) => f.attempt)).toEqual([1, 2, 3]);
       expect(retryFrames.every((f) => f.max === MAX_HOST_RETRIES)).toBe(true);
+      expect(retryFrames.slice(0, 3).every((f) => f.lane === `thread:${threadRow.id}`)).toBe(true);
 
       // eslint-disable-next-line no-console
       console.log('OBSERVED system_notice texts (live Postgres `messages`):', noticeTexts);

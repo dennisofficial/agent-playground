@@ -56,7 +56,16 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
   });
 
   it('build + retry park → resumeRetry (no-halt re-drive), never resumePaused', async () => {
-    due = [job({ session_resume: { lane: 'build', kind: 'retry' } })];
+    due = [
+      job({
+        session_resume: {
+          lane: 'build',
+          reason: 'retry',
+          resetSource: 'usage_api',
+          kind: 'retry',
+        },
+      }),
+    ];
     const resumed = await sweep.tick();
     expect(resumed).toBe(1);
     expect(driver.resumeRetry).toHaveBeenCalledWith('job-1');
@@ -64,14 +73,32 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
   });
 
   it('build + session-limit park → resumePaused (unchanged), never resumeRetry', async () => {
-    due = [job({ session_resume: { lane: 'build', kind: 'session_limit' } })];
+    due = [
+      job({
+        session_resume: {
+          lane: 'build',
+          reason: 'limit',
+          resetSource: 'parsed_string',
+          kind: 'session_limit',
+        },
+      }),
+    ];
     await sweep.tick();
     expect(driver.resumePaused).toHaveBeenCalledWith('job-1');
     expect(driver.resumeRetry).not.toHaveBeenCalled();
   });
 
   it('main + retry park → seeds the "Reconnecting…" nudge + clears the clock, NOT the session-limit copy', async () => {
-    due = [job({ session_resume: { lane: 'main', kind: 'retry' } })];
+    due = [
+      job({
+        session_resume: {
+          lane: 'main',
+          reason: 'retry',
+          resetSource: 'usage_api',
+          kind: 'retry',
+        },
+      }),
+    ];
     await sweep.tick();
     expect(surface.seedSystemNotification).toHaveBeenCalledTimes(1);
     const [repoId, jobId, nudge, opts] =
@@ -90,7 +117,16 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
   });
 
   it('main + session-limit park → seeds the reset nudge (unchanged behavior)', async () => {
-    due = [job({ session_resume: { lane: 'main', kind: 'session_limit' } })];
+    due = [
+      job({
+        session_resume: {
+          lane: 'main',
+          reason: 'limit',
+          resetSource: 'parsed_string',
+          kind: 'session_limit',
+        },
+      }),
+    ];
     await sweep.tick();
     const [, , nudge, opts] = surface.seedSystemNotification.mock.calls[0];
     expect(nudge).toEqual(sessionLimitResetNudge('Add retries'));
