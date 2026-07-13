@@ -231,6 +231,22 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(meta.workedMs).toBeUndefined();
   });
 
+  it('finish turn_meta: persists engine diagnostics from turn_debug even without usage', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', channel: 'R' });
+    h.onEvent({ kind: 'text', text: 'reply' });
+    h.onEvent({ kind: 'turn_debug', terminalReason: 'completed', stopReason: 'end_turn' });
+    h.onEvent({ kind: 'turn_debug', streamClosedCount: 2 });
+    await h.finish('reply');
+
+    expect(persisted.map((p) => p.block.kind)).toEqual(['chat', 'turn_meta']);
+    const meta = persisted.at(-1)!.block.meta!;
+    expect(meta.terminalReason).toBe('completed');
+    expect(meta.stopReason).toBe('end_turn');
+    expect(meta.streamClosedCount).toBe(2);
+    expect(meta.usage).toBeUndefined();
+  });
+
   it('finish without usage: no turn_meta block is written', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({ jobId: 'T', channel: 'R' });
