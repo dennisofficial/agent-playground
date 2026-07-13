@@ -83,7 +83,7 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
 
     const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? join(tmp, 'store') : undefined) } as EnvService;
     const git = new LocalGitService({ get: () => undefined } as never);
-    const creds = { githubToken: async () => undefined } as unknown as CredentialResolver;
+    const creds = { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver;
     repo = new FakeRepo();
     store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
     installer = new SkillInstallerService(env, git, creds, store);

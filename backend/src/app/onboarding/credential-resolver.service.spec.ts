@@ -196,6 +196,26 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
   });
 
   describe('githubToken — app mode', () => {
+    it('githubAuthMode returns the effective in-sandbox transport mode, not a raw app setting without an installation', async () => {
+      const r = new CredentialResolver(
+        fakeStore({ T1: { githubAuthMode: 'app', githubPat: 'ghp_fallback' } }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r.githubAuthMode('T1')).toBe('pat');
+
+      const r2 = new CredentialResolver(
+        fakeStore({
+          T2: { githubAuthMode: 'app', githubAppInstallationId: '123' },
+        }),
+        fakeClaudeStore({}),
+        fakeAppTokens(),
+        fakeIdentities(),
+      );
+      expect(await r2.githubAuthMode('T2')).toBe('app');
+    });
+
     it('app-mode org with an installation id returns the minted installation token', async () => {
       const r = new CredentialResolver(
         fakeStore({

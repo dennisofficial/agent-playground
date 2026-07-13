@@ -348,10 +348,11 @@ function githubAppErrorMessage(reason: string | null): string {
 }
 
 /**
- * The GitHub App is a separate, optional credential from the PAT above: connecting it swaps the org's
- * live GitHub auth to an installation token with its own rate-limit pool. Connecting is a redirect flow —
- * `install-url` mints a one-time GitHub install URL, and GitHub's callback lands back here via
- * `?githubApp=connected|error`, which this component picks up on mount.
+ * The GitHub App is a separate, optional credential from the PAT above: connecting it gives host/background
+ * GitHub operations an installation token with its own rate-limit pool. The PAT/App segmented control below
+ * explicitly chooses the in-sandbox commit/push/PR identity. Connecting is a redirect flow — `install-url`
+ * mints a one-time GitHub install URL, and GitHub's callback lands back here via `?githubApp=connected|error`,
+ * which this component picks up on mount.
  */
 function GithubAppConnect({
   orgId,
@@ -475,11 +476,14 @@ function GithubAppConnect({
         <div className="mt-3.5">
           <HelpBlock>
             <p>
-              App auth routes Atlas’s GitHub traffic through a GitHub App
-              installation token, which has its own rate-limit pool separate
-              from any human’s personal 5,000/hr budget.
+              App auth routes host and background GitHub traffic through a
+              GitHub App installation token, which has its own rate-limit pool
+              separate from any human’s personal 5,000/hr budget.
             </p>
-            <p>Connecting stops operators from getting personal-account rate-limited.</p>
+            <p>
+              After connecting, choose whether sandbox commits, pushes, and PRs
+              use the PAT or the App.
+            </p>
           </HelpBlock>
           {isOwner ? (
             <button

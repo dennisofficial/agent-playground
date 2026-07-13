@@ -678,7 +678,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
         e.GIT_TERMINAL_PROMPT = '0';
         // NOTE: GITHUB_TOKEN/GH_TOKEN are baked from `apiToken ?? token` into this frozen exec env and are
         // NOT refreshed mid-turn. `apiToken` and the transport `token` now resolve from the SAME
-        // `github_auth_mode` credential (CredentialResolver), so they're never a different credential — only
+        // effective GitHub credential (CredentialResolver), so they're never a different credential — only
         // static vs. live matters here. Only `git` survives the ~hourly expiry, via the host-refreshed
         // credential FILE above. When the resolved token is a PAT (pat-mode), it does not expire hourly, so
         // the mid-turn `gh`-expiry caveat below doesn't apply. When it's an App installation token (app-mode),

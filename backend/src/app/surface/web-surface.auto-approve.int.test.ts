@@ -53,6 +53,7 @@ const fakeCreds = {
   anthropicKey: async () => undefined,
   openaiKey: async () => undefined,
   githubToken: async () => 'fake-token',
+  hostGithubToken: async () => 'fake-token',
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 

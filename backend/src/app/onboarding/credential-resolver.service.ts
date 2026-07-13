@@ -37,10 +37,11 @@ export class CredentialResolver {
     return (await this.store.read(orgId))?.openaiApiKey;
   }
 
-  /** The org's GitHub auth mode ('pat' default). Drives whether in-sandbox git uses the file-backed credential helper (app) or a static extraheader (pat). */
+  /** Effective in-sandbox GitHub auth mode ('pat' default). Drives whether git uses the file-backed credential helper (app) or a static extraheader (pat). */
   async githubAuthMode(orgId?: string): Promise<'pat' | 'app'> {
     if (!orgId) return 'pat';
-    return (await this.store.read(orgId))?.githubAuthMode ?? 'pat';
+    const creds = await this.store.read(orgId);
+    return creds ? this.effectiveCredential(creds) : 'pat';
   }
 
   /** The single credential that governs ALL in-sandbox GitHub auth for this org: 'app' only when app-mode
