@@ -91,6 +91,19 @@ export interface LiveTurn {
     string,
     { contextTokens: number; contextModel?: string; contextLimit: number }
   >;
+  /**
+   * Set while a retry is in flight — either the SDK's native `api_retry` mid-turn (overloaded/5xx) or the
+   * host's 10×/10s auth/transport backstop between turns. Drives the `LiveIndicator`'s "Reconnecting to
+   * Claude — auto-retry n/m…" label + countdown. `nextAttemptAt` is ALWAYS an absolute epoch-ms instant
+   * (the reducer resolves a relative `retryDelayMs` to absolute ONCE at frame-apply time so the countdown
+   * has a stable target). Cleared the moment any real content frame lands (the retry succeeded).
+   */
+  retrying?: {
+    attempt: number;
+    max: number;
+    nextAttemptAt?: number;
+    reason?: string;
+  };
 }
 
 type StreamPayload = {
@@ -118,6 +131,17 @@ type StreamPayload = {
   contextLimit?: number;
   /** present on block-creating delta frames — server epoch-ms this block first appeared. */
   emittedAt?: number;
+  /** present on `kind:'turn_retry'` — the in-flight retry's attempt counter (1-based) and budget. */
+  attempt?: number;
+  max?: number;
+  /** `turn_retry`: the SDK `api_retry`'s RELATIVE delay to the next attempt (ms) — resolved to absolute in the reducer. */
+  retryDelayMs?: number;
+  /** `turn_retry`: the host backstop's ABSOLUTE epoch-ms instant of the next attempt (host frames carry this). */
+  nextAttemptAt?: number;
+  /** `turn_retry`: a short reason tag (e.g. `overloaded`, `auth`, `econnreset`) for the retry. */
+  reason?: string;
+  /** present on `kind:'snapshot'` — the retry state to restore so a reconnect mid-backoff still shows it. */
+  retrying?: LiveTurn["retrying"];
 };
 
 let blockSeq = 0;
@@ -190,6 +214,38 @@ class ThreadStreamStore {
         // The reconnect snapshot now carries `startedAt` so elapsed survives refresh/reconnect; fall back
         // to any value we already had, so a snapshot missing it doesn't reset the timer.
         startedAt: ev.startedAt ?? cur?.startedAt,
+        // Carry the retry state from the snapshot so a reconnect mid-backoff still shows "Reconnecting…".
+        retrying: ev.retrying,
+      });
+      this.notify(key);
+      return;
+    }
+
+    // `turn_retry` — a retry is in flight (SDK `api_retry` mid-turn, or the host 10×/10s backstop between
+    // turns). Keep the lane ACTIVE (a preceding `turn_end` may have cleared it — re-activating keeps the
+    // indicator mounted through the backoff) and stamp `retrying` for the label + countdown. Blocks and
+    // `startedAt` are untouched. The absolute `nextAttemptAt` is resolved ONCE here so the countdown has a
+    // stable target: host frames already carry it; SDK `api_retry` frames carry a relative `retryDelayMs`.
+    if (ev.kind === "turn_retry") {
+      if (cur && seq <= cur.lastSeq) return;
+      const nextAttemptAt =
+        ev.nextAttemptAt ??
+        (ev.retryDelayMs != null ? Date.now() + ev.retryDelayMs : undefined);
+      this.map.set(key, {
+        blocks: cur?.blocks ?? [],
+        active: true,
+        lastSeq: seq,
+        startedAt: cur?.startedAt,
+        contextTokens: cur?.contextTokens,
+        contextModel: cur?.contextModel,
+        contextLimit: cur?.contextLimit,
+        subUsage: cur?.subUsage,
+        retrying: {
+          attempt: ev.attempt ?? 0,
+          max: ev.max ?? 0,
+          nextAttemptAt,
+          reason: ev.reason,
+        },
       });
       this.notify(key);
       return;
@@ -403,10 +459,20 @@ class ThreadStreamStore {
     this.notify(key);
   }
 
-  end(jobId: string, lane: string): void {
+  /**
+   * Clear a lane's live turn after a `turn_end`. `endSeq` is the `turn_end` frame's `seq`: the host
+   * backstop fans a `turn_retry` (HIGHER seq) AFTER `finish()`'s `turn_end`, but the client only clears on
+   * the ASYNC `reconcileNow().then(endLiveTurn)` — which could run AFTER that `turn_retry` re-activated the
+   * turn and wrongly delete it (indicator vanishes for the whole backoff). So when a newer frame has landed
+   * (`turn.lastSeq > endSeq`), SKIP the delete — the turn was re-activated. Monotonic `seq` makes this exact.
+   */
+  end(jobId: string, lane: string, endSeq?: number): void {
     const key = laneKey(jobId, lane);
+    const cur = this.map.get(key);
+    // A stale turn_end must not clobber a turn that a newer frame (a turn_retry) just re-activated.
+    if (cur && endSeq != null && cur.lastSeq > endSeq) return;
     this.touchedEpoch.delete(key);
-    if (!this.map.has(key)) return;
+    if (!cur) return;
     this.map.delete(key);
     this.notify(key);
   }
@@ -476,9 +542,17 @@ export function applyStreamFrame(
   store.apply(jobId, lane, seq, event as StreamPayload);
 }
 
-/** Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`). */
-export function endLiveTurn(jobId: string, lane: string = MAIN_LANE): void {
-  store.end(jobId, lane);
+/**
+ * Clear a thread's live turn lane — call AFTER the durable `/messages` refetch lands (post `turn_end`).
+ * Pass the `turn_end` frame's `endSeq` so a stale `turn_end` can't delete a turn a later `turn_retry`
+ * re-activated (the host backstop fans `turn_retry` at a higher seq after `turn_end`).
+ */
+export function endLiveTurn(
+  jobId: string,
+  lane: string = MAIN_LANE,
+  endSeq?: number,
+): void {
+  store.end(jobId, lane, endSeq);
 }
 
 /**
@@ -577,4 +651,35 @@ export function formatElapsed(totalSeconds: number): string {
     return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`;
   if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
   return `${seconds}s`;
+}
+
+/**
+ * Whole seconds remaining until a retry's `targetMs` (absolute epoch-ms) at wall-clock `now` — the pure
+ * core of `useRetryCountdown`. Rounds UP (a fresh 10s wait reads "10s", not "9s") and returns `null` once
+ * the target has passed (or is undefined), so the label drops the countdown clause and shows a bare
+ * ellipsis while the next attempt fires. Kept pure (no React) so it's unit-testable in the node test env.
+ */
+export function retryCountdownSeconds(
+  targetMs: number | undefined,
+  now: number,
+): number | null {
+  if (targetMs == null) return null;
+  const remainingMs = targetMs - now;
+  if (remainingMs <= 0) return null;
+  return Math.ceil(remainingMs / 1_000);
+}
+
+// Dev-only test hook: expose the live-stream store entrypoints on `window` so a Playwright drive can inject
+// a SCRIPTED frame (e.g. a `turn_retry`) into the REAL store + the REAL `LiveIndicator` without a real
+// engine event — the sanctioned way to exercise the retry indicator's UX (the trigger isn't on-demand
+// inducible). Statically stripped from production bundles by the `NODE_ENV` guard, so it never ships.
+if (
+  typeof window !== "undefined" &&
+  process.env.NODE_ENV !== "production"
+) {
+  (window as unknown as Record<string, unknown>).__atlasLiveStream = {
+    applyStreamFrame,
+    endLiveTurn,
+    peekLiveTurn,
+  };
 }
