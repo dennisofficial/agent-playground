@@ -2470,6 +2470,37 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       spy.mockRestore();
     });
 
+    it('notifyThreadHalted escalates undelivered build-lane host seeds into the wake body + stamps them delivered', async () => {
+      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
+      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
+      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
+        status: 'blocked',
+        summary: 'response format undecided',
+        blocked: { reason: 'decision', detail: 'JSON vs plain text' },
+      });
+      // A still-undelivered host seed on the halting thread's build lane (`thread:th-x`) must ride the wake.
+      const store = (manager as unknown as {
+        stimulusStore: {
+          eligiblePendingChat: (j: string, l: number, lane?: string) => Promise<Array<{ id: string; body: string }>>;
+          markChatDelivered: (id: string) => Promise<void>;
+        };
+      }).stimulusStore;
+      const stamped: string[] = [];
+      store.eligiblePendingChat = async (_j, _l, lane) =>
+        lane === 'thread:th-x' ? [{ id: 'seed-1', body: 'leftover host seed body' }] : [];
+      store.markChatDelivered = async (id) => {
+        stamped.push(id);
+      };
+      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
+      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
+
+      const stim = spy.mock.calls[0][0] as ChatStimulus;
+      expect(stim.body).toContain('Undelivered host seeds'); // the labeled escalation section
+      expect(stim.body).toContain('leftover host seed body'); // the seed body carried to the brain
+      expect(stamped).toContain('seed-1'); // stamped so the sweep won't re-drive a now-dead lane
+      spy.mockRestore();
+    });
+
     it('notifyThreadHalted carries the transcript anchor (atlas-tx line + Leg) resolved from steps/legs', async () => {
       fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
       fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });

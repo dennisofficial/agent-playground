@@ -126,7 +126,7 @@ export class AgentChatSurface implements ChatSurface {
     channel: string,
     jobId: string,
     body: AgentMessage,
-    opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string } = {},
+    opts: { orgId?: string; deliveredQuestionId?: string; deliveredFileId?: string; lane?: string } = {},
   ): string {
     const ts = this.mintTs();
     this.inboundSubject.next({

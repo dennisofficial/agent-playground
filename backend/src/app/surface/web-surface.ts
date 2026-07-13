@@ -191,6 +191,9 @@ export class WebSurface implements ChatSurface {
       deliveredFileId?: string;
       /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
       seedRow?: SeedRow;
+      /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
+       *  lane is dispatched by the caller (`JitHostExecutor`), never here (see the port doc). */
+      lane?: string;
     } = {},
   ): string {
     return this.receiveFromClient(channel, wrapSystemNotification(body), {

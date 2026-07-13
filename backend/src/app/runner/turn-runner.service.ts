@@ -112,6 +112,14 @@ export interface RunTurnInput {
    * set it so a build thread recovers like the brain (see `reattach`). See ADR 0001.
    */
   turnMeta?: TurnMeta;
+  /**
+   * Fired ONCE, host-side, the instant this turn is DURABLY registered (mirrors
+   * `RunEngineArgs.onTurnRegistered`, `engine.types.ts:655`). The build-lane drain uses this to stamp each
+   * folded seed's `delivered_at` at the restart-survivable hand-off, exactly like the brain does. In-process
+   * callback, not a serialized spec field — forwarded host-side alongside `onEvent`/`signal`, NOT via
+   * `TURN_INPUT_FORWARD_KEYS`.
+   */
+  onTurnRegistered?: (turnId: string) => void;
 }
 
 // ── RunTurnInput → RunEngineArgs forwarding contract (second half of the host↔engine wire) ──────────────
@@ -122,7 +130,7 @@ export interface RunTurnInput {
 // to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
 type TurnInputDerivedOrRequiredKey =
   | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' // derived (→ target / sandboxKey) / host-only
-  | 'onEvent' | 'signal' // host-wrapped, set explicitly
+  | 'onEvent' | 'signal' | 'onTurnRegistered' // host-wrapped, set explicitly
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
 const TURN_INPUT_FORWARD_KEYS = [
@@ -257,6 +265,7 @@ export class TurnRunnerService {
         ...pickKeys(input, TURN_INPUT_FORWARD_KEYS),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.onTurnRegistered ? { onTurnRegistered: input.onTurnRegistered } : {}),
       });
     } catch (err) {
       // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the

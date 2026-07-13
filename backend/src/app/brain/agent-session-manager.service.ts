@@ -28,6 +28,15 @@ import {
   StimulusStoreService,
   renderTurn,
   type TurnChunk,
+  type CollectedPending,
+  type DeliveryLane,
+  CHAT_DELIVERY_LEASE_MS as DELIVERY_LEASE_MS,
+  collectPending,
+  steerPending,
+  trySteerLive,
+  isNowPriority,
+  isWakeEligible,
+  userChunkFor,
 } from '../stimulus';
 import {
   CHAT_SURFACE,
@@ -35,6 +44,7 @@ import {
   type DecisionApprovalCard,
   TurnHarnessFactory,
   ThreadInputService,
+  laneFor,
   SYSTEM_SEED_AUTHOR,
   type McpProposalServer,
   type WebQuestionCard,
@@ -249,7 +259,7 @@ export class AgentSessionManager
    * it can't be re-selected for this long. Longer than a cold-container provision so a live delivery isn't
    * raced by the sweep; the per-thread turn queue is the real serializer, so this is a cross-pass guard.
    */
-  private static readonly CHAT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
+  private static readonly CHAT_DELIVERY_LEASE_MS = DELIVERY_LEASE_MS;
 
   /**
    * The thread brain's model — the conversational/planning session that grills, locks decisions, and
@@ -827,6 +837,33 @@ export class AgentSessionManager
    * `/context/generated/threads/<ordinal>-<slug>/completion.md` + the fenced record in the body, then either re-drives with guidance
    * (`retry_thread`) or escalates. A no-op if the thread is no longer owed a wake (already re-driven / done).
    */
+  /**
+   * ESCALATE any still-undelivered build-lane host seed into the brain done/halt wake (spec step 6, d2). When
+   * a thread reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host
+   * seeds — `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Append their
+   * bodies to the wake body (so the brain reads them) and stamp each delivered (so the at-least-once sweep
+   * won't re-drive them into a now-dead lane). The sweep stays the backstop if this stamp races a crash.
+   */
+  private async escalateBuildLaneLeftovers(
+    jobId: string,
+    threadId: string,
+    wakeBody: AgentMessage,
+  ): Promise<AgentMessage> {
+    const leftovers = await this.stimulusStore
+      .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, laneFor('builder', threadId))
+      .catch(() => [] as ChatStimulus[]);
+    if (leftovers.length === 0) return wakeBody;
+    for (const s of leftovers) {
+      void this.stimulusStore.markChatDelivered(s.id).catch((err) =>
+        this.logger.debug(`build-lane escalation stamp for ${s.id} failed (sweep will retry): ${err}`),
+      );
+    }
+    const section = leftovers.map((s) => s.body).join('\n\n');
+    return agentMessage(
+      `${wakeBody}\n\n---\n\nUndelivered host seeds for this build thread (escalated at thread end):\n\n${section}`,
+    );
+  }
+
   async notifyThreadHalted(
     jobId: string,
     threadId: string,
@@ -852,7 +889,11 @@ export class AgentSessionManager
       jobId,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: renderHaltDelivery(thread, outcome, term, anchor),
+      body: await this.escalateBuildLaneLeftovers(
+        jobId,
+        threadId,
+        renderHaltDelivery(thread, outcome, term, anchor),
+      ),
       seedHaltWake: { threadId, gen },
       // The halted thread's own (untrusted) record → a visible `untrusted` pill; keyed by thread+gen.
       seedRow: {
@@ -911,7 +952,11 @@ export class AgentSessionManager
       jobId,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
+      body: await this.escalateBuildLaneLeftovers(
+        jobId,
+        threadId,
+        renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
+      ),
       seedDoneWake: { threadId, reason, gen },
       // The completed thread's own (untrusted) record → a visible `untrusted` pill.
       seedRow: {
@@ -1298,27 +1343,20 @@ export class AgentSessionManager
       return;
     }
 
-    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
-      const pending = await this.stimulusStore
-        .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
-        .catch((err) => {
-          this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
-          return [] as ChatStimulus[];
-        });
-      // Only `now`-priority messages steer a live turn; `queue`/`later` stay pending — they drain at
-      // turn-end (the turn-end re-pump) or ride along the next turn that runs for any other reason (d18).
-      const nowOnly = pending.filter(isNowPriority);
-      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
+    // FAST PATH: a live brain turn is steered directly (the pump core resolves + steers `now`-priority
+    // pending; `queue`/`later` stay pending for turn-end / ride-along).
+    const lane = this.mainDeliveryLane(jobId, orgId, repoId);
+    if (await trySteerLive(this.stimulusStore, lane, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, this.logger)) {
       return;
     }
 
-    // No running turn → deliver via a fresh turn, serialized on the per-thread turn queue.
+    // SLOW PATH: no running turn → deliver via a fresh turn, serialized on the per-thread turn queue (the
+    // queue keying is brain-specific, so the brain owns this serialization around the lane's fresh-turn drain).
     const key = `${orgId}:${jobId}`;
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     const next = prev
       .catch(() => undefined)
-      .then(() => this.deliverPendingViaFreshTurn(jobId, orgId, repoId));
+      .then(() => this.deliverPendingViaFreshTurn(lane));
     this.turnQueues.set(
       key,
       next.finally(() => {
@@ -1329,39 +1367,66 @@ export class AgentSessionManager
   }
 
   /**
-   * Owned coalescing selection for a fresh operator turn (d18). Fetch the thread's eligible pending chat, then
-   * build the chronological `<user>` chunks (one per message), the id set to stamp delivered, and the wake flag
-   * (true when at least one pending message is wake-eligible — a thread whose only pending rows are `later`
-   * composes them as ride-along but must NOT start a turn on its own). Returns null when nothing is pending.
+   * The brain's `main`-lane descriptor for the delivery pump: live-turn resolution stays `runningBrainTurn`
+   * (its exact live-turn + compaction semantics), steering stays the engine `steer`, body framing stays
+   * `engineBody`, and a fresh-turn drain coalesces the pending batch into ONE brain turn.
    */
-  private async collectPendingForTurn(jobId: string): Promise<{
-    pending: ChatStimulus[];
-    userChunks: TurnChunk[];
-    ids: string[];
-    wake: boolean;
-  } | null> {
-    const pending = await this.stimulusStore
-      .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
-      .catch((err) => {
-        this.logger.warn(`pump: eligiblePendingChat failed for thread=${jobId}: ${err}`);
-        return [] as ChatStimulus[];
-      });
-    if (pending.length === 0) return null;
+  private mainDeliveryLane(jobId: string, orgId: string, repoId: string): DeliveryLane {
     return {
-      pending,
-      userChunks: pending.map((p) => userChunkFor(p)),
-      ids: pending.map((p) => p.id),
-      wake: pending.some(isWakeEligible),
+      jobId,
+      orgId,
+      repoId,
+      lane: 'main',
+      resolveLiveTurn: () => this.turnRegistry.runningBrainTurn(jobId),
+      canSteer: () => typeof this.engineRunner.steer === 'function',
+      steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
+      renderBody: (p) => this.engineBody(p),
+      drainFreshTurn: async (collected) => {
+        await this.stimulusStore.leaseChatStimuli(collected.ids);
+        const ids = collected.ids;
+        // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
+        // message); the brain reads them together as this turn's task. Base fields come from the oldest.
+        const combined: ChatStimulus = {
+          ...collected.pending[0],
+          body: collected.pending.map((p) => p.body).join('\n\n'),
+          // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
+          // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
+          // is the clean fallback (used for logging + when `chunks` is absent on a replay).
+          chunks: collected.userChunks,
+        };
+        await this.runChatTurn(combined, {
+          // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
+          // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
+          onRegistered: () => {
+            for (const id of ids) {
+              void this.stimulusStore.markChatDelivered(id).catch((err) =>
+                this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
+              );
+            }
+          },
+        });
+      },
     };
   }
 
-  /** Run ONE fresh turn that consumes the thread's pending operator messages (coalesced, oldest first). */
-  private async deliverPendingViaFreshTurn(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void> {
-    const collected = await this.collectPendingForTurn(jobId);
+  /**
+   * Owned coalescing selection for a fresh operator turn (d18) — delegates to the pump core's `collectPending`
+   * on the `main` lane. Fetches the thread's eligible pending chat, builds the chronological `<user>` chunks
+   * (one per message), the id set to stamp delivered, and the wake flag. Returns null when nothing is pending.
+   */
+  private async collectPendingForTurn(jobId: string): Promise<CollectedPending | null> {
+    return collectPending(
+      this.stimulusStore,
+      jobId,
+      'main',
+      AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+      this.logger,
+    );
+  }
+
+  /** Run ONE fresh turn that consumes the lane's pending operator messages (coalesced, oldest first). */
+  private async deliverPendingViaFreshTurn(lane: DeliveryLane): Promise<void> {
+    const collected = await this.collectPendingForTurn(lane.jobId);
     if (!collected) return;
     // Only WAKE for a wake-eligible (now/queue) message. A thread whose only pending rows are `later`
     // composes them as ride-along into some OTHER turn — it must never start a turn on its own.
@@ -1370,50 +1435,14 @@ export class AgentSessionManager
     // A turn may have appeared since pumpThread's check (a boot re-attach resumed one). Steer the `now`
     // messages into it instead of starting a SECOND turn on the same session; queue/later stay pending for
     // the turn-end drain.
-    const live = await this.turnRegistry.runningBrainTurn(jobId).catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    const live = await lane.resolveLiveTurn().catch(() => null);
+    if (live?.turn_id && lane.canSteer()) {
       const nowOnly = collected.pending.filter(isNowPriority);
-      if (nowOnly.length) await this.steerPending(live.turn_id, nowOnly);
+      if (nowOnly.length) await steerPending(this.stimulusStore, lane, live.turn_id, nowOnly, this.logger);
       return;
     }
 
-    await this.stimulusStore.leaseChatStimuli(collected.ids);
-    const ids = collected.ids;
-    // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
-    // message); the brain reads them together as this turn's task. Base fields come from the oldest.
-    const combined: ChatStimulus = {
-      ...collected.pending[0],
-      body: collected.pending.map((p) => p.body).join('\n\n'),
-      // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
-      // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
-      // is the clean fallback (used for logging + when `chunks` is absent on a replay).
-      chunks: collected.userChunks,
-    };
-    await this.runChatTurn(combined, {
-      // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
-      // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
-      onRegistered: () => {
-        for (const id of ids) {
-          void this.stimulusStore.markChatDelivered(id).catch((err) =>
-            this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
-          );
-        }
-      },
-    });
-  }
-
-  /** Steer each pending message into a live turn (lease first; the engine `input_ack` stamps delivered). */
-  private async steerPending(turnId: string, pending: ChatStimulus[]): Promise<void> {
-    await this.stimulusStore.leaseChatStimuli(pending.map((p) => p.id)).catch((err) =>
-      this.logger.debug(`pump: leaseChat failed (continuing): ${err}`),
-    );
-    for (const p of pending) {
-      await this.engineRunner
-        .steer!(turnId, p.id, this.engineBody(p))
-        .catch((err) =>
-          this.logger.warn(`pump: steer of turn ${turnId} failed (sweep will re-drive): ${err}`),
-        );
-    }
+    await lane.drainFreshTurn(collected);
   }
 
   /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). A steered
@@ -7011,30 +7040,6 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
     stimulus.author.id !== ATLAS_AUTHOR_ID &&
     stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
   );
-}
-
-/** Wake-eligible (d18): `now`/`queue` (absent = `now`) may WAKE a fresh turn; `later` only rides along. */
-function isWakeEligible(s: ChatStimulus): boolean {
-  return (s.priority ?? 'now') !== 'later';
-}
-
-/** Steer-eligible (d18): only `now` (absent = `now`) steers mid-turn; `queue`/`later` never interrupt a live turn. */
-function isNowPriority(s: ChatStimulus): boolean {
-  return (s.priority ?? 'now') === 'now';
-}
-
-/** Build the `<user name at>` chunk for a human message — attribution reconstructed from the stimulus
- *  author + receipt time at engine-render time (the persisted body stays clean). `role` is provisioned
- *  for later multi-operator persona context; unset for now. */
-function userChunkFor(stimulus: ChatStimulus): TurnChunk {
-  return {
-    kind: 'user',
-    body: stimulus.body,
-    attrs: {
-      name: stimulus.author.displayName,
-      at: stimulus.receivedAt.toISOString(),
-    },
-  };
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */

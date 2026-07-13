@@ -8,6 +8,7 @@ import {
   JobEntity,
 } from '../persistence/entities';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
+import { DeliveryPump } from './delivery-pump.service';
 import { EventFilterService } from './event-filter.service';
 import { ProjectRoutingService } from './project-routing.service';
 import { StimulusIntake } from './stimulus-intake.service';
@@ -47,7 +48,13 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
     SurfaceOrchestration,
     StimulusIntake,
     ChatStimulusBridge,
+    DeliveryPump,
   ],
-  exports: [StimulusIntake, ProjectRoutingService, StimulusStoreService],
+  exports: [
+    StimulusIntake,
+    ProjectRoutingService,
+    StimulusStoreService,
+    DeliveryPump,
+  ],
 })
 export class StimulusModule {}

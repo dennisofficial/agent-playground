@@ -37,6 +37,7 @@ import { SessionResumeSweep } from './session-resume-sweep.service';
 import { JobUnblockSweep } from './job-unblock-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
+import { BuildLaneDeliveryService, LANE_SEEDER } from './build-lane-delivery.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
@@ -106,6 +107,10 @@ const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
     DriverStoreService,
     PipelineAwarenessStore,
     BuildShipService,
+    BuildLaneDeliveryService,
+    // The lane-capable host-seed seam — lets the brain's `JitHostExecutor` route a build-lane target through
+    // `seedLane` without a SurfaceModule↔DriverModule cycle (bound as a token so the injection stays @Optional).
+    { provide: LANE_SEEDER, useExisting: BuildLaneDeliveryService },
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     ThreadDriver,
     JobLifecycleService,
@@ -142,6 +147,8 @@ const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
     DriverStoreService,
     PipelineAwarenessStore,
     BuildShipService,
+    BuildLaneDeliveryService,
+    LANE_SEEDER,
     DRIVER_REPO,
   ],
 })
