@@ -3652,7 +3652,7 @@ export class AgentSessionManager
         return {
           ok: true,
           attempt: r.attempt,
-          message: `Thread re-driven with your guidance (attempt ${r.attempt}/${HALT_FIX_ATTEMPT_CAP}).`,
+          message: `Thread re-driven with your guidance (attempt ${r.attempt}).`,
         };
       },
 

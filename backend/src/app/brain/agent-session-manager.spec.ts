@@ -2428,11 +2428,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       const r = (await tools['retry_thread']({ threadId: 'th-x', guidance: 'return JSON' })) as {
         ok?: boolean;
         attempt?: number;
+        message?: string;
       };
       // The cap (HALT_FIX_ATTEMPT_CAP=2) is passed so the DRIVER claims budget only when it will re-drive.
+      // The judge-cap PROMOTION lives inside redriveThread (a judge_unavailable thread gets the higher cap
+      // there), so the brain still hands over the defect cap here — and its success message no longer hardcodes
+      // `/2`, which would misreport the budget for a judge hold.
       expect(mockDispatcher.redriveThread).toHaveBeenCalledWith(THREAD_ID, 'th-x', 'return JSON', 2);
       expect(r.ok).toBe(true);
       expect(r.attempt).toBe(1);
+      expect(r.message).toContain('attempt 1');
+      expect(r.message).not.toContain('/2');
     });
 
     it('retry_thread escalates when redriveThread refuses (budget exhausted / active / wrong job)', async () => {
