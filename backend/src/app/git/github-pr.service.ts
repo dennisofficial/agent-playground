@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { AutoMergeMethod } from '@workspace/shared';
 
 /**
  * Atlas v2's minimal GitHub REST client — a clean-room rewrite of v1's `GithubApiService`, scoped to
@@ -92,6 +93,22 @@ export interface PullReview {
   submittedAt: string | null;
   url: string | null;
 }
+
+/** The outcome of a merge attempt — `ok` carries the merge commit sha; the failure reasons distinguish the
+ *  GitHub statuses the auto-merge evaluator branches on (a moved head vs. a genuinely unmergeable PR). */
+export type MergeResult =
+  | { ok: true; sha: string }
+  | {
+      ok: false;
+      reason:
+        | 'not_mergeable'
+        | 'sha_mismatch'
+        | 'already_merged'
+        | 'method_disallowed'
+        | 'other';
+      status: number;
+      message: string;
+    };
 
 export interface RepoInfo {
   fullName: string;
@@ -508,6 +525,64 @@ export class GithubPrService {
     };
     throw new Error(
       `GitHub refused to close PR #${number} (${res.status}): ${errBody.message ?? 'no detail'}`,
+    );
+  }
+
+  /**
+   * Merge an open PR (PUT /pulls/:n/merge) with the repo-configured strategy. `sha` (the validated head)
+   * guards against a moved head — GitHub 409s if HEAD advanced past it since the caller last checked.
+   */
+  async mergePullRequest(
+    token: string,
+    {
+      owner,
+      repo,
+      number,
+      method,
+      sha,
+    }: { owner: string; repo: string; number: number; method: AutoMergeMethod; sha?: string },
+  ): Promise<MergeResult> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/pulls/${number}/merge`,
+      {
+        method: 'PUT',
+        headers: this.headers(token),
+        body: JSON.stringify({
+          merge_method: method,
+          ...(sha ? { sha } : {}),
+        }),
+      },
+    );
+    if (res.ok) {
+      const b = (await res.json().catch(() => ({}))) as { sha?: string };
+      return { ok: true, sha: b.sha ?? '' };
+    }
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    const message = body.message ?? 'no detail';
+    // 405 = not mergeable (behind/blocked, OR already merged); 409 = head SHA mismatch; 422 = method disallowed.
+    let reason: Exclude<MergeResult, { ok: true }>['reason'] = 'other';
+    if (res.status === 409) reason = 'sha_mismatch';
+    else if (res.status === 422) reason = 'method_disallowed';
+    else if (res.status === 405) {
+      reason = /already merged/i.test(message) ? 'already_merged' : 'not_mergeable';
+    }
+    return { ok: false, reason, status: res.status, message };
+  }
+
+  /** Delete a head branch after a merge (DELETE /git/refs/heads/:branch). Best-effort: a 404/422 means
+   *  it's already gone (a prior attempt, or GitHub's own auto-delete setting), which is a success here. */
+  async deleteBranch(
+    token: string,
+    { owner, repo, branch }: { owner: string; repo: string; branch: string },
+  ): Promise<void> {
+    const res = await this.fetchImpl(
+      `${API}/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+      { method: 'DELETE', headers: this.headers(token) },
+    );
+    if (res.ok || res.status === 404 || res.status === 422) return;
+    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(
+      `GitHub refused to delete branch ${branch} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );
   }
 

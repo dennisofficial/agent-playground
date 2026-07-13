@@ -52,5 +52,7 @@ export interface PromptCtx {
     workspaceProfile?: string | null;
     /** Per-job AUTO-APPROVE mode — which gates (plan / ship / both) auto-advance with no human. */
     autoApproveMode?: AutoApproveMode;
+    /** Per-job AUTO-MERGE toggle — a green, mergeable PR merges itself with no human at the final gate. */
+    autoMerge?: boolean;
   };
 }

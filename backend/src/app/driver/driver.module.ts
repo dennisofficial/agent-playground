@@ -32,6 +32,7 @@ import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
 import { StimulusModule } from '../stimulus';
 // Direct port path (NOT the '../surface' barrel) to stay clear of a SurfaceModule ↔ DriverModule cycle.
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
+import { AutoMergeService } from './auto-merge.service';
 import { GitStateReconciler } from './git-state-reconciler.service';
 import { SessionResumeSweep } from './session-resume-sweep.service';
 import { JobUnblockSweep } from './job-unblock-sweep.service';
@@ -109,6 +110,7 @@ const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
     { provide: DRIVER_REPO, useClass: GitDriverRepoResolver },
     ThreadDriver,
     JobLifecycleService,
+    AutoMergeService,
     GithubPrStateSync,
     GithubCiStateSync,
     GithubTokenRefreshService,
@@ -129,6 +131,7 @@ const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
     ThreadDriver,
     JOB_DISPATCHER,
     JobLifecycleService,
+    AutoMergeService,
     JOB_TEARDOWN,
     GithubPrStateSync,
     GithubCiStateSync,

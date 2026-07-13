@@ -134,6 +134,7 @@ import {
   type ResolvedRepo,
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
+import { AutoMergeService } from './auto-merge.service';
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -262,6 +263,9 @@ export class ThreadDriver implements JobDispatcher {
     private readonly skills: SkillResolver,
     private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
+    // The ONE merge resolution path — the manual "Merge PR" click lands here (resolveMergeApprovalDurably)
+    // exactly like the auto path.
+    private readonly autoMerge: AutoMergeService,
     private readonly awareness: PipelineAwarenessStore,
     // Lets the terminal-error catch tell a shutdown-induced abort (leave the job resumable) apart from a
     // real failure — so a graceful restart mid-build no longer self-marks the job `failed`.
@@ -1342,6 +1346,23 @@ export class ThreadDriver implements JobDispatcher {
       ),
     );
     return true;
+  }
+
+  /**
+   * MERGE-GATE APPROVAL (the "Merge PR" click, routed here by the web surface bridge). Posts a durable
+   * note then merges through the ONE host merge path (`AutoMergeService.mergeNow`) — unlike
+   * {@link resolveShipApprovalDurably} this does NOT re-drive: a merge is terminal, there is nothing left
+   * to build.
+   */
+  async resolveMergeApprovalDurably(jobId: string, ruledBy: string): Promise<void> {
+    await this.blockSink
+      .appendBlock(jobId, {
+        kind: 'chat',
+        text: ':twisted_rightwards_arrows: Merging the pull request.',
+        meta: { source: 'system_operator' },
+      })
+      .catch(() => undefined);
+    await this.autoMerge.mergeNow(jobId, ruledBy);
   }
 
   /**

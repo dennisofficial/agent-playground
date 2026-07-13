@@ -8,6 +8,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
 import { StimulusStoreService } from '../stimulus';
 import { sameCounts, summarizeChecks } from './git-state-reconciler.service';
+import { AutoMergeService } from './auto-merge.service';
 
 /**
  * The SILENT GitHub CI-status webhook sync — the FAST path that mirrors `GitStateReconciler.reconcileOne`'s
@@ -34,6 +35,7 @@ export class GithubCiStateSync {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
+    private readonly autoMerge: AutoMergeService,
   ) {}
 
   /** Coalesce a burst of CI webhooks per correlation key into ONE recompute ~5s later (fire-and-forget). */
@@ -120,5 +122,10 @@ export class GithubCiStateSync {
         { id: job.id },
         { ci_status: sum.status, ci_counts: sum.counts, pr_mergeable: detail.mergeableState },
       );
+    // Unconditional: a redelivered stable-clean CI webhook must still trigger a merge a prior tick skipped
+    // for brain-not-idle (fire-and-forget — never blocks/throws this recompute).
+    void this.autoMerge
+      .maybeAutoMerge(job.id)
+      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
   }
 }

@@ -13,6 +13,7 @@ import {
   AMEND_DISMISS_ACTION_ID,
   APPROVE_ACTION_ID,
   DENY_ACTION_ID,
+  MERGE_ACTION_ID,
   REQUEST_CHANGES_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   SHIP_ACTION_ID,
@@ -83,6 +84,15 @@ export class WebSurfaceModule implements OnApplicationBootstrap, OnApplicationSh
         return;
       }
 
+      // MERGE gate: the "Merge PR" click — not a plan verdict, resolved through the driver's ONE merge
+      // path. Lazy `ThreadDriver` resolution mirrors the SHIP branch above; `resolveMergeApprovalDurably`
+      // delegates to `AutoMergeService.mergeNow`, which re-checks mergeability under its own guard, so a
+      // stale/double click is a safe no-op.
+      if (actionId === MERGE_ACTION_ID) {
+        void resolveMergeApproval(this.moduleRef, meta.jobId, ruledBy).catch(() => undefined);
+        return;
+      }
+
       // RETRACT the ship-review gate: the "Back to building" click. Same lazy-driver resolution as the
       // approve branch above; `retractShipDurably` is idempotent (acts only while parked), so a stale click
       // is a safe no-op.
@@ -144,6 +154,22 @@ async function resolveShipApproval(
   const { ThreadDriver } = await import('../driver/thread-driver.service.js');
   const driver = moduleRef.get(ThreadDriver, { strict: false });
   await driver.resolveShipApprovalDurably(jobId, ruledBy);
+}
+
+/**
+ * Resume a "Merge PR" gate click. Lazily imports {@link ThreadDriver} (same dynamic-import pattern as
+ * {@link resolveShipApproval}) and resolves it from the app-wide DI graph. `resolveMergeApprovalDurably`
+ * delegates to `AutoMergeService.mergeNow`, which is itself idempotent (re-checks mergeability + guards
+ * against a concurrent merge), so a stale/double click is a safe no-op.
+ */
+async function resolveMergeApproval(
+  moduleRef: ModuleRef,
+  jobId: string,
+  ruledBy: string,
+): Promise<void> {
+  const { ThreadDriver } = await import('../driver/thread-driver.service.js');
+  const driver = moduleRef.get(ThreadDriver, { strict: false });
+  await driver.resolveMergeApprovalDurably(jobId, ruledBy);
 }
 
 /**

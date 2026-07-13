@@ -177,6 +177,166 @@ describe('GithubPrService.closePullRequest', () => {
   });
 });
 
+describe('GithubPrService.mergePullRequest', () => {
+  it('PUTs merge_method + sha and returns {ok:true,sha} on 200; token only in Authorization', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: { sha: 'abc' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('TOK123', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+      sha: 'HEAD',
+    });
+    expect(res).toEqual({ ok: true, sha: 'abc' });
+    expect(calls[0].url).toBe('https://api.github.com/repos/o/r/pulls/7/merge');
+    expect(calls[0].init?.method).toBe('PUT');
+    const headers = calls[0].init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer TOK123');
+    expect(String(calls[0].init?.body)).not.toContain('TOK123');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      merge_method: 'squash',
+      sha: 'HEAD',
+    });
+  });
+
+  it('omits the sha key from the body when no sha is passed', async () => {
+    const { impl, calls } = fakeFetch([{ status: 200, body: { sha: 'abc' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await svc.mergePullRequest('TOK', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'merge',
+    });
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body).toEqual({ merge_method: 'merge' });
+    expect('sha' in body).toBe(false);
+  });
+
+  it("maps a 405 'not mergeable' to reason:'not_mergeable'", async () => {
+    const { impl } = fakeFetch([
+      { status: 405, body: { message: 'Pull Request is not mergeable' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('SECRET', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+    });
+    expect(res).toEqual({
+      ok: false,
+      reason: 'not_mergeable',
+      status: 405,
+      message: 'Pull Request is not mergeable',
+    });
+    expect(JSON.stringify(res)).not.toContain('SECRET');
+  });
+
+  it("maps a 405 containing 'already merged' to reason:'already_merged'", async () => {
+    const { impl } = fakeFetch([
+      { status: 405, body: { message: 'Pull Request X is already merged' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('TOK', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+    });
+    expect(res).toMatchObject({ ok: false, reason: 'already_merged' });
+  });
+
+  it("maps a 409 to reason:'sha_mismatch'", async () => {
+    const { impl } = fakeFetch([{ status: 409, body: { message: 'sha wonky' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('TOK', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+    });
+    expect(res).toMatchObject({ ok: false, reason: 'sha_mismatch', status: 409 });
+  });
+
+  it("maps a 422 to reason:'method_disallowed'", async () => {
+    const { impl } = fakeFetch([
+      { status: 422, body: { message: 'Merge method squash is not allowed' } },
+    ]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('TOK', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+    });
+    expect(res).toMatchObject({ ok: false, reason: 'method_disallowed', status: 422 });
+  });
+
+  it("maps any other status to reason:'other'", async () => {
+    const { impl } = fakeFetch([{ status: 500, body: { message: 'boom' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    const res = await svc.mergePullRequest('SECRET', {
+      owner: 'o',
+      repo: 'r',
+      number: 7,
+      method: 'squash',
+    });
+    expect(res).toMatchObject({ ok: false, reason: 'other', status: 500 });
+    expect(JSON.stringify(res)).not.toContain('SECRET');
+  });
+});
+
+describe('GithubPrService.deleteBranch', () => {
+  it('resolves on a 204/200 (DELETE the ref)', async () => {
+    const { impl, calls } = fakeFetch([{ status: 204, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(
+      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+    ).resolves.toBeUndefined();
+    expect(calls[0].url).toBe(
+      'https://api.github.com/repos/o/r/git/refs/heads/atlas%2Ffeature',
+    );
+    expect(calls[0].init?.method).toBe('DELETE');
+  });
+
+  it('swallows a 404 (branch already gone)', async () => {
+    const { impl } = fakeFetch([{ status: 404, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(
+      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('swallows a 422 (unprocessable, e.g. already deleted by GitHub auto-delete)', async () => {
+    const { impl } = fakeFetch([{ status: 422, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(
+      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects on a 500', async () => {
+    const { impl } = fakeFetch([{ status: 500, body: { message: 'boom' } }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await expect(
+      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+    ).rejects.toThrow(/500/);
+  });
+});
+
 describe('GithubPrService.getRepo', () => {
   it('maps a repo and returns null on 404/403', async () => {
     const ok = fakeFetch([

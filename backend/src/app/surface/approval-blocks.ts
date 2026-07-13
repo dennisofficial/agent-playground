@@ -25,6 +25,9 @@ export const RETRACT_SHIP_ACTION_ID = 'atlas_approval:retract_ship';
  *  `RETRACT_SHIP_ACTION_ID`) so the plain ship-card "Amend build" click keeps its existing no-wake behavior. */
 export const AMEND_APPROVE_ACTION_ID = 'atlas_approval:amend_approve';
 export const AMEND_DISMISS_ACTION_ID = 'atlas_approval:amend_dismiss';
+/** The "Merge PR" gate — a human clicking it (or auto-merge auto-clicking it) merges the open PR into its
+ *  base. A THIRD gate alongside Approve (plan) and Ship it. Button value carries only `{ jobId }`. */
+export const MERGE_ACTION_ID = 'atlas_approval:merge';
 
 /** What rides in a button `value` / a verdict payload — the ids needed to resolve the gate. */
 export interface ApprovalActionMeta {
