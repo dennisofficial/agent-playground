@@ -15,6 +15,10 @@ function isOkStatus(status: number): boolean {
   return status === 304 || (status >= 200 && status < 300);
 }
 
+function encodeRefPath(ref: string): string {
+  return ref.split('/').map(encodeURIComponent).join('/');
+}
+
 /** Events delivered to the WORK-EVENTS front door (`/webhooks/github/events`) → routed to the owning job. */
 export const WORK_EVENTS = [
   'workflow_run',
@@ -576,7 +580,7 @@ export class GithubPrService {
     { owner, repo, branch }: { owner: string; repo: string; branch: string },
   ): Promise<void> {
     const res = await this.fetchImpl(
-      `${API}/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`,
+      `${API}/repos/${owner}/${repo}/git/refs/heads/${encodeRefPath(branch)}`,
       { method: 'DELETE', headers: this.headers(token) },
     );
     if (res.ok || res.status === 404 || res.status === 422) return;

@@ -652,6 +652,10 @@ export interface CreateThreadBody {
   autoApproveMode?: AutoApproveMode;
   /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
   autoMerge?: boolean;
+  /** GitHub merge strategy used when auto-merge lands the PR. */
+  autoMergeMethod?: AutoMergeMethod;
+  /** Delete the head branch after a successful auto-merge. */
+  autoMergeDeleteBranch?: boolean;
 }
 
 export function createJob(
@@ -681,6 +685,10 @@ export function createJobWithFiles(
   if (body.autoApproveMode)
     form.append("autoApproveMode", body.autoApproveMode);
   if (body.autoMerge) form.append("autoMerge", "true");
+  if (body.autoMergeMethod)
+    form.append("autoMergeMethod", body.autoMergeMethod);
+  if (body.autoMergeDeleteBranch != null)
+    form.append("autoMergeDeleteBranch", String(body.autoMergeDeleteBranch));
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

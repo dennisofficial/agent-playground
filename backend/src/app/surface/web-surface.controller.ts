@@ -393,6 +393,11 @@ interface SetAutoMergeDto {
   method?: AutoMergeMethod;
   deleteBranch?: boolean;
 }
+function coerceBoolean(raw: unknown): boolean | undefined {
+  if (raw === true || raw === 'true') return true;
+  if (raw === false || raw === 'false') return false;
+  return undefined;
+}
 interface ApproveDto {
   actionId: string;
   value: string;
@@ -819,6 +824,8 @@ export class WebSurfaceController {
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
     // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
     const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
+    const autoMerge = coerceBoolean(body.autoMerge) === true;
+    const autoMergeDeleteBranch = coerceBoolean(body.autoMergeDeleteBranch);
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -833,12 +840,11 @@ export class WebSurfaceController {
           : {}),
         // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
         // also records who armed it; an unknown/absent method defaults to 'squash', deleteBranch to true.
-        ...(body.autoMerge === true || (body.autoMerge as unknown) === 'true'
+        ...(autoMerge
           ? {
               auto_merge: true,
               auto_merge_method: isAutoMergeMethod(body.autoMergeMethod) ? body.autoMergeMethod : 'squash',
-              auto_merge_delete_branch:
-                typeof body.autoMergeDeleteBranch === 'boolean' ? body.autoMergeDeleteBranch : true,
+              auto_merge_delete_branch: autoMergeDeleteBranch ?? true,
               auto_merge_by: user.id,
             }
           : {}),
@@ -2540,14 +2546,15 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; autoMerge: boolean; autoMergeMethod: AutoMergeMethod; autoMergeDeleteBranch: boolean }> {
     // Resolve scoped to the org first (defense in depth beyond the guard) — 404s a missing/foreign job.
     await this.requireThread(jobId, org.id);
-    const enable = body.autoMerge === true;
+    const enable = coerceBoolean(body.autoMerge) === true;
     const method = isAutoMergeMethod(body.method) ? body.method : undefined;
+    const deleteBranch = coerceBoolean(body.deleteBranch);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
       {
         auto_merge: enable,
         ...(method ? { auto_merge_method: method } : {}),
-        ...(typeof body.deleteBranch === 'boolean' ? { auto_merge_delete_branch: body.deleteBranch } : {}),
+        ...(deleteBranch != null ? { auto_merge_delete_branch: deleteBranch } : {}),
         // Stamp who enabled it; never clear on disable — the audit trail of the last arm stands.
         ...(enable ? { auto_merge_by: user.id } : {}),
       },

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import type { CiSyncDelta } from '../domain';
@@ -35,7 +35,8 @@ export class GithubCiStateSync {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    private readonly autoMerge: AutoMergeService,
+    @Optional()
+    private readonly autoMerge?: AutoMergeService,
   ) {}
 
   /** Coalesce a burst of CI webhooks per correlation key into ONE recompute ~5s later (fire-and-forget). */
@@ -125,7 +126,7 @@ export class GithubCiStateSync {
     // Unconditional: a redelivered stable-clean CI webhook must still trigger a merge a prior tick skipped
     // for brain-not-idle (fire-and-forget — never blocks/throws this recompute).
     void this.autoMerge
-      .maybeAutoMerge(job.id)
+      ?.maybeAutoMerge(job.id)
       .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
   }
 }

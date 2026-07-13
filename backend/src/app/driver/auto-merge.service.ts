@@ -93,7 +93,9 @@ export class AutoMergeService {
     const job = await this.jobs.findOneBy({ id: jobId });
     if (!job) return;
     if (!prMergeReady(job)) {
-      await this.driverStore.neutralizeMergeCard(jobId, 'not-ready').catch(() => undefined);
+      await this.driverStore
+        .neutralizeMergeCard(jobId, 'not-ready')
+        .catch(() => undefined);
       return;
     }
     // GitHub-mergeable → the manual Merge PR card appears regardless of auto_merge (a human can always click).
@@ -104,14 +106,19 @@ export class AutoMergeService {
       const approver = await this.resolveApprover(job);
       await this.mergeNow(jobId, approver);
     } catch (err) {
-      this.logger.warn(`auto-merge could not resolve an approver for job ${jobId}: ${err}`);
+      this.logger.warn(
+        `auto-merge could not resolve an approver for job ${jobId}: ${err}`,
+      );
     }
   }
 
   private async resolveApprover(job: JobEntity): Promise<string> {
     if (job.auto_merge_by) return job.auto_merge_by;
     const owner = await this.driverStore.ownerUserId(job.org_id);
-    if (!owner) throw new Error(`no auto-merge approver for job ${job.id} (no auto_merge_by and no org owner)`);
+    if (!owner)
+      throw new Error(
+        `no auto-merge approver for job ${job.id} (no auto_merge_by and no org owner)`,
+      );
     return owner;
   }
 
@@ -123,6 +130,9 @@ export class AutoMergeService {
     try {
       const job = await this.jobs.findOneBy({ id: jobId });
       if (!job || !prMergeReady(job)) return false; // re-check under the guard
+      // A prior 422 means the repo disallows THIS configured merge method. Do not keep hammering GitHub
+      // on every later reconciler/CI/turn-end trigger; changing the job's method creates a fresh key.
+      if (await this.hasMethodDisallowedNote(job)) return false;
       const repo = await this.repos.findOne({ where: { id: job.repo_id } });
       const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
       const token = await this.creds.githubToken(job.org_id);
@@ -140,13 +150,20 @@ export class AutoMergeService {
         sha: detail.headSha ?? undefined,
       });
       if (result.ok || result.reason === 'already_merged') {
-        if (job.auto_merge_delete_branch && job.feature_branch) {
+        const branchToDelete = detail.headRef ?? job.feature_branch;
+        if (job.auto_merge_delete_branch && branchToDelete) {
           await this.pr
-            .deleteBranch(token, { owner: parsed.owner, repo: parsed.repo, branch: job.feature_branch })
+            .deleteBranch(token, {
+              owner: parsed.owner,
+              repo: parsed.repo,
+              branch: branchToDelete,
+            })
             .catch(() => undefined);
         }
         await this.lifecycle.applyGithubPrState(job, 'merged'); // pr_state='merged' + teardown
-        await this.driverStore.neutralizeMergeCard(jobId).catch(() => undefined);
+        await this.driverStore
+          .neutralizeMergeCard(jobId)
+          .catch(() => undefined);
         this.logger.log(
           `merged PR #${job.pr_number} (${job.auto_merge_method}) for job ${jobId}, ruled by ${ruledBy}`,
         );
@@ -169,12 +186,30 @@ export class AutoMergeService {
     }
   }
 
+  private methodDisallowedTs(
+    job: Pick<JobEntity, 'id' | 'auto_merge_method'>,
+  ): string {
+    return `automerge-method:${job.id}:${job.auto_merge_method}`;
+  }
+
+  private async hasMethodDisallowedNote(job: JobEntity): Promise<boolean> {
+    const existing = await this.messages.findOne({
+      where: { job_id: job.id, ts: this.methodDisallowedTs(job) },
+    });
+    return existing != null;
+  }
+
   /** One-time, deduped OPERATOR-facing chat note when GitHub rejects the configured merge method (422) — a
-   *  visible line, NOT a brain seed, so the operator can switch methods or merge manually. Keyed by a fixed
-   *  `ts` so repeated rejections (the reconciler re-evaluates constantly) don't spam the transcript. */
-  private async postMethodDisallowedNoteOnce(job: JobEntity, message: string): Promise<void> {
-    const ts = `automerge-method:${job.id}`;
-    const existing = await this.messages.findOne({ where: { job_id: job.id, ts } });
+   *  visible line, NOT a brain seed, so the operator can switch methods or merge manually. Keyed by job+method
+   *  so repeated rejections don't spam the transcript, while changing methods allows a fresh attempt/note. */
+  private async postMethodDisallowedNoteOnce(
+    job: JobEntity,
+    message: string,
+  ): Promise<void> {
+    const ts = this.methodDisallowedTs(job);
+    const existing = await this.messages.findOne({
+      where: { job_id: job.id, ts },
+    });
     if (existing) return;
     await this.messages
       .save(
@@ -188,6 +223,10 @@ export class AutoMergeService {
           ts,
         }),
       )
-      .catch((err) => this.logger.warn(`postMethodDisallowedNoteOnce failed for job ${job.id}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(
+          `postMethodDisallowedNoteOnce failed for job ${job.id}: ${err}`,
+        ),
+      );
   }
 }

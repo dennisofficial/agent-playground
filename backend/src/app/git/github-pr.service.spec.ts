@@ -253,7 +253,9 @@ describe('GithubPrService.mergePullRequest', () => {
   });
 
   it("maps a 409 to reason:'sha_mismatch'", async () => {
-    const { impl } = fakeFetch([{ status: 409, body: { message: 'sha wonky' } }]);
+    const { impl } = fakeFetch([
+      { status: 409, body: { message: 'sha wonky' } },
+    ]);
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     const res = await svc.mergePullRequest('TOK', {
@@ -262,7 +264,11 @@ describe('GithubPrService.mergePullRequest', () => {
       number: 7,
       method: 'squash',
     });
-    expect(res).toMatchObject({ ok: false, reason: 'sha_mismatch', status: 409 });
+    expect(res).toMatchObject({
+      ok: false,
+      reason: 'sha_mismatch',
+      status: 409,
+    });
   });
 
   it("maps a 422 to reason:'method_disallowed'", async () => {
@@ -277,7 +283,11 @@ describe('GithubPrService.mergePullRequest', () => {
       number: 7,
       method: 'squash',
     });
-    expect(res).toMatchObject({ ok: false, reason: 'method_disallowed', status: 422 });
+    expect(res).toMatchObject({
+      ok: false,
+      reason: 'method_disallowed',
+      status: 422,
+    });
   });
 
   it("maps any other status to reason:'other'", async () => {
@@ -301,12 +311,30 @@ describe('GithubPrService.deleteBranch', () => {
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(
-      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+      svc.deleteBranch('TOK', {
+        owner: 'o',
+        repo: 'r',
+        branch: 'atlas/feature',
+      }),
     ).resolves.toBeUndefined();
     expect(calls[0].url).toBe(
-      'https://api.github.com/repos/o/r/git/refs/heads/atlas%2Ffeature',
+      'https://api.github.com/repos/o/r/git/refs/heads/atlas/feature',
     );
     expect(calls[0].init?.method).toBe('DELETE');
+  });
+
+  it('encodes each ref path segment without flattening branch slashes', async () => {
+    const { impl, calls } = fakeFetch([{ status: 204, body: {} }]);
+    const svc = new GithubPrService();
+    svc.fetchImpl = impl;
+    await svc.deleteBranch('TOK', {
+      owner: 'o',
+      repo: 'r',
+      branch: 'atlas/feature space',
+    });
+    expect(calls[0].url).toBe(
+      'https://api.github.com/repos/o/r/git/refs/heads/atlas/feature%20space',
+    );
   });
 
   it('swallows a 404 (branch already gone)', async () => {
@@ -314,7 +342,11 @@ describe('GithubPrService.deleteBranch', () => {
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(
-      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+      svc.deleteBranch('TOK', {
+        owner: 'o',
+        repo: 'r',
+        branch: 'atlas/feature',
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -323,7 +355,11 @@ describe('GithubPrService.deleteBranch', () => {
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(
-      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+      svc.deleteBranch('TOK', {
+        owner: 'o',
+        repo: 'r',
+        branch: 'atlas/feature',
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -332,7 +368,11 @@ describe('GithubPrService.deleteBranch', () => {
     const svc = new GithubPrService();
     svc.fetchImpl = impl;
     await expect(
-      svc.deleteBranch('TOK', { owner: 'o', repo: 'r', branch: 'atlas/feature' }),
+      svc.deleteBranch('TOK', {
+        owner: 'o',
+        repo: 'r',
+        branch: 'atlas/feature',
+      }),
     ).rejects.toThrow(/500/);
   });
 });

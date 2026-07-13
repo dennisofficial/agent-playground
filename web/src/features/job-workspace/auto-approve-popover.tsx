@@ -59,11 +59,22 @@ export function AutoApprovePopover({
   const popRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(mode);
   const [draftMode, setDraftMode] = useState(mode);
+  const [draftMerge, setDraftMerge] = useState(autoMerge);
+  const [draftMergeMethod, setDraftMergeMethod] = useState(autoMergeMethod);
+  const [draftMergeDeleteBranch, setDraftMergeDeleteBranch] = useState(
+    autoMergeDeleteBranch,
+  );
 
   useEffect(() => {
     draftRef.current = mode;
     setDraftMode(mode);
   }, [mode]);
+
+  useEffect(() => {
+    setDraftMerge(autoMerge);
+    setDraftMergeMethod(autoMergeMethod);
+    setDraftMergeDeleteBranch(autoMergeDeleteBranch);
+  }, [autoMerge, autoMergeMethod, autoMergeDeleteBranch]);
 
   const selectMode = useCallback(
     (next: AutoApproveMode) => {
@@ -86,6 +97,25 @@ export function AutoApprovePopover({
       selectMode(composeMode(modeApprovesPlan(draftRef.current), nextShip));
     },
     [selectMode],
+  );
+
+  const setMerge = useCallback(
+    (next: {
+      autoMerge?: boolean;
+      method?: AutoMergeMethod;
+      deleteBranch?: boolean;
+    }) => {
+      const body = {
+        autoMerge: next.autoMerge ?? draftMerge,
+        method: next.method ?? draftMergeMethod,
+        deleteBranch: next.deleteBranch ?? draftMergeDeleteBranch,
+      };
+      setDraftMerge(body.autoMerge);
+      setDraftMergeMethod(body.method);
+      setDraftMergeDeleteBranch(body.deleteBranch);
+      onSetMerge(body);
+    },
+    [draftMerge, draftMergeDeleteBranch, draftMergeMethod, onSetMerge],
   );
 
   useEffect(() => {
@@ -183,10 +213,10 @@ export function AutoApprovePopover({
         <SwitchRow
           title="Merge"
           description="Merge the PR automatically once it's green & mergeable"
-          checked={autoMerge}
+          checked={draftMerge}
           first
           testId="auto-merge-toggle"
-          onChange={(next) => onSetMerge({ autoMerge: next })}
+          onChange={(next) => setMerge({ autoMerge: next })}
         />
 
         <div className="flex items-center justify-between gap-2 pb-1">
@@ -199,10 +229,9 @@ export function AutoApprovePopover({
           <select
             id="auto-merge-method"
             data-testid="auto-merge-method"
-            value={autoMergeMethod}
+            value={draftMergeMethod}
             onChange={(e) =>
-              onSetMerge({
-                autoMerge,
+              setMerge({
                 method: e.target.value as AutoMergeMethod,
               })
             }
@@ -223,18 +252,16 @@ export function AutoApprovePopover({
           <button
             type="button"
             role="switch"
-            aria-checked={autoMergeDeleteBranch}
+            aria-checked={draftMergeDeleteBranch}
             aria-label="Delete branch after merge"
             data-testid="auto-merge-delete-branch"
-            onClick={() =>
-              onSetMerge({ autoMerge, deleteBranch: !autoMergeDeleteBranch })
-            }
+            onClick={() => setMerge({ deleteBranch: !draftMergeDeleteBranch })}
             className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
             style={{
-              background: autoMergeDeleteBranch
+              background: draftMergeDeleteBranch
                 ? "var(--green)"
                 : "var(--surface-3)",
-              borderColor: autoMergeDeleteBranch
+              borderColor: draftMergeDeleteBranch
                 ? "var(--green)"
                 : "var(--border-2)",
             }}
@@ -242,7 +269,7 @@ export function AutoApprovePopover({
             <span
               className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
               style={{
-                transform: autoMergeDeleteBranch
+                transform: draftMergeDeleteBranch
                   ? "translateX(13px)"
                   : "translateX(0)",
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",

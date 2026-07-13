@@ -12,7 +12,9 @@ import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
 import type { OperatorJobKind } from "@/lib/api/job-api";
 import {
+  AUTO_MERGE_METHODS,
   type AutoApproveMode,
+  type AutoMergeMethod,
   modeApprovesPlan,
   modeApprovesShip,
 } from "@workspace/shared";
@@ -59,6 +61,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     useState<AutoApproveMode>("off");
   // Per-job auto-merge armed at creation — a separate boolean, orthogonal to autoApproveMode.
   const [autoMerge, setAutoMerge] = useState(false);
+  const [autoMergeMethod, setAutoMergeMethod] =
+    useState<AutoMergeMethod>("squash");
+  const [autoMergeDeleteBranch, setAutoMergeDeleteBranch] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -141,7 +146,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
         ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
-        ...(autoMerge ? { autoMerge: true } : {}),
+        ...(autoMerge
+          ? { autoMerge: true, autoMergeMethod, autoMergeDeleteBranch }
+          : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -313,6 +320,67 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               testId="create-auto-merge"
               onChange={setAutoMerge}
             />
+            {autoMerge ? (
+              <div className="border-t border-border py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="create-auto-merge-method"
+                    className="font-mono text-[9.5px] uppercase tracking-[0.04em] text-faint"
+                  >
+                    Method
+                  </label>
+                  <select
+                    id="create-auto-merge-method"
+                    data-testid="create-auto-merge-method"
+                    value={autoMergeMethod}
+                    onChange={(e) =>
+                      setAutoMergeMethod(e.target.value as AutoMergeMethod)
+                    }
+                    className="rounded-md border border-border-2 bg-surface-2 px-1.5 py-0.5 text-[11px] text-text outline-none focus:border-accent"
+                  >
+                    {AUTO_MERGE_METHODS.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-[10.5px] leading-snug text-faint">
+                    Delete branch after merge
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoMergeDeleteBranch}
+                    aria-label="Delete branch after merge"
+                    data-testid="create-auto-merge-delete-branch"
+                    onClick={() =>
+                      setAutoMergeDeleteBranch((current) => !current)
+                    }
+                    className="relative h-[17px] w-[30px] shrink-0 rounded-full border transition-colors"
+                    style={{
+                      background: autoMergeDeleteBranch
+                        ? "var(--green)"
+                        : "var(--surface-3)",
+                      borderColor: autoMergeDeleteBranch
+                        ? "var(--green)"
+                        : "var(--border-2)",
+                    }}
+                  >
+                    <span
+                      className="absolute top-[1px] left-[1px] h-[13px] w-[13px] rounded-full bg-white transition-transform"
+                      style={{
+                        transform: autoMergeDeleteBranch
+                          ? "translateX(13px)"
+                          : "translateX(0)",
+                        boxShadow: "0 1px 2px rgba(0, 0, 0, 0.25)",
+                      }}
+                    />
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

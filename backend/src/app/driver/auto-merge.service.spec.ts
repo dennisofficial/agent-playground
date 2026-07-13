@@ -7,13 +7,17 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { GithubPrService } from '../git';
+import type { GithubPrService, PullDetail } from '../git';
 import type { CredentialResolver } from '../onboarding';
 import type { JobLifecycleService } from './job-lifecycle.service';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import type { DriverStoreService } from './driver-store.service';
-import type { JobEntity, RepoEntity, MessageEntity } from '../persistence/entities';
+import type {
+  JobEntity,
+  RepoEntity,
+  MessageEntity,
+} from '../persistence/entities';
 import { AutoMergeService, prMergeReady } from './auto-merge.service';
 
 function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
@@ -39,11 +43,13 @@ function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
   } as JobEntity;
 }
 
-function make(over: {
-  job?: JobEntity;
-  mergeResult?: unknown;
-  existingMethodNote?: Partial<MessageEntity> | null;
-} = {}) {
+function make(
+  over: {
+    job?: JobEntity;
+    mergeResult?: unknown;
+    existingMethodNote?: Partial<MessageEntity> | null;
+  } = {},
+) {
   const job = over.job ?? makeJobEntity();
 
   const findOneBy = vi.fn(async () => job);
@@ -64,7 +70,7 @@ function make(over: {
     create: messagesCreate,
   } as unknown as Repository<MessageEntity>;
 
-  const getPullDetail = vi.fn(async () => ({
+  const getPullDetail = vi.fn(async (): Promise<PullDetail> => ({
     number: 7,
     url: 'https://github.com/acme/app/pull/7',
     state: 'open' as const,
@@ -92,7 +98,9 @@ function make(over: {
   const turns = { runningBrainTurn } as unknown as TurnRegistry;
 
   const hasUndeliveredChat = vi.fn(async () => false);
-  const stimulusStore = { hasUndeliveredChat } as unknown as StimulusStoreService;
+  const stimulusStore = {
+    hasUndeliveredChat,
+  } as unknown as StimulusStoreService;
 
   const postMergeCard = vi.fn(async () => undefined);
   const neutralizeMergeCard = vi.fn(async () => undefined);
@@ -136,7 +144,12 @@ function make(over: {
 }
 
 describe('prMergeReady', () => {
-  const base = { pr_state: 'open', pr_number: 7, pr_mergeable: 'clean', ci_status: 'success' };
+  const base = {
+    pr_state: 'open',
+    pr_number: 7,
+    pr_mergeable: 'clean',
+    ci_status: 'success',
+  };
 
   it('is true for clean + success', () => {
     expect(prMergeReady(base)).toBe(true);
@@ -158,9 +171,12 @@ describe('prMergeReady', () => {
     expect(prMergeReady({ ...base, ci_status: 'pending' })).toBe(false);
   });
 
-  it.each(['dirty', 'behind', 'blocked'])('is false for pr_mergeable %s', (state) => {
-    expect(prMergeReady({ ...base, pr_mergeable: state })).toBe(false);
-  });
+  it.each(['dirty', 'behind', 'blocked'])(
+    'is false for pr_mergeable %s',
+    (state) => {
+      expect(prMergeReady({ ...base, pr_mergeable: state })).toBe(false);
+    },
+  );
 
   it.each(['merged', 'closed'])('is false for pr_state %s', (state) => {
     expect(prMergeReady({ ...base, pr_state: state })).toBe(false);
@@ -189,24 +205,32 @@ describe('AutoMergeService.brainSettled (private, cast to any)', () => {
 
   it('is false when halt is non-null', async () => {
     const { svc, job } = make({
-      job: makeJobEntity({ halt: { kind: 'failed', reason: 'x', at: new Date().toISOString() } }),
+      job: makeJobEntity({
+        halt: { kind: 'failed', reason: 'x', at: new Date().toISOString() },
+      }),
     });
     await expect((svc as any).brainSettled(job)).resolves.toBe(false);
   });
 
   it('is false when open_question_count > 0', async () => {
-    const { svc, job } = make({ job: makeJobEntity({ open_question_count: 1 }) });
+    const { svc, job } = make({
+      job: makeJobEntity({ open_question_count: 1 }),
+    });
     await expect((svc as any).brainSettled(job)).resolves.toBe(false);
   });
 
   it('is false when awaiting_secret_id is set', async () => {
-    const { svc, job } = make({ job: makeJobEntity({ awaiting_secret_id: 'secret-1' }) });
+    const { svc, job } = make({
+      job: makeJobEntity({ awaiting_secret_id: 'secret-1' }),
+    });
     await expect((svc as any).brainSettled(job)).resolves.toBe(false);
   });
 
   it('is false when runningBrainTurn returns non-null', async () => {
     const { svc, job, runningBrainTurn } = make();
-    (runningBrainTurn as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'turn-1' });
+    (runningBrainTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: 'turn-1',
+    });
     await expect((svc as any).brainSettled(job)).resolves.toBe(false);
   });
 
@@ -219,12 +243,25 @@ describe('AutoMergeService.brainSettled (private, cast to any)', () => {
 
 describe('AutoMergeService.mergeNow', () => {
   it('merges, deletes the branch (when configured + a feature branch exists), applies pr_state=merged, neutralizes the card, and returns true', async () => {
-    const { svc, job, applyGithubPrState, deleteBranch, neutralizeMergeCard, mergePullRequest } = make();
+    const {
+      svc,
+      job,
+      applyGithubPrState,
+      deleteBranch,
+      neutralizeMergeCard,
+      mergePullRequest,
+    } = make();
     const ok = await svc.mergeNow(job.id, 'user-1');
     expect(ok).toBe(true);
     expect(mergePullRequest).toHaveBeenCalledWith(
       'ghp_tok',
-      expect.objectContaining({ owner: 'acme', repo: 'app', number: 7, method: 'squash', sha: 'HEAD' }),
+      expect.objectContaining({
+        owner: 'acme',
+        repo: 'app',
+        number: 7,
+        method: 'squash',
+        sha: 'HEAD',
+      }),
     );
     expect(applyGithubPrState).toHaveBeenCalledWith(job, 'merged');
     expect(deleteBranch).toHaveBeenCalledWith('ghp_tok', {
@@ -244,16 +281,49 @@ describe('AutoMergeService.mergeNow', () => {
   });
 
   it('does NOT delete the branch when there is no feature branch', async () => {
-    const { svc, job, deleteBranch } = make({
+    const { svc, job, getPullDetail, deleteBranch } = make({
       job: makeJobEntity({ feature_branch: null }),
+    });
+    getPullDetail.mockResolvedValueOnce({
+      number: 7,
+      url: 'https://github.com/acme/app/pull/7',
+      state: 'open',
+      mergeableState: 'clean',
+      headSha: 'HEAD',
+      headRef: null,
     });
     await svc.mergeNow(job.id, 'user-1');
     expect(deleteBranch).not.toHaveBeenCalled();
   });
 
+  it('deletes the PR head ref returned by GitHub when it differs from the canonical feature_branch', async () => {
+    const { svc, job, getPullDetail, deleteBranch } = make({
+      job: makeJobEntity({ feature_branch: 'atlas/canonical' }),
+    });
+    getPullDetail.mockResolvedValueOnce({
+      number: 7,
+      url: 'https://github.com/acme/app/pull/7',
+      state: 'open',
+      mergeableState: 'clean',
+      headSha: 'HEAD',
+      headRef: 'atlas/live-branch',
+    });
+    await svc.mergeNow(job.id, 'user-1');
+    expect(deleteBranch).toHaveBeenCalledWith('ghp_tok', {
+      owner: 'acme',
+      repo: 'app',
+      branch: 'atlas/live-branch',
+    });
+  });
+
   it('already_merged is treated as a success (idempotent): still applies pr_state=merged and returns true', async () => {
     const { svc, job, applyGithubPrState } = make({
-      mergeResult: { ok: false, reason: 'already_merged', status: 405, message: 'already merged' },
+      mergeResult: {
+        ok: false,
+        reason: 'already_merged',
+        status: 405,
+        message: 'already merged',
+      },
     });
     const ok = await svc.mergeNow(job.id, 'user-1');
     expect(ok).toBe(true);
@@ -264,7 +334,12 @@ describe('AutoMergeService.mergeNow', () => {
     'returns false, does NOT apply pr_state and does NOT touch messages on a %s rejection (no brain seed)',
     async (reason) => {
       const { svc, job, applyGithubPrState, messagesSave } = make({
-        mergeResult: { ok: false, reason, status: reason === 'sha_mismatch' ? 409 : 405, message: 'x' },
+        mergeResult: {
+          ok: false,
+          reason,
+          status: reason === 'sha_mismatch' ? 409 : 405,
+          message: 'x',
+        },
       });
       const ok = await svc.mergeNow(job.id, 'user-1');
       expect(ok).toBe(false);
@@ -275,7 +350,12 @@ describe('AutoMergeService.mergeNow', () => {
 
   it('posts a one-time operator note on method_disallowed, does not apply pr_state, and dedupes a repeat', async () => {
     const { svc, job, messagesSave, applyGithubPrState } = make({
-      mergeResult: { ok: false, reason: 'method_disallowed', status: 422, message: 'squash not allowed' },
+      mergeResult: {
+        ok: false,
+        reason: 'method_disallowed',
+        status: 422,
+        message: 'squash not allowed',
+      },
     });
     const ok = await svc.mergeNow(job.id, 'user-1');
     expect(ok).toBe(false);
@@ -285,12 +365,23 @@ describe('AutoMergeService.mergeNow', () => {
 
   it('does NOT post a second method_disallowed note when one already exists', async () => {
     const jobId = 'job-1';
-    const { svc, messagesSave } = make({
-      mergeResult: { ok: false, reason: 'method_disallowed', status: 422, message: 'squash not allowed' },
-      existingMethodNote: { id: 'm-1', job_id: jobId, ts: `automerge-method:${jobId}` } as Partial<MessageEntity>,
+    const { svc, messagesSave, mergePullRequest, getPullDetail } = make({
+      mergeResult: {
+        ok: false,
+        reason: 'method_disallowed',
+        status: 422,
+        message: 'squash not allowed',
+      },
+      existingMethodNote: {
+        id: 'm-1',
+        job_id: jobId,
+        ts: `automerge-method:${jobId}:squash`,
+      } as Partial<MessageEntity>,
     });
     await svc.mergeNow(jobId, 'user-1');
     expect(messagesSave).not.toHaveBeenCalled();
+    expect(getPullDetail).not.toHaveBeenCalled();
+    expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
   it('the in-flight guard makes a re-entrant call return false immediately without another merge attempt', async () => {
@@ -304,9 +395,10 @@ describe('AutoMergeService.mergeNow', () => {
 
 describe('AutoMergeService.maybeAutoMerge', () => {
   it('neutralizes the card and does not post/merge when the PR is not merge-ready', async () => {
-    const { svc, job, postMergeCard, neutralizeMergeCard, mergePullRequest } = make({
-      job: makeJobEntity({ pr_mergeable: 'dirty' }),
-    });
+    const { svc, job, postMergeCard, neutralizeMergeCard, mergePullRequest } =
+      make({
+        job: makeJobEntity({ pr_mergeable: 'dirty' }),
+      });
     await svc.maybeAutoMerge(job.id);
     expect(neutralizeMergeCard).toHaveBeenCalledWith(job.id, 'not-ready');
     expect(postMergeCard).not.toHaveBeenCalled();

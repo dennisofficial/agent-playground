@@ -1,5 +1,5 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
@@ -138,7 +138,8 @@ export class JobLifecycleService {
     // Neutralize any live "Merge PR" card on a terminal PR state — this is the single shared entry point
     // for every terminal path (webhook fast path + poll backstop), so it also catches a PR merged/closed
     // outside `AutoMergeService.mergeNow`. No DI cycle: DriverStoreService doesn't depend on this service.
-    private readonly driverStore: DriverStoreService,
+    @Optional()
+    private readonly driverStore?: DriverStoreService,
   ) {}
 
   /**
@@ -611,9 +612,11 @@ export class JobLifecycleService {
     await this.jobs.update({ id: job.id }, { pr_state: prState });
     // Retire any live "Merge PR" card now the PR is terminal — the shared point every terminal path funnels
     // through, so a PR merged/closed by any means (github.com, a click, a poll) can't leave a stale button.
-    await this.driverStore
-      .neutralizeMergeCard(job.id, prState === 'merged' ? 'merged' : 'not-ready')
-      .catch(() => undefined);
+    if (this.driverStore) {
+      await this.driverStore
+        .neutralizeMergeCard(job.id, prState === 'merged' ? 'merged' : 'not-ready')
+        .catch(() => undefined);
+    }
     await this.jobDeps
       .onBlockerResolved(job.id, prState === 'merged' ? 'merged' : 'closed_unmerged')
       .catch((err) => this.logger.warn(`applyGithubPrState: wake funnel failed for blocker ${job.id}: ${err}`));

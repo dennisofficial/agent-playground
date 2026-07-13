@@ -103,7 +103,7 @@ function pipelineUrl(jobId: string): string {
 async function loadJobRow(jobId: string): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
     `SELECT status, pr_state, pr_number, pr_mergeable, ci_status, auto_merge, auto_merge_method,
-            auto_merge_by, feature_branch
+            auto_merge_delete_branch, auto_merge_by, feature_branch
        FROM jobs WHERE id = $1`,
     [jobId],
   )) as Array<Record<string, unknown>>;
@@ -306,5 +306,46 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
       .set('Cookie', ownerCookie)
       .send({ autoMerge: true });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('auto-merge — POST .../jobs armed at creation (live Postgres, real HTTP)', () => {
+  const createUrl = `/web/orgs/${ORG}/repos/${REPO}/jobs`;
+
+  async function createJob(body: Record<string, unknown>): Promise<string> {
+    const res = await request(server).post(createUrl).set('Cookie', ownerCookie).send(body);
+    expect(res.status).toBe(201);
+    expect(typeof res.body.jobId).toBe('string');
+    return res.body.jobId as string;
+  }
+
+  it("CREATE 1 — autoMerge at creation persists method/delete-branch and who armed it", async () => {
+    const jobId = await createJob({
+      firstMessage: 'Add creation-time auto-merge settings.',
+      autoMerge: true,
+      autoMergeMethod: 'rebase',
+      autoMergeDeleteBranch: false,
+    });
+
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({
+      auto_merge: true,
+      auto_merge_method: 'rebase',
+      auto_merge_delete_branch: false,
+      auto_merge_by: ownerId,
+    });
+    // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
+    console.log('OBSERVED CREATE 1 DB row (created with autoMerge settings):', JSON.stringify(row));
+  });
+
+  it("CREATE 2 — absent autoMerge leaves defaults in place", async () => {
+    const jobId = await createJob({ firstMessage: 'Plain job, no auto-merge.' });
+    const row = await loadJobRow(jobId);
+    expect(row).toMatchObject({
+      auto_merge: false,
+      auto_merge_method: 'squash',
+      auto_merge_delete_branch: true,
+      auto_merge_by: null,
+    });
   });
 });

@@ -514,6 +514,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       mainDefaultFooter: { engine: 'claude', model: 'opus', effort: 'high' },
       createdBy: null,
       autoApproveMode: 'off',
+      autoMerge: false,
+      autoMergeMethod: 'squash',
+      autoMergeDeleteBranch: true,
+      mergeReady: false,
+      mergeValue: null,
       blockedBy: [],
       blockedSeedMessage: null,
     });

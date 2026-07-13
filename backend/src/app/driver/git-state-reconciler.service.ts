@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Not, Raw, Repository } from 'typeorm';
 import { CredentialResolver } from '../onboarding';
@@ -43,7 +43,8 @@ export class GitStateReconciler {
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
     private readonly intake: StimulusIntake,
-    private readonly autoMerge: AutoMergeService,
+    @Optional()
+    private readonly autoMerge?: AutoMergeService,
   ) {}
 
   /**
@@ -269,7 +270,7 @@ export class GitStateReconciler {
     // reconcile): a redelivered/settled mergeability tick can be the FIRST signal a prior brain-not-idle
     // check would have skipped.
     void this.autoMerge
-      .maybeAutoMerge(job.id)
+      ?.maybeAutoMerge(job.id)
       .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
 
     // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
