@@ -273,13 +273,14 @@ export interface SandboxGitIdentity {
 }
 
 /**
- * Authenticated-git for a turn: the remote url + org PAT the sandbox agent uses to fetch/push, plus the
- * resolved commit {@link SandboxGitIdentity} to attribute its commits to. See {@link ExecutionTarget.gitAuth}.
+ * Authenticated-git for a turn: the remote url + effective org GitHub token the sandbox agent uses to
+ * fetch/push, plus the resolved commit {@link SandboxGitIdentity} to attribute its commits to. See
+ * {@link ExecutionTarget.gitAuth}.
  */
 export interface GitAuth {
   gitUrl: string;
   token?: string;
-  /** Token for the sandbox `gh`/GITHUB_TOKEN path (PR create/comment/review), set to the credential that MATCHES the resolved commit identity when it differs from the git transport `token` (identity mode routes API writes through the PAT or App bot independently of transport). Absent → GITHUB_TOKEN falls back to `token`. */
+  /** Token for the sandbox `gh`/GITHUB_TOKEN path (PR create/comment/review). It resolves from the same effective credential as `token`; absent means GITHUB_TOKEN falls back to `token`. */
   apiToken?: string;
   identity?: SandboxGitIdentity;
   /**

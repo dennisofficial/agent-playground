@@ -72,7 +72,7 @@ function makeService(
     projects,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,
-    { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
     { get: vi.fn() } as unknown as EnvService,
     new SandboxActivityRegistry(),
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -107,7 +107,7 @@ function makeServiceWithMocks(
     { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,
-    { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
     { get: vi.fn() } as unknown as EnvService,
     new SandboxActivityRegistry(),
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -152,7 +152,7 @@ function makeServiceForReset(
     { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
     {} as unknown as LocalGitService,
     { getPullState: vi.fn() } as unknown as GithubPrService,
-    { githubToken: vi.fn() } as unknown as CredentialResolver,
+    { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
     { get: vi.fn() } as unknown as EnvService,
     activity,
     { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -405,7 +405,7 @@ describe('JobLifecycleService.applyGithubPrState', () => {
       { findOne: vi.fn() } as unknown as Repository<RepoEntity>,
       {} as unknown as LocalGitService,
       { getPullState: vi.fn() } as unknown as GithubPrService,
-      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -465,14 +465,14 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       findOne: vi.fn().mockResolvedValue(repo),
     } as unknown as Repository<RepoEntity>;
     const closePullRequest = vi.fn().mockResolvedValue(undefined);
-    const githubToken = vi.fn().mockResolvedValue('TOK');
+    const hostGithubToken = vi.fn().mockResolvedValue('TOK');
     const svc = new JobLifecycleService(
       { findOne: vi.fn() } as unknown as Repository<JobEntity>,
       { findOne: vi.fn(), save: vi.fn(), create: vi.fn() } as unknown as Repository<JobSandboxEntity>,
       projects,
       {} as unknown as LocalGitService,
       { closePullRequest } as unknown as GithubPrService,
-      { githubToken } as unknown as CredentialResolver,
+      { hostGithubToken } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -484,7 +484,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
       { wakeForProvisioningFailure: vi.fn() } as unknown as BrainGateway,
       { reconcileOrgAsync: vi.fn() } as unknown as SkillUpdaterService,
     );
-    return { svc, projects, closePullRequest, githubToken };
+    return { svc, projects, closePullRequest, hostGithubToken };
   }
 
   it('no-ops (never calls pr.closePullRequest) when the job has no open PR', async () => {
@@ -524,7 +524,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
   });
 
   it('resolves the repo + token and closes the PR when pr_state is open', async () => {
-    const { svc, projects, closePullRequest, githubToken } = makeServiceForClose({
+    const { svc, projects, closePullRequest, hostGithubToken } = makeServiceForClose({
       id: 'repo-1',
       git_url: 'https://github.com/acme/app.git',
     });
@@ -538,7 +538,7 @@ describe('JobLifecycleService.closeJobPullRequest', () => {
     } as JobEntity);
 
     expect(projects.findOne).toHaveBeenCalledWith({ where: { id: 'repo-1', org_id: 'T1' } });
-    expect(githubToken).toHaveBeenCalledWith('T1');
+    expect(hostGithubToken).toHaveBeenCalledWith('T1');
     expect(closePullRequest).toHaveBeenCalledWith('TOK', {
       owner: 'acme',
       repo: 'app',
@@ -582,7 +582,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main', git_url: 'https://github.com/a/b' }) } as unknown as Repository<RepoEntity>,
       { removeSandbox } as unknown as LocalGitService,
       { getPullState: vi.fn() } as unknown as GithubPrService,
-      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -636,7 +636,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { findOne: vi.fn().mockResolvedValue({ id: 'repo-uuid-1', slug: 'proj', default_branch: 'main' }) } as unknown as Repository<RepoEntity>,
       {} as unknown as LocalGitService,
       { getPullState: vi.fn() } as unknown as GithubPrService,
-      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -669,7 +669,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { findOne: vi.fn().mockResolvedValue({ id: 'repo-1', git_url: 'https://github.com/a/b' }) } as unknown as Repository<RepoEntity>,
       {} as unknown as LocalGitService,
       { getPullState } as unknown as GithubPrService,
-      { githubToken: vi.fn().mockResolvedValue('ghtok') } as unknown as CredentialResolver,
+      { hostGithubToken: vi.fn().mockResolvedValue('ghtok') } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,
@@ -713,7 +713,7 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       { findOne: vi.fn() } as unknown as Repository<RepoEntity>,
       {} as unknown as LocalGitService,
       { getPullState: vi.fn() } as unknown as GithubPrService,
-      { githubToken: vi.fn() } as unknown as CredentialResolver,
+      { githubToken: vi.fn(), hostGithubToken: vi.fn() } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
       { resolve: vi.fn() } as unknown as DriverRepoResolver,

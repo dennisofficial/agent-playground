@@ -147,7 +147,7 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
   private async reconcileOne(row: WorkspaceSkillEntity): Promise<void> {
     if (!row.source_url) return; // defensive — the `provenance:'git'` filter should already guarantee this
     const token = row.source_url.startsWith('https://github.com/')
-      ? await this.creds.githubToken(row.org_id)
+      ? await this.creds.hostGithubToken(row.org_id)
       : undefined;
     const head = await this.git.resolveRemoteRef(row.source_url, row.source_ref ?? undefined, token);
 

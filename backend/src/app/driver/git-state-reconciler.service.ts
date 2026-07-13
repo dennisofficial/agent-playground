@@ -166,7 +166,7 @@ export class GitStateReconciler {
   private async reconcileOne(job: JobEntity): Promise<PollTier> {
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
     const parsed = repo ? parseGithubRepoUrl(repo.git_url) : null;
-    const token = await this.creds.githubToken(job.org_id);
+    const token = await this.creds.hostGithubToken(job.org_id);
     // Misconfig (no repo URL / no token) is persistent — back off to the slow tier rather than retrying
     // every heartbeat.
     if (!parsed || !token) return 'discovering';

@@ -68,7 +68,7 @@ export class GitDriverRepoResolver implements DriverRepoResolver {
         `Repo ${project.slug} git_url is not an HTTPS GitHub URL: ${project.git_url}`,
       );
     }
-    const token = await this.creds.githubToken(thread.orgId);
+    const token = await this.creds.hostGithubToken(thread.orgId);
     const identity = await this.identities.resolve(token);
     // The repo's SLUG is the on-disk clone/worktree identity (human-readable), NOT the uuid id.
     const projectRepo = await this.git.ensureRepo({

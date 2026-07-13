@@ -154,7 +154,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     storeRoot = join(tmp, 'store');
     const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never;
     const git = new LocalGitService({ get: () => undefined } as never); // reposRoot unused — scratch clones use os.tmpdir()
-    const creds = { githubToken: async () => undefined } as unknown as CredentialResolver; // local paths need no token
+    const creds = { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver; // local paths need no token
     store = new WorkspaceSkillStore(new FakeRepo() as unknown as Repository<WorkspaceSkillEntity>);
     installer = new SkillInstallerService(env, git, creds, store);
   });
@@ -211,7 +211,7 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     const slowInstaller = new SkillInstallerService(
       { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never,
       new LocalGitService({ get: () => undefined } as never),
-      { githubToken: async () => undefined } as unknown as CredentialResolver,
+      { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver,
       slowStore,
     );
 

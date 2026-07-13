@@ -676,16 +676,16 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // Auth config was actually injected (https github url) — fail fast instead of prompting/falling back
         // to ambient helpers. Only expose GH_TOKEN/GITHUB_TOKEN when a live token exists.
         e.GIT_TERMINAL_PROMPT = '0';
-        // NOTE: GITHUB_TOKEN/GH_TOKEN are baked from `apiToken ?? token` (identity mode may route the API
-        // token to the PAT/App-bot credential independently of the transport `token`) into this frozen exec
-        // env and are NOT refreshed mid-turn. Only `git` survives the ~hourly expiry, via the host-refreshed
-        // credential FILE above. When the resolved API token is a PAT (human-identity turns), it does not
-        // expire hourly, so the mid-turn `gh`-expiry caveat below doesn't apply. When it's an App installation
-        // token (bot-identity turns, or app auth-mode with no identity override), `gh` and any
-        // GITHUB_TOKEN-driven API call read this static value, guaranteed correct only for the token's
-        // initial lifetime (normal/short turns) — on a >1h turn app-mode in-sandbox `gh` can hit an expired
-        // token while `git` keeps working — accepted for now (routing `gh` through the refreshed file needs
-        // an in-sandbox wrapper; out of scope).
+        // NOTE: GITHUB_TOKEN/GH_TOKEN are baked from `apiToken ?? token` into this frozen exec env and are
+        // NOT refreshed mid-turn. `apiToken` and the transport `token` now resolve from the SAME
+        // effective GitHub credential (CredentialResolver), so they're never a different credential — only
+        // static vs. live matters here. Only `git` survives the ~hourly expiry, via the host-refreshed
+        // credential FILE above. When the resolved token is a PAT (pat-mode), it does not expire hourly, so
+        // the mid-turn `gh`-expiry caveat below doesn't apply. When it's an App installation token (app-mode),
+        // `gh` and any GITHUB_TOKEN-driven API call read this static value, guaranteed correct only for the
+        // token's initial lifetime (normal/short turns) — on a >1h turn app-mode in-sandbox `gh` can hit an
+        // expired token while `git` keeps working — accepted for now (routing `gh` through the refreshed
+        // file needs an in-sandbox wrapper; out of scope).
         const ghToken = apiToken ?? token;
         if (ghToken) {
           e.GITHUB_TOKEN = ghToken;
