@@ -244,10 +244,11 @@ export interface EngineCoreConfig {
 /**
  * The agentic-engine model ids — CODE CONSTANTS, never env-configured (env vars are for per-environment
  * config; the model choice doesn't change across local/dev/staging/prod). A per-turn `args.model` still
- * overrides (e.g. the thread brain pins its own). The Claude id is the `'opus'` alias (auto-threads latest
- * Opus, like the brain); the Codex id is the Codex SDK's coding model.
+ * overrides (e.g. the thread brain pins its own Opus). The Claude id is the current Sonnet 5 model id —
+ * the builder lane orchestrator (and its `post_review` autofix child) run on this; the Codex id is the
+ * Codex SDK's coding model.
  */
-const DEFAULT_WORKER_MODEL = 'opus';
+const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
 // NOTE: Codex runs subscription-only here — a ChatGPT-account OAuth token (see `resolveAuth`; there is no
 // API-key path). A ChatGPT account REJECTS any explicit model with a 400 ("The '<model>' model is not
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
