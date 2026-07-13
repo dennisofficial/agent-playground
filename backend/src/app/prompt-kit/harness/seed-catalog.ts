@@ -1,4 +1,5 @@
 import type { EventStimulus } from '../../domain/stimulus';
+import type { JobProvenance } from '../../domain/job';
 import type { SessionAnchor, ThreadTerminalRecord } from '../../persistence/entities/thread.entity';
 import { threadDirName } from './thread-dir-name';
 import { agentMessage, type AgentMessage } from '../message';
@@ -170,6 +171,32 @@ export function wakeUnblockedJobBody(note: string | null): AgentMessage {
       ? `${note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
       : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.',
   );
+}
+
+// ── Follow-up job seed ──────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * SEED framing for a follow-up thread spawned by ANOTHER Atlas job via `create_job` — NOT typed by a human.
+ * Without it the child brain reads the bare opening intent as an operator message and assumes the human
+ * started the thread (and often that "I created it"). Names the spawning job (title + id) so provenance is
+ * unambiguous, then hands over the opening intent verbatim. `parent` is null only defensively — a follow-up
+ * always carries a `createdBy` snapshot — in which case the intent passes through unframed (prior behaviour).
+ */
+export function renderFollowUpJobSeed(input: {
+  firstMessage: string;
+  parent: JobProvenance | null;
+}): AgentMessage {
+  const { firstMessage, parent } = input;
+  if (!parent) return agentMessage(firstMessage);
+  const name = parent.title ?? 'untitled';
+  const framing = [
+    'This thread was spawned by ANOTHER Atlas job via create_job — a human operator did NOT start it.',
+    `Spawning job: "${name}" (job ${parent.jobId}).`,
+    "The opening intent below was written by that job's Atlas, not by the operator, so don't assume the",
+    'operator has already seen it or is waiting on you. Treat it as your starting brief and scope it with',
+    'the operator from here as you would any new thread.',
+  ].join('\n');
+  return agentMessage(`${framing}\n\n${firstMessage}`);
 }
 
 // ── Amend-approved wake ─────────────────────────────────────────────────────────────────────────────────
