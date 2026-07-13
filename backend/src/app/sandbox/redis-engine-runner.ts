@@ -66,6 +66,8 @@ export interface AttachArgs {
   onEvent?: (e: EngineEvent) => void;
   toolBridge?: ToolBridgeOptions;
   signal?: AbortSignal;
+  /** Dispatch-time credential the turn runs on (host-only; stamped onto rate_limit events). */
+  credentialId?: string;
 }
 
 /**
@@ -176,8 +178,15 @@ export class RedisEngineRunner implements EngineRunnerPort {
           lane: args.turnMeta.lane,
           kind: args.turnMeta.kind,
           containerId: target.containerId,
-          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach.
-          ctx: { ...(args.turnMeta.ctx ?? {}), orgId: args.turnMeta.orgId, jobId: args.turnMeta.jobId },
+          // ctx carries the real repoId/author/body for `buildTools` reconstruction on re-attach — plus the
+          // dispatch-time credential the turn runs on, so a boot re-attach can re-stamp its rate_limit events
+          // with the SAME credentialId a fresh dispatch does (keeps the credential-scoped usage snapshot wired).
+          ctx: {
+            ...(args.turnMeta.ctx ?? {}),
+            orgId: args.turnMeta.orgId,
+            jobId: args.turnMeta.jobId,
+            ...(auth?.refreshBack?.credentialId ? { credentialId: auth.refreshBack.credentialId } : {}),
+          },
         });
         registered = true;
       } catch (err) {
@@ -217,7 +226,12 @@ export class RedisEngineRunner implements EngineRunnerPort {
       const result = await this.runAttached(
         turnId,
         keys,
-        args,
+        {
+          onEvent: args.onEvent,
+          toolBridge: args.toolBridge,
+          signal: args.signal,
+          credentialId: auth?.refreshBack?.credentialId,
+        },
         target.containerId,
         target,
         onKicked,
@@ -563,7 +577,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
         for (const entry of entries) {
           lastId = entry.id;
           const frame = entry.data as EventFrame;
-          if (frame.t === 'event') args.onEvent?.(frame.e);
+          if (frame.t === 'event') {
+            const e = frame.e;
+            args.onEvent?.(e.kind === 'rate_limit' ? { ...e, credentialId: args.credentialId } : e);
+          }
           else if (frame.t === 'final') result = frame.r;
           else if (frame.t === 'error') {
             errorMsg = frame.message;

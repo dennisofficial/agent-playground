@@ -132,6 +132,12 @@ export class ClaudeCredentialStore {
     };
   }
 
+  /** The org's selected Claude credential id (organizations.selected_claude_credential_id), or null. */
+  async getSelectedCredentialId(orgId: string): Promise<string | null> {
+    const org = await this.orgRepo.findOne({ where: { id: orgId } });
+    return org?.selected_claude_credential_id ?? null;
+  }
+
   /**
    * The org's SELECTED credential's id + last-refresh instant — NO decryption. The driver's auth-halt
    * classifier reads this to tell a lost-rotation-race (the token was just refreshed elsewhere, so this

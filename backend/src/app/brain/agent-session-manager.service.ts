@@ -1952,6 +1952,9 @@ export class AgentSessionManager
         deliveryStimulusId?: string;
         seedHaltWake?: { threadId: string; gen: number };
         seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
+        // Dispatch-time credential the turn ran on — re-stamped onto rate_limit events so the reattach path
+        // feeds the credential-scoped usage snapshot exactly like a fresh dispatch (else it tags `undefined`).
+        credentialId?: string;
       };
       if (
         !row.container_id ||
@@ -2036,6 +2039,7 @@ export class AgentSessionManager
               streamer.onEvent(e);
             },
             toolBridge: { jobId: row.job_id, tools },
+            ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
           },
         );
         if (result.sessionId && sandboxRow) {
@@ -2920,6 +2924,7 @@ export class AgentSessionManager
           rateLimitType: rlType,
           resetsAt: new Date(resumeClock).getTime(),
           utilization: 100,
+          credentialId: auth?.refreshBack?.credentialId,
         })
         .catch(() => undefined);
       const resetSource: 'usage_api' | 'parsed_string' = rlType ? 'usage_api' : 'parsed_string';
@@ -6368,10 +6373,13 @@ export class AgentSessionManager
     }
     let result: EngineRunResult;
     try {
+      const ctx = (row.ctx ?? {}) as { credentialId?: string };
       result = await this.engineRunner.reattach!(row.turn_id, row.container_id, {
         onEvent: () => {
           /* internal turn — not surfaced in the operator transcript */
         },
+        // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
+        ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
       });
     } catch (err) {
       // Lost the tail (detached again) — the row survives; the next boot re-attempts. Best-effort.

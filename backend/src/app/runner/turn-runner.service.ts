@@ -290,7 +290,9 @@ export class TurnRunnerService {
       }
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+      throw new EngineSessionLimitError(
+        message, resetAt, rateLimitType, result.sessionId, input.auth?.refreshBack?.credentialId,
+      );
     }
 
     // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
@@ -383,6 +385,8 @@ export class TurnRunnerService {
     onEvent?: (e: EngineEvent) => void;
     toolBridge?: ToolBridgeOptions;
     signal?: AbortSignal;
+    /** Dispatch-time credential the turn ran on — re-stamped onto rate_limit events (parity with runTurn). */
+    credentialId?: string;
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
       throw new Error('bound ENGINE_RUNNER has no reattach() — cannot re-attach turn');
@@ -399,6 +403,7 @@ export class TurnRunnerService {
       onEvent,
       ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
+      ...(input.credentialId ? { credentialId: input.credentialId } : {}),
     });
     if (stepId && result.sessionId) {
       await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
@@ -406,7 +411,9 @@ export class TurnRunnerService {
     if (result.sessionLimit) {
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(message, resetAt, rateLimitType, result.sessionId);
+      throw new EngineSessionLimitError(
+        message, resetAt, rateLimitType, result.sessionId, input.credentialId,
+      );
     }
     return {
       report: result.result,

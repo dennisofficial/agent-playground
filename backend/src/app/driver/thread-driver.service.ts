@@ -837,6 +837,7 @@ export class ThreadDriver implements JobDispatcher {
               rateLimitType: limit.rateLimitType,
               resetsAt: new Date(resumeClock).getTime(),
               utilization: 100,
+              credentialId: limit.credentialId,
             })
             .catch(() => undefined);
         // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
@@ -3156,6 +3157,7 @@ export class ThreadDriver implements JobDispatcher {
       metaTag,
     });
     try {
+      const reattachCredentialId = (row.ctx as { credentialId?: string } | null)?.credentialId;
       const result = await this.turn.reattach({
         turnId: row.turn_id,
         containerId: row.container_id!,
@@ -3165,6 +3167,8 @@ export class ThreadDriver implements JobDispatcher {
         // Re-supply the host tool closure — the in-sandbox session may have an in-flight
         // `request_operator_input` request whose response the re-attached host must still serve.
         ...(toolBridge ? { toolBridge } : {}),
+        // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
+        ...(reattachCredentialId ? { credentialId: reattachCredentialId } : {}),
       });
       await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
       return result;

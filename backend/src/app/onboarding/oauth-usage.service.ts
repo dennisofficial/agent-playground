@@ -86,7 +86,13 @@ export class OauthUsageService {
    */
   async applyHarvest(
     orgId: string,
-    info: { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number },
+    info: {
+      status?: string;
+      resetsAt?: number;
+      rateLimitType?: string;
+      utilization?: number;
+      credentialId?: string;
+    },
   ): Promise<void> {
     try {
       // The SDK reports `resetsAt` in epoch SECONDS; `resetEpochToIso` normalizes that (and tolerates a
@@ -103,7 +109,9 @@ export class OauthUsageService {
       if (!rateLimitType) return;
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
-      const changed = await this.store.mergeClaudeUsageWindow(orgId, key, { utilization, resetsAt }, Date.now());
+      const changed = await this.store.mergeClaudeUsageWindow(
+        orgId, key, { utilization, resetsAt }, Date.now(), info.credentialId,
+      );
       if (changed) void this.publishHarvested(orgId);
     } catch (err) {
       this.logger.warn(`applyHarvest failed org=${orgId}: ${err}`);
@@ -191,13 +199,20 @@ export class OauthUsageService {
    */
   async get(orgId: string): Promise<OrgUsage> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
+    const selectedId = await this.claudeStore.getSelectedCredentialId(orgId);
+    // Trust the harvested snapshot ONLY when it was produced by the currently-selected credential.
+    // A snapshot tagged to a now-deselected account (or an untagged legacy/reattach snapshot) must
+    // not shadow the live per-account read — that is the account-switch staleness bug.
+    const harvestTrusted = !!snapshot?.credentialId && snapshot.credentialId === selectedId;
     // Drop any harvested window whose reset instant has already passed: the window has rolled over, so its
     // stored utilization (e.g. a latched 100% from a session-limit hit) is stale and must NOT keep shadowing
     // the live snapshot's fresh post-reset value — otherwise a maxed window never visibly "resets to 0".
     const now = Date.now();
     const harvestWindows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>> = {};
-    for (const [key, w] of Object.entries(snapshot?.windows ?? {})) {
-      if (w && new Date(w.resetsAt).getTime() > now) harvestWindows[key as ClaudeUsageWindowKey] = w;
+    if (harvestTrusted) {
+      for (const [key, w] of Object.entries(snapshot?.windows ?? {})) {
+        if (w && new Date(w.resetsAt).getTime() > now) harvestWindows[key as ClaudeUsageWindowKey] = w;
+      }
     }
     const harvestIsEmpty = Object.keys(harvestWindows).length === 0;
 

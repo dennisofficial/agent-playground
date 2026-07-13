@@ -13,8 +13,9 @@ type FakeCredentialRow = { id: string; kind: 'setup_token' | 'personal'; secret:
 
 /**
  * Minimal in-memory stand-in for `ClaudeCredentialStore`'s full surface these tests need: the
- * per-credential read/write-back path (`list`, `getDecryptedById`, `advanceClaudeCredential`) AND the
- * selected-account display header (`getSelectedDisplay`).
+ * per-credential read/write-back path (`list`, `getDecryptedById`, `advanceClaudeCredential`), the
+ * selected-account display header (`getSelectedDisplay`), and the bare selected-id getter
+ * (`getSelectedCredentialId`) `get()` now uses to gate harvest trust.
  */
 class FakeClaudeStore {
   readonly advanceCalls: Array<{ orgId: string; credentialId: string; secret: string }> = [];
@@ -22,10 +23,19 @@ class FakeClaudeStore {
   constructor(
     private readonly rows: FakeCredentialRow[] = [],
     private readonly display: SelectedDisplay | null = null,
+    private selectedCredentialId: string | null = null,
   ) {}
 
   getSelectedDisplay(_orgId: string): Promise<SelectedDisplay | null> {
     return Promise.resolve(this.display);
+  }
+
+  getSelectedCredentialId(_orgId: string): Promise<string | null> {
+    return Promise.resolve(this.selectedCredentialId);
+  }
+
+  setSelectedCredentialId(id: string | null): void {
+    this.selectedCredentialId = id;
   }
 
   list(_orgId: string): Promise<ClaudeCredentialSummary[]> {
@@ -85,8 +95,13 @@ class FakeCredentialStore {
     key: ClaudeUsageWindowKey,
     window: StoredUsageWindow,
     fetchedAt: number,
+    credentialId?: string,
   ): Promise<boolean> {
-    const snapshot = this.snapshots.get(orgId) ?? { windows: {}, fetchedAt: 0 };
+    let snapshot = this.snapshots.get(orgId) ?? { windows: {}, fetchedAt: 0 };
+    // Mirrors the real store's single-account invariant: a harvest from a DIFFERENT credential resets.
+    if (snapshot.credentialId !== credentialId) {
+      snapshot = { windows: {}, fetchedAt: 0, credentialId };
+    }
     const existing = snapshot.windows[key];
     if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
       return Promise.resolve(false);
@@ -94,6 +109,7 @@ class FakeCredentialStore {
     this.snapshots.set(orgId, {
       windows: { ...snapshot.windows, [key]: window },
       fetchedAt,
+      credentialId,
     });
     return Promise.resolve(true);
   }
@@ -133,6 +149,14 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 /**
+ * The credential id most tests harvest under — tests that aren't specifically about cross-credential
+ * scoping (the whole point of this module) use this as BOTH the harvested snapshot's tag AND the org's
+ * selected credential, so `get()`'s harvest-trust gate passes and the pre-existing freshness/publish
+ * assertions keep exercising the same behavior they always did.
+ */
+const CRED = 'cred-default';
+
+/**
  * applyHarvest writes through to the (fake) durable store; get() serves the harvested snapshot without HTTP
  * when it's fresh. Also returns the service's `UsageEventBus` (and a running list of everything it
  * published) and the `FakeClaudeStore` it was built with, so tests can assert on realtime fan-out and
@@ -143,10 +167,13 @@ function makeService(
     store?: FakeCredentialStore;
     claudeStore?: FakeClaudeStore;
     selectedDisplay?: SelectedDisplay | null;
+    selectedCredentialId?: string | null;
   } = {},
 ): { svc: OauthUsageService; bus: UsageEventBus; published: UsageChange[]; claudeStore: FakeClaudeStore } {
   const store = opts.store ?? new FakeCredentialStore();
-  const claudeStore = opts.claudeStore ?? new FakeClaudeStore([], opts.selectedDisplay ?? null);
+  const claudeStore =
+    opts.claudeStore ??
+    new FakeClaudeStore([], opts.selectedDisplay ?? null, opts.selectedCredentialId ?? CRED);
   const bus = new UsageEventBus();
   const published: UsageChange[] = [];
   bus.stream$.subscribe((e) => published.push(e));
@@ -165,7 +192,7 @@ describe('OauthUsageService.applyHarvest', () => {
   it('paints the session window full on a rejected frame that omits utilization + window', async () => {
     const { svc } = makeService();
     const resetsAt = Date.now() + 60 * 60 * 1000;
-    await svc.applyHarvest('org1', { status: 'rejected', resetsAt });
+    await svc.applyHarvest('org1', { status: 'rejected', resetsAt, credentialId: CRED });
 
     const usage = await svc.get('org1');
     expect(usage.ok).toBe(true);
@@ -183,6 +210,7 @@ describe('OauthUsageService.applyHarvest', () => {
       status: 'rejected',
       rateLimitType: 'seven_day',
       resetsAt,
+      credentialId: CRED,
     });
 
     const usage = await svc.get('org1');
@@ -202,6 +230,7 @@ describe('OauthUsageService.applyHarvest', () => {
       status: 'rejected',
       rateLimitType: 'five_hour',
       resetsAt: seconds,
+      credentialId: CRED,
     });
     const usage = await svc.get('org1');
     expect(usage.fiveHour?.resetsAt).toBe(new Date(seconds * 1000).toISOString());
@@ -217,6 +246,7 @@ describe('OauthUsageService.applyHarvest', () => {
       rateLimitType: 'five_hour',
       utilization: 82,
       resetsAt,
+      credentialId: CRED,
     });
 
     const usage = await svc.get('org1');
@@ -250,6 +280,7 @@ describe('OauthUsageService.applyHarvest', () => {
       status: 'rejected',
       rateLimitType: 'seven_day_opus',
       resetsAt,
+      credentialId: CRED,
     });
 
     const snapshot = await store.readClaudeUsageSnapshot('org1');
@@ -277,6 +308,7 @@ describe('OauthUsageService realtime publish', () => {
       status: 'rejected',
       rateLimitType: 'five_hour',
       resetsAt,
+      credentialId: CRED,
     });
     await flushMicrotasks();
 
@@ -366,6 +398,7 @@ describe('OauthUsageService.applyHarvest scale', () => {
       rateLimitType: 'five_hour',
       resetsAt: Math.floor((Date.now() + 3 * 60 * 60 * 1000) / 1000), // epoch SECONDS
       utilization: 0.9,
+      credentialId: CRED,
     });
     const usage = await svc.get('org1');
     expect(usage.fiveHour?.utilization).toBe(90);
@@ -395,6 +428,7 @@ describe('OauthUsageService.get harvested-window expiry', () => {
       'fiveHour',
       { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60_000).toISOString() },
       Date.now(),
+      CRED,
     );
     const usage = await svc.get('org1');
     expect(usage.fiveHour?.utilization).toBe(100);
@@ -416,17 +450,21 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
     store: FakeCredentialStore;
   } {
     const store = new FakeCredentialStore();
-    const claudeStore = new FakeClaudeStore([
-      {
-        id: 'cred1',
-        kind: 'personal',
-        secret: personalSecret({
-          accessToken: 'at-personal',
-          refreshToken: 'rt-personal',
-          expiresAt: Date.now() + 60 * 60 * 1000,
-        }),
-      },
-    ]);
+    const claudeStore = new FakeClaudeStore(
+      [
+        {
+          id: 'cred1',
+          kind: 'personal',
+          secret: personalSecret({
+            accessToken: 'at-personal',
+            refreshToken: 'rt-personal',
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        },
+      ],
+      null,
+      'cred1', // selected — matches the harvested snapshot's credentialId so the trust gate passes
+    );
     const bus = new UsageEventBus();
     const credRefresh = new FakeCredRefresh(claudeStore);
     // `secret` itself is never read on this path — `fetchLive` resolves the real secret through
@@ -461,6 +499,7 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
       'fiveHour',
       { utilization: 99, resetsAt: harvestResetsAt },
       Date.now() - 60 * 60 * 1000,
+      'cred1',
     );
     const liveResetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     vi.stubGlobal(
@@ -490,6 +529,7 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
       'fiveHour',
       { utilization: 88, resetsAt: harvestResetsAt },
       harvestNow,
+      'cred1',
     );
 
     const usage = await svc.get('org1');
@@ -497,6 +537,137 @@ describe('OauthUsageService.get freshness (harvest vs live)', () => {
     expect(usage.fiveHour?.utilization).toBe(88);
     expect(usage.source).toBe('harvested');
     expect(new Date(usage.fetchedAt).getTime()).toBe(harvestNow);
+  });
+});
+
+describe('OauthUsageService.get credential-scoped harvest trust', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Like `makeServiceWithLiveCredential` above, but the org's SELECTED credential id is configurable
+   * independently of the harvested snapshot's own tag — these tests are specifically about the
+   * cross-credential trust gate (d2), not the harvest-vs-live freshness race.
+   */
+  function makeServiceForTrust(selectedCredentialId: string | null): {
+    svc: OauthUsageService;
+    store: FakeCredentialStore;
+  } {
+    const store = new FakeCredentialStore();
+    const claudeStore = new FakeClaudeStore(
+      [
+        {
+          id: 'cred-live',
+          kind: 'personal',
+          secret: personalSecret({
+            accessToken: 'at-live',
+            refreshToken: 'rt-live',
+            expiresAt: Date.now() + 60 * 60 * 1000,
+          }),
+        },
+      ],
+      null,
+      selectedCredentialId,
+    );
+    const bus = new UsageEventBus();
+    const credRefresh = new FakeCredRefresh(claudeStore);
+    // `fetchLive` resolves through the currently-SELECTED credential ('cred-live' in every test below).
+    const engineAuth: Pick<CredentialResolver, 'engineAuth'> = {
+      engineAuth: () =>
+        Promise.resolve({
+          secret: '',
+          kind: 'personal',
+          refreshBack: { orgId: 'org1', engine: 'claude', credentialId: 'cred-live' },
+        }),
+    };
+    const svc = new OauthUsageService(
+      engineAuth as unknown as CredentialResolver,
+      store as unknown as TenantCredentialStore,
+      claudeStore as unknown as ClaudeCredentialStore,
+      bus,
+      credRefresh as unknown as CredentialRefreshService,
+    );
+    return { svc, store };
+  }
+
+  it('a snapshot tagged to a DIFFERENT (deselected) credential is ignored — live wins', async () => {
+    const { svc, store } = makeServiceForTrust('cred-live'); // selected = B
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      Date.now(),
+      'cred-old', // A — a different, now-deselected credential
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+    );
+
+    const usage = await svc.get('org1');
+
+    expect(usage.fiveHour?.utilization).toBe(21);
+    expect(usage.source).toBe('usage_api');
+  });
+
+  it('a snapshot tagged to the SELECTED credential is trusted — fresh harvest wins', async () => {
+    const { svc, store } = makeServiceForTrust('cred-live');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+    );
+    const harvestNow = Date.now() + 1000; // strictly newer than the live fetch's own `fetchedAt`
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      harvestNow,
+      'cred-live',
+    );
+
+    const usage = await svc.get('org1');
+
+    expect(usage.fiveHour?.utilization).toBe(100);
+    expect(usage.source).toBe('harvested');
+  });
+
+  it('a snapshot with no credentialId (legacy/reattach) is untrusted — live wins', async () => {
+    const { svc, store } = makeServiceForTrust('cred-live');
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      Date.now(),
+      // no credentialId — legacy/untagged snapshot
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+    );
+
+    const usage = await svc.get('org1');
+
+    expect(usage.fiveHour?.utilization).toBe(21);
+    expect(usage.source).toBe('usage_api');
+  });
+
+  it('applyHarvest forwards its credentialId into mergeClaudeUsageWindow (tags the resulting snapshot)', async () => {
+    const store = new FakeCredentialStore();
+    const { svc } = makeService({ store, selectedCredentialId: 'cred-forward' });
+    await svc.applyHarvest('org1', {
+      status: 'rejected',
+      rateLimitType: 'five_hour',
+      resetsAt: Date.now() + 60 * 60 * 1000,
+      credentialId: 'cred-forward',
+    });
+
+    const snapshot = await store.readClaudeUsageSnapshot('org1');
+    expect(snapshot?.credentialId).toBe('cred-forward');
+    // Only trusted (selected === harvested) because the id was actually forwarded — proves the wiring.
+    const usage = await svc.get('org1');
+    expect(usage.fiveHour?.utilization).toBe(100);
+    expect(usage.source).toBe('harvested');
   });
 });
 
