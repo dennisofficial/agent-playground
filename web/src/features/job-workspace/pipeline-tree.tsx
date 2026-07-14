@@ -373,6 +373,12 @@ function StageFold({
   // The latest thread drives the header glyph + live task overlay (a build stage's newest builder leg; a
   // singleton stage's one thread). A stage should never be empty, but guard so a malformed one renders nothing.
   const primary = roots[roots.length - 1];
+
+  // REALTIME: fold the latest thread's live lane over the durable list, so mid-turn task calls tick instantly
+  // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
+  // Hook must run unconditionally (Rules of Hooks) — stage.threads can be empty on some renders of the
+  // same component instance (e.g. a freshly materialized stage), so the early-return below must come after.
+  const liveTurn = useLiveTurn(jobId, threadLane(primary?.id ?? ""));
   if (!primary) return null;
 
   const state = laneState(primary.status, primary.condition, drafted);
@@ -388,9 +394,6 @@ function StageFold({
     (roots.some((t) => t.id === laneNode) ||
       reviewChildren.some((c) => c.id === laneNode));
 
-  // REALTIME: fold the latest thread's live lane over the durable list, so mid-turn task calls tick instantly
-  // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
-  const liveTurn = useLiveTurn(jobId, threadLane(primary.id));
   const tasks = overlayLiveTasks(stage.tasks, liveTurn);
   const done = tasks.filter((t) => t.status === "completed").length;
   const isDraft = state === "draft";

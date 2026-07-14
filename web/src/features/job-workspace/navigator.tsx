@@ -48,12 +48,7 @@ import {
   useServices,
 } from "@/lib/api/job-queries";
 import { threadHref } from "@/lib/routes";
-import {
-  Divider,
-  PipelineTree,
-  TasksBody,
-  haltThreadIdx,
-} from "./pipeline-tree";
+import { Divider, PipelineTree, TasksBody } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
@@ -1359,7 +1354,7 @@ function StateBanner({
         <div className="mb-1 flex items-center gap-1.5">
           <Hourglass size={11} className="text-dim" />
           <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
-            VERIFICATION UNAVAILABLE · §{stuck.ordinal}
+            VERIFICATION UNAVAILABLE
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
@@ -1393,7 +1388,6 @@ function StateBanner({
       job.halt.kind === "budget_exhausted" ||
       job.halt.kind === "incomplete")
   ) {
-    const haltNo = job ? haltSectionNo(job) : null;
     return (
       <div
         className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
@@ -1405,7 +1399,7 @@ function StateBanner({
         <div className="mb-1 flex items-center gap-1.5">
           <AlertTriangle size={11} className="text-red" />
           <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
-            HALTED{haltNo ? ` · §${haltNo}` : ""}
+            HALTED
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
@@ -1457,11 +1451,6 @@ function StateBanner({
     );
   }
   return null;
-}
-
-function haltSectionNo(job: PipelineJob): number | null {
-  const idx = haltThreadIdx(job.stages.flatMap((s) => s.threads));
-  return idx === -1 ? null : idx + 1;
 }
 
 function BannerBtn({

@@ -235,17 +235,17 @@ export function useSay(ref: JobRef) {
   return useMutation<
     { ts: string },
     Error,
-    { text: string; lane?: string },
+    { text: string; lane?: string; threadId?: string },
     SayContext
   >({
     mutationFn: ({ text, lane }) => sayMessage(ref, text, lane),
-    onMutate: async ({ text }) => {
+    onMutate: async ({ text, threadId }) => {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
-        threadId: ref.jobId,
+        threadId: threadId ?? ref.jobId,
         subagentId: null,
         author: "user",
         authorId: "me",
@@ -280,6 +280,7 @@ interface SayWithAttachmentsInput {
   text: string;
   attachments: PendingAttachment[];
   lane?: string;
+  threadId?: string;
 }
 
 /**
@@ -319,7 +320,7 @@ export function useSayWithAttachments(ref: JobRef) {
       };
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
-        threadId: ref.jobId,
+        threadId: input.threadId ?? ref.jobId,
         subagentId: null,
         author: "user",
         authorId: "me",
@@ -361,6 +362,7 @@ export function useStop(ref: JobRef) {
 interface ReviewCommentsSendInput {
   items: ReviewCommentItemBody[];
   message?: string;
+  threadId?: string;
 }
 
 /**
@@ -388,7 +390,7 @@ export function useSendReviewComments(ref: JobRef) {
       };
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
-        threadId: ref.jobId,
+        threadId: input.threadId ?? ref.jobId,
         subagentId: null,
         author: "user",
         authorId: "me",

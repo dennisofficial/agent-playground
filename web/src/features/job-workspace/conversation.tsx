@@ -473,6 +473,7 @@ export function TranscriptView({
           jobRef={jobRef}
           attach={attach}
           lane={lane === MAIN_LANE ? undefined : lane}
+          threadId={threadId}
           onHeightChange={setComposerHeight}
           footer={footer}
           readOnly={readOnly}
