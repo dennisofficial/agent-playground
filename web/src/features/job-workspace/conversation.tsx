@@ -420,16 +420,16 @@ export function TranscriptView({
   // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
   // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
   const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
-  // Every ```mermaid fence in the transcript, deduped by the warm helper — handed to the idle pass so it can
-  // warm the render cache off-screen BEFORE a diagram row is pre-measured (see idle-premeasure.tsx).
+  // Every ```mermaid fence in the lane-filtered durable transcript, deduped by the warm helper — handed to the
+  // idle pass so it can warm the render cache off-screen BEFORE a diagram row is pre-measured.
   const warmSources = useMemo(
     () =>
       premeasureEnabled
-        ? messages.flatMap((m) =>
+        ? log.flatMap((m) =>
             extractMermaidSources(typeof m.text === "string" ? m.text : ""),
           )
         : [],
-    [messages, premeasureEnabled],
+    [log, premeasureEnabled],
   );
   const premeasureLayer = useIdlePremeasure({
     items,
