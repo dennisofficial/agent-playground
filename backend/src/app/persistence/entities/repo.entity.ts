@@ -1,6 +1,7 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn, Unique } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import type { SeenTooling } from '../../workspace-profile/seen-tooling';
 import { OrganizationEntity } from './organization.entity';
 
 /**
@@ -87,6 +88,15 @@ export class RepoEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', nullable: true })
   profile_seen_manifests!: string[] | null;
+
+  /**
+   * The per-repo seen-tooling ledger for the install-awareness nudge. Each entry is a tool the host
+   * ProfileAwarenessService has already surfaced an awareness nudge for; a later install of the same tool is
+   * deduped (suppressed). Distinct from `profile_seen_manifests` (root-manifest new-stack signal) — this is
+   * append-only and never touched by the manifest writers. null = never recorded.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  profile_seen_tooling!: SeenTooling[] | null;
 
   /** Named GitHub-token override; null → the org default token. */
   @Column({ type: 'text', nullable: true })

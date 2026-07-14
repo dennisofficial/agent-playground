@@ -4,6 +4,8 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
+import type { InstallMatch } from '../prompt-kit/jit/install-awareness';
+import type { SeenTooling } from '../workspace-profile/seen-tooling';
 import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 
 /**
@@ -75,6 +77,46 @@ export class WorkspaceConfigStore {
   async setSeenManifests(orgId: string, repoId: string, manifests: string[]): Promise<void> {
     const unique = Array.from(new Set(manifests)).sort();
     await this.repos.update({ id: repoId, org_id: orgId }, { profile_seen_manifests: unique });
+  }
+
+  /**
+   * Apply an install/remove transition to the seen-tooling ledger (`repos.profile_seen_tooling`) atomically —
+   * `SELECT … FOR UPDATE` under `this.repos.manager.transaction`, mirroring
+   * {@link TenantCredentialStore.advanceCodexAuthSecret}. Safe against a build lane racing the brain on the
+   * same repo row. Returns the action that actually fired, or null on a no-op (add of an already-present key,
+   * remove of an absent one) — the caller (`ProfileAwarenessService`) suppresses the nudge on null. A missing
+   * repo row is also a no-op.
+   */
+  async applyToolingTransition(
+    orgId: string,
+    repoId: string,
+    match: InstallMatch,
+  ): Promise<'add' | 'remove' | null> {
+    return this.repos.manager.transaction(async (m) => {
+      const row = await m.findOne(RepoEntity, {
+        where: { id: repoId, org_id: orgId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!row) {
+        this.logger.warn(`applyToolingTransition: no repo row for org=${orgId} repo=${repoId} — skipping`);
+        return null;
+      }
+      const ledger = row.profile_seen_tooling ?? [];
+      const present = ledger.some((t) => t.key === match.key);
+
+      if (match.action === 'add') {
+        if (present) return null; // already tracked — steady-state repeat, deduped
+        const entry: SeenTooling = { key: match.key, kind: match.kind, seenAt: new Date().toISOString() };
+        row.profile_seen_tooling = [...ledger, entry];
+        await m.save(row);
+        return 'add';
+      }
+
+      if (!present) return null; // never tracked — steady-state repeat, deduped
+      row.profile_seen_tooling = ledger.filter((t) => t.key !== match.key);
+      await m.save(row);
+      return 'remove';
+    });
   }
 
   /** All mounts for a repo. */
