@@ -160,6 +160,8 @@ export interface RunTurnResult {
   /** A plan, when the turn was a plan turn that captured one. */
   planText?: string;
   usage?: EngineUsage;
+  /** The claude_credentials.id this turn authed on; absent for Codex / no-credential turns. */
+  credentialId?: string;
   /** Set when the turn ended on a Claude subscription session/usage limit (see {@link EngineRunResult.sessionLimit}).
    *  Pure pass-through from the engine result; the caller decides how to park/resume. */
   sessionLimit?: SessionLimitHit;
@@ -355,6 +357,7 @@ export class TurnRunnerService {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.credentialId ? { credentialId: result.credentialId } : {}),
       ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       session,
     };
@@ -439,7 +442,11 @@ export class TurnRunnerService {
     turnId: string;
     containerId: string;
     jobId: string;
+    orgId?: string;
     stepId?: string | null;
+    lane?: string;
+    kind?: string;
+    engine?: SessionEngine;
     onEvent?: (e: EngineEvent) => void;
     toolBridge?: ToolBridgeOptions;
     signal?: AbortSignal;
@@ -473,10 +480,26 @@ export class TurnRunnerService {
         message, resetAt, rateLimitType, result.sessionId, input.credentialId,
       );
     }
+    const credentialId = result.credentialId ?? input.credentialId ?? null;
+    if (result.claimed !== false) {
+      void this.usage?.record(
+        {
+          jobId: input.jobId,
+          orgId: input.orgId,
+          lane: input.lane ?? 'main',
+          kind: input.kind ?? 'step',
+          engine: input.engine ?? 'claude',
+          credentialId,
+          ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
+        },
+        result.usage,
+      );
+    }
     return {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(credentialId ? { credentialId } : {}),
       ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
       session: {
