@@ -433,6 +433,40 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     }
   });
 
+  it('sets an explicit per-subagent effort on the SDK agents map (fetchers lowered, writers kept high)', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
+      engine: 'claude',
+      task: agentMessage('t'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      // Execute mode so the writer/validate/prototype subagents are present too.
+      mode: 'execute',
+      auth: { secret: 'tok' },
+    });
+    const agents = captured.options!.agents as Record<string, { effort?: string }>;
+
+    // Every subagent pins its OWN effort — none inherits the session effort (`high`) implicitly.
+    // Mechanical fetchers run cheaper; judgment writers/reviewers stay high.
+    const expected: Record<string, 'low' | 'medium' | 'high'> = {
+      docs: 'low',
+      test: 'low',
+      explore: 'medium',
+      validate: 'medium',
+      prototype: 'medium',
+      review: 'high',
+      debug: 'high',
+      implement: 'high',
+      'implement-deep': 'high',
+    };
+    for (const [name, effort] of Object.entries(expected)) {
+      expect(agents[name], `subagent ${name} must be present`).toBeDefined();
+      expect(agents[name].effort, `subagent ${name} effort`).toBe(effort);
+    }
+  });
+
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, {

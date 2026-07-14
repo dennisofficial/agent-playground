@@ -327,6 +327,13 @@ const LSP_WRITE_TOOLS = qualifyLspToolNames(LSP_TOOL_NAMES);
 // can Write/Edit (only the calling turn changes files). `test` is the one exception to "read-only": it
 // gets Bash so it can RUN the repo's verification, but it still cannot edit/commit. This keeps delegated
 // work token-cheap and side-effect-free, while letting a worker push noisy test output off its context.
+//
+// EFFORT: each subagent pins its own `effort`. A subagent that OMITS `effort` inherits the SESSION effort
+// (the spawning orchestrator's — brain/builder run at `high`, see thread-kind/registry.ts), so leaving it
+// unset spends `high` even on mechanical stages. We split by how effort-sensitive the stage is: the
+// mechanical FETCHERS run cheaper (`low`/`medium`) while the judgment WRITERS/reviewers stay `high`. The
+// value is the Claude SDK's own effort enum (`Options['agents'][k].effort`); `low|medium|high` pass
+// through verbatim (no `toClaudeEffort` mapping needed).
 const SUBAGENTS: NonNullable<Options['agents']> = {
   explore: {
     description:
@@ -338,6 +345,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Self-directs repo search; recall matters (not `low`), but the orchestrator can re-ask (not `high`).
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
   docs: {
@@ -348,6 +357,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Pure external doc lookup — mechanical fetch, cheapest tier.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
   review: {
@@ -358,6 +369,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Review quality is the most effort-sensitive dimension — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
   debug: {
@@ -367,6 +380,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Root-cause tracing is judgment-heavy — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
   test: {
@@ -377,6 +392,9 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs verification + returns a diagnosis — mostly mechanical. Watch diagnosis quality; bump to
+    // `medium` if it regresses.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.TEST),
   },
 };
@@ -403,6 +421,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'claude-sonnet-5',
+    // Writing code is effort-sensitive — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
   'implement-deep': {
@@ -413,6 +433,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
     tools: WRITER_TOOLS,
     model: 'opus',
+    // The Opus escalation writer — the hardest slices. Keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
 };
@@ -436,6 +458,8 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs e2e but must judge pass/fail — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.VALIDATE),
   },
 };
@@ -455,6 +479,8 @@ const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
       'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Authors a design-fidelity mockup — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.PROTOTYPE),
   },
 };
