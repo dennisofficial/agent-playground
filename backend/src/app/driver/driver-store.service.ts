@@ -33,7 +33,7 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { coerceThreadType, laneDefaultFooter } from '../thread-kind';
+import { coerceThreadType, laneDefaultFooter, threadKindSpec } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import { webAmendProposalCard, webMergeReadyCard, webVerdictCard } from '../surface/web-approval-card';
@@ -1416,6 +1416,10 @@ export class DriverStoreService {
         t.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
       // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's role.
       defaultFooter: laneDefaultFooter(t.role),
+      // Per-role operator-chat toggle (d12) — whether this thread's kind accepts operator input at all. The
+      // web gates the chat composer on this (live steerability/halted-retry nuance is a runtime check, not
+      // this static per-kind flag).
+      operatorInput: threadKindSpec(t.role).operatorInput,
       isMasterReview: t.role === 'master_review',
       // A builder's review CHILD threads (review_agent × N + review_fix) live in the SAME stage, related by
       // `parent_thread_id`. Each is a first-class row with its own status + findings + streaming lane.

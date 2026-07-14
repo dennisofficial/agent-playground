@@ -932,6 +932,11 @@ export class WebSurfaceController {
     });
     return rows.map((m) => ({
       id: m.id,
+      // The owning thread (d3) + optional subagent (d4) — the web filters a thread's transcript by
+      // `threadId` and joins a spawned subagent's blocks by `subagentId` (replaces the old
+      // `meta.phaseId`/`meta.parentToolUseId↔meta.id` peel).
+      threadId: m.thread_id,
+      subagentId: m.subagent_id,
       ts: m.ts,
       author: m.author,
       authorId: m.author_id,
