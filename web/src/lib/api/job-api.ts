@@ -647,6 +647,9 @@ export interface CreateThreadBody {
   autoApproveMode?: AutoApproveMode;
   /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
   autoMerge?: boolean;
+  /** Job ids this new job should block on (born-blocked). All must be siblings in the same repo.
+   *  When any is still live, the job starts blocked and its first turn/branch are deferred until they resolve. */
+  dependsOn?: string[];
 }
 
 export function createJob(
@@ -676,6 +679,8 @@ export function createJobWithFiles(
   if (body.autoApproveMode)
     form.append("autoApproveMode", body.autoApproveMode);
   if (body.autoMerge) form.append("autoMerge", "true");
+  if (body.dependsOn?.length)
+    for (const id of body.dependsOn) form.append("dependsOn", id);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",
