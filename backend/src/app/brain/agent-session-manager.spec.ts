@@ -129,9 +129,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     awaitingSecretId: vi.fn().mockResolvedValue(null),
     getSecretCard: vi.fn().mockResolvedValue(null),
     markSecretProvided: vi.fn().mockResolvedValue(undefined),
+    markSecretProvidedPerCard: vi.fn().mockResolvedValue(undefined),
     markSecretDelivered: vi.fn().mockResolvedValue(undefined),
     clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
     findUndeliveredProvidedSecrets: vi.fn().mockResolvedValue([]),
+    // Durable/mcp secret requests are PER-CARD (like file requests) — an open-cards list + withdraw.
+    openSecretCards: vi.fn().mockResolvedValue([]),
+    withdrawSecretRequest: vi.fn().mockResolvedValue({ withdrawn: true }),
     // MCP-proposal gate (propose_mcp_servers lifecycle); default to "opened ok".
     openMcpProposal: vi.fn().mockResolvedValue({ ok: true }),
     getMcpProposalCard: vi.fn().mockResolvedValue(null),
@@ -1918,6 +1922,38 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       key: 'Authorization',
     });
     expect(arg.card.path).toBeUndefined();
+  });
+
+  it('withdraw_secret_request retracts an open durable/mcp card by id (and reports a no-op when it could not be withdrawn)', async () => {
+    const tools = manager.buildTools(fakeStimulus, 'onboarding');
+
+    // Happy path: a still-open card is withdrawn (the store decrements open_secret_count).
+    (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withdrawn: true,
+    });
+    const ok = await tools['withdraw_secret_request']({
+      requestId: 's-123',
+      reason: 'wrong target',
+    });
+    expect(mockStore.withdrawSecretRequest).toHaveBeenCalledWith(
+      THREAD_ID,
+      's-123',
+      'wrong target',
+    );
+    expect(ok).toMatchObject({ ok: true, requestId: 's-123' });
+
+    // Missing requestId → refused before touching the store.
+    (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockClear();
+    const bad = await tools['withdraw_secret_request']({});
+    expect(bad).toMatchObject({ ok: false });
+    expect(mockStore.withdrawSecretRequest).not.toHaveBeenCalled();
+
+    // Already provided/withdrawn → the store reports no winner → the tool surfaces a no-op.
+    (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withdrawn: false,
+    });
+    const raced = await tools['withdraw_secret_request']({ requestId: 's-123' });
+    expect(raced).toMatchObject({ ok: false });
   });
 
   it('(e) ask_question opens the durable gate with a normalized question_card', async () => {

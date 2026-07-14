@@ -449,7 +449,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const h = makeManager({ live: true, leader: true });
     const { manager, run, steer, store } = h;
     store.awaitingSecretId.mockResolvedValue('sec-1');
-    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+    // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear this test exercises.
+    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true });
 
     const seed = await recordSeed(thread.id, '<system_notice>secret provided</system_notice>', {
       seedSecretId: 'sec-1',
@@ -528,7 +529,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         name: 'secret',
         target: { seedSecretId: 'sec-1' },
         arm: (store) =>
-          store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null }),
+          // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear.
+          store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true }),
         assertCard: (store, jobId) => {
           expect(store.markSecretDelivered).toHaveBeenCalledWith(jobId, 'sec-1');
           expect(store.clearAwaitingSecret).toHaveBeenCalledWith(jobId, 'sec-1');

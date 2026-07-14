@@ -1489,13 +1489,21 @@ export class WebSurfaceController {
     if (!card || payload?.type !== 'secret_input_card') {
       throw new BadRequestException('no such secret request on this thread');
     }
-    // Gate against stale / already-handled cards (idempotent — e.g. a double submit): only the thread's
-    // currently-open secret request is fillable, and only once.
-    if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
-      return { ok: false, ts: '' };
-    }
-    if (payload.provided_at != null) {
-      return { ok: true, ts: '' }; // already provided; a delivery turn is in flight / queued
+    // Gate against stale / already-handled cards (idempotent — e.g. a double submit). Two lanes:
+    // - EPHEMERAL: single-slot — only the thread's currently-pointed request is fillable, and only once.
+    // - DURABLE/MCP: per-card (like provide-file) — a withdrawn card is refused, a delivered card is stale,
+    //   an already-provided card is an idempotent no-op (a delivery turn is in flight / queued).
+    if (payload.ephemeral) {
+      if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
+        return { ok: false, ts: '' };
+      }
+      if (payload.provided_at != null) {
+        return { ok: true, ts: '' };
+      }
+    } else {
+      if (payload.withdrawnAt) return { ok: false, ts: '' };
+      if (payload.delivered_at) return { ok: false, ts: '' };
+      if (payload.provided_at != null) return { ok: true, ts: '' };
     }
 
     // EPHEMERAL lane — a one-time value (an OAuth code, a 2FA code) piped STRAIGHT into the running process
@@ -1556,7 +1564,13 @@ export class WebSurfaceController {
       // stale card slipped past the brain-side check — the row is the source of truth.
       const target = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
       if (target?.auth_kind === 'oauth') {
-        await this.store.clearAwaitingSecret(jobId, body.requestId);
+        // Per-card lane: no single-slot pointer to clear — stamp the card terminal (withdrawn) and decrement
+        // the open-secret counter so it stops showing as awaiting a value.
+        await this.store.withdrawSecretRequest(
+          jobId,
+          body.requestId,
+          'MCP server uses OAuth — not a fillable secret slot',
+        );
         const notice = mcpSecretOauthRefused(server);
         const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
           orgId: org.id,
@@ -1573,9 +1587,13 @@ export class WebSurfaceController {
         value,
       );
       if (!wrote) {
-        // The server row is gone (deleted between propose/approve and provide) — clear the gate and tell the
-        // brain rather than wedge on a stale card.
-        await this.store.clearAwaitingSecret(jobId, body.requestId);
+        // The server row is gone (deleted between propose/approve and provide) — stamp the card terminal
+        // (withdrawn) + decrement the counter (per-card lane has no pointer) and tell the brain.
+        await this.store.withdrawSecretRequest(
+          jobId,
+          body.requestId,
+          'MCP server row is gone',
+        );
         const notice = mcpSecretStoreFailed(key, server);
         const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
           orgId: org.id,
@@ -1592,8 +1610,8 @@ export class WebSurfaceController {
           .recordValidation(org.id, thread.repo_id, server, result)
           .catch(() => undefined);
       }
-      card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
-      await this.messages.save(card);
+      // Per-card lane: stamp provided_at AND decrement the open-secret counter in one transaction.
+      await this.store.markSecretProvidedPerCard(jobId, body.requestId);
       const notice = mcpSecretStored(key, server, slot);
       const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
         orgId: org.id,
@@ -1618,10 +1636,10 @@ export class WebSurfaceController {
     await this.threadLifecycle
       .rehydrateThread(jobId, org.id)
       .catch(() => undefined);
-    // Stamp the card PROVIDED (no value), then deliver a MASKED confirmation. The gate clears only on the
-    // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
-    card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
-    await this.messages.save(card);
+    // Stamp the card PROVIDED (no value) AND decrement the open-secret counter in one transaction, then
+    // deliver a MASKED confirmation. This lane is per-card (no pointer to clear); the boot sweep re-delivers
+    // a provided-but-undelivered card after a crash (at-least-once).
+    await this.store.markSecretProvidedPerCard(jobId, body.requestId);
     const notice = secretStored(payload.name, payload.path);
     const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
       orgId: org.id,

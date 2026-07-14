@@ -30,6 +30,7 @@ function makeJobEntity(over: Partial<JobEntity> = {}): JobEntity {
     halt: null,
     open_question_count: 0,
     awaiting_secret_id: null,
+    open_secret_count: 0,
     pr_state: 'open',
     pr_number: 7,
     pr_mergeable: 'clean',
@@ -226,6 +227,13 @@ describe('AutoMergeService.brainSettled (private, cast to any)', () => {
   it('is false when awaiting_secret_id is set', async () => {
     const { svc, job } = make({
       job: makeJobEntity({ awaiting_secret_id: 'secret-1' }),
+    });
+    await expect((svc as any).brainSettled(job)).resolves.toBe(false);
+  });
+
+  it('is false when open_secret_count > 0', async () => {
+    const { svc, job } = make({
+      job: makeJobEntity({ open_secret_count: 1 }),
     });
     await expect((svc as any).brainSettled(job)).resolves.toBe(false);
   });
