@@ -34,6 +34,7 @@ import { UsageEventBus } from './usage-event-bus';
 import { OrgUsageController } from './usage.controller';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 import { WorkspaceConfigStore } from './workspace-config.store';
+import { WorkspaceProfileController } from './workspace-profile.controller';
 import { WorkspaceSecretsController } from './workspace-secrets.controller';
 
 /**
@@ -69,6 +70,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
     OrgCredentialsController,
     ClaudeCredentialsController,
     WorkspaceSecretsController,
+    WorkspaceProfileController,
     RepoController,
     OnboardingController,
     OrgUsageController,

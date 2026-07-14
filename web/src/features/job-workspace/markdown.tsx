@@ -282,20 +282,40 @@ function MermaidFrame({
   );
 }
 
+const MERMAID_RESERVE_MIN = 200;
+/** Tall diagrams (deep flowcharts) really do render past 1000px on a phone-width column — a low cap is
+ *  exactly what left big diagrams badly under-reserved, so the placeholder jumped when the SVG landed. */
+const MERMAID_RESERVE_MAX = 1600;
+
+function clampMermaidReserve(px: number): number {
+  return Math.min(Math.max(Math.round(px), MERMAID_RESERVE_MIN), MERMAID_RESERVE_MAX);
+}
+
 /**
- * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE — diagram height grows with
- * node/edge count, so a diagram's non-empty source-line count is a decent proxy. Used in TWO places that
- * must agree: the loading placeholder + rendered container reserve this height (so the async SVG render
- * barely changes the row), and the transcript virtualizer estimates a diagram-bearing row from the same
- * number (so the row after a diagram is positioned correctly and doesn't briefly overlap it). Clamped so a
- * tiny diagram doesn't leave a big blank and a huge one doesn't over-reserve.
+ * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE, reserved by the loading
+ * placeholder AND used by the transcript virtualizer's row estimate — the two MUST agree so the async
+ * placeholder→SVG swap barely changes the row height. A flat "px per source line" is a poor proxy because
+ * height depends on the diagram KIND: a vertical flowchart grows with its rank depth (tall), while a
+ * sequence diagram grows with its message count and renders wide-and-short — sizing both by raw line count
+ * over-reserves sequences and (with a low cap) under-reserves flowcharts. So estimate per kind instead.
+ * Still only an approximation — the exact height isn't knowable until Mermaid lays the diagram out; the
+ * virtualizer's own resize compensation absorbs the residual.
  */
 export function mermaidReservePx(source: string): number {
-  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
-  // ~72px per source line ≈ one rank of a vertical (TD/TB) flowchart, the dominant diagram kind here.
-  // Erring slightly high is safer than low: an over-reserve leaves a brief gap that closes, whereas an
-  // under-reserve lets the row below overlap the diagram until measureElement corrects.
-  return Math.min(Math.max(lines * 72, 200), 760);
+  const lines = source
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const header = lines[0]?.toLowerCase() ?? "";
+  // Sequence diagrams: height ≈ header chrome + one row per message arrow; participants add width, not height.
+  if (header.startsWith("sequencediagram")) {
+    const messages = lines.filter((line) => /--?>>?/.test(line)).length;
+    return clampMermaidReserve(120 + messages * 44);
+  }
+  // Flowchart / graph / stateDiagram (the vertical, dominant kinds): height tracks the number of ranks,
+  // proxied by edge count (`-->`/`->`), which avoids double-counting standalone node-label lines.
+  const edges = lines.filter((line) => line.includes("->")).length;
+  return clampMermaidReserve(Math.max(edges, 1) * 84);
 }
 
 function Mermaid({ chart }: { chart: string }) {
