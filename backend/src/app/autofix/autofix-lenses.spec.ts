@@ -12,7 +12,7 @@ import type { AutoFixContext, ReviewFinding } from './autofix.types';
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
   sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
-  diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
+  gitRange: 'abc123..HEAD',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',
   label: 'backend',
@@ -159,13 +159,24 @@ describe('reviewAgentsForThread', () => {
 });
 
 describe('prompt builders', () => {
-  it('review prompt carries the lens focus, intent, files and diff', () => {
+  it('review prompt carries the lens focus, intent, files and the tool-based change-set commands (not an inline diff)', () => {
     const p = buildReviewPrompt(DEFAULT_LENSES[0], ctx);
     expect(p).toContain(DEFAULT_LENSES[0].label);
     expect(p).toContain('add a y constant');
     expect(p).toContain('src/x.ts');
     expect(p).toContain('READ-ONLY');
     expect(p).toContain('"findings"');
+    // The reviewer pulls the diff itself, scoped to gitRange — no inline diff fence.
+    expect(p).toContain('git diff abc123..HEAD');
+    expect(p).toContain('git diff --stat abc123..HEAD');
+    expect(p).not.toContain('```diff');
+    expect(p).not.toContain('Diff under review');
+  });
+
+  it('review prompt falls back to HEAD when no gitRange is supplied', () => {
+    const { gitRange: _omit, ...noRange } = ctx;
+    const p = buildReviewPrompt(DEFAULT_LENSES[0], noRange);
+    expect(p).toContain('git diff HEAD');
   });
 
   it('a diff-scoped lens gets the strict diff-only contract + the ship-blocker/severity bar', () => {

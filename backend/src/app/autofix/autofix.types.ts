@@ -131,8 +131,9 @@ export interface AutoFixContext {
    */
   sandboxKey: EngineHomeKey;
   /**
-   * The unified diff to review. When omitted the stage derives one from the worktree git state (see
-   * `gitRange`). Supplying it is cheaper + deterministic (the driver already has the thread's diff).
+   * Optional unified diff. NO LONGER inlined into the review prompt — the reviewer pulls the diff itself
+   * via git, scoped to `gitRange` (see `buildReviewPrompt`). Retained only as an optional carrier for
+   * callers that already hold a diff; the review path ignores it and keys off `changedFiles` + `gitRange`.
    */
   diff?: string;
   /** The repo-relative changed files (review framing + scopes the fix). Optional alongside `diff`. */
