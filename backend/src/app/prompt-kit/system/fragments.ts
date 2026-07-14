@@ -507,6 +507,15 @@ export const PREVIEW_PREP_SEED_BODY = [
 
 const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
 
+/** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
+ *  run. Spliced into both footer branches of {@link composePreviewPrepSeed}. */
+const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
+  'The recipe is REPO-scoped, JOB-AGNOSTIC memory that ANY future job on this repo reuses — NOT a log of ' +
+  'this run: capture only the repeatable stand-up procedure, and STRIP everything specific to the change ' +
+  'you just previewed (this run\'s deep-link target, feature-only fixtures/seed scripts, and any ' +
+  '"verified for <feature>" note). For the deep-link, record HOW to build one into the area under test, ' +
+  'not the literal URL for this feature.';
+
 /** Compose the Spin-up-preview seed: the standing procedure, then the Atlas-managed recipe as a
  *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
  *  stale one — the "stop re-discovering" memory loop (d4). */
@@ -522,10 +531,16 @@ export function composePreviewPrepSeed(instructions: string | null): string {
   const footer = recipe
     ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
       'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
-      '`read_preview_instructions` first to amend). To edit it any time, use those two tools.'
-    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable steps (envs to set, ' +
-      'ports, docker compose / migrate / seed commands, the deep-link) with `write_preview_instructions` so the ' +
-      'NEXT Spin up preview is instant instead of re-discovered.';
+      '`read_preview_instructions` first to amend). To edit it any time, use those two tools. ' +
+      PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE +
+      ' While you are in there, PRUNE any residue a previous author left — a hard-coded deep-link to some ' +
+      'other feature, one-off fixtures/seed scripts, a "verified for <feature>" stamp — so the recipe stays ' +
+      'the clean repeatable procedure.'
+    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable stand-up procedure ' +
+      '(envs to set, ports, docker compose / migrate / seed the BASELINE demo data, start, verify, and HOW to ' +
+      'construct a deep-link into the area under test) with `write_preview_instructions` so the NEXT Spin up ' +
+      'preview is instant instead of re-discovered. ' +
+      PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE;
   return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
 }
 
