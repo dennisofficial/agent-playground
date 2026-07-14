@@ -233,6 +233,43 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
  *  of replaying the async render and the placeholder→SVG size jump it causes. */
 const mermaidCache = new Map<string, { svg: string; w: number; h: number }>();
 
+/** Extract trimmed ```mermaid fence sources from raw markdown text. */
+export function extractMermaidSources(text: string): string[] {
+  const out: string[] = [];
+  const re = /```mermaid\n([\s\S]*?)```/g; // same shape as conversation.tsx MERMAID_FENCE
+  for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1].replace(/\n$/, "").trim());
+  return out;
+}
+
+let warmId = 0;
+/** Render each not-yet-cached diagram off-screen so mermaidCache holds its real {svg,w,h} BEFORE its row is
+ *  measured/enters the viewport. Pure in source (theme fixed at init), so it is the same result the live
+ *  component would produce. Broken diagrams are skipped (they render an error frame at a small fixed height,
+ *  not an aspect-ratio box, so they need no warm). Renders sequentially to bound main-thread cost. */
+export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
+  const todo = [...new Set(sources.map((s) => s.trim()))].filter(
+    (s) => s.length > 0 && !mermaidCache.has(s),
+  );
+  if (todo.length === 0) return;
+  let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
+  }
+  for (const src of todo) {
+    if (mermaidCache.has(src)) continue;
+    try {
+      await mermaid.parse(src);
+      const { svg } = await mermaid.render(`mmd-warm-${warmId++}`, src);
+      mermaidCache.set(src, parseSvg(svg));
+    } catch {
+      /* leave uncached — the error frame reserves the same mermaidReservePx height as the loading
+         placeholder (see Mermaid's error branch below), so it needs no warming to avoid a shift */
+    }
+  }
+}
+
 /** A header-bar action button shared by the diagram frame (copy / expand / fix). */
 function FrameBtn({
   onClick,
@@ -409,12 +446,16 @@ function Mermaid({ chart }: { chart: string }) {
           </>
         }
       >
-        <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
-          failed to render — {error}
-        </p>
-        <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
-          {chart}
-        </pre>
+        {/* Reserve the same height the loading placeholder (and premeasure's cold-read) used, so an
+            unwarmed/broken diagram's row doesn't grow or shrink when it settles into this error frame. */}
+        <div style={{ minHeight: mermaidReservePx(chart) }}>
+          <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
+            failed to render — {error}
+          </p>
+          <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
+            {chart}
+          </pre>
+        </div>
       </MermaidFrame>
     );
   }

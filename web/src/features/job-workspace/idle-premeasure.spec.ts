@@ -82,6 +82,45 @@ describe("useIdlePremeasure seeding mechanism", () => {
   });
 });
 
+describe("warm-then-measure seeding (Mermaid rows)", () => {
+  it("GREEN: a row seeded at its cache-warmed real height settles with zero adjustment, same as any other row", () => {
+    // The mechanism `useIdlePremeasure` relies on (resizeItem's zero-delta no-op) doesn't distinguish a
+    // Mermaid row from a text row — it only cares whether the seeded height matches the later real measure.
+    // The `warmed` gate exists purely to make that true for Mermaid rows too: once mermaidCache is warm, the
+    // hidden layer's offsetHeight read for that row IS its real height, so seeding behaves exactly like the
+    // existing GREEN case above. This asserts the gate doesn't change the seeding contract itself.
+    const { v, adjustmentsPassed } = buildVirtualizer();
+    const idx = 95;
+    const realMermaidHeight = 812; // e.g. a tall flowchart's real rendered height, read from a warm cache hit
+
+    v.resizeItem(idx, realMermaidHeight);
+    const totalAfterSeed = v.getTotalSize();
+
+    adjustmentsPassed.length = 0;
+    v.resizeItem(idx, realMermaidHeight);
+
+    expect(v.getTotalSize()).toBe(totalAfterSeed);
+    expect(adjustmentsPassed).toEqual([]);
+  });
+
+  it("RED (what the fix removes): seeding a cold-placeholder height still causes a shift once the real SVG lands", () => {
+    // Before warming, a Mermaid row's offsetHeight at seed time is the SOURCE-heuristic placeholder, not the
+    // real rendered height — so the later real measurement (once mermaid.render resolves) is a non-zero
+    // delta, exactly like an unseeded row. This is the bug the WARM phase eliminates by making the seeded
+    // height already real.
+    const { v, adjustmentsPassed } = buildVirtualizer();
+    const idx = 95;
+    const placeholderHeight = 320; // mermaidReservePx cold estimate
+    const realHeight = 812; // what the SVG actually measures once it lands
+
+    v.resizeItem(idx, placeholderHeight);
+    adjustmentsPassed.length = 0;
+    v.resizeItem(idx, realHeight);
+
+    expect(adjustmentsPassed.length).toBeGreaterThan(0);
+  });
+});
+
 describe("premeasure chunk planning", () => {
   it("measures tail appends without skipping the older unmeasured backlog", () => {
     const items = Array.from({ length: 7 }, (_, i) => ({ key: String(i) }));
