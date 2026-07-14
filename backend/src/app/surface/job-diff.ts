@@ -25,6 +25,13 @@ export type JobDiff = { files: JobDiffFile[]; truncated: boolean };
 
 export type JobDiffNumstatEntry = { path: string; additions: number; deletions: number; binary: boolean };
 
+export type JobDiffSummary = { files: JobDiffNumstatEntry[] };
+
+/** Summary-only view (numstat, no hunks) for the sidebar's +/- totals. */
+export function buildDiffSummary(numstat: JobDiffNumstatEntry[]): JobDiffSummary {
+  return { files: numstat };
+}
+
 /** Strip a leading `a/` or `b/` diff prefix; `/dev/null` and undefined pass through unchanged. */
 function stripDiffPrefix(name: string | undefined): string | undefined {
   if (name === undefined) return undefined;

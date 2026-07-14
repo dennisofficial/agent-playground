@@ -752,6 +752,19 @@ export interface JobDiff {
   truncated: boolean;
 }
 
+/** One file's line totals in the cheap diff summary — mirrors the backend `JobDiffNumstatEntry`. */
+export interface JobDiffSummaryFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** Numstat-only summary (no hunks) for the sidebar counts — mirrors the backend `JobDiffSummary`. */
+export interface JobDiffSummary {
+  files: JobDiffSummaryFile[];
+}
+
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────
 /**
  * One process the agent started via `atlas-svc run`, from its durable marker file. Mirrors the backend

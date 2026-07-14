@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseGitDiff, type JobDiffNumstatEntry } from './job-diff';
+import { buildDiffSummary, parseGitDiff, type JobDiffNumstatEntry } from './job-diff';
 
 const RAW_DIFF = `diff --git a/src/foo.ts b/src/foo.ts
 index 111111..222222 100644
@@ -126,5 +126,11 @@ Binary files a/src/image.png and b/src/image.png differ
     const modified = result.files.find((f) => f.path === 'src/foo.ts');
     expect(modified?.status).toBe('modified');
     expect(modified?.additions).toBe(2);
+  });
+});
+
+describe('buildDiffSummary', () => {
+  it('wraps the numstat entries unchanged, including binary files', () => {
+    expect(buildDiffSummary(NUMSTAT).files).toEqual(NUMSTAT);
   });
 });

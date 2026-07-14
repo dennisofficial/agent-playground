@@ -89,7 +89,7 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
-import { parseGitDiff, type JobDiff } from './job-diff';
+import { parseGitDiff, buildDiffSummary, type JobDiff, type JobDiffSummary } from './job-diff';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -2610,6 +2610,25 @@ export class WebSurfaceController {
     ]);
     if (!raw) return { files: [], truncated: false };
     return parseGitDiff(raw, numstat, { maxBytes: MAX_DIFF_BYTES });
+  }
+
+  /**
+   * `GET …/jobs/:jobId/diff/summary` — cheap numstat-only view of the same diff as `jobDiff()` above
+   * (per-file path/additions/deletions/binary, NO hunks). For the always-mounted sidebar's +/- totals,
+   * which don't need — and shouldn't pay for — the full hunk payload.
+   */
+  @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff/summary')
+  @UseGuards(OrgMembershipGuard)
+  async jobDiffSummary(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<JobDiffSummary> {
+    await this.requireThread(jobId, org.id);
+    const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
+    if (!sandbox) return { files: [] };
+    const baseRef = `origin/${await this.threadLifecycle.resolveBaseBranch(jobId, org.id)}`;
+    const numstat = await this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef);
+    return buildDiffSummary(numstat);
   }
 
   /**
