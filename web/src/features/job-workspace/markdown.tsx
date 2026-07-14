@@ -251,7 +251,12 @@ export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
     (s) => s.length > 0 && !mermaidCache.has(s),
   );
   if (todo.length === 0) return;
-  const mermaid = await loadMermaid();
+  let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
+  }
   for (const src of todo) {
     if (mermaidCache.has(src)) continue;
     try {
@@ -259,7 +264,8 @@ export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
       const { svg } = await mermaid.render(`mmd-warm-${warmId++}`, src);
       mermaidCache.set(src, parseSvg(svg));
     } catch {
-      /* leave uncached — the row renders the error frame (fixed small height), which does not shift */
+      /* leave uncached — the error frame reserves the same mermaidReservePx height as the loading
+         placeholder (see Mermaid's error branch below), so it needs no warming to avoid a shift */
     }
   }
 }
@@ -440,12 +446,16 @@ function Mermaid({ chart }: { chart: string }) {
           </>
         }
       >
-        <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
-          failed to render — {error}
-        </p>
-        <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
-          {chart}
-        </pre>
+        {/* Reserve the same height the loading placeholder (and premeasure's cold-read) used, so an
+            unwarmed/broken diagram's row doesn't grow or shrink when it settles into this error frame. */}
+        <div style={{ minHeight: mermaidReservePx(chart) }}>
+          <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
+            failed to render — {error}
+          </p>
+          <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
+            {chart}
+          </pre>
+        </div>
       </MermaidFrame>
     );
   }
