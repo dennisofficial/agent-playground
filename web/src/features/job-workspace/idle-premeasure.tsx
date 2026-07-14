@@ -1,8 +1,9 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createContext } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
+import { warmMermaidDiagrams } from "./markdown";
 
 /** True inside the hidden off-screen pre-measurement layer below — rows rendered there are read for
  *  `offsetHeight` only and never actually seen, so components with mount-time side effects (attachment
@@ -101,14 +102,21 @@ export function useIdlePremeasure(opts: {
   virtualizer: Virt;
   enabled: boolean;
   chunkSize?: number;
+  /** ```mermaid fence sources found anywhere in the transcript (deduped by the warm helper itself). Warmed
+   *  off-screen before MEASURE runs, so a Mermaid row's `offsetHeight` reflects its REAL rendered height
+   *  instead of the cold placeholder. */
+  warmSources?: string[];
 }): React.ReactNode {
-  const { items, virtualizer, enabled, chunkSize = DEFAULT_CHUNK_SIZE } = opts;
+  const { items, virtualizer, enabled, chunkSize = DEFAULT_CHUNK_SIZE, warmSources } = opts;
 
   const measuredRef = useRef<Map<string, number>>(new Map());
   const [seeded, setSeeded] = useState(false);
   // Rows measured so far, counted from the tail up. The hidden layer renders the next unmeasured chunk.
   const [cursor, setCursor] = useState(0);
   const layerRef = useRef<HTMLDivElement>(null);
+  // Gates MEASURE (not just SEED): a Mermaid row rendered before its diagram is warm would still read its
+  // cold placeholder height, reproducing the exact bug this pass exists to fix.
+  const [warmed, setWarmed] = useState(false);
 
   // Re-arm from the tail whenever the top of the list changes identity (older history prepended) — a plain
   // append leaves the backlog untouched (new tail rows measure on-screen normally), so it must NOT re-run.
@@ -119,9 +127,31 @@ export function useIdlePremeasure(opts: {
     measuredRef.current = new Map();
     if (seeded) setSeeded(false);
     if (cursor !== 0) setCursor(0);
+    if (warmed) setWarmed(false);
   }
 
-  const measuring = enabled && !seeded && items.length > 0;
+  // WARM phase: render every not-yet-cached diagram off-screen (idle-scheduled) before MEASURE reads any
+  // row's offsetHeight. Runs once per arming; a transcript with no diagrams warms trivially (empty list).
+  useEffect(() => {
+    if (!enabled || warmed) return;
+    const list = warmSources ?? [];
+    if (list.length === 0) {
+      setWarmed(true);
+      return;
+    }
+    let cancelled = false;
+    const cancelIdle = scheduleIdle(() => {
+      void warmMermaidDiagrams(list).finally(() => {
+        if (!cancelled) setWarmed(true);
+      });
+    });
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [enabled, warmed, warmSources]);
+
+  const measuring = enabled && warmed && !seeded && items.length > 0;
   // The next bottom-up chunk of not-yet-measured rows. `cursor` is how many rows (from the tail) are already
   // handled; the scan starts just above that and skips anything already in the map.
   const chunkIndexes = measuring

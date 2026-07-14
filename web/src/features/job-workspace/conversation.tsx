@@ -51,7 +51,7 @@ import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
-import { mermaidReservePx } from "./markdown";
+import { extractMermaidSources, mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -420,7 +420,23 @@ export function TranscriptView({
   // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
   // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
   const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
-  const premeasureLayer = useIdlePremeasure({ items, virtualizer, enabled: premeasureEnabled });
+  // Every ```mermaid fence in the transcript, deduped by the warm helper — handed to the idle pass so it can
+  // warm the render cache off-screen BEFORE a diagram row is pre-measured (see idle-premeasure.tsx).
+  const warmSources = useMemo(
+    () =>
+      premeasureEnabled
+        ? messages.flatMap((m) =>
+            extractMermaidSources(typeof m.text === "string" ? m.text : ""),
+          )
+        : [],
+    [messages, premeasureEnabled],
+  );
+  const premeasureLayer = useIdlePremeasure({
+    items,
+    virtualizer,
+    enabled: premeasureEnabled,
+    warmSources,
+  });
 
   // Scroll to the next unanswered question (cycles oldest→newest on repeated clicks) and flash its card.
   const jumpToOpenQuestion = () => {
