@@ -1,20 +1,24 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckCircle2, FileUp, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CheckCircle2, Clock, FileUp, XCircle } from "lucide-react";
 import { Markdown } from "./markdown";
-import { useProvideFile } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebFileRequestCard } from "@/lib/api/types";
+import {
+  composerStore,
+  useComposerStagedAnswers,
+  type StagedAnswer,
+} from "@/lib/api/composer-store";
 
 /** Max upload size, kept in lockstep with the backend `MAX_FILE_UPLOAD_BYTES`. */
 const MAX_FILE_BYTES = 512 * 1024;
 
 /**
  * A secure file-upload request the onboarding brain posed via `request_file`. Renders a file picker; the
- * chosen file is read as text client-side and POSTs to `…/threads/:jobId/provide-file`, which stores the
- * contents encrypted + grants them. The contents are never echoed back or kept in the card. Once
+ * chosen file is read as text client-side and STAGED into the composer's tray the instant it's picked (no
+ * separate confirm step) — nothing hits the backend until the operator's batched Send, which POSTs to
+ * `…/threads/:jobId/answer-batch`. The contents are never echoed back or kept in the card. Once
  * `provided_at` is set, renders the compact "uploaded" state.
  */
 export function FileCardView({
@@ -24,36 +28,64 @@ export function FileCardView({
   card: WebFileRequestCard;
   jobRef: JobRef;
 }) {
-  const provide = useProvideFile(jobRef);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [filename, setFilename] = useState("");
-  const [content, setContent] = useState<string | null>(null);
   const [tooBig, setTooBig] = useState(false);
-  const pending = provide.isPending;
+  const staged = useComposerStagedAnswers(jobRef).find(
+    (a): a is Extract<StagedAnswer, { kind: "file" }> =>
+      a.kind === "file" && a.cardId === card.requestId,
+  );
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
       setTooBig(true);
-      setContent(null);
-      setFilename("");
+      if (inputRef.current) inputRef.current.value = "";
       return;
     }
     setTooBig(false);
-    setFilename(file.name);
+    const filename = file.name;
     const reader = new FileReader();
-    reader.onload = () =>
-      setContent(typeof reader.result === "string" ? reader.result : "");
+    reader.onload = () => {
+      const content = typeof reader.result === "string" ? reader.result : "";
+      composerStore.stageAnswer(jobRef, {
+        kind: "file",
+        cardId: card.requestId,
+        label: card.path,
+        filename,
+        content,
+      });
+    };
     reader.readAsText(file);
+    if (inputRef.current) inputRef.current.value = "";
   }
 
-  function submit() {
-    if (content == null || !filename) return;
-    provide.mutate({ requestId: card.requestId, filename, content });
-    setContent(null); // never keep file contents in component state after sending
-    setFilename("");
-    if (inputRef.current) inputRef.current.value = "";
+  if (staged) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-dashed border-accent-line bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Clock size={15} className="text-accent" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-text">
+              <span className="font-mono">{card.path}</span>
+            </p>
+            <p className="truncate text-[12.5px] text-dim">
+              <span className="font-mono">{staged.filename}</span>
+            </p>
+            <p className="text-[11px] text-faint">Staged — not yet sent</p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              composerStore.removeStagedAnswer(jobRef, card.requestId)
+            }
+            className="rounded-md px-2 py-1 text-[11.5px] font-medium text-dim hover:text-text"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (card.withdrawnAt != null && card.provided_at == null) {
@@ -131,22 +163,6 @@ export function FileCardView({
             smaller config/key file.
           </span>
         ) : null}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            loading={pending}
-            loadingText="Uploading…"
-            disabled={content == null || !filename}
-            onClick={submit}
-          >
-            Upload securely
-          </Button>
-          {provide.isError ? (
-            <span className="text-[11.5px] text-red">
-              Could not upload the file. Try again.
-            </span>
-          ) : null}
-        </div>
       </div>
     </div>
   );

@@ -64,6 +64,14 @@ export interface InboundChatMessage {
    * `delivered_at` on success — same at-least-once bookkeeping as `seedQuestionId`. Undefined otherwise.
    */
   seedSecretId?: string;
+  /**
+   * BATCH DELIVERY SEED: the arrays of card ids a SINGLE combined `answer-batch` seed delivers — the
+   * plural of `seedQuestionId`/`seedFileId`/`seedSecretId`. Its lone delivery turn stamps EVERY listed
+   * card delivered on success (at-least-once). Undefined for a single-card seed.
+   */
+  seedQuestionIds?: string[];
+  seedFileIds?: string[];
+  seedSecretIds?: string[];
   /** SEED RENDER COMMAND — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
@@ -167,6 +175,11 @@ export interface ChatSurface {
       deliveredQuestionId?: string;
       deliveredFileId?: string;
       deliveredSecretId?: string;
+      /** BATCH: arrays of card ids a single combined `answer-batch` seed delivers (see the plural
+       *  `InboundChatMessage.seedQuestionIds`). Mapped to the plural internal fields downstream. */
+      deliveredQuestionIds?: string[];
+      deliveredFileIds?: string[];
+      deliveredSecretIds?: string[];
       seedRow?: SeedRow;
       /**
        * Routing coordinate — `'main'` (the brain, default) or a build lane (`'thread:<threadId>'`). d4 makes

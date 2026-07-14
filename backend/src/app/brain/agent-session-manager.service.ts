@@ -725,6 +725,14 @@ export class AgentSessionManager
       this.logger.warn(`question-delivery reconciliation failed: ${err}`);
     }
 
+    // Heal the denormalized open-secret counter from the actual open durable/mcp secret cards, mirroring the
+    // open-question heal above (ephemeral cards use the single-slot pointer, not this counter, and are excluded).
+    try {
+      await this.store.reconcileOpenSecretCounts();
+    } catch (err) {
+      this.logger.warn(`open-secret-count reconciliation failed: ${err}`);
+    }
+
     // 2b) Backfill any secret the operator PROVIDED (value durably stored + granted) but whose masked
     //     confirmation turn a crash dropped before it reached the brain — onto the durable pump, same shape as
     //     the answered-question backfill. The value is NOT carried, only the masked name/path notice.
@@ -1457,6 +1465,11 @@ export class AgentSessionManager
               ),
             );
         }
+        // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer; durable/mcp cards are
+        // per-card (no pointer to clear — like the file lane). Called unconditionally anyway (not gated on
+        // `card.ephemeral === true`): `clearAwaitingSecret` is compare-and-clear, so it's a no-op unless the
+        // pointer still equals this requestId — which also heals a pre-deploy legacy durable/mcp request that
+        // left the pointer set before per-card secrets existed.
         await this.store
           .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
           .catch((err) =>
@@ -1478,6 +1491,54 @@ export class AgentSessionManager
           );
       }
     }
+    // BATCH seed: a single combined `answer-batch` seed carries arrays of ids. Loop each with the SAME
+    // per-kind guarded logic as the singular blocks above — per-id best-effort (`.catch` + continue), so a
+    // transient failure on one card leaves it owed for the sweep without stranding the rest of the batch.
+    for (const questionId of stimulus.seedQuestionIds ?? []) {
+      const card = await this.store
+        .getQuestionCard(stimulus.jobId, questionId)
+        .catch(() => null);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store
+          .markQuestionDelivered(stimulus.jobId, questionId)
+          .catch((err) =>
+            this.logger.warn(`markQuestionDelivered (batch steer) failed: ${err}`),
+          );
+      }
+    }
+    for (const secretId of stimulus.seedSecretIds ?? []) {
+      const card = await this.store
+        .getSecretCard(stimulus.jobId, secretId)
+        .catch(() => null);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store
+            .markSecretDelivered(stimulus.jobId, secretId)
+            .catch((err) =>
+              this.logger.warn(`markSecretDelivered (batch legacy seed) failed: ${err}`),
+            );
+        }
+        // Unconditional compare-and-clear — a no-op for durable/mcp per-card secrets (no pointer), same as
+        // the singular block above.
+        await this.store
+          .clearAwaitingSecret(stimulus.jobId, secretId)
+          .catch((err) =>
+            this.logger.warn(`clearAwaitingSecret (batch legacy seed) failed: ${err}`),
+          );
+      }
+    }
+    for (const fileId of stimulus.seedFileIds ?? []) {
+      const card = await this.store
+        .getFileCard(stimulus.jobId, fileId)
+        .catch(() => null);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store
+          .markFileDelivered(stimulus.jobId, fileId)
+          .catch((err) =>
+            this.logger.warn(`markFileDelivered (batch steer) failed: ${err}`),
+          );
+      }
+    }
   }
 
   /**
@@ -1494,7 +1555,15 @@ export class AgentSessionManager
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
     if (!stimulus) return false;
-    const { jobId, seedQuestionId, seedSecretId, seedFileId } = stimulus;
+    const {
+      jobId,
+      seedQuestionId,
+      seedSecretId,
+      seedFileId,
+      seedQuestionIds,
+      seedSecretIds,
+      seedFileIds,
+    } = stimulus;
 
     if (seedQuestionId) {
       // No .catch here: getQuestionCard returns null for a genuinely-absent card, and a THROWN error is
@@ -1513,8 +1582,12 @@ export class AgentSessionManager
         if (card.delivered_at == null) {
           await this.store.markSecretDelivered(jobId, seedSecretId);
         }
-        // Clear even if the card was already marked delivered by a prior partial tail: the row must not be
-        // delivered until both the card stamp and the gate clear have succeeded.
+        // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer (durable/mcp is per-card,
+        // like the file lane) — but this is called unconditionally regardless of `card.ephemeral`:
+        // `clearAwaitingSecret` is compare-and-clear, so it's a no-op unless the pointer still equals this
+        // requestId, which also heals a pre-deploy legacy durable/mcp request that left the pointer set before
+        // per-card secrets existed. Clear even if the card was already marked delivered by a prior partial
+        // tail: the row must not be delivered until both stamps have succeeded.
         await this.store.clearAwaitingSecret(jobId, seedSecretId);
       }
     }
@@ -1524,6 +1597,32 @@ export class AgentSessionManager
       const card = await this.store.getFileCard(jobId, seedFileId);
       if (card?.provided_at != null && card.delivered_at == null) {
         await this.store.markFileDelivered(jobId, seedFileId);
+      }
+    }
+
+    // BATCH seed: loop the id arrays a combined `answer-batch` seed carries. NO `.catch` here (unlike
+    // `stampLegacySeedCard`): this function's invariant is that a transient error PROPAGATES so the caller
+    // skips the trailing `markChatDelivered` and the sweep re-drives the whole idempotent sequence — a card
+    // is never left stranded behind a delivered row.
+    for (const questionId of seedQuestionIds ?? []) {
+      const card = await this.store.getQuestionCard(jobId, questionId);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store.markQuestionDelivered(jobId, questionId);
+      }
+    }
+    for (const secretId of seedSecretIds ?? []) {
+      const card = await this.store.getSecretCard(jobId, secretId);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store.markSecretDelivered(jobId, secretId);
+        }
+        await this.store.clearAwaitingSecret(jobId, secretId);
+      }
+    }
+    for (const fileId of seedFileIds ?? []) {
+      const card = await this.store.getFileCard(jobId, fileId);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store.markFileDelivered(jobId, fileId);
       }
     }
     return true;
@@ -2116,6 +2215,9 @@ export class AgentSessionManager
         seedQuestionId?: string;
         seedSecretId?: string;
         seedFileId?: string;
+        seedQuestionIds?: string[];
+        seedSecretIds?: string[];
+        seedFileIds?: string[];
         // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
         // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
         deliveryStimulusId?: string;
@@ -2159,6 +2261,9 @@ export class AgentSessionManager
         ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
         ...(ctx.seedSecretId ? { seedSecretId: ctx.seedSecretId } : {}),
         ...(ctx.seedFileId ? { seedFileId: ctx.seedFileId } : {}),
+        ...(ctx.seedQuestionIds?.length ? { seedQuestionIds: ctx.seedQuestionIds } : {}),
+        ...(ctx.seedSecretIds?.length ? { seedSecretIds: ctx.seedSecretIds } : {}),
+        ...(ctx.seedFileIds?.length ? { seedFileIds: ctx.seedFileIds } : {}),
         // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
         // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
         ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
@@ -2622,6 +2727,21 @@ export class AgentSessionManager
       });
     }
 
+    // Same idea for still-open durable/mcp secret requests (posted, not yet provided/withdrawn): a compacted
+    // or restart-rebuilt session has no memory of what it requested, so without this it re-posts a duplicate
+    // request_secret. Advisory reminder listing each open card's id + target, so it waits (or
+    // `withdraw_secret_request`s a stale one) instead of re-requesting. Applies to every turn; best-effort.
+    const openSecretsPrefix = await this.buildOpenSecretRequestsPrefix(
+      stimulus.jobId,
+    );
+    if (openSecretsPrefix) {
+      reminderChunks.push({
+        kind: 'system_reminder',
+        body: openSecretsPrefix,
+        attrs: { reminderKind: 'open_secret_requests' },
+      });
+    }
+
     // AMENDING guidance — persistent while the ship gate is retracted for a follow-up fix. BOTH entry paths
     // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
     // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
@@ -2894,6 +3014,17 @@ export class AgentSessionManager
             ? { seedSecretId: stimulus.seedSecretId }
             : {}),
           ...(stimulus.seedFileId ? { seedFileId: stimulus.seedFileId } : {}),
+          // BATCH seed: persist the id arrays so a re-attached combined-batch delivery turn still stamps
+          // every card on success (else the boot sweep would re-seed each card on every restart forever).
+          ...(stimulus.seedQuestionIds?.length
+            ? { seedQuestionIds: stimulus.seedQuestionIds }
+            : {}),
+          ...(stimulus.seedFileIds?.length
+            ? { seedFileIds: stimulus.seedFileIds }
+            : {}),
+          ...(stimulus.seedSecretIds?.length
+            ? { seedSecretIds: stimulus.seedSecretIds }
+            : {}),
           // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
           // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
           // Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag their id through the tail.
@@ -4698,6 +4829,7 @@ export class AgentSessionManager
       request_secret: this.buildRequestSecretTool(stimulus),
       request_file: this.buildRequestFileTool(stimulus),
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
+      withdraw_secret_request: this.buildWithdrawSecretRequestTool(stimulus),
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
       write_setup_script: this.buildWriteSetupScriptTool(stimulus),
       read_setup_script: this.buildReadSetupScriptTool(stimulus),
@@ -4917,21 +5049,18 @@ export class AgentSessionManager
           requestId,
           card,
         });
-        if (!opened.ok) {
+        if (!opened.ok)
           return {
             ok: false,
-            reason: opened.alreadyOpen
-              ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
-              : 'Could not open the secret request (thread not found).',
+            reason: 'Could not open the secret request (thread not found).',
           };
-        }
         return {
           ok: true,
           requestId,
           message:
-            `Secure secret card posted for MCP server "${server}" (${slot}:${key}). Stop and wait — the ` +
-            "operator's value goes straight into the encrypted MCP store and activates the server; you only " +
-            'see a masked confirmation. Never ask for the value in chat.',
+            `Secure secret card posted for MCP server "${server}" (${slot}:${key}). The operator's value goes ` +
+            "straight into the encrypted MCP store and activates the server; you only see a masked " +
+            'confirmation. Never ask for the value in chat. You may open several secret requests at once.',
         };
       }
 
@@ -4962,20 +5091,18 @@ export class AgentSessionManager
         requestId,
         card,
       });
-      if (!opened.ok) {
+      if (!opened.ok)
         return {
           ok: false,
-          reason: opened.alreadyOpen
-            ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
-            : 'Could not open the secret request (thread not found).',
+          reason: 'Could not open the secret request (thread not found).',
         };
-      }
       return {
         ok: true,
         requestId,
         message:
-          `Secure secret card posted for "${name}". Stop and wait — the operator's value goes straight to ` +
-          'encrypted storage; you will only see a masked confirmation. Never ask for the value in chat.',
+          `Secure secret card posted for "${name}". The operator's value goes straight to encrypted storage; ` +
+          'you will only see a masked confirmation. Never ask for the value in chat. You may open several ' +
+          'secret requests at once (and withdraw_secret_request any you no longer need).',
       };
     };
   }
@@ -5063,6 +5190,41 @@ export class AgentSessionManager
         message:
           'File request withdrawn — the operator no longer sees it as awaiting an upload. Post a corrected ' +
           'request_file if you still need a file.',
+      };
+    };
+  }
+
+  /**
+   * `withdraw_secret_request({ requestId, reason? })` — retract a still-open durable/mcp `request_secret`
+   * card (wrong target, no longer needed). The secret-card mirror of `withdraw_file_request`: race-safe +
+   * idempotent (if the operator already submitted the value, the withdraw is a no-op). Applies only to the
+   * per-card durable/mcp lane — the ephemeral (`deliver_to`) lane is single-slot and not withdrawable here.
+   * org/repo/job come from the closure (never tool args) — tenant safety.
+   */
+  private buildWithdrawSecretRequestTool(stimulus: ChatStimulus): ToolImpl {
+    return async (args) => {
+      const requestId = String(args['requestId'] ?? '').trim();
+      if (!requestId) return { ok: false, reason: 'requestId is required' };
+      const reason = String(args['reason'] ?? '').trim();
+      const res = await this.store.withdrawSecretRequest(
+        stimulus.jobId,
+        requestId,
+        reason || undefined,
+      );
+      if (!res.withdrawn) {
+        return {
+          ok: false,
+          reason:
+            'That secret request could not be withdrawn — it was already provided, already withdrawn, or not ' +
+            'found. If the operator already provided it, work from that secret instead of re-requesting.',
+        };
+      }
+      return {
+        ok: true,
+        requestId,
+        message:
+          'Secret request withdrawn — the operator no longer sees it as awaiting a value. Post a corrected ' +
+          'request_secret if you still need one.',
       };
     };
   }
@@ -7713,6 +7875,41 @@ export class AgentSessionManager
   }
 
   /**
+   * The secret-request analog of {@link buildOpenFileRequestsPrefix}: an advisory reminder of the durable/mcp
+   * `request_secret` cards still awaiting a value (posted, not yet provided/withdrawn), so a fresh/compacted
+   * brain session doesn't re-post a duplicate. Ephemeral (`deliver_to`) requests are single-slot/immediate and
+   * excluded by {@link BrainStore.openSecretCards}. Lists each open card's id + target. Best-effort.
+   */
+  private async buildOpenSecretRequestsPrefix(
+    jobId: string,
+  ): Promise<string | null> {
+    try {
+      const open = await this.store.openSecretCards(jobId);
+      if (open.length === 0) return null;
+      const lines = open.map((c) => {
+        const target = c.mcp
+          ? `${c.mcp.server} (${c.mcp.slot}:${c.mcp.key})`
+          : c.path
+            ? `${c.name} → ${c.path}`
+            : c.name;
+        return `  • [${c.requestId}] ${target}`;
+      });
+      const n = open.length;
+      return (
+        `You have ${n} secret request${n === 1 ? '' : 's'} already posted to the operator and still awaiting ` +
+        `a value. Do NOT re-post ${n === 1 ? 'it' : 'them'} — wait for the value to arrive on a later turn, or ` +
+        `call withdraw_secret_request({ requestId, reason }) to retract one (e.g. wrong target or no longer ` +
+        `needed).\n${lines.join('\n')}`
+      );
+    } catch (err) {
+      this.logger.debug(
+        `open-secret-requests prefix failed (continuing): ${err}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Build an `onMilestone` callback for the provisioning chain (`ensureProvisioned`/`ensureContainer`) —
    * narrates the genuinely slow attach sub-steps (a real image rebuild, a cold container create) as a
    * quiet operator-visible pill via `appendSystemEvent`, NOT a fake Atlas reply and NOT `recordMilestone`
@@ -8010,7 +8207,15 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
  *  TOGETHER on the consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or
  *  registration — so a register-then-fail turn re-drives instead of stranding a card behind a delivered row. */
 function isSeedCardDelivery(s: ChatStimulus): boolean {
-  return !!s.seed && (!!s.seedQuestionId || !!s.seedSecretId || !!s.seedFileId);
+  return (
+    !!s.seed &&
+    (!!s.seedQuestionId ||
+      !!s.seedSecretId ||
+      !!s.seedFileId ||
+      (s.seedQuestionIds?.length ?? 0) > 0 ||
+      (s.seedFileIds?.length ?? 0) > 0 ||
+      (s.seedSecretIds?.length ?? 0) > 0)
+  );
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */

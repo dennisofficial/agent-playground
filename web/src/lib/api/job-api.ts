@@ -370,6 +370,28 @@ export function provideFile(
   });
 }
 
+// ── Batched staged answers (the Composer staging tray) ─────────────────────────────────────────────
+/** One staged answer in an `answer-batch` — a question answer, a file upload, or a durable/MCP secret
+ *  value (ephemeral secrets are never batched — they keep the immediate `provide-secret` path). */
+export type AnswerBatchItem =
+  | { kind: "question"; questionId: string; answer: string }
+  | { kind: "file"; requestId: string; filename: string; content: string }
+  | { kind: "secret"; requestId: string; value: string };
+
+/**
+ * Submit every staged card answer + an optional operator note as ONE combined request — a single brain
+ * wake instead of one per card. See `staged-answers-tray.tsx` for the authoring side.
+ */
+export function submitAnswerBatch(
+  ref: JobRef,
+  body: { items: AnswerBatchItem[]; message?: string },
+): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+  return webJson(threadPath(ref, "/answer-batch"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
 export function retryJob(
   ref: JobRef,

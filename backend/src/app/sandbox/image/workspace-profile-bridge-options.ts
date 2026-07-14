@@ -27,6 +27,7 @@ export const WORKSPACE_PROFILE_TOOL_NAMES = [
   'request_secret',
   'request_file',
   'withdraw_file_request',
+  'withdraw_secret_request',
   'derive_secret',
   // Mounts / cache
   'write_workspace_config',

@@ -199,6 +199,9 @@ export interface WebQuestionCard {
    *  "withdrawn" state with no answer buttons. Terminal, like `answer`. */
   withdrawnAt?: string;
   withdrawnReason?: string;
+  /** `'build'` cards (the driver's onboarding/build-flow questions) keep the immediate answer-question POST;
+   *  `'brain'` (or absent, for older rows) cards stage in the composer tray for batched Send. */
+  origin?: "brain" | "build";
 }
 
 /**
@@ -227,6 +230,10 @@ export interface WebSecretInputCard {
   mcp?: { server: string; slot: "header" | "env"; key: string };
   provided_at?: string;
   delivered_at?: string;
+  /** Set when the brain RETRACTED this still-unprovided request (`withdraw_secret_request`) — renders a
+   *  compact "withdrawn" state with no input. Terminal, like `provided_at`. */
+  withdrawnAt?: string;
+  withdrawnReason?: string;
 }
 
 /**
