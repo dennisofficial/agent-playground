@@ -41,6 +41,11 @@ export interface WebInboundOptions {
   seedFileId?: string;
   /** Delivery seed — the `request_secret` card id whose provided value this seed confirms (see `InboundChatMessage.seedSecretId`). */
   seedSecretId?: string;
+  /** Batch delivery seed — the arrays of card ids a single combined `answer-batch` seed delivers (see
+   *  `InboundChatMessage.seedQuestionIds`). */
+  seedQuestionIds?: string[];
+  seedFileIds?: string[];
+  seedSecretIds?: string[];
   /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
@@ -167,6 +172,9 @@ export class WebSurface implements ChatSurface {
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ...(opts.seedSecretId ? { seedSecretId: opts.seedSecretId } : {}),
+      ...(opts.seedQuestionIds?.length ? { seedQuestionIds: opts.seedQuestionIds } : {}),
+      ...(opts.seedFileIds?.length ? { seedFileIds: opts.seedFileIds } : {}),
+      ...(opts.seedSecretIds?.length ? { seedSecretIds: opts.seedSecretIds } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
       ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
@@ -193,6 +201,11 @@ export class WebSurface implements ChatSurface {
       deliveredQuestionId?: string;
       deliveredFileId?: string;
       deliveredSecretId?: string;
+      /** BATCH: arrays of card ids a single combined `answer-batch` seed delivers. Mapped to the plural
+       *  internal `seedQuestionIds`/`seedFileIds`/`seedSecretIds` fields on `receiveFromClient`. */
+      deliveredQuestionIds?: string[];
+      deliveredFileIds?: string[];
+      deliveredSecretIds?: string[];
       /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
       seedRow?: SeedRow;
       /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
@@ -216,6 +229,9 @@ export class WebSurface implements ChatSurface {
       ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
       ...(opts.deliveredSecretId ? { seedSecretId: opts.deliveredSecretId } : {}),
+      ...(opts.deliveredQuestionIds?.length ? { seedQuestionIds: opts.deliveredQuestionIds } : {}),
+      ...(opts.deliveredFileIds?.length ? { seedFileIds: opts.deliveredFileIds } : {}),
+      ...(opts.deliveredSecretIds?.length ? { seedSecretIds: opts.deliveredSecretIds } : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
   }

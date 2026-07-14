@@ -16,6 +16,7 @@ const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
+import type { PromptCtx } from '../prompt-kit/system/prompt-ctx';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import {
@@ -469,21 +470,43 @@ const CONVENTION_FACING_SUBAGENTS: Record<string, Agent> = {
   review: Agent.REVIEW_AGENT,
 };
 
+// The build-facing subagent whose persona must carry the repo's saved PREVIEW RECIPE, read-only — `validate`
+// is the only in-sandbox subagent that ever needs to stand a live preview up. Distinct map (not merged into
+// `CONVENTION_FACING_SUBAGENTS`) since it gates on a different per-run signal (`previewInstructions`, not
+// `repoConventions`).
+const PREVIEW_FACING_SUBAGENTS: Record<string, Agent> = {
+  validate: Agent.VALIDATE,
+};
+
 /**
- * Fold the repo's house-style envelope into the build-facing subagent prompts. When the turn carries no
- * attached profile (`repoConventions` absent/null) this returns the map UNCHANGED — byte-identical to today.
- * Otherwise it re-renders each convention-facing subagent's `prompt` WITH the conventions ctx (a subagent
- * not present in this turn's map — e.g. the writers on a non-execute turn — is simply skipped).
+ * Fold per-run host context (the repo's house-style envelope, its saved preview recipe) into the build-facing
+ * subagent prompts. When the turn carries neither (`repoConventions` absent/null AND `previewInstructions`
+ * absent/blank) this returns the map UNCHANGED — byte-identical to today. Otherwise it re-renders the UNION of
+ * convention-facing + preview-facing subagents present in this turn's map, each with only the ctx it actually
+ * gates on (a subagent not present in this turn's map — e.g. the writers on a non-execute turn — is simply
+ * skipped).
  */
-export function applyConventionsToAgents(
+export function applyPerRunCtxToAgents(
   agents: NonNullable<Options['agents']>,
-  repoConventions: RunEngineArgs['repoConventions'],
+  args: { repoConventions: RunEngineArgs['repoConventions']; previewInstructions?: string | null },
 ): NonNullable<Options['agents']> {
-  if (!repoConventions) return agents;
-  const ctx = { settings: { repoConventions } };
+  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
+  if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
-  for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) {
-    if (out[name]) out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
+  const targets = new Map<string, Agent>();
+  if (args.repoConventions) {
+    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  if (preview) {
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  for (const [name, agent] of targets) {
+    if (!out[name]) continue;
+    const ctx: PromptCtx = {
+      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
+      ...(preview ? { previewInstructions: preview } : {}),
+    };
+    out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
   }
   return out;
 }
@@ -868,11 +891,11 @@ export class EngineCore {
       // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
       // file-mutating or evidence-writing subagent. See
       // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
-      agents: applyConventionsToAgents(
+      agents: applyPerRunCtxToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
-        args.repoConventions,
+        { repoConventions: args.repoConventions, previewInstructions: args.previewInstructions },
       ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
@@ -1218,6 +1241,17 @@ export class EngineCore {
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
+          // The CLI sometimes reports a subscription wall as an `is_error` result whose subtype is still
+          // `success` — its `result` string is the printed limit line — then exits non-zero (the SDK then
+          // throws "Claude Code returned an error result: …"). That is NOT a genuine answer: latch the hit
+          // and break to the clean-park return, so the caller parks + auto-resumes instead of surfacing the
+          // limit line as the turn result (or letting the thrown exit-error fail the build). The structured
+          // `rate_limit_event` path keeps its existing success handling below (its result carries no limit text).
+          const errResult = message as { is_error?: boolean; result?: string };
+          if (errResult.is_error === true && errResult.result && detectSessionLimitText(errResult.result)) {
+            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            break;
+          }
           if (message.subtype === 'success') {
             result = message.result;
             onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
@@ -1295,11 +1329,19 @@ export class EngineCore {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
-      // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
-      // graceful end — fall through to the normal post-loop return with the partial result + live session,
-      // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
-      // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
-      if (!(streaming && abortController.signal.aborted)) throw err;
+      // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
+      // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
+      // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
+      // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
+      if (detectSessionLimitText(msg)) {
+        sessionLimit ??= { resetAt: parseResetAt(msg) };
+      } else if (!(streaming && abortController.signal.aborted)) {
+        // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
+        // graceful end — fall through to the normal post-loop return with the partial result + live session,
+        // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
+        // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
+        throw err;
+      }
     } finally {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;

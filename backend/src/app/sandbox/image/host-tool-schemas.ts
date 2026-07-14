@@ -241,6 +241,10 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     requestId: z.string(),
     reason: z.string().optional(),
   },
+  withdraw_secret_request: {
+    requestId: z.string(),
+    reason: z.string().optional(),
+  },
   write_workspace_config: {
     mounts: z
       .array(
@@ -465,6 +469,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
   request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
+  withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script: 'Write the per-sandbox setup script for this workspace.',
   read_setup_script:
