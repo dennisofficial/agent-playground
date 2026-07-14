@@ -381,7 +381,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 });
 
-describe('public preview exposure prompt (auto-expose sequence)', () => {
+describe('public preview exposure prompt (opt-in --expose sequence)', () => {
   it('the PUBLIC PREVIEW URLS block composes into the build brain under notOnboarding', () => {
     for (const jobKind of ['feature', 'bugfix', 'event'] as const) {
       const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
@@ -391,7 +391,7 @@ describe('public preview exposure prompt (auto-expose sequence)', () => {
       expect(out, jobKind).toContain('$ATLAS_PREVIEW_DOMAIN');
       // the load-bearing ordering + the 0.0.0.0 binding gotcha must survive assembly
       expect(out, jobKind).toContain('BIND TO 0.0.0.0');
-      expect(out, jobKind).toContain('--no-expose');
+      expect(out, jobKind).toContain('--expose');
     }
   });
 
@@ -406,7 +406,7 @@ describe('public preview exposure prompt (auto-expose sequence)', () => {
 
   it('sandboxRuntime documents the --port flag alongside the run form', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    expect(out).toContain('atlas-svc run --name <id> [--port <n>] -- <cmd>');
+    expect(out).toContain('atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>');
     expect(out).toContain('PORTS panel');
   });
 });
