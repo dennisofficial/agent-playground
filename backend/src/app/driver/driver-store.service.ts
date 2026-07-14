@@ -1686,6 +1686,7 @@ export class DriverStoreService {
       orgId: input.orgId,
       role: 'post_build',
       brief: 'Ship — open the PR',
+      ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
     return { stageId: created.id, threadId: thread.id };
   }
@@ -1734,6 +1735,7 @@ export class DriverStoreService {
       orgId: input.orgId,
       role: 'ci',
       brief: 'CI — post-ship checks',
+      ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
     return { stageId: created.id, threadId: thread.id };
   }
@@ -1818,6 +1820,21 @@ export class DriverStoreService {
       .where('t.stage_id = :stageId', { stageId })
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
+  }
+
+  /** The next job-GLOBAL ordinal for a ROOT thread (`parent_thread_id IS NULL`). Root threads share the
+   *  job-wide `uq_threads_job_parent_ordinal` (job_id, parent_thread_id, ordinal) NULLS NOT DISTINCT index,
+   *  so a lazily-created stage-thread (post_build/ci) must gap-number off the highest existing root ordinal
+   *  — NOT its own (always-empty) new stage, which would always yield ORDINAL_GAP and collide with the
+   *  planning thread / a sibling post-build stage-thread. Mirrors `persistPlan`'s root-ordinal allocation. */
+  private async nextRootThreadOrdinal(jobId: string): Promise<number> {
+    const row = await this.threads
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.job_id = :jobId', { jobId })
+      .andWhere('t.parent_thread_id IS NULL')
+      .getRawOne<{ max: number | null }>();
+    return (row?.max ?? 0) + ORDINAL_GAP;
   }
 
   private async maxTaskOrdinal(stageId: string): Promise<number> {
