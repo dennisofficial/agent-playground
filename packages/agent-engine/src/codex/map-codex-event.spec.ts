@@ -143,9 +143,11 @@ describe('CodexAppServerAdapter', () => {
     readRefreshedAuth: () => undefined,
   };
 
-  it('declares engine "codex" and exactly the writeGuard + richStream capabilities', () => {
+  it('declares engine "codex" and exactly the writeGuard + postToolUseContext + midTurnSteer + richStream capabilities', () => {
     const adapter = new CodexAppServerAdapter(fakeProvisioner);
     expect(adapter.engine).toBe('codex');
-    expect(new Set(adapter.capabilities)).toEqual(new Set(['writeGuard', 'richStream']));
+    expect(new Set(adapter.capabilities)).toEqual(
+      new Set(['writeGuard', 'postToolUseContext', 'midTurnSteer', 'richStream']),
+    );
   });
 });

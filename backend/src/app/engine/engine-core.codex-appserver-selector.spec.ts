@@ -39,6 +39,7 @@ vi.mock('@workspace/agent-engine', async (importOriginal) => {
   return {
     ...actual,
     CodexAppServerAdapter: class {
+      readonly capabilities = new Set(['writeGuard', 'postToolUseContext', 'midTurnSteer', 'richStream']);
       async run(args: AdapterRunArgs): Promise<EngineRunResult> {
         appServerRunCalls.push(args);
         return appServerResult;

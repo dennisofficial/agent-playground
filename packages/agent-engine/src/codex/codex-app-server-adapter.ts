@@ -6,7 +6,7 @@ import type {
   CodexTokenUsage,
   CodexTurnHandlers,
 } from '@workspace/codex-sdk';
-import type { AdapterRunArgs, EngineAdapter, EngineCapability } from '../port.js';
+import type { AdapterRunArgs, EngineAdapter, EngineCapability, EngineLocalHooks } from '../port.js';
 import type { EngineAuth, EngineHomeKey, EngineRunResult, EngineUsage, ReasoningEffort } from '../types.js';
 import { EngineAuthError, isAuthErrorMessage } from '../types.js';
 import { mapCodexEvent, type MapCodexEventCtx } from './map-codex-event.js';
@@ -40,12 +40,20 @@ function toCodexEffort(e?: ReasoningEffort): CodexEffort | undefined {
 /**
  * The Codex {@link EngineAdapter}: the ONE place Atlas maps to/from the `codex app-server` protocol via
  * `@workspace/codex-sdk`. One `CodexClient` (one app-server subprocess) per `run()` — no cross-turn caching
- * this pass. Capabilities are `writeGuard` + `richStream` only; `postToolUseContext`/`midTurnSteer`/
- * `subagents` land in thread 3.
+ * this pass. Capabilities are `writeGuard` + `postToolUseContext` + `midTurnSteer` + `richStream`: write-guard
+ * via `onApproval` returning `decline`, and both the svc-nudge post-tool-context rule and the leg-rotation
+ * mid-turn steer are committed through `CodexClient.steer`. `holdTimer`/`subagents` remain honestly
+ * undeclared — the 0.137.0 app-server surface exposes no observable equivalent to Claude's held-open
+ * background-task hold-timer or a controllable subagent surface this pass.
  */
 export class CodexAppServerAdapter implements EngineAdapter {
   readonly engine = 'codex' as const;
-  readonly capabilities: ReadonlySet<EngineCapability> = new Set<EngineCapability>(['writeGuard', 'richStream']);
+  readonly capabilities: ReadonlySet<EngineCapability> = new Set<EngineCapability>([
+    'writeGuard',
+    'postToolUseContext',
+    'midTurnSteer',
+    'richStream',
+  ]);
 
   constructor(private readonly provisioner: CodexHomeProvisioner) {}
 
@@ -82,13 +90,50 @@ export class CodexAppServerAdapter implements EngineAdapter {
         },
       };
 
+      // Per-turn hook-fire state (fresh per `run()` call, mirroring the Claude adapter's per-turn closures —
+      // no cross-turn leakage). `contextTokens` is refreshed from the app-server's own `tokenUsageUpdated`
+      // notifications (Codex reports no per-call usage any other way); `firedRotationLevel` level-latches the
+      // leg-rotation steer exactly like the Claude path (engine-core.ts's main-agent round-trip tracker).
+      let contextTokens = 0;
+      let firedRotationLevel = -1;
+
+      // svc-nudge parity: a completed Bash command that matches the rule gets its nudge delivered via a
+      // mid-turn steer (Claude delivers the SAME rule as a PostToolUse `additionalContext` — different
+      // transport, identical behavioral effect: the agent sees the nudge at the next round-trip).
+      const maybeSteerSvcNudge = (threadId: string, turnId: string, item: Record<string, unknown>): void => {
+        if (!args.hooks?.postToolUseContext) return;
+        const command = typeof item.command === 'string' ? item.command : '';
+        const text = args.hooks.postToolUseContext('Bash', { command }, contextTokens);
+        if (!text) return;
+        void client.steer(threadId, turnId, [{ type: 'text', text }]).catch(() => {});
+      };
+
+      // leg-rotation parity: level-latch on the SAME soft/reminder-band algorithm the Claude path uses,
+      // driven off Codex's own cumulative token-usage notifications instead of the SDK's per-call usage.
+      const maybeSteerRotation = (threadId: string, turnId: string): void => {
+        const rotation = args.hooks?.rotation;
+        if (!rotation || contextTokens < rotation.softTokens) return;
+        const level = Math.floor((contextTokens - rotation.softTokens) / rotation.reminderDeltaTokens);
+        if (level <= firedRotationLevel) return;
+        const isFirst = firedRotationLevel < 0;
+        firedRotationLevel = level;
+        const text = isFirst ? rotation.softText : rotation.reminderText;
+        void client.steer(threadId, turnId, [{ type: 'text', text }]).catch(() => {});
+      };
+
       const handlers: CodexTurnHandlers = {
         onEvent: (e) => {
+          if (e.type === 'tokenUsageUpdated') {
+            contextTokens = (e.usage.inputTokens ?? 0) + (e.usage.cachedInputTokens ?? 0);
+            maybeSteerRotation(e.threadId, e.turnId);
+          } else if (e.type === 'itemCompleted' && e.item.type === 'command_execution') {
+            maybeSteerSvcNudge(e.threadId, e.turnId, e.item);
+          }
           for (const mapped of mapCodexEvent(e, mapCtx)) args.onEvent?.(mapped);
         },
         onApproval: async (req: CodexApprovalRequest): Promise<CodexApprovalDecision> => {
-          // thread 2: writeGuard is unset for Codex (as for Claude), so this defaults to 'accept'. The
-          // plumbing exists so a later rule can gate writes through it.
+          // Unset when the turn carries no write-guard predicate (e.g. an execute turn with no root
+          // confinement configured), so this defaults to 'accept'.
           if (!args.hooks?.writeGuard) return 'accept';
           const verdict = args.hooks.writeGuard(req.kind, req.raw);
           return verdict.allow ? 'accept' : 'decline';

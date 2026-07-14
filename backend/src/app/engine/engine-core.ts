@@ -22,6 +22,9 @@ import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
   legRotationRule,
+  ROTATION_REMINDER_DELTA_TOKENS,
+  ROTATION_SOFT_TOKENS,
+  svcNudgeRule,
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
@@ -41,8 +44,13 @@ import {
   type StructuredPatchHunk,
   resolveContextLimit,
 } from './engine.types';
-import type { AdapterRunArgs, EngineLocalHooks } from '@workspace/agent-engine';
-import { CodexAppServerAdapter } from '@workspace/agent-engine';
+import type { AdapterRunArgs, EngineCapability, EngineLocalHooks } from '@workspace/agent-engine';
+import {
+  buildEngineLocalHooks,
+  CodexAppServerAdapter,
+  evaluateWriteGuard,
+  guardHooksAgainstCapabilities,
+} from '@workspace/agent-engine';
 import { ClaudeAdapter } from './claude-adapter';
 import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
 
@@ -602,7 +610,7 @@ export class EngineCore {
    * the Claude branch) MUST hand the port a resolved secret: `CodexAppServerAdapter.run` throws on a
    * missing `auth`, whereas `args.auth` alone may be undefined (resolved lazily inside legacy `runCodex`).
    */
-  private toAdapterArgs(args: RunEngineArgs, authOverride?: EngineAuth): AdapterRunArgs {
+  private toAdapterArgs(args: RunEngineArgs, authOverride?: EngineAuth, hooks?: EngineLocalHooks): AdapterRunArgs {
     return {
       engine: args.engine,
       task: args.task,
@@ -619,7 +627,39 @@ export class EngineCore {
       ...(args.persistAuthRefresh !== undefined ? { persistAuthRefresh: args.persistAuthRefresh } : {}),
       ...(args.signal ? { signal: args.signal } : {}),
       ...(args.onEvent ? { onEvent: args.onEvent } : {}),
+      ...(hooks ? { hooks } : {}),
     };
+  }
+
+  /**
+   * Assemble a Codex-app-server turn's {@link EngineLocalHooks} from the SAME JIT rule catalog Claude's
+   * `ClaudeAdapter.buildHooks` reads (svc-nudge, leg-rotation) plus the structural write-guard (always built,
+   * unconditional on any rule's `enabled` flag — it's the read-only/root-confinement security boundary, not a
+   * nudge). {@link guardHooksAgainstCapabilities} then drops any field the adapter's declared capability set
+   * can't honor, so a future capability change here degrades honestly instead of silently no-op-ing mid-turn.
+   */
+  private buildCodexHooks(args: RunEngineArgs, capabilities: ReadonlySet<EngineCapability>): EngineLocalHooks {
+    const readOnly = args.mode !== 'execute';
+    const hooks = buildEngineLocalHooks({
+      svcNudge: svcNudgeRule.enabled
+        ? {
+            tool: 'Bash',
+            match: detectLongRunningCommand,
+            deltaTokens: svcNudgeRule.throttle!.deltaTokens,
+            render: (command) => svcNudgeRule.render({ command }),
+          }
+        : undefined,
+      writeGuard: { readOnly, roots: [args.cwd, ...(args.writableRoots ?? [])] },
+      rotation: legRotationRule.enabled
+        ? {
+            softTokens: ROTATION_SOFT_TOKENS,
+            reminderDeltaTokens: ROTATION_REMINDER_DELTA_TOKENS,
+            softText: legRotationRule.render({ phase: 'soft' }),
+            reminderText: legRotationRule.render({ phase: 'reminder' }),
+          }
+        : undefined,
+    });
+    return guardHooksAgainstCapabilities(hooks, capabilities);
   }
 
   /**
@@ -642,9 +682,8 @@ export class EngineCore {
    */
   private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
     const auth = this.resolveAuth('codex', args.auth);
-    return new CodexAppServerAdapter(new BackendCodexHomeProvisioner(this.homeRoot())).run(
-      this.toAdapterArgs(args, auth),
-    );
+    const adapter = new CodexAppServerAdapter(new BackendCodexHomeProvisioner(this.homeRoot()));
+    return adapter.run(this.toAdapterArgs(args, auth, this.buildCodexHooks(args, adapter.capabilities)));
   }
 
   /**
@@ -1698,8 +1737,15 @@ export function makeCanUseTool(
       if (typeof input.plan === 'string') onPlan(input.plan);
       return { behavior: 'deny', message: 'Plan recorded — ending the planning turn.' };
     }
-    if (readOnly && (toolName === 'Write' || toolName === 'Edit')) {
-      return { behavior: 'deny', message: 'This is a read-only turn — no file writes.' };
+    const readOnlyVerdict = evaluateWriteGuard(toolName, input, {
+      readOnly,
+      roots: [],
+    });
+    if (!readOnlyVerdict.allow) {
+      return {
+        behavior: 'deny',
+        message: readOnlyVerdict.reason ?? 'This is a read-only turn — no file writes.',
+      };
     }
     if (skillGuard && SKILL_MUTATING_TOOLS.has(toolName)) {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
@@ -1714,14 +1760,15 @@ export function makeCanUseTool(
         };
       }
     }
-    if (toolName === 'Write' || toolName === 'Edit') {
-      const path = typeof input.file_path === 'string' ? input.file_path : '';
-      if (path && !allowedRoots.some((root) => isInsideRoot(path, root))) {
-        return {
-          behavior: 'deny',
-          message: `Write outside the allowed roots (${allowedRoots.join(', ')}) is not allowed: ${path}`,
-        };
-      }
+    const rootVerdict = evaluateWriteGuard(toolName, input, {
+      readOnly: false,
+      roots: allowedRoots,
+    });
+    if (!rootVerdict.allow) {
+      return {
+        behavior: 'deny',
+        message: rootVerdict.reason ?? 'Write outside the allowed roots is not allowed.',
+      };
     }
     if (writeGuard) {
       const verdict = writeGuard(toolName, input);

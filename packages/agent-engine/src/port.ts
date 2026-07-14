@@ -17,6 +17,10 @@ export interface EngineLocalHooks {           // capability-gated JIT primitives
   writeGuard?: (toolName: string, input: unknown) => { allow: boolean; reason?: string };
   steer?: SteerChannel;
   holdCapMs?: number;
+  /** Engine-local mid-turn token-threshold steer (the `leg-rotation` JIT rule's Codex wiring — Claude's OWN
+   *  rotation path is driven by a separate, pre-existing `RunEngineArgs.rotationNudge` mechanism gated to
+   *  builder threads and is UNCHANGED by this hook). */
+  rotation?: { softTokens: number; reminderDeltaTokens: number; softText: string; reminderText: string };
 }
 export interface AdapterRunArgs {             // slim, vendor-agnostic; EngineCore maps RunEngineArgs → this
   engine: SessionEngine; task: string; cwd: string; systemPrompt: string;
