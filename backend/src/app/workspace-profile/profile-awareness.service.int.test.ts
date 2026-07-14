@@ -43,7 +43,10 @@ describe('ProfileAwarenessService (live Postgres)', () => {
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
+      imports: [
+        TypeOrmModule.forRoot(dbOpts()),
+        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
+      ],
       providers: [WorkspaceConfigStore, ProfileAwarenessService],
     }).compile();
 
@@ -65,25 +68,42 @@ describe('ProfileAwarenessService (live Postgres)', () => {
   });
 
   afterAll(async () => {
-    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+      .catch(() => undefined);
     await mod?.close();
   });
 
-  async function ledger(): Promise<Array<{ key: string }>> {
-    const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [repoId]);
+  async function ledger(): Promise<
+    Array<{ key: string; firstSeenAt: string }>
+  > {
+    const rows = await ds.query(
+      `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
+      [repoId],
+    );
     return rows[0].t ?? [];
   }
 
   async function handle(command: string): Promise<string | null> {
-    return service.handle({ orgId: ORG_ID, repoId, jobId: 'job-1', sessionType: 'brain', command });
+    return service.handle({
+      orgId: ORG_ID,
+      repoId,
+      jobId: 'job-1',
+      sessionType: 'brain',
+      command,
+    });
   }
 
   it('pnpm add eslint: fires an "added" checklist and records pnpm:eslint', async () => {
     const text = await handle('pnpm add eslint');
     expect(text).toContain('[profile-awareness]');
     expect(text).toContain('pnpm:eslint');
-    expect((await ledger()).map((t) => t.key)).toEqual(['pnpm:eslint']);
+    const entries = await ledger();
+    expect(entries.map((t) => t.key)).toEqual(['pnpm:eslint']);
+    expect(entries[0].firstSeenAt).toEqual(expect.any(String));
   });
 
   it('same pnpm add eslint again: deduped (null, ledger unchanged)', async () => {
@@ -96,7 +116,10 @@ describe('ProfileAwarenessService (live Postgres)', () => {
   it('apt-get install doctl: fires an "added" checklist and records apt:doctl', async () => {
     const text = await handle('apt-get install doctl');
     expect(text).toContain('apt:doctl');
-    expect((await ledger()).map((t) => t.key).sort()).toEqual(['apt:doctl', 'pnpm:eslint']);
+    expect((await ledger()).map((t) => t.key).sort()).toEqual([
+      'apt:doctl',
+      'pnpm:eslint',
+    ]);
   });
 
   it('pnpm remove eslint: fires a "retire" checklist and drops pnpm:eslint', async () => {

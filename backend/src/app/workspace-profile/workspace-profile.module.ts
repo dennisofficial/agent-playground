@@ -1,16 +1,20 @@
 import { Global, Module } from '@nestjs/common';
+import { EnvService } from '@core/config/env/env.service';
 import { CredentialResolver } from '../onboarding';
 import { WorkspaceProfileService } from './workspace-profile.service';
 import { ProfileAwarenessService } from './profile-awareness.service';
-import { INSTALL_AWARENESS_FILTER, AnthropicInstallAwarenessFilter } from './install-awareness-filter';
+import {
+  INSTALL_AWARENESS_FILTER,
+  AnthropicInstallAwarenessFilter,
+} from './install-awareness-filter';
 
 /**
- * Stage 2 kill switch (decision d2). Flip to `false` to disable the Haiku filter/enricher entirely — the
- * `INSTALL_AWARENESS_FILTER` provider then resolves to `undefined`, and `ProfileAwarenessService` falls
- * through to the plain Stage-1 deterministic checklist for every nudge. Proves the mechanism fully works
- * with Stage 2 disabled, per decision d2.
+ * Stage 2 kill switch (decision d2). Set `INSTALL_AWARENESS_FILTER_DISABLED=on` to disable the Haiku
+ * filter/enricher entirely — the `INSTALL_AWARENESS_FILTER` provider then resolves to `undefined`, and
+ * `ProfileAwarenessService` falls through to the plain Stage-1 deterministic checklist for every nudge.
  */
-export const INSTALL_AWARENESS_FILTER_ENABLED = true;
+export const INSTALL_AWARENESS_FILTER_DISABLED =
+  'INSTALL_AWARENESS_FILTER_DISABLED';
 
 /**
  * The Workspace Profile read-model layer. `WorkspaceProfileService` COMPOSES the per-dimension stores
@@ -30,13 +34,19 @@ export const INSTALL_AWARENESS_FILTER_ENABLED = true;
     ProfileAwarenessService,
     {
       provide: INSTALL_AWARENESS_FILTER,
-      inject: [CredentialResolver],
-      useFactory: (creds: CredentialResolver) =>
-        INSTALL_AWARENESS_FILTER_ENABLED
-          ? new AnthropicInstallAwarenessFilter((orgId) => creds.anthropicKey(orgId))
+      inject: [CredentialResolver, EnvService],
+      useFactory: (creds: CredentialResolver, env: EnvService) =>
+        env.get(INSTALL_AWARENESS_FILTER_DISABLED) !== 'on'
+          ? new AnthropicInstallAwarenessFilter((orgId) =>
+              creds.anthropicKey(orgId),
+            )
           : undefined,
     },
   ],
-  exports: [WorkspaceProfileService, ProfileAwarenessService, INSTALL_AWARENESS_FILTER],
+  exports: [
+    WorkspaceProfileService,
+    ProfileAwarenessService,
+    INSTALL_AWARENESS_FILTER,
+  ],
 })
 export class WorkspaceProfileModule {}

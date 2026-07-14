@@ -21,12 +21,55 @@ export type InstallMatch = {
   label: string;
 };
 
-/** Splits off the current shell segment (stops at the next `&&`/`||`/`;`/`|`) and returns its first non-flag token. */
-function firstPackageToken(rest: string): string | null {
+const FLAGS_WITH_VALUE_BY_ECO: Record<string, Set<string>> = {
+  apt: new Set(['-o', '-t']),
+  npm: new Set(['--prefix', '--registry', '--userconfig']),
+  pip: new Set([
+    '-c',
+    '--constraint',
+    '-f',
+    '--find-links',
+    '-i',
+    '--index-url',
+    '-r',
+    '--requirement',
+    '--target',
+    '--trusted-host',
+  ]),
+  pipx: new Set(['--index-url', '--pip-args', '--python']),
+  pnpm: new Set(['--filter', '--prefix', '--registry', '--workspace']),
+  uv: new Set(['-c', '--constraint', '-r', '--requirement', '--index-url']),
+  yarn: new Set(['--cwd', '--registry']),
+};
+
+/** Splits off the current shell segment (stops at the next `&&`/`||`/`;`/`|`) and returns its first package token. */
+function firstPackageToken(rest: string, eco: string): string | null {
   const segment = rest.split(/&&|\|\|/)[0].split(/[;|]/)[0];
+  if (/\s--only-upgrade(?:\s|=|$)/.test(` ${segment}`)) return null;
+  const flagsWithValue = FLAGS_WITH_VALUE_BY_ECO[eco] ?? new Set<string>();
+  let skipValue = false;
   for (const tok of segment.trim().split(/\s+/).filter(Boolean)) {
-    if (tok.startsWith('-')) continue;
     const cleaned = tok.replace(/^['"]|['"]$/g, '');
+    if (!cleaned) continue;
+    if (skipValue) {
+      skipValue = false;
+      continue;
+    }
+    const flag = cleaned.includes('=')
+      ? cleaned.slice(0, cleaned.indexOf('='))
+      : cleaned;
+    if (flagsWithValue.has(flag)) {
+      skipValue = !cleaned.includes('=');
+      continue;
+    }
+    if (
+      /^-r\S+/.test(cleaned) ||
+      /^--requirement=/.test(cleaned) ||
+      /^--constraint=/.test(cleaned)
+    ) {
+      continue;
+    }
+    if (cleaned.startsWith('-')) continue;
     if (cleaned) return cleaned;
   }
   return null;
@@ -220,9 +263,16 @@ export function detectInstallCommand(command: string): InstallMatch | null {
     if (!m) continue;
     const eco = rule.eco(m);
     const rest = cmd.slice(m.index + m[0].length);
-    const pkg = (rule.pkg ?? firstPackageToken)(rest, cmd, eco);
+    const pkg = rule.pkg
+      ? rule.pkg(rest, cmd, eco)
+      : firstPackageToken(rest, eco);
     if (!pkg) return null; // verb matched but no package arg — a bare restore/list/no-op, not a new install
-    return { action: rule.action, kind: rule.kind, key: `${eco}:${pkg}`, label: rule.label(eco) };
+    return {
+      action: rule.action,
+      kind: rule.kind,
+      key: `${eco}:${pkg}`,
+      label: rule.label(eco),
+    };
   }
   return null;
 }
@@ -231,7 +281,7 @@ const ADDED_CORE =
   'Consider the workspace profile as a whole — is there an official/third-party SKILL that complements it ' +
   "(`propose_skill_install`)? an MCP server (`propose_mcp_servers`)? should it be part of this repo's " +
   'VALIDATION profile? does it need to PERSIST across sandbox resets (`write_setup_script`)? Only act where ' +
-  "it clearly earns its place; otherwise note it and move on. NOTE: a workaround for a harness/image BUG is " +
+  'it clearly earns its place; otherwise note it and move on. NOTE: a workaround for a harness/image BUG is ' +
   "NOT profile material — file it at the image level, don't persist it.";
 
 const RETIRE_CORE =

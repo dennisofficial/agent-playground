@@ -23,7 +23,11 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine } from './container-engine.port';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
+import type {
+  EngineEvent,
+  RunEngineArgs,
+  ToolBridgeOptions,
+} from '../engine/engine.types';
 import { agentMessage } from '../prompt-kit/message';
 
 const ORG_ID = '3bbbbbbb-2222-4222-8222-222222222222';
@@ -46,15 +50,17 @@ function dbOpts() {
 }
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
-const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
+const fakeActivity = {
+  thread: (_id: string, fn: () => unknown) => fn(),
+} as unknown as SandboxActivityRegistry;
 
 function fakeRegistry() {
   return {
-    register: vi.fn(async () => undefined),
-    heartbeat: vi.fn(async () => undefined),
-    finalize: vi.fn(async () => true),
-    getToolReply: vi.fn(async () => null),
-    recordToolReply: vi.fn(async () => undefined),
+    register: vi.fn(() => Promise.resolve(undefined)),
+    heartbeat: vi.fn(() => Promise.resolve(undefined)),
+    finalize: vi.fn(() => Promise.resolve(true)),
+    getToolReply: vi.fn(() => Promise.resolve(null)),
+    recordToolReply: vi.fn(() => Promise.resolve(undefined)),
   } as unknown as TurnRegistry;
 }
 
@@ -64,7 +70,12 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
     task: agentMessage('do the thing'),
     cwd: '/wt',
     systemPrompt: agentMessage('SYS'),
-    sandboxKey: { orgId: ORG_ID, repoId: 'repo-1', jobId: 'job-1', type: 'build' },
+    sandboxKey: {
+      orgId: ORG_ID,
+      repoId: 'repo-1',
+      jobId: 'job-1',
+      type: 'build',
+    },
     mode: 'execute',
     onEvent,
     target: { containerId: 'c1', worktreeHost: '/wt' },
@@ -76,39 +87,63 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
  * for `__profile_awareness`, polls the replies stream for the correlated reply, then emits the reply's
  * result as a text event before ending the turn.
  */
-function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
+function fakeContainersWithProfileAwarenessCall(
+  redis: InMemoryRedisStream,
+  command: string,
+) {
   return {
-    execDetached: vi.fn(async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
-      const turnId = opts?.env?.TURN_ID;
-      if (!turnId) return {};
-      const k = turnKeys(turnId);
-      void (async () => {
-        const callId = `call-${turnId}`;
-        await redis.xadd(k.tools, {
-          t: 'tool_request',
-          id: callId,
-          name: '__profile_awareness',
-          args: { command },
-        });
-        let lastId = '0-0';
-        let done = false;
-        for (let i = 0; i < 50 && !done; i++) {
-          const r = await redis.xread({ stream: k.replies, lastId, count: 10, blockMs: 50 });
-          for (const entry of r) {
-            const d = entry.data as { id?: string; t?: string; result?: unknown };
-            if (d.id !== callId) continue;
-            if (d.t === 'tool_progress') continue;
-            const text = d.t === 'tool_response' && typeof d.result === 'string' ? d.result : '';
-            await redis.xadd(k.events, { t: 'event', e: { kind: 'text', text } });
-            done = true;
-            break;
+    execDetached: vi.fn(
+      (
+        _id: string,
+        _argv: string[],
+        opts?: { env?: Record<string, string> },
+      ) => {
+        const turnId = opts?.env?.TURN_ID;
+        if (!turnId) return Promise.resolve({});
+        const k = turnKeys(turnId);
+        void (async () => {
+          const callId = `call-${turnId}`;
+          await redis.xadd(k.tools, {
+            t: 'tool_request',
+            id: callId,
+            name: '__profile_awareness',
+            args: { command },
+          });
+          let lastId = '0-0';
+          let done = false;
+          for (let i = 0; i < 50 && !done; i++) {
+            const r = await redis.xread({
+              stream: k.replies,
+              lastId,
+              count: 10,
+              blockMs: 50,
+            });
+            for (const entry of r) {
+              const d = entry.data as {
+                id?: string;
+                t?: string;
+                result?: unknown;
+              };
+              if (d.id !== callId) continue;
+              if (d.t === 'tool_progress') continue;
+              const text =
+                d.t === 'tool_response' && typeof d.result === 'string'
+                  ? d.result
+                  : '';
+              await redis.xadd(k.events, {
+                t: 'event',
+                e: { kind: 'text', text },
+              });
+              done = true;
+              break;
+            }
+            if (r.length) lastId = r[r.length - 1].id;
           }
-          if (r.length) lastId = r[r.length - 1].id;
-        }
-        await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
-      })();
-      return {};
-    }),
+          await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
+        })();
+        return Promise.resolve({});
+      },
+    ),
   } as unknown as ContainerEngine;
 }
 
@@ -120,7 +155,10 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
-      imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
+      imports: [
+        TypeOrmModule.forRoot(dbOpts()),
+        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
+      ],
       providers: [WorkspaceConfigStore, ProfileAwarenessService],
     }).compile();
 
@@ -142,28 +180,39 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
   });
 
   afterAll(async () => {
-    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+      .catch(() => undefined);
     await mod?.close();
   });
 
-  async function ledger(): Promise<Array<{ key: string }>> {
-    const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [repoId]);
+  async function ledger(): Promise<
+    Array<{ key: string; firstSeenAt: string }>
+  > {
+    const rows = await ds.query(
+      `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
+      [repoId],
+    );
     return rows[0].t ?? [];
   }
 
-  function makeBridge() {
+  function makeBridge(): ToolBridgeOptions {
     return {
       jobId: 'job-1',
       tools: {
-        __profile_awareness: (args: Record<string, unknown>) =>
-          service.handle({
+        __profile_awareness: (args: Record<string, unknown>) => {
+          const commandArg = args.command;
+          return service.handle({
             orgId: ORG_ID,
             repoId,
             jobId: 'job-1',
             sessionType: 'build',
-            command: String(args['command'] ?? ''),
-          }),
+            command: typeof commandArg === 'string' ? commandArg : '',
+          });
+        },
       },
     };
   }
@@ -173,22 +222,30 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     const redis = new InMemoryRedisStream();
     const events: EngineEvent[] = [];
     const containers = fakeContainersWithProfileAwarenessCall(redis, command);
-    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+    const runner = new RedisEngineRunner(
+      containers,
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+    );
 
     const out = await runner.run({
       ...baseArgs((e) => events.push(e)),
       sandboxKey: { orgId: ORG_ID, repoId, jobId: 'job-1', type: 'build' },
-      toolBridge: makeBridge() as never,
+      toolBridge: makeBridge(),
     });
 
     expect(out).toMatchObject({ result: 'DONE' });
-    const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
-      | { kind: 'text'; text: string }
-      | undefined;
+    const replyText = events.find(
+      (e) => (e as { kind?: string }).kind === 'text',
+    ) as { kind: 'text'; text: string } | undefined;
     expect(replyText?.text).toContain('[profile-awareness]');
     expect(replyText?.text).toContain('pnpm:left-pad-throwaway-dep');
 
-    expect((await ledger()).map((t) => t.key)).toEqual(['pnpm:left-pad-throwaway-dep']);
+    const entries = await ledger();
+    expect(entries.map((t) => t.key)).toEqual(['pnpm:left-pad-throwaway-dep']);
+    expect(entries[0].firstSeenAt).toEqual(expect.any(String));
   });
 
   it('same command again over the same round-trip: deduped (empty reply text), ledger unchanged', async () => {
@@ -197,17 +254,23 @@ describe('RedisEngineRunner + ProfileAwarenessService (live Postgres) — instal
     const redis = new InMemoryRedisStream();
     const events: EngineEvent[] = [];
     const containers = fakeContainersWithProfileAwarenessCall(redis, command);
-    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+    const runner = new RedisEngineRunner(
+      containers,
+      redis,
+      fakeEnv,
+      fakeActivity,
+      fakeRegistry(),
+    );
 
     await runner.run({
       ...baseArgs((e) => events.push(e)),
       sandboxKey: { orgId: ORG_ID, repoId, jobId: 'job-1', type: 'build' },
-      toolBridge: makeBridge() as never,
+      toolBridge: makeBridge(),
     });
 
-    const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
-      | { kind: 'text'; text: string }
-      | undefined;
+    const replyText = events.find(
+      (e) => (e as { kind?: string }).kind === 'text',
+    ) as { kind: 'text'; text: string } | undefined;
     // `service.handle` returns null on dedup; the tool-bridge reply's result is null, so the fake
     // container's text extraction (only a STRING result becomes text) yields an empty string.
     expect(replyText?.text).toBe('');

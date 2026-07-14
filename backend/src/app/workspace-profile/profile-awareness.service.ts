@@ -5,8 +5,14 @@ import {
   type InstallMatch,
 } from '../prompt-kit/jit/install-awareness';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
-import { WorkspaceProfileService } from './workspace-profile.service';
-import { INSTALL_AWARENESS_FILTER, type InstallAwarenessFilter } from './install-awareness-filter';
+import {
+  WorkspaceProfileService,
+  type WorkspaceProfileSnapshot,
+} from './workspace-profile.service';
+import {
+  INSTALL_AWARENESS_FILTER,
+  type InstallAwarenessFilter,
+} from './install-awareness-filter';
 
 /**
  * The host round-trip handler for the install-awareness nudge (decisions d1/d2). Detects a
@@ -29,7 +35,9 @@ export class ProfileAwarenessService {
     // int tests) construct `ProfileAwarenessService` without them — Stage 2 simply stays off in that case,
     // identical to the kill-switch/no-key fallback.
     @Optional() private readonly profile?: WorkspaceProfileService,
-    @Optional() @Inject(INSTALL_AWARENESS_FILTER) private readonly filter?: InstallAwarenessFilter,
+    @Optional()
+    @Inject(INSTALL_AWARENESS_FILTER)
+    private readonly filter?: InstallAwarenessFilter,
   ) {}
 
   /** Returns the nudge text to inject via `additionalContext`, or null to suppress. Never throws. */
@@ -44,7 +52,11 @@ export class ProfileAwarenessService {
       const match = detectInstallCommand(input.command);
       if (!match) return null;
 
-      const fired = await this.configStore.applyToolingTransition(input.orgId, input.repoId, match);
+      const fired = await this.configStore.applyToolingTransition(
+        input.orgId,
+        input.repoId,
+        match,
+      );
       if (!fired) return null; // repeat / no transition — deduped (ledger untouched)
 
       // The ledger transition is already committed above — Stage 2 only ever affects whether/how the
@@ -76,10 +88,28 @@ export class ProfileAwarenessService {
     try {
       const snapshot = await this.profile.describe(orgId, repoId);
       const profileBlock = this.profile.render(snapshot);
-      const verdict = await this.filter.filter({ orgId, match, profileBlock });
+      // `render()` deliberately drops the "Skills:" line (see its own comment — the SDK's native skills
+      // listing now owns that for the brain), so the filter would otherwise never see which skills are
+      // installed and could never satisfy its "already covered by an installed skill" suppression case.
+      // Render them separately here as the `catalog` slot instead.
+      const renderSkill = (
+        s: WorkspaceProfileSnapshot['skills'][number],
+      ): string =>
+        `${s.name} (${s.tier}${s.enabled ? '' : ', disabled'}) — ${s.description}`;
+      const catalog = snapshot.skills.length
+        ? snapshot.skills.map(renderSkill).join('\n')
+        : undefined;
+      const verdict = await this.filter.filter({
+        orgId,
+        match,
+        profileBlock,
+        catalog,
+      });
       if (!verdict) return text; // no key / error / timeout → fail-open to Stage 1
       if (verdict.suppress) return null; // filtered out as noise
-      return verdict.suggestion.trim() ? `${text}\n\nSuggestion: ${verdict.suggestion.trim()}` : text;
+      return verdict.suggestion.trim()
+        ? `${text}\n\nSuggestion: ${verdict.suggestion.trim()}`
+        : text;
     } catch (err) {
       this.logger.warn(
         `applyFilter: swallowed Stage-2 error for org=${orgId} repo=${repoId} — ${err instanceof Error ? err.message : String(err)}`,

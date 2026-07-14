@@ -1,8 +1,15 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
-import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import {
+  ChatPromptTemplate,
+  HumanMessagePromptTemplate,
+} from '@langchain/core/prompts';
+import {
+  RunnableLambda,
+  RunnableSequence,
+  type Runnable,
+} from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 import type { InstallMatch } from '../prompt-kit/jit/install-awareness';
@@ -23,15 +30,19 @@ export const INSTALL_FILTER_MODEL = 'claude-haiku-4-5-20251001';
 export const InstallFilterSchema = z.object({
   suppress: z
     .boolean()
-    .describe('true = this install is noise / already covered; do NOT interrupt the agent'),
+    .describe(
+      'true = this install is noise / already covered; do NOT interrupt the agent',
+    ),
   suggestion: z
     .string()
-    .describe('A specific, actionable suggestion (name the skill/MCP), or "" if none'),
+    .describe(
+      'A specific, actionable suggestion (name the skill/MCP), or "" if none',
+    ),
   reason: z.string().describe('One short line.'),
 });
 export type InstallFilterVerdict = z.infer<typeof InstallFilterSchema>;
 
-export interface InstallAwarenessFilter {
+export type InstallAwarenessFilter = {
   /**
    * Read-only: returns a verdict, or `undefined` when the filter is unavailable (no key / error /
    * timeout) — the caller then keeps the plain Stage-1 text. Never throws.
@@ -42,7 +53,7 @@ export interface InstallAwarenessFilter {
     profileBlock: string;
     catalog?: string;
   }): Promise<InstallFilterVerdict | undefined>;
-}
+};
 
 export const INSTALL_AWARENESS_FILTER = Symbol('INSTALL_AWARENESS_FILTER');
 
@@ -83,7 +94,12 @@ const SYSTEM = [
 
 /** Render an `InstallMatch` as compact untrusted-fenced text for the prompt. */
 const renderMatch = (m: InstallMatch): string =>
-  [`action: ${m.action}`, `kind: ${m.kind}`, `key: ${m.key}`, `label: ${m.label}`].join('\n');
+  [
+    `action: ${m.action}`,
+    `kind: ${m.kind}`,
+    `key: ${m.key}`,
+    `label: ${m.label}`,
+  ].join('\n');
 
 /**
  * Declarative chain: `RunnableLambda` assembles the fenced sections into one template variable (so
@@ -92,32 +108,36 @@ const renderMatch = (m: InstallMatch): string =>
  * scalar fields — no array-typed schema field, avoiding the `withStructuredOutput` array-schema gotcha
  * noted in `driver/static-verification-judge.ts`).
  */
-namespace FilterInstallChain {
-  export interface Input {
-    install: string;
-    profileBlock: string;
-    catalog?: string;
-  }
+type FilterInstallInput = {
+  install: string;
+  profileBlock: string;
+  catalog?: string;
+};
 
-  const renderUser = (i: Input): string =>
-    [
-      fence('install', i.install),
-      fenceOrNone('workspace_profile', i.profileBlock),
-      fenceOrNone('available_skills', i.catalog),
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+const renderFilterInstallUser = (i: FilterInstallInput): string =>
+  [
+    fence('install', i.install),
+    fenceOrNone('workspace_profile', i.profileBlock),
+    fenceOrNone('available_skills', i.catalog),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
 
-  export const build = (llm: BaseChatModel): Runnable<Input, InstallFilterVerdict> =>
-    RunnableSequence.from<Input, InstallFilterVerdict>([
-      RunnableLambda.from((i: Input) => ({ input: renderUser(i) })),
-      ChatPromptTemplate.fromMessages([
-        new SystemMessage(SYSTEM),
-        HumanMessagePromptTemplate.fromTemplate('{input}'),
-      ]),
-      llm.withStructuredOutput(InstallFilterSchema, { name: 'filter_install_awareness' }),
-    ]).withConfig({ runName: 'Filter Install Awareness' });
-}
+const buildFilterInstallChain = (
+  llm: BaseChatModel,
+): Runnable<FilterInstallInput, InstallFilterVerdict> =>
+  RunnableSequence.from<FilterInstallInput, InstallFilterVerdict>([
+    RunnableLambda.from((i: FilterInstallInput) => ({
+      input: renderFilterInstallUser(i),
+    })),
+    ChatPromptTemplate.fromMessages([
+      new SystemMessage(SYSTEM),
+      HumanMessagePromptTemplate.fromTemplate('{input}'),
+    ]),
+    llm.withStructuredOutput(InstallFilterSchema, {
+      name: 'filter_install_awareness',
+    }),
+  ]).withConfig({ runName: 'Filter Install Awareness' });
 
 /**
  * The real adapter. Lazy by construction — no chain until the first `filter` call; a missing key returns
@@ -125,18 +145,32 @@ namespace FilterInstallChain {
  * cached per resolved key string, exactly like `AnthropicClassifierLlm`.
  */
 export class AnthropicInstallAwarenessFilter implements InstallAwarenessFilter {
-  private readonly chains = new Map<string, Runnable<FilterInstallChain.Input, InstallFilterVerdict>>();
+  private readonly chains = new Map<
+    string,
+    Runnable<FilterInstallInput, InstallFilterVerdict>
+  >();
 
   /** @param resolveKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
-  constructor(private readonly resolveKey: (orgId?: string) => Promise<string | undefined>) {}
+  constructor(
+    private readonly resolveKey: (
+      orgId?: string,
+    ) => Promise<string | undefined>,
+  ) {}
 
-  private async chain(orgId?: string): Promise<Runnable<FilterInstallChain.Input, InstallFilterVerdict> | undefined> {
+  private async chain(
+    orgId?: string,
+  ): Promise<Runnable<FilterInstallInput, InstallFilterVerdict> | undefined> {
     const key = await this.resolveKey(orgId);
     if (!key) return undefined;
     let c = this.chains.get(key);
     if (!c) {
-      c = FilterInstallChain.build(
-        new ChatAnthropic({ apiKey: key, model: INSTALL_FILTER_MODEL, maxTokens: 256, temperature: 0 }),
+      c = buildFilterInstallChain(
+        new ChatAnthropic({
+          apiKey: key,
+          model: INSTALL_FILTER_MODEL,
+          maxTokens: 256,
+          temperature: 0,
+        }),
       );
       this.chains.set(key, c);
     }

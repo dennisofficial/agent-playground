@@ -9,5 +9,5 @@ export type SeenTooling = {
   /** Coarse class driving the checklist's angle. */
   kind: 'repo-manifest' | 'env-binary';
   /** ISO-8601 timestamp of the transition that recorded this key (audit only; membership is by `key`). */
-  seenAt: string;
+  firstSeenAt: string;
 };
