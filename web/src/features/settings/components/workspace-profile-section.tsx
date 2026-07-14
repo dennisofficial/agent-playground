@@ -538,6 +538,7 @@ function ScriptEditor({
   const [value, setValue] = useState(seeded ?? "");
   const savedRef = useRef(seeded ?? "");
   const dirty = value !== savedRef.current;
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const next = seeded ?? "";
@@ -548,14 +549,24 @@ function ScriptEditor({
   }, [seeded]);
 
   async function save() {
-    await onSave(value);
-    savedRef.current = value;
+    setError("");
+    try {
+      await onSave(value);
+      savedRef.current = value;
+    } catch (e) {
+      setError((e as Error)?.message || "Could not save.");
+    }
   }
 
   async function clear() {
-    await onClear();
-    savedRef.current = "";
-    setValue("");
+    setError("");
+    try {
+      await onClear();
+      savedRef.current = "";
+      setValue("");
+    } catch (e) {
+      setError((e as Error)?.message || "Could not clear.");
+    }
   }
 
   return (
@@ -569,6 +580,7 @@ function ScriptEditor({
         className={`${inputCls} h-auto resize-y py-2.5 font-mono text-[12.5px] leading-relaxed disabled:opacity-70`}
       />
       <p className="mt-1.5 text-[11px] leading-relaxed text-faint">{helper}</p>
+      {error ? <p className="mt-1.5 text-[11.5px] text-red">{error}</p> : null}
       {canManage ? (
         <div className="mt-3 flex gap-2.5">
           <Button size="sm" onClick={save} disabled={!dirty} loading={saving} loadingText="Saving…">
