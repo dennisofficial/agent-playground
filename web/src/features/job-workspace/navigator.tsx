@@ -46,6 +46,7 @@ import {
   useRetryJob,
   useRetryVerification,
   useServices,
+  useShipWithoutReview,
 } from "@/lib/api/job-queries";
 import { threadHref } from "@/lib/routes";
 import {
@@ -1314,6 +1315,7 @@ function StateBanner({
   const retry = useRetryJob(jobRef);
   const retryVerification = useRetryVerification(jobRef);
   const acceptThread = useAcceptThread(jobRef);
+  const shipWithoutReview = useShipWithoutReview(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
@@ -1383,6 +1385,61 @@ function StateBanner({
               disabled={pending}
             />
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // The Codex-outage hold on the ship-time master_review: a transient infra hold (mirroring
+  // judge_unavailable), not a terminal failure — the job auto-retries on the resume clock, or the
+  // operator can jump straight to the ship-review gate without the automated whole-diff pass.
+  if (job?.halt?.kind === "codex_review_unavailable") {
+    const pending = retry.isPending || shipWithoutReview.isPending;
+    const onShipWithoutReview = () =>
+      shipWithoutReview.mutate(undefined, {
+        onSuccess: (res) =>
+          res.ok
+            ? onConversation()
+            : onNotice(res.reason ?? "Ship without review was refused."),
+      });
+    return (
+      <div
+        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
+        style={{
+          borderColor: "var(--border)",
+          borderLeftColor: "var(--accent-line)",
+          background: "var(--surface-2)",
+        }}
+      >
+        <div className="mb-1 flex items-center gap-1.5">
+          <Hourglass size={11} className="text-dim" />
+          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
+            MASTER REVIEW PAUSED
+          </span>
+        </div>
+        <p className="text-[10.5px] leading-snug text-dim">
+          Codex is unreachable — it&apos;s retrying automatically. You can
+          retry now, or ship without the automated review and review the diff
+          yourself.
+        </p>
+        <div className="mt-2 flex gap-1.5">
+          <BannerBtn
+            tone="accent"
+            icon={<RotateCw size={10} />}
+            label={retry.isPending ? "Retrying…" : "Retry now"}
+            onClick={onRetry}
+            disabled={pending}
+          />
+          <BannerBtn
+            tone="neutral"
+            label={
+              shipWithoutReview.isPending
+                ? "Shipping…"
+                : "Ship without review"
+            }
+            onClick={onShipWithoutReview}
+            disabled={pending}
+          />
         </div>
       </div>
     );
