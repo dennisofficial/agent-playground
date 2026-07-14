@@ -1,17 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, ExternalLink, KeyRound } from "lucide-react";
+import { CheckCircle2, Clock, ExternalLink, KeyRound, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { useProvideSecret } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebSecretInputCard } from "@/lib/api/types";
+import {
+  composerStore,
+  useComposerStagedAnswers,
+  type StagedAnswer,
+} from "@/lib/api/composer-store";
 
 /**
- * A secure secret request the onboarding brain posed via `request_secret`. Renders a MASKED input; the
- * value POSTs to `…/threads/:jobId/provide-secret`, which stores it encrypted + grants it. The value is
- * never echoed back or kept in the card. Once `provided_at` is set, renders the compact "provided" state.
+ * A secure secret request the onboarding brain posed via `request_secret`. Renders a MASKED input.
+ * Ephemeral requests (`card.ephemeral`) keep the immediate `…/threads/:jobId/provide-secret` POST. Durable
+ * and MCP requests instead STAGE the value into the composer's tray — nothing hits the backend until the
+ * operator's batched Send — so confirming here just queues it (relabeled "Stage value" to avoid implying
+ * it's already stored). The value is never echoed back or kept in the card. Once `provided_at` is set,
+ * renders the compact "provided" state.
  */
 export function SecretCardView({
   card,
@@ -23,11 +31,70 @@ export function SecretCardView({
   const provide = useProvideSecret(jobRef);
   const [value, setValue] = useState("");
   const pending = provide.isPending;
+  const staged = useComposerStagedAnswers(jobRef).find(
+    (a): a is Extract<StagedAnswer, { kind: "secret" }> =>
+      a.kind === "secret" && a.cardId === card.requestId,
+  );
 
   function submit() {
     if (!value) return;
-    provide.mutate({ requestId: card.requestId, value });
-    setValue(""); // never keep the plaintext in component state after sending
+    if (card.ephemeral) {
+      provide.mutate({ requestId: card.requestId, value });
+      setValue(""); // never keep the plaintext in component state after sending
+      return;
+    }
+    composerStore.stageAnswer(jobRef, {
+      kind: "secret",
+      cardId: card.requestId,
+      label: card.path ?? card.mcp?.key ?? card.name,
+      value,
+    });
+    setValue(""); // never keep the plaintext in component state after staging
+  }
+
+  if (staged) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-dashed border-accent-line bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Clock size={15} className="text-accent" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-text">
+              <span className="font-mono">{card.name}</span>
+            </p>
+            <p className="text-[12.5px] text-dim">•••• staged</p>
+            <p className="text-[11px] text-faint">Staged — not yet sent</p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              composerStore.removeStagedAnswer(jobRef, card.requestId)
+            }
+            className="rounded-md px-2 py-1 text-[11.5px] font-medium text-dim hover:text-text"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (card.withdrawnAt != null && card.provided_at == null) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <XCircle size={15} className="text-faint" />
+          <div className="min-w-0">
+            <p className="truncate text-[12.5px] text-dim line-through">
+              <span className="font-mono">{card.name}</span>
+            </p>
+            <p className="text-[12px] text-faint">
+              Withdrawn
+              {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (card.provided_at != null) {
@@ -112,18 +179,16 @@ export function SecretCardView({
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
-            loading={pending}
-            loadingText={card.ephemeral ? "Sending…" : "Storing…"}
+            loading={Boolean(card.ephemeral) && pending}
+            loadingText="Sending…"
             disabled={!value}
             onClick={submit}
           >
-            {card.ephemeral ? "Send code" : "Store securely"}
+            {card.ephemeral ? "Send code" : "Stage value"}
           </Button>
-          {provide.isError ? (
+          {card.ephemeral && provide.isError ? (
             <span className="text-[11.5px] text-red">
-              {card.ephemeral
-                ? "Could not deliver the code — Atlas will restart the login. Try again."
-                : "Could not store the secret. Try again."}
+              Could not deliver the code — Atlas will restart the login. Try again.
             </span>
           ) : null}
         </div>

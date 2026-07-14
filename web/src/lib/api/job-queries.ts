@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { qk } from "./query-keys";
 import { useOrgs } from "./me";
+import { composerStore } from "./composer-store";
 import {
   addJobDependency,
   answerQuestion,
@@ -44,6 +45,8 @@ import {
   sayMessageWithFiles,
   spinUpPreview,
   stopJob,
+  submitAnswerBatch,
+  type AnswerBatchItem,
   type AnswerQuestionBody,
   type ProvideSecretBody,
   type ProvideFileBody,
@@ -395,6 +398,26 @@ export function useSendReviewComments(ref: JobRef) {
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+    },
+  });
+}
+
+/**
+ * Submit every staged card answer (question/file/durable-secret) + an optional operator note as ONE
+ * combined request — the Composer's staging-tray Send. Unlike `useSendReviewComments`, there's no
+ * optimistic transcript row (a batch answer doesn't render as its own bubble the way a comments card
+ * does) — the tray just clears and the thread refetches on success.
+ */
+export function useSubmitStagedAnswers(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { items: AnswerBatchItem[]; message?: string }) =>
+      submitAnswerBatch(ref, body),
+    onSuccess: () => {
+      composerStore.setStagedAnswers(ref, () => []);
+      composerStore.clearDraft(ref.jobId);
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
   });
 }
