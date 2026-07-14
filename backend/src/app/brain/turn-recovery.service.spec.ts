@@ -95,6 +95,13 @@ function makeRegistry(running: (jobId: string) => boolean = () => false) {
   ).TurnRegistry;
 }
 
+function makeBootstrap() {
+  return {
+    planningThreadId: vi.fn(async () => 'thread-1'),
+    ensurePlanningStage: vi.fn(async () => undefined),
+  } as unknown as import('../job-bootstrap').JobBootstrapService;
+}
+
 /** Messages a FIRST/cold interrupted turn leaves behind: the operator prompt + the provisioning notice
  *  (Atlas-authored, persisted AFTER the prompt) — and crucially NO transcript reply. */
 const INTERRUPTED_FIRST_TURN: Row[] = [
@@ -108,7 +115,7 @@ describe('TurnRecoveryService', () => {
   it('REGRESSION: recovers when the last durable row is the provisioning notice (not the operator prompt)', async () => {
     const projects = seedTranscript();
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     const recovered = await svc.recoverInterruptedTurns();
 
@@ -130,6 +137,7 @@ describe('TurnRecoveryService', () => {
       makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's1' }),
       makeProvider(projects),
       makeRegistry(),
+      makeBootstrap(),
     );
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
@@ -144,6 +152,7 @@ describe('TurnRecoveryService', () => {
       makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's-old' }),
       makeProvider(projects),
       makeRegistry(),
+      makeBootstrap(),
     );
 
     expect(await svc.recoverInterruptedTurns()).toBe(1); // 's1' ≠ 's-old' → not skipped
@@ -152,7 +161,7 @@ describe('TurnRecoveryService', () => {
   it('is idempotent — a second run sees the final reply persisted and inserts nothing', async () => {
     const projects = seedTranscript();
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     await svc.recoverInterruptedTurns();
     const afterFirst = saved.length;
@@ -168,7 +177,7 @@ describe('TurnRecoveryService', () => {
       { author_id: 'U-OP', text: 'Do a deep dive review.', kind: 'chat' },
       { author_id: 'atlas', text: `${FINAL_REPLY} (already here)`, kind: 'chat' },
     ]);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
     expect(saved.length).toBe(2);
@@ -178,7 +187,7 @@ describe('TurnRecoveryService', () => {
     const cutOff = TRANSCRIPT.split('\n').slice(0, 4).join('\n');
     const projects = seedTranscript(cutOff);
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
     expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length);
@@ -186,7 +195,7 @@ describe('TurnRecoveryService', () => {
 
   it('no-ops when no transcript dir exists for the thread', async () => {
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(null), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(null), makeRegistry(), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
     expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length);
@@ -195,7 +204,7 @@ describe('TurnRecoveryService', () => {
   it('no-ops when there are no non-closed sandbox threads', async () => {
     const projects = seedTranscript();
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
     expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length);
@@ -221,7 +230,7 @@ describe('TurnRecoveryService', () => {
       { author_id: 'U-OP', text: 'Hello?', kind: 'chat' },
       { author_id: 'atlas', text: 'Sorry, I finished the investigation.', kind: 'chat' },
     ]);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(1);
 
@@ -236,7 +245,7 @@ describe('TurnRecoveryService', () => {
   it('skips a thread that has a live Redis turn (re-attach owns it)', async () => {
     const projects = seedTranscript();
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(() => true));
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(() => true), makeBootstrap());
 
     expect(await svc.recoverInterruptedTurns()).toBe(0);
     expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length);
@@ -252,7 +261,7 @@ describe('TurnRecoveryService', () => {
     const projects = join(root, 'brain_x', 'claude', 'projects');
 
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     // The orphaned engine "finishes" shortly after the watch starts.
     setTimeout(() => writeFileSync(file, TRANSCRIPT), 15);
@@ -270,7 +279,7 @@ describe('TurnRecoveryService', () => {
     const projects = join(root, 'brain_x', 'claude', 'projects');
 
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry());
+    const svc = new TurnRecoveryService(repo, makeSandboxRows([THREAD_ID]), makeProvider(projects), makeRegistry(), makeBootstrap());
 
     await svc.finishAndRecover([THREAD_ID], { intervalMs: 10, timeoutMs: 30 });
 

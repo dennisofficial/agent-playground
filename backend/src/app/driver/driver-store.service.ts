@@ -715,6 +715,9 @@ export class DriverStoreService {
       this.messages,
       {
         jobId: input.jobId,
+        // `phaseId` was repointed to `thread_id` when the `steps` table was retired, so it IS the build
+        // thread's `threads.id` — the same row this chunk belongs to.
+        threadId: input.phaseId,
         kind: input.kind,
         text: input.text,
         chunkKey: input.chunkKey,

@@ -109,6 +109,13 @@ export class BrainStoreService {
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
+  /** The job's planning-stage thread id — the anchor every main-lane message row is stamped onto
+   *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
+  private async planningThreadId(jobId: string): Promise<string> {
+    if (!this.jobBootstrap) throw new Error('brain-store: JobBootstrapService not wired');
+    return this.jobBootstrap.planningThreadId(jobId);
+  }
+
   /**
    * Resolve the thread an EVENT stimulus seeded (the intake seam opened it but the in-memory
    * `EventStimulus` doesn't carry the id). Reads the `stimuli` row's `job_id`. Null if the
@@ -147,6 +154,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -170,6 +178,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -187,6 +196,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -247,6 +257,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -267,6 +278,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -291,6 +303,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -330,7 +343,10 @@ export class BrainStoreService {
     framing?: string;
     createdAt?: Date;
   }): Promise<void> {
-    return writeSystemChunk(this.messages, input);
+    return writeSystemChunk(this.messages, {
+      ...input,
+      threadId: await this.planningThreadId(input.jobId),
+    });
   }
 
   /**
@@ -378,6 +394,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -526,6 +543,7 @@ export class BrainStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -776,6 +794,7 @@ export class BrainStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -922,6 +941,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1071,6 +1091,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1119,6 +1140,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1169,6 +1191,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1221,6 +1244,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1268,6 +1292,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',

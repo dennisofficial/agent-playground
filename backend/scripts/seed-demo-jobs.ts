@@ -455,6 +455,8 @@ async function upsertRichMessages(ds: DataSource): Promise<void> {
       (await messages.findOne({ where: { id: m.id } })) ??
       messages.create({ id: m.id });
     row.job_id = RICH_JOB_ID;
+    // Every message hangs off the rich job's main conversation thread (`messages.thread_id` is NOT NULL).
+    row.thread_id = threadId(1);
     row.author = m.author;
     row.author_id = m.author_id;
     row.author_bot_id = m.author_bot_id;

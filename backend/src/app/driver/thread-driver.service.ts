@@ -140,6 +140,7 @@ import {
   type JobRoute,
   type ReviewChildThread,
 } from './driver-store.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { renderPlan, type PlannedStep } from '../prompt-kit/messages/render-plan';
 import {
   LegRotationWatch,
@@ -331,7 +332,18 @@ export class ThreadDriver implements JobDispatcher {
     // `composeTurn` + `collectOperatorPrepends` rail the brain uses (d4). @Global BrainModule. @Optional so the
     // unit test constructs without it (undefined → the inert empty memory rail, byte-identical framing).
     @Optional() private readonly jit?: JitHostExecutor,
+    // Resolves the job's planning-stage thread id — the anchor job-level operator notices (pause/fail/ship/
+    // merge boxes) are stamped onto (`messages.thread_id` is NOT NULL). @Optional so the direct-construction
+    // unit tests keep compiling; the @Global JobBootstrapModule supplies it live.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
+
+  /** The job's planning-stage thread id — the anchor a job-level operator notice (no build-lane thread of
+   *  its own) is stamped onto. Wired in prod via DI; throws loudly if the @Optional dependency is absent. */
+  private async planningThreadId(jobId: string): Promise<string> {
+    if (!this.jobBootstrap) throw new Error('thread-driver: JobBootstrapService not wired');
+    return this.jobBootstrap.planningThreadId(jobId);
+  }
 
   /**
    * Per-job auto-retry counter for the "lost the rotation race" auth halt (Thread 1, step 6). In-memory by
@@ -1041,9 +1053,11 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async relayRetrying(jobId: string, n: number, max: number): Promise<void> {
     const text = `Reconnecting to Claude — auto-retry ${n}/${max}…`;
+    const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId,
         text,
         meta: { source: 'system_notice' },
       })
@@ -1063,9 +1077,11 @@ export class ThreadDriver implements JobDispatcher {
       overrideText != null
         ? `:lock: Build paused — ${overrideText}\n_Your work + the engine session are saved; resume (or reply here) to continue the SAME session._`
         : `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
+    const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId,
         text,
         meta: { source: 'system_operator', severity: 'warning' },
       })
@@ -1093,9 +1109,11 @@ export class ThreadDriver implements JobDispatcher {
       .hasRecentSystemOperatorNotice(jobId, text)
       .catch(() => false);
     if (!alreadyPosted) {
+      const threadId = await this.planningThreadId(jobId);
       await this.blockSink
         .appendBlock(jobId, {
           kind: 'chat',
+          threadId,
           text,
           meta: {
             source: 'system_operator',
@@ -1139,9 +1157,11 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async relayFailure(jobId: string, err: unknown): Promise<void> {
     const text = `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`;
+    const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId,
         text,
         meta: { source: 'system_operator', severity: 'error' },
       })
@@ -1483,6 +1503,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(job.id, {
         kind: 'chat',
+        threadId: await this.planningThreadId(job.id),
         text: ':rocket: Shipping — opening the pull request.',
         meta: { source: 'system_operator' },
       })
@@ -1508,6 +1529,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId: await this.planningThreadId(jobId),
         text: ':rocket: Shipping — opening the pull request.',
         meta: { source: 'system_operator' },
       })
@@ -1531,6 +1553,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId: await this.planningThreadId(jobId),
         text: ':twisted_rightwards_arrows: Merging the pull request.',
         meta: { source: 'system_operator' },
       })
@@ -1561,6 +1584,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
+        threadId: await this.planningThreadId(jobId),
         text: '↩︎ Ship-review retracted — amending the build.',
         meta: { source: 'system_operator' },
       })
@@ -1669,6 +1693,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(job.id, {
         kind: 'chat',
+        threadId: await this.planningThreadId(job.id),
         text,
         meta: { source: 'system_operator', severity },
       })
@@ -2209,7 +2234,10 @@ export class ThreadDriver implements JobDispatcher {
     // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
     await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     try {
-      const lensCtx = lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx;
+      const lensCtx = {
+        ...(lens.scope === 'framework' ? { ...ctx, frameworkBodies } : ctx),
+        threadId: child.id,
+      };
       // Read-only lens finders run on Sonnet, not the default Opus worker: the finding task is well within
       // Sonnet's capability and this is the dominant token win (N finder turns per thread move off Opus).
       const findings = await this.autofix.runReviewLens(lensCtx, lens, { model: REVIEW_LENS_MODEL });
@@ -2258,7 +2286,7 @@ export class ThreadDriver implements JobDispatcher {
         await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
         return;
       }
-      await this.autofix.applyReviewFindings(ctx, actionable);
+      await this.autofix.applyReviewFindings({ ...ctx, threadId: child.id }, actionable);
       await this.store.setThreadStatus(child.id, 'done');
       await this.store.setThreadCondition(child.id, 'none').catch(() => undefined);
     } catch (err) {
@@ -3027,6 +3055,7 @@ export class ThreadDriver implements JobDispatcher {
         await this.blockSink
           .appendBlock(job.id, {
             kind: 'build_anchor',
+            threadId: thread.id,
             text: `${thread.brief} — ${label}`,
             meta: {
               phaseId: anchor.id,
@@ -3228,7 +3257,7 @@ export class ThreadDriver implements JobDispatcher {
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const spec = threadKindSpec(thread.kind);
     const metaTag = { phaseId: anchor.id, commitNudge: attempt };
-    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, threadId: thread.id, channel, lane, metaTag });
     const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
@@ -3334,6 +3363,7 @@ export class ThreadDriver implements JobDispatcher {
     const harness = this.turnHarness.create({
       jobId: job.id,
       orgId: job.orgId,
+      threadId: thread.id,
       channel: row.channel,
       lane,
       metaTag,
@@ -3446,7 +3476,7 @@ export class ThreadDriver implements JobDispatcher {
     seedIds: string[] = [],
   ): Promise<Awaited<ReturnType<TurnRunnerService['runTurn']>>> {
     const anchor = steps[0];
-    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, channel, lane, metaTag });
+    const harness = this.turnHarness.create({ jobId: job.id, orgId: job.orgId, threadId: thread.id, channel, lane, metaTag });
     // Engine / persona / reasoning effort come from the thread-kind spec (the prompt-kit `Agent` binding).
     // The master-review kind runs CODEX in execute mode over the whole diff (review + fix + verify) with a
     // dedicated persona + high reasoning effort; a builder runs Claude with the WORKER persona. `jobKind` is
@@ -3931,6 +3961,7 @@ export class ThreadDriver implements JobDispatcher {
     await this.blockSink
       .appendBlock(job.id, {
         kind: 'autofix_anchor',
+        threadId: await this.planningThreadId(job.id),
         text: `Reviewing the diff — ${a.label}`,
         meta: {
           autofixId: a.autofixId,

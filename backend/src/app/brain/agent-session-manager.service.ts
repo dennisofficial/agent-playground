@@ -83,6 +83,7 @@ import {
   JobLifecycleService,
 } from '../driver/job-lifecycle.service';
 import { DriverStoreService } from '../driver/driver-store.service';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
@@ -495,7 +496,18 @@ export class AgentSessionManager
     // Live-turn fan-out for the mid-turn "Reconnecting…" indicator during a host-backstop retry. @Optional
     // so unit tests construct the manager without it; DI (@Global LiveTurnModule) supplies it live.
     @Optional() private readonly liveTurns?: LiveTurnStore,
+    // Resolves the job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are
+    // stamped onto (`messages.thread_id` is NOT NULL). @Optional matching this constructor's convention;
+    // the @Global JobBootstrapModule supplies it live.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
+
+  /** The job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are stamped
+   *  onto. Wired in prod via DI; throws loudly if the @Optional dependency is somehow absent at use. */
+  private async planningThreadId(jobId: string): Promise<string> {
+    if (!this.jobBootstrap) throw new Error('agent-session-manager: JobBootstrapService not wired');
+    return this.jobBootstrap.planningThreadId(jobId);
+  }
 
   /**
    * Resolve the git auth the brain's turns use to fetch/push/merge against the remote from inside the
@@ -2008,9 +2020,12 @@ export class AgentSessionManager
       // racing the client's async reconcile; guarded so the empty boot path is a no-op. Lane defaults to
       // 'main' — matches create() below (no lane arg).
       this.turnHarness.resetLane(row.channel, row.job_id);
+      const threadId =
+        stimulus.resumeThreadId ?? (await this.planningThreadId(row.job_id));
       const streamer = this.turnHarness.create({
         jobId: row.job_id,
         orgId: row.org_id,
+        threadId,
         channel: row.channel,
         turnId: row.turn_id,
         // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
@@ -2551,9 +2566,12 @@ export class AgentSessionManager
     // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation. EXCEPT a
     // completion-wake turn: tag its blocks with the wake generation so a later re-delivery can supersede this
     // attempt's rows if it dies mid-stream (see `supersedeDoneWakeMessages`).
+    const threadId =
+      stimulus.resumeThreadId ?? (await this.planningThreadId(stimulus.jobId));
     const streamer = this.turnHarness.create({
       jobId: stimulus.jobId,
       orgId: stimulus.orgId,
+      threadId,
       channel,
       ...(stimulus.seedDoneWake
         ? {

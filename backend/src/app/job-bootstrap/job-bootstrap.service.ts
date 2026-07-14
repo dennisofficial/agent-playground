@@ -54,6 +54,19 @@ export class JobBootstrapService {
     await this.createPlanningThread(stage.id, jobId, orgId);
   }
 
+  /**
+   * The job's planning-stage thread id — the anchor for job-level messages that have no build-lane thread
+   * of their own. Every job gets exactly one planning stage with one thread at job start (ensurePlanningStage
+   * above), so this should always resolve; throws loudly rather than letting a caller insert a message with
+   * a bogus thread_id if it somehow doesn't.
+   */
+  async planningThreadId(jobId: string): Promise<string> {
+    const stage = await this.stages.findOne({ where: { job_id: jobId, kind: 'planning' }, order: { ordinal: 'ASC' } });
+    const thread = stage ? await this.threads.findOne({ where: { stage_id: stage.id }, order: { ordinal: 'ASC' } }) : null;
+    if (!thread) throw new Error(`job-bootstrap: job ${jobId} has no planning-stage thread to anchor a message`);
+    return thread.id;
+  }
+
   /** The planning stage's single `planning`-role thread — ordinal 0, so builders (gap-numbered after the
    *  highest top-level ordinal) never collide with it on the job-wide UNIQUE(job_id, parent, ordinal). */
   private async createPlanningThread(stageId: string, jobId: string, orgId: string): Promise<void> {

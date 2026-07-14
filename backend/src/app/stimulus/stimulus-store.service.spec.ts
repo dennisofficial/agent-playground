@@ -12,6 +12,16 @@ import {
   DuplicateStimulusError,
   StimulusStoreService,
 } from './stimulus-store.service';
+import type { JobBootstrapService } from '../job-bootstrap';
+
+/** A JobBootstrapService stub — every message row a store method writes anchors on this planning thread
+ *  (`messages.thread_id` is NOT NULL). */
+function makeBootstrap() {
+  return {
+    planningThreadId: vi.fn(async () => 'thread-planning'),
+    ensurePlanningStage: vi.fn(async () => undefined),
+  } as unknown as JobBootstrapService;
+}
 
 /** A minimal repo fake that mints ids on save + threads create/save/delete. */
 function fakeRepo<T extends { id?: string }>(prefix: string) {
@@ -69,7 +79,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const messages = fakeRepo<MessageEntity>('msg');
     const stimuli = fakeRepo<StimulusEntity>('stim');
     const ds = fakeDataSource(() => []);
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     const seeded = await store.seedEventThread({
       orgId: 'T1',
@@ -107,7 +117,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     (stimuli.repo.save as ReturnType<typeof vi.fn>).mockRejectedValueOnce(uniqueErr);
 
     const ds = fakeDataSource(() => []);
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
     await expect(
       store.seedEventThread({
         orgId: 'T1',
@@ -132,7 +142,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const ds = fakeDataSource((Entity) =>
       Entity === MessageEntity ? messages.rows : stimuli.rows,
     );
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     const event = await store.attachEventToJob({
       jobId: 'job-7',
@@ -166,7 +176,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
       { failOn: StimulusEntity },
     );
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     await expect(
       store.attachEventToJob({
@@ -196,7 +206,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
       { failOn: StimulusEntity, failWith: uniqueErr },
     );
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     await expect(
       store.attachEventToJob({
@@ -223,7 +233,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     const ds = fakeDataSource((Entity) =>
       Entity === MessageEntity ? messages.rows : stimuli.rows,
     );
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     const chat = await store.recordChatStimulus({
       orgId: 'T1',
@@ -258,7 +268,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
       { failOn: StimulusEntity },
     );
-    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, makeBootstrap());
 
     await expect(
       store.recordChatStimulus({
@@ -345,7 +355,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     const messageRows: MessageEntity[] = [];
     const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
     const ds = fakeDataSourceWithMessageRepo(messagesRepo);
-    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds, makeBootstrap());
 
     const chunkKey = 'seed:q:job-9:q1';
     const seedRow: SeedRow = { label: 'Question answered', chunkKey };
@@ -385,7 +395,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     const messageRows: MessageEntity[] = [];
     const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
     const ds = fakeDataSourceWithMessageRepo(messagesRepo);
-    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds);
+    const store = new StimulusStoreService(threads.repo, messagesRepo, stimuli.repo, ds, makeBootstrap());
 
     const chunkKey = 'seed:q:job-9:q1';
     const seedRow: SeedRow = { label: 'Question answered', chunkKey };
@@ -437,6 +447,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       messages.repo,
       stimuliRepo,
       {} as unknown as DataSource,
+      makeBootstrap(),
     );
 
     const chat = await store.findChatStimulusById('stim-42');
@@ -473,6 +484,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       messages.repo,
       stimuliRepo,
       {} as unknown as DataSource,
+      makeBootstrap(),
     );
 
     const chat = await store.findChatStimulusById('stim-43');

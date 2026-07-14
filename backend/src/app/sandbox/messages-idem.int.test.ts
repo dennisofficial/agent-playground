@@ -8,6 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { BLOCK_SINK, MessageBlockSink, TurnHarnessFactory } from '../surface/turn-harness.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -35,6 +36,7 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
   let harness: TurnHarnessFactory;
   let dataSource: DataSource;
   let jobA = '';
+  let threadA = '';
 
   const prevSurface = process.env.SURFACE;
 
@@ -75,6 +77,11 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
+    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning stage + thread so every
+    // block below has a real thread to anchor onto.
+    const bootstrap = app.get(JobBootstrapService);
+    await bootstrap.ensurePlanningStage(jobA, TEAM_ID);
+    threadA = await bootstrap.planningThreadId(jobA);
   }, 60_000);
 
   afterAll(async () => {
@@ -95,8 +102,8 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     const key = `${randomUUID()}:0`;
     const text = `idem-${randomUUID()}`;
 
-    await sink.appendBlock(jobA, { kind: 'chat', text, idemKey: key });
-    await sink.appendBlock(jobA, { kind: 'chat', text, idemKey: key }); // repeat write ⇒ no-op
+    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key });
+    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key }); // repeat write ⇒ no-op
 
     const rows = await dataSource.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
@@ -106,7 +113,7 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
 
     // A DIFFERENT key with the SAME text is a distinct message — the key is identity, not content.
     const key2 = `${randomUUID()}:0`;
-    await sink.appendBlock(jobA, { kind: 'chat', text, idemKey: key2 });
+    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key2 });
 
     const row2 = await dataSource.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
@@ -126,8 +133,8 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     const text = `dup-${randomUUID()}`;
     const ev: EngineEvent = { kind: 'text', text };
 
-    const a = harness.create({ jobId: jobA, orgId: TEAM_ID, channel: 'repo-guard', lane: 'main', turnId });
-    const b = harness.create({ jobId: jobA, orgId: TEAM_ID, channel: 'repo-guard', lane: 'main', turnId });
+    const a = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main', turnId });
+    const b = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main', turnId });
     a.onEvent(ev);
     b.onEvent(ev);
 

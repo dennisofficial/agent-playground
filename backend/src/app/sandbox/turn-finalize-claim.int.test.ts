@@ -8,6 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { TurnHarnessFactory } from '../surface/turn-harness.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -36,6 +37,7 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
   let harness: TurnHarnessFactory;
   let dataSource: DataSource;
   let jobA = '';
+  let threadA = '';
 
   const prevSurface = process.env.SURFACE;
 
@@ -87,6 +89,11 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
+    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning stage + thread so the
+    // harness blocks below anchor onto a real thread.
+    const bootstrap = app.get(JobBootstrapService);
+    await bootstrap.ensurePlanningStage(jobA, TEAM_ID);
+    threadA = await bootstrap.planningThreadId(jobA);
   }, 60_000);
 
   afterAll(async () => {
@@ -123,8 +130,8 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     const text = `winner-only-${randomUUID()}`;
     const textEvent: EngineEvent = { kind: 'text', text };
 
-    const winner = harness.create({ jobId: jobA, orgId: TEAM_ID, channel: 'repo-guard', lane: 'main' });
-    const loser = harness.create({ jobId: jobA, orgId: TEAM_ID, channel: 'repo-guard', lane: 'main' });
+    const winner = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main' });
+    const loser = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main' });
     winner.onEvent(textEvent);
     loser.onEvent(textEvent);
 

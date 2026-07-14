@@ -19,6 +19,7 @@ export interface BlockSink {
     jobId: string,
     block: {
       kind: string;
+      threadId: string;
       text?: string;
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
@@ -34,7 +35,7 @@ export interface BlockSink {
   appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void>;
 }
 
@@ -57,6 +58,7 @@ export class MessageBlockSink implements BlockSink {
     jobId: string,
     block: {
       kind: string;
+      threadId: string;
       text?: string;
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
@@ -65,6 +67,7 @@ export class MessageBlockSink implements BlockSink {
   ): Promise<void> {
     const row = {
       job_id: jobId,
+      thread_id: block.threadId,
       author: 'Atlas',
       author_id: 'atlas',
       author_bot_id: 'atlas',
@@ -90,7 +93,7 @@ export class MessageBlockSink implements BlockSink {
   async appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void> {
     // A job accumulates only a handful of `agent_prompt` rows (one per brain turn / review round / gate
     // iteration / lens), so loading them and filtering by `meta.promptKey` in JS is cheap and avoids
@@ -104,7 +107,7 @@ export class MessageBlockSink implements BlockSink {
     }
     // Stamp the key into meta so the dedup read above finds it on the NEXT call — the single source of
     // truth, whether the caller went through the harness's `emitPrompt` or wrote the block directly.
-    await this.appendBlock(jobId, { ...block, meta: { ...(block.meta ?? {}), promptKey } });
+    await this.appendBlock(jobId, { ...block, threadId: block.threadId, meta: { ...(block.meta ?? {}), promptKey } });
   }
 }
 
@@ -227,6 +230,8 @@ export interface TurnHarness {
 export interface TurnHarnessOptions {
   /** The thread whose durable log + live stream this turn writes to. */
   jobId: string;
+  /** The real `threads.id` row every durable block from this turn is stamped onto (NOT NULL on `messages`). */
+  threadId: string;
   /** The org this turn runs under — the key `rate_limit` frames harvest into {@link OauthUsageService}.
    *  Optional: when absent (e.g. an org-less internal turn), rate-limit frames are simply not harvested. */
   orgId?: string;
@@ -289,7 +294,7 @@ export class TurnHarnessFactory {
   }
 
   create(options: TurnHarnessOptions): TurnHarness {
-    const { jobId, orgId, channel } = options;
+    const { jobId, orgId, channel, threadId } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
     let persistTurnId = options.turnId;
@@ -331,6 +336,7 @@ export class TurnHarnessFactory {
         await this.sink
           .appendBlock(jobId, {
             kind: b.kind,
+            threadId,
             createdAt: b.emittedAt,
             ...(b.text != null ? { text: b.text } : {}),
             ...(b.meta ? { meta: b.meta } : {}),
@@ -347,6 +353,7 @@ export class TurnHarnessFactory {
         await this.sink
           .appendBlockOnce(jobId, promptKey, {
             kind: 'agent_prompt',
+            threadId,
             text: task,
             // `metaTag` (the lane's peel keys — codexReviewId / phaseId / autofixId) FIRST so the web routes
             // this block into the right sub-lane; `agentPrompt` + `promptKey` mark it + dedup it.

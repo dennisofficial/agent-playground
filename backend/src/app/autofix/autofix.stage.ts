@@ -142,6 +142,7 @@ export class AutoFixStage {
     return this.turnHarness.create({
       jobId: ctx.jobId,
       orgId: ctx.orgId,
+      threadId: ctx.threadId ?? ctx.autofixId,
       channel: ctx.channel,
       lane,
       metaTag: {

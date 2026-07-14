@@ -85,6 +85,13 @@ export class StimulusStoreService {
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
+  /** The job's planning-stage thread id — the anchor a job-level message row is stamped onto
+   *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
+  private async planningThreadId(jobId: string): Promise<string> {
+    if (!this.jobBootstrap) throw new Error('stimulus-store: JobBootstrapService not wired');
+    return this.jobBootstrap.planningThreadId(jobId);
+  }
+
   /**
    * Open a NEW thread for a notification and persist its first message + the event stimulus row.
    * The event row's id becomes the returned `EventStimulus.id`. The unique index enforces "one live
@@ -113,10 +120,12 @@ export class StimulusStoreService {
     // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for an
     // event-seeded thread that never gets a plan proposed.
     await this.jobBootstrap?.ensurePlanningStage(thread.id, input.orgId);
+    const threadId = await this.planningThreadId(thread.id);
 
     const message = await this.messages.save(
       this.messages.create({
         job_id: thread.id,
+        thread_id: threadId,
         author: input.source,
         author_id: input.source,
         author_bot_id: null,
@@ -195,12 +204,14 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
+    const threadId = await this.planningThreadId(input.jobId);
     let row: StimulusEntity;
     try {
       row = await this.dataSource.transaction(async (m) => {
         await m.save(
           m.create(MessageEntity, {
             job_id: input.jobId,
+            thread_id: threadId,
             author: input.source,
             author_id: input.source,
             author_bot_id: null,
@@ -330,11 +341,18 @@ export class StimulusStoreService {
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
     };
 
+    // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
+    // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
+    const threadId = input.lane?.startsWith('thread:')
+      ? input.lane.slice('thread:'.length)
+      : await this.planningThreadId(input.jobId);
+
     const row = await this.dataSource.transaction(async (m) => {
       if (input.systemChunk === undefined) {
         await m.save(
           m.create(MessageEntity, {
             job_id: input.jobId,
+            thread_id: threadId,
             author: input.author.displayName,
             author_id: input.author.id,
             author_bot_id: null,
@@ -352,6 +370,7 @@ export class StimulusStoreService {
           !isUntrusted && input.body !== desc.label ? input.body : undefined;
         await writeSystemChunk(m.getRepository(MessageEntity), {
           jobId: input.jobId,
+          threadId,
           kind: desc.kind ?? 'system_notice',
           text: fromExternal(desc.label),
           chunkKey: desc.chunkKey,

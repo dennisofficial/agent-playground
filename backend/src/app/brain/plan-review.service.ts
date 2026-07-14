@@ -238,6 +238,9 @@ export class PlanReviewService {
     // the authoritative work-owed/recovery source now (retired `codex_reviews`); the driver never executes
     // it (render-only role). Idempotent — a resume/re-review reuses the same thread.
     row = await this.persistRow(row, input, specHash, 'running', null, null);
+    // The plan_review thread's own row id — the anchor every message from this review round is stamped
+    // onto. Captured as a non-null const so the `attempt` closure below can reference it without renarrowing.
+    const reviewThreadId = row.id;
 
     // STABLE per JOB (not per review): the Codex SDK stores its transcript under CODEX_HOME keyed by this
     // sandboxKey, so resuming a prior session only finds it when every review of a job shares ONE home.
@@ -277,6 +280,7 @@ export class PlanReviewService {
       const harness = this.turnHarness.create({
         jobId: input.jobId,
         orgId: input.orgId,
+        threadId: reviewThreadId,
         channel,
         lane: codexReviewLane(input.jobId),
         metaTag: { codexReviewId: input.jobId },
@@ -358,6 +362,7 @@ export class PlanReviewService {
     await this.blockSink
       .appendBlockOnce(input.jobId, `codex:${input.jobId}:${row.resume_count}`, {
         kind: 'agent_prompt',
+        threadId: reviewThreadId,
         text: task,
         meta: { codexReviewId: input.jobId, agentPrompt: true, reviewRound: row.resume_count },
       })

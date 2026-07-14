@@ -178,6 +178,12 @@ export interface AutoFixContext {
    * the lane namespace (`autofix:<autofixId>`, `…:<lensId>`, `…:fix`) + tags every block's `meta.autofixId`.
    */
   autofixId?: string;
+  /**
+   * The real `threads.id` row this review/fix turn's messages belong to (a `review_agent`/`review_fix` child
+   * thread). Falls back to `autofixId` (the builder thread id) when absent — the legacy/dead
+   * `autofixThread`/`autofixPullRequest` entry points never set it.
+   */
+  threadId?: string;
   /** Which pass this is — `'thread'` (per-thread, after a thread's steps) or `'pr'` (PR-tail, whole diff). */
   scope?: 'thread' | 'pr';
 
