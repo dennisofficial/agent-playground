@@ -1,4 +1,3 @@
-import { CodexClient } from '@workspace/codex-sdk';
 import type {
   CodexApprovalDecision,
   CodexApprovalRequest,
@@ -6,8 +5,15 @@ import type {
   CodexTokenUsage,
   CodexTurnHandlers,
 } from '@workspace/codex-sdk';
-import type { AdapterRunArgs, EngineAdapter, EngineCapability, EngineLocalHooks } from '../port.js';
-import type { EngineAuth, EngineHomeKey, EngineRunResult, EngineUsage, ReasoningEffort } from '../types.js';
+import { CodexClient } from '@workspace/codex-sdk';
+import type { AdapterRunArgs, EngineAdapter, EngineCapability } from '../port.js';
+import type {
+  EngineAuth,
+  EngineHomeKey,
+  EngineRunResult,
+  EngineUsage,
+  ReasoningEffort,
+} from '../types.js';
 import { EngineAuthError, isAuthErrorMessage } from '../types.js';
 import { mapCodexEvent, type MapCodexEventCtx } from './map-codex-event.js';
 
@@ -29,6 +35,13 @@ export interface CodexHomeProvisioner {
   /** The post-turn rotated auth secret if Codex rewrote `auth.json`, else undefined (unchanged). */
   readRefreshedAuth(sandboxKey: EngineHomeKey): string | undefined;
 }
+
+export type CodexAppServerAdapterOptions = {
+  codexPathOverride?: string;
+  args?: string[];
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
+};
 
 /** Codex's effort has no `'max'`; clamp it to the ceiling (`'xhigh'`). Every other value passes through
  *  verbatim — an Atlas caller's `xhigh` must reach `startTurn` as `xhigh`, unchanged. */
@@ -55,23 +68,40 @@ export class CodexAppServerAdapter implements EngineAdapter {
     'richStream',
   ]);
 
-  constructor(private readonly provisioner: CodexHomeProvisioner) {}
+  constructor(
+    private readonly provisioner: CodexHomeProvisioner,
+    private readonly options: CodexAppServerAdapterOptions = {},
+  ) {}
 
   async run(args: AdapterRunArgs): Promise<EngineRunResult> {
     // The caller (EngineCore) owns auth resolution and guarantees a secret before calling in; this is a
     // cheap assertion, not the auth-resolution policy.
     if (!args.auth) throw new Error('CodexAppServerAdapter.run: auth is required');
 
-    const codexHome = this.provisioner.provision({ sandboxKey: args.sandboxKey, auth: args.auth });
-    const client = new CodexClient({ codexHome });
+    const codexHome = this.provisioner.provision({
+      sandboxKey: args.sandboxKey,
+      auth: args.auth,
+    });
+    const client = new CodexClient({
+      codexHome,
+      codexPathOverride: this.options.codexPathOverride,
+      args: this.options.args,
+      env: this.options.env,
+      cwd: this.options.cwd,
+    });
     await client.init();
 
     try {
       // Model left UNSET — the subscription account's default is used (subscription accounts reject an
       // explicit model). `resumeThread` takes no `cwd` (the thread already knows its worktree).
       const { threadId } = args.sessionId
-        ? await client.resumeThread(args.sessionId, { sandbox: 'dangerFullAccess' })
-        : await client.startThread({ cwd: args.cwd, sandbox: 'dangerFullAccess' });
+        ? await client.resumeThread(args.sessionId, {
+            sandbox: 'dangerFullAccess',
+          })
+        : await client.startThread({
+            cwd: args.cwd,
+            sandbox: 'dangerFullAccess',
+          });
 
       // The app-server's thread/start RPC returns the id synchronously, so surface the resume handle at
       // once (before the turn) for mid-turn halt recovery.
@@ -79,7 +109,9 @@ export class CodexAppServerAdapter implements EngineAdapter {
 
       // Codex has no system-prompt option: a FRESH thread gets the persona as a first-turn preamble; a
       // RESUMED thread already carries it in history.
-      const inputText = args.sessionId ? args.task : `${args.systemPrompt}\n\n---\n\nTask: ${args.task}`;
+      const inputText = args.sessionId
+        ? args.task
+        : `${args.systemPrompt}\n\n---\n\nTask: ${args.task}`;
 
       let resultText = '';
       const mapCtx: MapCodexEventCtx = {
@@ -100,7 +132,11 @@ export class CodexAppServerAdapter implements EngineAdapter {
       // svc-nudge parity: a completed Bash command that matches the rule gets its nudge delivered via a
       // mid-turn steer (Claude delivers the SAME rule as a PostToolUse `additionalContext` — different
       // transport, identical behavioral effect: the agent sees the nudge at the next round-trip).
-      const maybeSteerSvcNudge = (threadId: string, turnId: string, item: Record<string, unknown>): void => {
+      const maybeSteerSvcNudge = (
+        threadId: string,
+        turnId: string,
+        item: Record<string, unknown>,
+      ): void => {
         if (!args.hooks?.postToolUseContext) return;
         const command = typeof item.command === 'string' ? item.command : '';
         const text = args.hooks.postToolUseContext('Bash', { command }, contextTokens);
@@ -113,7 +149,9 @@ export class CodexAppServerAdapter implements EngineAdapter {
       const maybeSteerRotation = (threadId: string, turnId: string): void => {
         const rotation = args.hooks?.rotation;
         if (!rotation || contextTokens < rotation.softTokens) return;
-        const level = Math.floor((contextTokens - rotation.softTokens) / rotation.reminderDeltaTokens);
+        const level = Math.floor(
+          (contextTokens - rotation.softTokens) / rotation.reminderDeltaTokens,
+        );
         if (level <= firedRotationLevel) return;
         const isFirst = firedRotationLevel < 0;
         firedRotationLevel = level;
@@ -126,7 +164,10 @@ export class CodexAppServerAdapter implements EngineAdapter {
           if (e.type === 'tokenUsageUpdated') {
             contextTokens = (e.usage.inputTokens ?? 0) + (e.usage.cachedInputTokens ?? 0);
             maybeSteerRotation(e.threadId, e.turnId);
-          } else if (e.type === 'itemCompleted' && e.item.type === 'command_execution') {
+          } else if (
+            e.type === 'itemCompleted' &&
+            (e.item.type === 'commandExecution' || e.item.type === 'command_execution')
+          ) {
             maybeSteerSvcNudge(e.threadId, e.turnId, e.item);
           }
           for (const mapped of mapCodexEvent(e, mapCtx)) args.onEvent?.(mapped);
@@ -140,11 +181,20 @@ export class CodexAppServerAdapter implements EngineAdapter {
         },
       };
 
-      const result = await client.startTurn(threadId, [{ type: 'text', text: inputText }], handlers, {
-        effort: toCodexEffort(args.modelReasoningEffort),
-        sandbox: 'dangerFullAccess',
-        signal: args.signal,
-      });
+      const turnSandbox = args.mode === 'execute' ? 'workspaceWrite' : 'readOnly';
+      const writableRoots = [args.cwd, ...(args.writableRoots ?? [])];
+      const result = await client.startTurn(
+        threadId,
+        [{ type: 'text', text: inputText }],
+        handlers,
+        {
+          effort: toCodexEffort(args.modelReasoningEffort),
+          sandbox: turnSandbox,
+          writableRoots,
+          networkAccess: true,
+          signal: args.signal,
+        },
+      );
 
       if (result.status === 'failed') {
         const message = result.error?.message ?? 'Codex turn failed';
@@ -165,6 +215,7 @@ export class CodexAppServerAdapter implements EngineAdapter {
       return {
         result: summary,
         sessionId: threadId,
+        ...(args.mode === 'plan' ? { planText: summary } : {}),
         ...(usage ? { usage } : {}),
         ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
       };

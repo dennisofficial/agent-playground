@@ -20,7 +20,9 @@ import type {
 
 export type CodexTurnHandlers = {
   onEvent: (e: CodexEvent) => void;
-  onApproval?: (req: CodexApprovalRequest) => Promise<CodexApprovalDecision> | CodexApprovalDecision;
+  onApproval?: (
+    req: CodexApprovalRequest,
+  ) => Promise<CodexApprovalDecision> | CodexApprovalDecision;
 };
 
 export type CodexClientOptions = {
@@ -39,8 +41,21 @@ type StartTurnOptions = {
   model?: string;
   effort?: CodexEffort;
   sandbox?: CodexSandbox;
+  writableRoots?: string[];
+  networkAccess?: boolean;
   signal?: AbortSignal;
 };
+
+type TurnSandboxPolicy =
+  | { type: 'dangerFullAccess' }
+  | { type: 'readOnly'; networkAccess: boolean }
+  | {
+      type: 'workspaceWrite';
+      writableRoots: string[];
+      networkAccess: boolean;
+      excludeTmpdirEnvVar: boolean;
+      excludeSlashTmp: boolean;
+    };
 
 type ActiveTurn = {
   threadId: string;
@@ -87,9 +102,38 @@ function toThreadSandbox(sandbox: CodexSandbox): string {
 }
 
 // turn/start has no `sandbox` field at all — it takes a discriminated `sandboxPolicy` object whose
-// `type` discriminator is camelCase (matching CodexSandbox verbatim).
-function toTurnSandboxPolicy(sandbox: CodexSandbox): { type: CodexSandbox } {
-  return { type: sandbox };
+// `type` discriminator is camelCase (matching CodexSandbox verbatim) and whose non-danger variants
+// require their policy fields on the 0.137.0 wire.
+function toTurnSandboxPolicy(
+  sandbox: CodexSandbox,
+  opts?: { writableRoots?: string[]; networkAccess?: boolean },
+): TurnSandboxPolicy {
+  const networkAccess = opts?.networkAccess ?? true;
+  switch (sandbox) {
+    case 'readOnly':
+      return { type: 'readOnly', networkAccess };
+    case 'workspaceWrite':
+      return {
+        type: 'workspaceWrite',
+        writableRoots: opts?.writableRoots ?? [],
+        networkAccess,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false,
+      };
+    case 'dangerFullAccess':
+      return { type: 'dangerFullAccess' };
+  }
+}
+
+function toWireInput(input: CodexInput[]): unknown[] {
+  return input.map((item) => {
+    if (item.type !== 'text') return item;
+    const existing = (item as { text_elements?: unknown }).text_elements;
+    return {
+      ...item,
+      text_elements: Array.isArray(existing) ? existing : [],
+    };
+  });
 }
 
 /**
@@ -215,11 +259,18 @@ export class CodexClient {
         .request<{ turn?: { id?: string } }>('turn/start', {
           threadId,
           clientUserMessageId,
-          input,
+          input: toWireInput(input),
           ...(opts?.model ? { model: opts.model } : {}),
           // effort is passed through verbatim — never clamped or downgraded.
           ...(opts?.effort ? { effort: opts.effort } : {}),
-          ...(opts?.sandbox ? { sandboxPolicy: toTurnSandboxPolicy(opts.sandbox) } : {}),
+          ...(opts?.sandbox
+            ? {
+                sandboxPolicy: toTurnSandboxPolicy(opts.sandbox, {
+                  writableRoots: opts.writableRoots,
+                  networkAccess: opts.networkAccess,
+                }),
+              }
+            : {}),
         })
         .then((result) => {
           // The response confirms acceptance and carries the turn id; turn/started confirms it too.
@@ -237,7 +288,7 @@ export class CodexClient {
     await this.require().request('turn/steer', {
       threadId,
       clientUserMessageId: randomUUID(),
-      input,
+      input: toWireInput(input),
       expectedTurnId: turnId,
     });
   }
@@ -284,7 +335,7 @@ export class CodexClient {
         };
         const active = this.activeTurns.get(req.threadId);
         const decision = (await active?.handlers.onApproval?.(req)) ?? 'accept';
-        return { decision };
+        return approvalResponse(kind, decision, params);
       });
     }
   }
@@ -349,7 +400,9 @@ function num(value: unknown): number | undefined {
 }
 
 function turnStatus(value: unknown): CodexTurnStatus {
-  return TURN_STATUSES.includes(value as CodexTurnStatus) ? (value as CodexTurnStatus) : 'completed';
+  return TURN_STATUSES.includes(value as CodexTurnStatus)
+    ? (value as CodexTurnStatus)
+    : 'completed';
 }
 
 function parseUsage(value: unknown): CodexTokenUsage | undefined {
@@ -372,6 +425,34 @@ function parseError(value: unknown): CodexTurnError | undefined {
   const r = asRecord(value);
   if (typeof r.message === 'string') return { message: r.message };
   return undefined;
+}
+
+function approvalResponse(
+  kind: CodexApprovalKind,
+  decision: CodexApprovalDecision,
+  params: unknown,
+): unknown {
+  if (kind !== 'permissions') return { decision };
+
+  if (decision === 'accept' || decision === 'acceptForSession') {
+    return {
+      permissions: requestedPermissions(params),
+      scope: decision === 'acceptForSession' ? 'session' : 'turn',
+    };
+  }
+
+  return { permissions: {}, scope: 'turn', strictAutoReview: true };
+}
+
+function requestedPermissions(params: unknown): Record<string, unknown> {
+  const p = asRecord(params);
+  const permissions = asRecord(p.permissions);
+  const granted: Record<string, unknown> = {};
+  if (permissions.network !== undefined && permissions.network !== null)
+    granted.network = permissions.network;
+  if (permissions.fileSystem !== undefined && permissions.fileSystem !== null)
+    granted.fileSystem = permissions.fileSystem;
+  return granted;
 }
 
 function mapNotification(method: string, params: unknown): CodexEvent {
@@ -458,7 +539,12 @@ function mapNotification(method: string, params: unknown): CodexEvent {
         raw: params,
       };
     case 'turn/diff/updated':
-      return { type: 'turnDiffUpdated', threadId: str(p.threadId), turnId: str(p.turnId), raw: params };
+      return {
+        type: 'turnDiffUpdated',
+        threadId: str(p.threadId),
+        turnId: str(p.turnId),
+        raw: params,
+      };
     case 'thread/tokenUsage/updated':
       return {
         type: 'tokenUsageUpdated',

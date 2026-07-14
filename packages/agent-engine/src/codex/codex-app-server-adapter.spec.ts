@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexTurnHandlers, CodexTurnResult } from '@workspace/codex-sdk';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdapterRunArgs, EngineLocalHooks } from '../port.js';
 import { CodexAppServerAdapter, type CodexHomeProvisioner } from './codex-app-server-adapter.js';
 
@@ -16,6 +16,7 @@ import { CodexAppServerAdapter, type CodexHomeProvisioner } from './codex-app-se
 let capturedHandlers: CodexTurnHandlers | undefined;
 const steerCalls: Array<{ threadId: string; turnId: string; text: string }> = [];
 let resolveTurn: ((r: CodexTurnResult) => void) | undefined;
+let capturedStartTurnOpts: unknown;
 
 vi.mock('@workspace/codex-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@workspace/codex-sdk')>();
@@ -34,14 +35,19 @@ vi.mock('@workspace/codex-sdk', async (importOriginal) => {
         _threadId: string,
         _input: unknown,
         handlers: CodexTurnHandlers,
-        _opts: unknown,
+        opts: unknown,
       ): Promise<CodexTurnResult> {
         capturedHandlers = handlers;
+        capturedStartTurnOpts = opts;
         return new Promise<CodexTurnResult>((resolve) => {
           resolveTurn = resolve;
         });
       }
-      async steer(threadId: string, turnId: string, input: Array<{ type: string; text?: string }>): Promise<void> {
+      async steer(
+        threadId: string,
+        turnId: string,
+        input: Array<{ type: string; text?: string }>,
+      ): Promise<void> {
         steerCalls.push({ threadId, turnId, text: input[0]?.text ?? '' });
       }
       async close(): Promise<void> {}
@@ -54,16 +60,22 @@ const fakeProvisioner: CodexHomeProvisioner = {
   readRefreshedAuth: () => undefined,
 };
 
-function baseArgs(hooks?: EngineLocalHooks): AdapterRunArgs {
+function baseArgs(hooks?: EngineLocalHooks, over: Partial<AdapterRunArgs> = {}): AdapterRunArgs {
   return {
     engine: 'codex',
     task: 'do it',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
     mode: 'execute',
-    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' },
+    sandboxKey: {
+      orgId: 'acme',
+      repoId: 'atlas',
+      jobId: 'feat',
+      type: 'build',
+    },
     auth: { secret: 'auth-blob' },
     ...(hooks ? { hooks } : {}),
+    ...over,
   };
 }
 
@@ -85,6 +97,7 @@ function settleTurn(over: Partial<CodexTurnResult> = {}): void {
 
 beforeEach(() => {
   capturedHandlers = undefined;
+  capturedStartTurnOpts = undefined;
   resolveTurn = undefined;
   steerCalls.length = 0;
 });
@@ -95,7 +108,9 @@ afterEach(() => {
 describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
   it('steers the svc-nudge text when a completed command_execution item matches the rule', async () => {
     const postToolUseContext = vi.fn((toolName: string, input: unknown) =>
-      toolName === 'Bash' && (input as { command: string }).command === 'pnpm dev' ? 'nudge: use atlas-svc' : null,
+      toolName === 'Bash' && (input as { command: string }).command === 'pnpm dev'
+        ? 'nudge: use atlas-svc'
+        : null,
     );
     const adapter = new CodexAppServerAdapter(fakeProvisioner);
     const runPromise = adapter.run(baseArgs({ postToolUseContext }));
@@ -105,10 +120,12 @@ describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
       type: 'itemCompleted',
       threadId: 'thread-1',
       turnId: 'turn-1',
-      item: { id: 'c1', type: 'command_execution', command: 'pnpm dev' },
+      item: { id: 'c1', type: 'commandExecution', command: 'pnpm dev' },
       raw: {},
     });
-    expect(steerCalls).toEqual([{ threadId: 'thread-1', turnId: 'turn-1', text: 'nudge: use atlas-svc' }]);
+    expect(steerCalls).toEqual([
+      { threadId: 'thread-1', turnId: 'turn-1', text: 'nudge: use atlas-svc' },
+    ]);
 
     settleTurn();
     await runPromise;
@@ -124,14 +141,14 @@ describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
       type: 'itemCompleted',
       threadId: 'thread-1',
       turnId: 'turn-1',
-      item: { id: 'c1', type: 'command_execution', command: 'pnpm test' },
+      item: { id: 'c1', type: 'commandExecution', command: 'pnpm test' },
       raw: {},
     });
     capturedHandlers!.onEvent({
       type: 'itemCompleted',
       threadId: 'thread-1',
       turnId: 'turn-1',
-      item: { id: 'a1', type: 'agent_message', text: 'hi' },
+      item: { id: 'a1', type: 'agentMessage', text: 'hi' },
       raw: {},
     });
     expect(steerCalls).toEqual([]);
@@ -149,7 +166,7 @@ describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
       type: 'itemCompleted',
       threadId: 'thread-1',
       turnId: 'turn-1',
-      item: { id: 'c1', type: 'command_execution', command: 'pnpm dev' },
+      item: { id: 'c1', type: 'commandExecution', command: 'pnpm dev' },
       raw: {},
     });
     expect(steerCalls).toEqual([]);
@@ -159,7 +176,12 @@ describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
   });
 
   it('level-latches the leg-rotation steer: soft text once at the threshold, reminder text on the next band, never a repeat', async () => {
-    const rotation = { softTokens: 100, reminderDeltaTokens: 50, softText: 'soft-nudge', reminderText: 'reminder-nudge' };
+    const rotation = {
+      softTokens: 100,
+      reminderDeltaTokens: 50,
+      softText: 'soft-nudge',
+      reminderText: 'reminder-nudge',
+    };
     const adapter = new CodexAppServerAdapter(fakeProvisioner);
     const runPromise = adapter.run(baseArgs({ rotation }));
     await flush();
@@ -209,6 +231,57 @@ describe('CodexAppServerAdapter.run — mid-turn steer wiring', () => {
     settleTurn();
     await runPromise;
   });
+
+  it('runs execute turns in workspace-write with network and explicit writable roots', async () => {
+    const adapter = new CodexAppServerAdapter(fakeProvisioner);
+    const runPromise = adapter.run(
+      baseArgs(undefined, { writableRoots: ['/context', '/playground'] }),
+    );
+    await flush();
+
+    expect(capturedStartTurnOpts).toMatchObject({
+      sandbox: 'workspaceWrite',
+      writableRoots: ['/tmp/wt', '/context', '/playground'],
+      networkAccess: true,
+    });
+
+    settleTurn();
+    await runPromise;
+  });
+
+  it('runs review turns read-only with network enabled', async () => {
+    const adapter = new CodexAppServerAdapter(fakeProvisioner);
+    const runPromise = adapter.run(baseArgs(undefined, { mode: 'review' }));
+    await flush();
+
+    expect(capturedStartTurnOpts).toMatchObject({
+      sandbox: 'readOnly',
+      networkAccess: true,
+    });
+
+    settleTurn();
+    await runPromise;
+  });
+
+  it('returns planText for Codex plan items on plan-mode turns', async () => {
+    const adapter = new CodexAppServerAdapter(fakeProvisioner);
+    const runPromise = adapter.run(baseArgs(undefined, { mode: 'plan' }));
+    await flush();
+
+    capturedHandlers!.onEvent({
+      type: 'itemCompleted',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      item: { id: 'p1', type: 'plan', text: '1. Keep the change focused.' },
+      raw: {},
+    });
+    settleTurn();
+
+    await expect(runPromise).resolves.toMatchObject({
+      result: '1. Keep the change focused.',
+      planText: '1. Keep the change focused.',
+    });
+  });
 });
 
 describe('CodexAppServerAdapter.run — onApproval write-guard wiring', () => {
@@ -226,7 +299,9 @@ describe('CodexAppServerAdapter.run — onApproval write-guard wiring', () => {
       raw: { path: '/etc/passwd' },
     });
     expect(decision).toBe('decline');
-    expect(writeGuard).toHaveBeenCalledWith('fileChange', { path: '/etc/passwd' });
+    expect(writeGuard).toHaveBeenCalledWith('fileChange', {
+      path: '/etc/passwd',
+    });
 
     settleTurn();
     await runPromise;

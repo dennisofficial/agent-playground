@@ -93,8 +93,35 @@ describe('CodexClient', () => {
     const completed = events.filter(
       (e): e is Extract<CodexEvent, { type: 'itemCompleted' }> => e.type === 'itemCompleted',
     );
-    const fileChange = completed.find((e) => e.item.type === 'file_change');
+    const fileChange = completed.find((e) => e.item.type === 'fileChange');
     expect(fileChange?.item.status).toBe('declined');
+    expect(result.status).toBe('completed');
+  });
+
+  it('answers permissions approvals with a granted permissions response shape', async () => {
+    client = makeClient();
+    await client.init();
+    const { threadId } = await client.startThread({ cwd: '/tmp' });
+
+    const events: CodexEvent[] = [];
+    let captured: CodexApprovalRequest | undefined;
+    const result = await client.startTurn(
+      threadId,
+      [{ type: 'text', text: 'trigger-permissions' }],
+      {
+        onEvent: (e) => events.push(e),
+        onApproval: (req) => {
+          captured = req;
+          return 'accept';
+        },
+      },
+    );
+
+    expect(captured?.kind).toBe('permissions');
+    const message = events.find(
+      (e): e is Extract<CodexEvent, { type: 'itemCompleted' }> => e.type === 'itemCompleted',
+    );
+    expect(message?.item.text).toBe('permission-granted');
     expect(result.status).toBe('completed');
   });
 
@@ -117,7 +144,8 @@ describe('CodexClient', () => {
     const result = await done;
 
     const delta = events.find(
-      (e): e is Extract<CodexEvent, { type: 'agentMessageDelta' }> => e.type === 'agentMessageDelta',
+      (e): e is Extract<CodexEvent, { type: 'agentMessageDelta' }> =>
+        e.type === 'agentMessageDelta',
     );
     expect(delta?.delta).toContain('steered!');
     expect(result.status).toBe('completed');
@@ -160,6 +188,10 @@ describe('CodexClient', () => {
     );
     expect((started?.raw as { sandboxPolicy?: { type?: string } }).sandboxPolicy).toEqual({
       type: 'workspaceWrite',
+      writableRoots: [],
+      networkAccess: true,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false,
     });
   });
 });

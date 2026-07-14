@@ -74,18 +74,53 @@ async function runScript(threadId, text, effort, sandboxPolicy) {
       threadId,
       turnId: TURN_ID,
       itemId: 'item_fc_1',
-      changes: [{ path: 'foo.txt', kind: 'add' }],
+      grantRoot: '/tmp/codex-sdk-test-home',
     });
     const status = decision && decision.decision === 'decline' ? 'declined' : 'completed';
     notify('item/started', {
       threadId,
       turnId: TURN_ID,
-      item: { id: 'item_fc_1', type: 'file_change', status: 'inProgress' },
+      item: { id: 'item_fc_1', type: 'fileChange', status: 'inProgress' },
     });
     notify('item/completed', {
       threadId,
       turnId: TURN_ID,
-      item: { id: 'item_fc_1', type: 'file_change', status },
+      item: { id: 'item_fc_1', type: 'fileChange', status },
+    });
+    notify('thread/tokenUsage/updated', { threadId, turnId: TURN_ID, tokenUsage: CANNED_USAGE });
+    completeTurn(threadId, 'completed');
+    return;
+  }
+
+  if (text.includes('trigger-permissions')) {
+    const grant = await serverRequest('item/permissions/requestApproval', {
+      threadId,
+      turnId: TURN_ID,
+      itemId: 'item_perm_1',
+      environmentId: null,
+      cwd: '/tmp',
+      reason: 'need workspace write',
+      startedAtMs: Date.now(),
+      permissions: {
+        fileSystem: { read: null, write: ['/tmp/codex-sdk-test-home'], entries: [] },
+        network: null,
+      },
+    });
+    const ok =
+      grant &&
+      grant.permissions &&
+      grant.permissions.fileSystem &&
+      Array.isArray(grant.permissions.fileSystem.write) &&
+      grant.permissions.fileSystem.write[0] === '/tmp/codex-sdk-test-home' &&
+      grant.scope === 'turn';
+    notify('item/completed', {
+      threadId,
+      turnId: TURN_ID,
+      item: {
+        id: 'item_am_1',
+        type: 'agentMessage',
+        text: ok ? 'permission-granted' : 'permission-bad-response',
+      },
     });
     notify('thread/tokenUsage/updated', { threadId, turnId: TURN_ID, tokenUsage: CANNED_USAGE });
     completeTurn(threadId, 'completed');
@@ -96,7 +131,7 @@ async function runScript(threadId, text, effort, sandboxPolicy) {
     notify('item/started', {
       threadId,
       turnId: TURN_ID,
-      item: { id: 'item_am_1', type: 'agent_message' },
+      item: { id: 'item_am_1', type: 'agentMessage' },
     });
     const steeredText = await new Promise((resolve) => {
       steerResolver = resolve;
@@ -114,7 +149,7 @@ async function runScript(threadId, text, effort, sandboxPolicy) {
     notify('item/completed', {
       threadId,
       turnId: TURN_ID,
-      item: { id: 'item_am_1', type: 'agent_message', text: `echo:${steeredText}` },
+      item: { id: 'item_am_1', type: 'agentMessage', text: `echo:${steeredText}` },
     });
     notify('thread/tokenUsage/updated', { threadId, turnId: TURN_ID, tokenUsage: CANNED_USAGE });
     completeTurn(threadId, 'completed');
@@ -125,7 +160,7 @@ async function runScript(threadId, text, effort, sandboxPolicy) {
   notify('item/started', {
     threadId,
     turnId: TURN_ID,
-    item: { id: 'item_am_1', type: 'agent_message' },
+    item: { id: 'item_am_1', type: 'agentMessage' },
   });
   notify('item/agentMessage/delta', {
     threadId,
@@ -136,7 +171,7 @@ async function runScript(threadId, text, effort, sandboxPolicy) {
   notify('item/completed', {
     threadId,
     turnId: TURN_ID,
-    item: { id: 'item_am_1', type: 'agent_message', text: 'Hello' },
+    item: { id: 'item_am_1', type: 'agentMessage', text: 'Hello' },
   });
   notify('thread/tokenUsage/updated', { threadId, turnId: TURN_ID, tokenUsage: CANNED_USAGE });
   if (interrupted) {
@@ -151,18 +186,29 @@ function handleTurnStart(msg) {
   currentThreadId = params.threadId || 'thr_test_1';
   const input = Array.isArray(params.input) ? params.input : [];
   const text = (input[0] && input[0].text) || '';
-  send({ id: msg.id, result: { turn: { id: TURN_ID, status: 'inProgress', items: [], error: null } } });
+  if (input.some((item) => item && item.type === 'text' && !Array.isArray(item.text_elements))) {
+    send({ id: msg.id, error: { code: -32602, message: 'text input missing text_elements' } });
+    return;
+  }
+  send({
+    id: msg.id,
+    result: { turn: { id: TURN_ID, status: 'inProgress', items: [], error: null } },
+  });
   // Let the response line flush before scripting notifications.
   setImmediate(() => runScript(currentThreadId, text, params.effort, params.sandboxPolicy));
 }
 
 function handleSteer(msg) {
   const params = msg.params || {};
+  const input = Array.isArray(params.input) ? params.input : [];
+  if (input.some((item) => item && item.type === 'text' && !Array.isArray(item.text_elements))) {
+    send({ id: msg.id, error: { code: -32602, message: 'text input missing text_elements' } });
+    return;
+  }
   send({ id: msg.id, result: { turnId: TURN_ID } });
   if (steerResolver) {
     const resolve = steerResolver;
     steerResolver = null;
-    const input = Array.isArray(params.input) ? params.input : [];
     resolve((input[0] && input[0].text) || '');
   }
 }

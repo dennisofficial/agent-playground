@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
 import type { CodexEvent, CodexItem } from '@workspace/codex-sdk';
+import { describe, expect, it, vi } from 'vitest';
 import { CodexAppServerAdapter, type CodexHomeProvisioner } from './codex-app-server-adapter.js';
 import { mapCodexEvent, type MapCodexEventCtx } from './map-codex-event.js';
 
@@ -12,18 +12,38 @@ function itemCompleted(item: CodexItem): CodexEvent {
 }
 
 describe('mapCodexEvent', () => {
-  it('maps an agent_message to a text event and surfaces the running result', () => {
+  it('maps an agentMessage to a text event and surfaces the running result', () => {
     const onResult = vi.fn();
     const out = mapCodexEvent(
-      itemCompleted({ id: 'a', type: 'agent_message', text: 'the answer' }),
+      itemCompleted({ id: 'a', type: 'agentMessage', text: 'the answer' }),
       ctx({ onResult }),
     );
     expect(out).toEqual([{ kind: 'text', text: 'the answer' }]);
     expect(onResult).toHaveBeenCalledWith('the answer');
   });
 
+  it('still accepts the legacy snake_case agent_message shape defensively', () => {
+    expect(
+      mapCodexEvent(itemCompleted({ id: 'a', type: 'agent_message', text: 'legacy' }), ctx()),
+    ).toEqual([{ kind: 'text', text: 'legacy' }]);
+  });
+
+  it('maps a plan item to text and surfaces it as the running result', () => {
+    const onResult = vi.fn();
+    const out = mapCodexEvent(
+      itemCompleted({ id: 'p', type: 'plan', text: '1. Ship the small fix.' }),
+      ctx({ onResult }),
+    );
+    expect(out).toEqual([{ kind: 'text', text: '1. Ship the small fix.' }]);
+    expect(onResult).toHaveBeenCalledWith('1. Ship the small fix.');
+  });
+
   it('maps reasoning to thinking under richStream and to text otherwise', () => {
-    const item: CodexItem = { id: 'r', type: 'reasoning', text: 'pondering' };
+    const item: CodexItem = {
+      id: 'r',
+      type: 'reasoning',
+      content: ['pondering'],
+    };
     expect(mapCodexEvent(itemCompleted(item), ctx({ richStream: true }))).toEqual([
       { kind: 'thinking', text: 'pondering' },
     ]);
@@ -32,13 +52,13 @@ describe('mapCodexEvent', () => {
     ]);
   });
 
-  it('expands command_execution into a tool_use/tool_result pair under richStream', () => {
+  it('expands commandExecution into a tool_use/tool_result pair under richStream', () => {
     const item: CodexItem = {
       id: 'c1',
-      type: 'command_execution',
+      type: 'commandExecution',
       command: 'ls -a',
-      aggregated_output: 'file.txt',
-      exit_code: 0,
+      aggregatedOutput: 'file.txt',
+      exitCode: 0,
       status: 'completed',
     };
     expect(mapCodexEvent(itemCompleted(item), ctx({ richStream: true }))).toEqual([
@@ -47,47 +67,61 @@ describe('mapCodexEvent', () => {
     ]);
   });
 
-  it('flags command_execution as error on a non-zero exit code', () => {
+  it('flags commandExecution as error on a non-zero exit code', () => {
     const item: CodexItem = {
       id: 'c2',
-      type: 'command_execution',
+      type: 'commandExecution',
       command: 'false',
-      aggregated_output: '',
-      exit_code: 1,
+      aggregatedOutput: '',
+      exitCode: 1,
       status: 'completed',
     };
     const [, result] = mapCodexEvent(itemCompleted(item), ctx({ richStream: true }));
     expect(result).toMatchObject({ kind: 'tool_result', isError: true });
   });
 
-  it('emits a coarse tool event for command_execution without richStream', () => {
-    const item: CodexItem = { id: 'c3', type: 'command_execution', command: 'pwd' };
+  it('emits a coarse tool event for commandExecution without richStream', () => {
+    const item: CodexItem = {
+      id: 'c3',
+      type: 'commandExecution',
+      command: 'pwd',
+    };
     expect(mapCodexEvent(itemCompleted(item), ctx({ richStream: false }))).toEqual([
       { kind: 'tool', name: 'bash', detail: 'pwd' },
     ]);
   });
 
-  it('keeps a single-file file_change on the item id under richStream', () => {
+  it('keeps a single-file fileChange on the item id under richStream', () => {
     const item: CodexItem = {
       id: 'fc1',
-      type: 'file_change',
+      type: 'fileChange',
       status: 'completed',
-      changes: [{ path: 'a.txt', kind: 'add' }],
+      changes: [{ path: 'a.txt', kind: { type: 'add' }, diff: '' }],
     };
     const out = mapCodexEvent(itemCompleted(item), ctx({ richStream: true }));
     expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ kind: 'tool_use', id: 'fc1', name: 'edit', input: { file_path: 'a.txt', kind: 'add' } });
-    expect(out[1]).toMatchObject({ kind: 'tool_result', id: 'fc1', result: 'completed', isError: false });
+    expect(out[0]).toMatchObject({
+      kind: 'tool_use',
+      id: 'fc1',
+      name: 'edit',
+      input: { file_path: 'a.txt', kind: 'add' },
+    });
+    expect(out[1]).toMatchObject({
+      kind: 'tool_result',
+      id: 'fc1',
+      result: 'completed',
+      isError: false,
+    });
   });
 
-  it('splits a multi-file file_change into one indexed pair per file under richStream', () => {
+  it('splits a multi-file fileChange into one indexed pair per file under richStream', () => {
     const item: CodexItem = {
       id: 'fc2',
-      type: 'file_change',
+      type: 'fileChange',
       status: 'completed',
       changes: [
-        { path: 'a.txt', kind: 'update' },
-        { path: 'b.txt', kind: 'delete' },
+        { path: 'a.txt', kind: { type: 'update', move_path: null }, diff: '' },
+        { path: 'b.txt', kind: { type: 'delete' }, diff: '' },
       ],
     };
     const out = mapCodexEvent(itemCompleted(item), ctx({ richStream: true }));
@@ -98,14 +132,14 @@ describe('mapCodexEvent', () => {
     ]);
   });
 
-  it('emits one coarse edit event summarizing a file_change without richStream', () => {
+  it('emits one coarse edit event summarizing a fileChange without richStream', () => {
     const item: CodexItem = {
       id: 'fc3',
-      type: 'file_change',
+      type: 'fileChange',
       status: 'completed',
       changes: [
-        { path: 'a.txt', kind: 'update' },
-        { path: 'b.txt', kind: 'add' },
+        { path: 'a.txt', kind: { type: 'update', move_path: null }, diff: '' },
+        { path: 'b.txt', kind: { type: 'add' }, diff: '' },
       ],
     };
     expect(mapCodexEvent(itemCompleted(item), ctx({ richStream: false }))).toEqual([
@@ -114,24 +148,51 @@ describe('mapCodexEvent', () => {
   });
 
   it('maps an error item to a text event', () => {
-    expect(mapCodexEvent(itemCompleted({ id: 'e', type: 'error', message: 'boom' }), ctx())).toEqual([
-      { kind: 'text', text: 'error: boom' },
-    ]);
+    expect(
+      mapCodexEvent(itemCompleted({ id: 'e', type: 'error', message: 'boom' }), ctx()),
+    ).toEqual([{ kind: 'text', text: 'error: boom' }]);
   });
 
   it('gates agentMessageDelta and reasoning deltas on richStream', () => {
-    const amDelta: CodexEvent = { type: 'agentMessageDelta', threadId: 't', turnId: 'u', itemId: 'i', delta: 'hi', raw: {} };
-    expect(mapCodexEvent(amDelta, ctx({ richStream: true }))).toEqual([{ kind: 'text_delta', text: 'hi' }]);
+    const amDelta: CodexEvent = {
+      type: 'agentMessageDelta',
+      threadId: 't',
+      turnId: 'u',
+      itemId: 'i',
+      delta: 'hi',
+      raw: {},
+    };
+    expect(mapCodexEvent(amDelta, ctx({ richStream: true }))).toEqual([
+      { kind: 'text_delta', text: 'hi' },
+    ]);
     expect(mapCodexEvent(amDelta, ctx({ richStream: false }))).toEqual([]);
 
-    const reasonDelta: CodexEvent = { type: 'reasoningTextDelta', threadId: 't', turnId: 'u', itemId: 'i', delta: 'mm', raw: {} };
-    expect(mapCodexEvent(reasonDelta, ctx({ richStream: true }))).toEqual([{ kind: 'thinking_delta', text: 'mm' }]);
+    const reasonDelta: CodexEvent = {
+      type: 'reasoningTextDelta',
+      threadId: 't',
+      turnId: 'u',
+      itemId: 'i',
+      delta: 'mm',
+      raw: {},
+    };
+    expect(mapCodexEvent(reasonDelta, ctx({ richStream: true }))).toEqual([
+      { kind: 'thinking_delta', text: 'mm' },
+    ]);
     expect(mapCodexEvent(reasonDelta, ctx({ richStream: false }))).toEqual([]);
   });
 
   it('produces no EngineEvent for lifecycle / unknown notifications', () => {
-    const unknown: CodexEvent = { type: 'unknown', method: 'some/method', raw: {} };
-    const turnStarted: CodexEvent = { type: 'turnStarted', threadId: 't', turnId: 'u', raw: {} };
+    const unknown: CodexEvent = {
+      type: 'unknown',
+      method: 'some/method',
+      raw: {},
+    };
+    const turnStarted: CodexEvent = {
+      type: 'turnStarted',
+      threadId: 't',
+      turnId: 'u',
+      raw: {},
+    };
     expect(mapCodexEvent(unknown, ctx({ richStream: true }))).toEqual([]);
     expect(mapCodexEvent(turnStarted, ctx({ richStream: true }))).toEqual([]);
   });

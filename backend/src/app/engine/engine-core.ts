@@ -2,6 +2,7 @@ import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@ant
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
@@ -53,6 +54,8 @@ import {
 } from '@workspace/agent-engine';
 import { ClaudeAdapter } from './claude-adapter';
 import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
+
+const requireFromHere = createRequire(__filename);
 
 /**
  * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
@@ -675,6 +678,20 @@ export class EngineCore {
   }
 
   /**
+   * The custom SDK defaults to spawning `codex` from PATH because it is standalone. Backend deployments
+   * already carry `@openai/codex` for the CLI binary. Resolve that direct dependency here,
+   * at the Atlas-owned adapter boundary, instead of adding monorepo coupling to `@workspace/codex-sdk`.
+   */
+  private codexAppServerSpawnOptions(): { codexPathOverride?: string; args?: string[] } {
+    try {
+      const codexBin = requireFromHere.resolve('@openai/codex/bin/codex.js');
+      return { codexPathOverride: process.execPath, args: [codexBin, 'app-server'] };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * Route a Codex turn through the port: resolve auth up front (the adapter throws on a missing secret,
    * so resolve here rather than let it throw a less specific error), then hand off to
    * {@link CodexAppServerAdapter}. A fresh {@link BackendCodexHomeProvisioner} per call mirrors how
@@ -682,7 +699,10 @@ export class EngineCore {
    */
   private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
     const auth = this.resolveAuth('codex', args.auth);
-    const adapter = new CodexAppServerAdapter(new BackendCodexHomeProvisioner(this.homeRoot()));
+    const adapter = new CodexAppServerAdapter(
+      new BackendCodexHomeProvisioner(this.homeRoot()),
+      this.codexAppServerSpawnOptions(),
+    );
     return adapter.run(this.toAdapterArgs(args, auth, this.buildCodexHooks(args, adapter.capabilities)));
   }
 

@@ -7,15 +7,35 @@ function ctx(over: Partial<WriteGuardCtx> = {}): WriteGuardCtx {
 
 describe('evaluateWriteGuard', () => {
   it('allows a non-mutating tool name regardless of readOnly', () => {
-    expect(evaluateWriteGuard('Bash', { command: 'ls' }, ctx({ readOnly: true }))).toEqual({ allow: true });
-    expect(evaluateWriteGuard('commandExecution', {}, ctx({ readOnly: true }))).toEqual({ allow: true });
+    expect(evaluateWriteGuard('Bash', { command: 'ls' }, ctx({ readOnly: true }))).toEqual({
+      allow: true,
+    });
+    expect(evaluateWriteGuard('commandExecution', {}, ctx({ readOnly: true }))).toEqual({
+      allow: true,
+    });
+    expect(
+      evaluateWriteGuard(
+        'permissions',
+        { permissions: { network: { enabled: true }, fileSystem: null } },
+        ctx({ readOnly: true }),
+      ),
+    ).toEqual({ allow: true });
   });
 
   it('denies Write/Edit/fileChange when readOnly with the exact message', () => {
-    const expected = { allow: false, reason: 'This is a read-only turn — no file writes.' };
-    expect(evaluateWriteGuard('Write', { file_path: '/root/a.txt' }, ctx({ readOnly: true }))).toEqual(expected);
-    expect(evaluateWriteGuard('Edit', { file_path: '/root/a.txt' }, ctx({ readOnly: true }))).toEqual(expected);
-    expect(evaluateWriteGuard('fileChange', { path: 'a.txt' }, ctx({ readOnly: true }))).toEqual(expected);
+    const expected = {
+      allow: false,
+      reason: 'This is a read-only turn — no file writes.',
+    };
+    expect(
+      evaluateWriteGuard('Write', { file_path: '/root/a.txt' }, ctx({ readOnly: true })),
+    ).toEqual(expected);
+    expect(
+      evaluateWriteGuard('Edit', { file_path: '/root/a.txt' }, ctx({ readOnly: true })),
+    ).toEqual(expected);
+    expect(evaluateWriteGuard('fileChange', { path: 'a.txt' }, ctx({ readOnly: true }))).toEqual(
+      expected,
+    );
   });
 
   it('allows a write inside the allowed roots', () => {
@@ -28,7 +48,11 @@ describe('evaluateWriteGuard', () => {
   });
 
   it('denies a write outside the allowed roots (Claude file_path shape)', () => {
-    const verdict = evaluateWriteGuard('Write', { file_path: '/other/a.txt' }, ctx({ roots: ['/root'] }));
+    const verdict = evaluateWriteGuard(
+      'Write',
+      { file_path: '/other/a.txt' },
+      ctx({ roots: ['/root'] }),
+    );
     expect(verdict).toEqual({
       allow: false,
       reason: 'Write outside the allowed roots (/root) is not allowed: /other/a.txt',
@@ -36,10 +60,26 @@ describe('evaluateWriteGuard', () => {
   });
 
   it('denies a write outside the allowed roots (Codex path shape)', () => {
-    const verdict = evaluateWriteGuard('fileChange', { path: '/other/a.txt' }, ctx({ roots: ['/root'] }));
+    const verdict = evaluateWriteGuard(
+      'fileChange',
+      { path: '/other/a.txt' },
+      ctx({ roots: ['/root'] }),
+    );
     expect(verdict).toEqual({
       allow: false,
       reason: 'Write outside the allowed roots (/root) is not allowed: /other/a.txt',
+    });
+  });
+
+  it('denies a write outside the allowed roots (Codex grantRoot shape)', () => {
+    const verdict = evaluateWriteGuard(
+      'fileChange',
+      { grantRoot: '/other' },
+      ctx({ roots: ['/root'] }),
+    );
+    expect(verdict).toEqual({
+      allow: false,
+      reason: 'Write outside the allowed roots (/root) is not allowed: /other',
     });
   });
 
@@ -56,7 +96,50 @@ describe('evaluateWriteGuard', () => {
   });
 
   it('allows when roots is empty (no confinement configured)', () => {
-    const verdict = evaluateWriteGuard('Write', { file_path: '/anywhere/a.txt' }, ctx({ roots: [] }));
+    const verdict = evaluateWriteGuard(
+      'Write',
+      { file_path: '/anywhere/a.txt' },
+      ctx({ roots: [] }),
+    );
     expect(verdict).toEqual({ allow: true });
+  });
+
+  it('denies Codex permission-profile write grants outside allowed roots', () => {
+    const verdict = evaluateWriteGuard(
+      'permissions',
+      {
+        permissions: { fileSystem: { write: ['/other/a.txt'] }, network: null },
+      },
+      ctx({ roots: ['/root'] }),
+    );
+    expect(verdict).toEqual({
+      allow: false,
+      reason: 'Write outside the allowed roots (/root) is not allowed: /other/a.txt',
+    });
+  });
+
+  it('denies opaque Codex permission-profile write grants when roots are configured', () => {
+    const verdict = evaluateWriteGuard(
+      'permissions',
+      {
+        permissions: {
+          fileSystem: {
+            entries: [
+              {
+                access: 'write',
+                path: { type: 'special', value: { kind: 'root' } },
+              },
+            ],
+          },
+          network: null,
+        },
+      },
+      ctx({ roots: ['/root'] }),
+    );
+    expect(verdict).toEqual({
+      allow: false,
+      reason:
+        'Write outside the allowed roots (/root) is not allowed: requested file-system write permission',
+    });
   });
 });
