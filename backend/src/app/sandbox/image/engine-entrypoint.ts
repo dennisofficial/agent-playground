@@ -95,6 +95,7 @@ async function runOverRedis(turnId: string): Promise<void> {
     // its OWN reply-reader — so we must NOT also run one here for Codex (two readers would race for the
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
+    let bridgeCall: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
     let workspaceProfileBridge: BridgeClaudeOptions | undefined;
     let atlasProdBridge: BridgeClaudeOptions | undefined;
     if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
@@ -111,6 +112,21 @@ async function runOverRedis(turnId: string): Promise<void> {
       });
       reader.start();
       const toolReader = reader;
+
+      // Round-trip callback for host tools invoked OUTSIDE the model's tool list (e.g. the
+      // install-awareness PostToolUse hook). Mirrors makeProxyTool's transport but returns the raw
+      // host result instead of an SDK tool-content envelope.
+      bridgeCall = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+        const id = randomUUID();
+        const resultPromise = toolReader.register(id);
+        try {
+          await xadd(toolsKey, { t: 'tool_request', id, name, args });
+        } catch (err) {
+          toolReader.cancel(id);
+          throw err;
+        }
+        return resultPromise;
+      };
 
       // One proxy per tool — identical transport (XADD a `tool_request` by BARE name); which server
       // it is registered under is purely presentational. Reused for both bridges below. Each tool
@@ -252,6 +268,7 @@ async function runOverRedis(turnId: string): Promise<void> {
       ...spec,
       onEvent: (e: EngineEvent) => void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
       ...(spec.steerable ? { signal: abortController.signal, steerInput } : {}),
+      ...(bridgeCall ? { bridgeCall } : {}),
     };
     // `extraClaudeOptions`/bridge tool names are each a SINGLE object/array spread verbatim into the SDK
     // Options (see bridge-options.ts) — so the host bridge's and the LSP bridge's `mcpServers` must be

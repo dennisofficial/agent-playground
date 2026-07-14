@@ -240,6 +240,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     expect(text).toContain(PREVIEW_PREP_SEED_BODY);
     expect(text).toContain('```md\n' + recipe + '\n```');
     expect(text).toContain('UPDATE it with `write_preview_instructions`');
+    expect(text).toContain('REPO-scoped, JOB-AGNOSTIC memory');
   });
 
   it('with no stored recipe: the seed nudges saving one', async () => {
@@ -253,7 +254,8 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     const text = seeds[0].text;
     expect(text).toContain(PREVIEW_PREP_SEED_BODY);
     expect(text).toContain('(no preview recipe saved yet)');
-    expect(text).toContain('SAVE the exact repeatable steps');
+    expect(text).toContain('SAVE the exact repeatable stand-up procedure');
+    expect(text).toContain('REPO-scoped, JOB-AGNOSTIC memory');
   });
 
   it('second click: 200 {ok:true,ts:""} idempotent — no second seed, stamp unchanged', async () => {

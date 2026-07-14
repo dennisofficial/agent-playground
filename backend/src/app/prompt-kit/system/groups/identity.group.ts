@@ -21,7 +21,10 @@ export class IdentityGroup {
   }
 
   /**
-   * The per-job CURRENT JOB orientation block — which repo / branch / working dir THIS turn runs against.
+   * The per-job CURRENT JOB orientation block — which repo / branch THIS turn runs against. The working
+   * directory is deliberately NOT emitted here: the sandbox worktree path is a HOST path that does not
+   * exist inside the container (the checkout is bind-mounted at `/workspace`), and the FILESYSTEM MAP
+   * fragment is the single source of truth for where the checkout lives.
    * Sits right after the persona line (order 1002; 1005 is conversation, 1010 the sandbox map). Renders
    * ONLY when the call site supplies `ctx.job` (the brain turn), so the boot smoke-test probes and every
    * subagent — which pass no `job` — keep the prompt byte-identical. Each line is guarded, so a field that
@@ -37,7 +40,6 @@ export class IdentityGroup {
     if (!job) return '';
     const lines = ['CURRENT JOB'];
     if (job.repoName) lines.push(`- Repo: ${job.repoName}`);
-    if (job.cwd) lines.push(`- Working directory: ${job.cwd}`);
     if (job.branch && job.baseBranch) {
       lines.push(`- Branch: ${job.branch}  ·  Base: ${job.baseBranch}`);
     } else if (job.baseBranch) {

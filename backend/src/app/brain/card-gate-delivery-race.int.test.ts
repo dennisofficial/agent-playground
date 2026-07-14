@@ -150,6 +150,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       seedQuestionId?: string;
       seedSecretId?: string;
       seedFileId?: string;
+      seedQuestionIds?: string[];
+      seedSecretIds?: string[];
+      seedFileIds?: string[];
       priority?: 'now' | 'queue' | 'later';
     },
   ) {
@@ -167,6 +170,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       ...(target.seedQuestionId ? { seedQuestionId: target.seedQuestionId } : {}),
       ...(target.seedSecretId ? { seedSecretId: target.seedSecretId } : {}),
       ...(target.seedFileId ? { seedFileId: target.seedFileId } : {}),
+      ...(target.seedQuestionIds ? { seedQuestionIds: target.seedQuestionIds } : {}),
+      ...(target.seedSecretIds ? { seedSecretIds: target.seedSecretIds } : {}),
+      ...(target.seedFileIds ? { seedFileIds: target.seedFileIds } : {}),
     });
   }
 
@@ -449,7 +455,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const h = makeManager({ live: true, leader: true });
     const { manager, run, steer, store } = h;
     store.awaitingSecretId.mockResolvedValue('sec-1');
-    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+    // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear this test exercises.
+    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true });
 
     const seed = await recordSeed(thread.id, '<system_notice>secret provided</system_notice>', {
       seedSecretId: 'sec-1',
@@ -528,7 +535,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         name: 'secret',
         target: { seedSecretId: 'sec-1' },
         arm: (store) =>
-          store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null }),
+          // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear.
+          store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true }),
         assertCard: (store, jobId) => {
           expect(store.markSecretDelivered).toHaveBeenCalledWith(jobId, 'sec-1');
           expect(store.clearAwaitingSecret).toHaveBeenCalledWith(jobId, 'sec-1');
@@ -587,5 +595,59 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         expect(worklist.some((t) => t.jobId === thread.id)).toBe(false);
       });
     }
+  });
+
+  it('combined answer-batch seed: 3 cards (question + file + durable secret) deliver as ONE turn; the success tail stamps all three', async () => {
+    const thread = await makeThread('batch delivery thread');
+    const { manager, run, store } = makeManager({ live: false, leader: true });
+    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
+    store.getFileCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+    // DURABLE secret (ephemeral omitted) — per-card, like the file lane.
+    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+
+    // ONE combined seed carrying arrays of ids (never the singular `seed*Id`).
+    const seed = await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
+      seedQuestionIds: ['q-1'],
+      seedFileIds: ['file-1'],
+      seedSecretIds: ['sec-1'],
+      priority: 'now',
+    });
+
+    await manager.pumpThread(thread.id, ORG_ID, repoId);
+
+    // The lone combined seed delivered SOLO → exactly ONE fresh turn (not three).
+    expect(run).toHaveBeenCalledOnce();
+    // The success tail looped all three id arrays and stamped every card.
+    expect(store.markQuestionDelivered).toHaveBeenCalledWith(thread.id, 'q-1');
+    expect(store.markFileDelivered).toHaveBeenCalledWith(thread.id, 'file-1');
+    expect(store.markSecretDelivered).toHaveBeenCalledWith(thread.id, 'sec-1');
+    // The durable row is stamped delivered together with the cards (at-least-once, keyed on stimuli.id).
+    expect((await rowState(seed.id)).delivered_at).not.toBeNull();
+  });
+
+  it('crash-recovery guard: hasChatStimulusForSeedTarget recognizes every card an undelivered COMBINED batch seed carries, so the boot per-card backfill enqueues no duplicate', async () => {
+    const thread = await makeThread('batch crash-recovery thread');
+    // A LIVE (undelivered) combined batch seed — its ids live in the plural `seed*Ids` arrays only.
+    await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
+      seedQuestionIds: ['q-1'],
+      seedFileIds: ['file-1'],
+      seedSecretIds: ['sec-1'],
+    });
+
+    // Each per-card backfill (findUndeliveredAnsweredQuestions/…ProvidedFiles/…ProvidedSecrets → this guard)
+    // must see the combined seed as already covering its card — so it skips re-enqueuing a duplicate per-card seed.
+    expect(
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedQuestionId: 'q-1' }),
+    ).toBe(true);
+    expect(
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedFileId: 'file-1' }),
+    ).toBe(true);
+    expect(
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedSecretId: 'sec-1' }),
+    ).toBe(true);
+    // A card NOT in the batch is still uncovered — the backfill would (correctly) enqueue it.
+    expect(
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedQuestionId: 'q-2' }),
+    ).toBe(false);
   });
 });

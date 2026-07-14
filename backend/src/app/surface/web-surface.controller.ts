@@ -4,6 +4,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Header,
   HttpException,
@@ -125,8 +126,10 @@ import {
   renderUploadedFilesXml,
   type AttachmentCardItem,
 } from '../prompt-kit';
+import type { AgentMessage } from '../prompt-kit/message';
 import {
   answeredQuestionBody,
+  batchAnswerBody,
   chunkKey,
   conventionAttached,
   conventionEdited,
@@ -225,8 +228,8 @@ export interface ServiceInfo {
   /** The dev-server port the process advertised via `atlas-svc --port`; null when unmarked. */
   port: number | null;
   /**
-   * The public https preview URL when the service is exposed (`expose !== false`), currently `running`,
-   * and the preview feature is on; otherwise null.
+   * The public https preview URL when the service opts into exposure (`expose === true`), currently
+   * `running`, and the preview feature is on; otherwise null.
    */
   url: string | null;
   /** Size of the paired `<id>.log`, 0 if none yet. */
@@ -348,6 +351,9 @@ interface CreateThreadDto {
   autoApproveMode?: string;
   /** Operator-chosen auto-merge toggle to arm at creation; absent/false leaves the DB default. */
   autoMerge?: boolean;
+  /** Job ids to block on (born-blocked), mirroring `create_job`'s `dependsOn`. Accepts a single id or
+   *  an array — the multipart create path delivers repeated `dependsOn` form fields either way. */
+  dependsOn?: string | string[];
 }
 
 /**
@@ -402,6 +408,11 @@ function coerceBoolean(raw: unknown): boolean | undefined {
   if (raw === true || raw === 'true') return true;
   if (raw === false || raw === 'false') return false;
   return undefined;
+}
+/** Normalize a `dependsOn` DTO field (single id, array, or absent) to a deduped, trimmed `string[]`. */
+function toStringArray(v: unknown): string[] {
+  const arr = Array.isArray(v) ? v : v == null || v === '' ? [] : [v];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
 }
 interface ApproveDto {
   actionId: string;
@@ -491,6 +502,82 @@ interface ProvideFileDto {
   filename: string;
   /** The file's text contents — written to the encrypted store + granted, NEVER persisted in the card. */
   content: string;
+}
+
+/** One staged answer in an `answer-batch` — a question answer, a file upload, or a durable/mcp secret value. */
+type AnswerBatchItem =
+  | { kind: 'question'; questionId: string; answer: string }
+  | { kind: 'file'; requestId: string; filename: string; content: string }
+  | { kind: 'secret'; requestId: string; value: string }; // durable/mcp only — ephemeral is never batched
+interface AnswerBatchDto {
+  items: AnswerBatchItem[];
+  /** Optional operator note delivered inside the same combined seed body. */
+  message?: string;
+}
+/** Total inline content cap across a batch's items (must stay ≤ the JSON body-parser limit in `main.ts`). */
+const MAX_BATCH_BYTES = 4 * 1024 * 1024;
+/** Hard cap on staged answers per submit, to bound per-item DB/file-store work even when bodies are small. */
+const MAX_BATCH_ITEMS = 50;
+
+function requiredBatchString(value: unknown, field: string): string {
+  const s = String(value ?? '').trim();
+  if (!s) throw new BadRequestException(`${field} is required`);
+  return s;
+}
+
+function requiredBatchValue(value: unknown, field: string): string {
+  const s = String(value ?? '');
+  if (!s) throw new BadRequestException(`${field} is required`);
+  return s;
+}
+
+function normalizeAnswerBatchItem(item: unknown): AnswerBatchItem {
+  if (item == null || typeof item !== 'object') {
+    throw new BadRequestException('each item must be an object');
+  }
+  const raw = item as Record<string, unknown>;
+  if (raw.kind === 'question') {
+    return {
+      kind: 'question',
+      questionId: requiredBatchString(raw.questionId, 'questionId'),
+      answer: requiredBatchString(raw.answer, 'answer'),
+    };
+  }
+  if (raw.kind === 'file') {
+    return {
+      kind: 'file',
+      requestId: requiredBatchString(raw.requestId, 'requestId'),
+      filename: String(raw.filename ?? 'upload').trim() || 'upload',
+      content: requiredBatchValue(raw.content, 'content'),
+    };
+  }
+  if (raw.kind === 'secret') {
+    return {
+      kind: 'secret',
+      requestId: requiredBatchString(raw.requestId, 'requestId'),
+      value: requiredBatchValue(raw.value, 'value'),
+    };
+  }
+  throw new BadRequestException('unsupported batch item kind');
+}
+
+/**
+ * The outcome of applying ONE staged card answer (question/file/secret), shared by the single endpoints and
+ * the batch. The helper does NO seeding/waking/rehydrate itself — it returns what the caller needs to seed:
+ *  - `applied`   — the winner: `notice`+`seedId`+`kind` (and `chunkKey` for a single-card pill) to deliver.
+ *  - `stale`/`withdrawn`/`noop`/`notfound` — a gate skip; no brain delivery. A `withdrawn` with a `notice`
+ *    is the mcp-terminal-failure case (oauth server / row gone): the single endpoint seeds that failure
+ *    notice and returns not-ok, while the batch simply excludes it (the card was already withdrawn).
+ */
+interface ApplyResult {
+  status: 'applied' | 'stale' | 'withdrawn' | 'noop' | 'notfound';
+  notice?: AgentMessage;
+  seedId?: string;
+  kind?: 'question' | 'file' | 'secret';
+  /** The single-endpoint per-card pill key (the batch uses one `chunkKey.batch` pill instead). */
+  chunkKey?: string;
+  /** True when an APPLIED write needs the worktree store rendered into the sandbox (durable secret / file). */
+  rehydrate?: boolean;
 }
 
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
@@ -709,7 +796,7 @@ export class WebSurfaceController {
           status: t.status,
           activity: t.activity,
           openQuestion: t.open_question_count > 0,
-          awaitingSecret: t.awaiting_secret_id != null,
+          awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
           halted: t.halted || t.halt != null,
         }),
         createdAt: t.created_at,
@@ -794,7 +881,7 @@ export class WebSurfaceController {
         status: t.status,
         activity: t.activity,
         openQuestion: t.open_question_count > 0,
-        awaitingSecret: t.awaiting_secret_id != null,
+        awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
         halted: t.halted || t.halt != null,
       }),
       baseBranch: t.base_branch,
@@ -824,6 +911,16 @@ export class WebSurfaceController {
     // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
     // row, never from raw input (so the denormalized tenant keys can't be pointed at another org's repo).
     const repo = await this.requireRepo(repoId, org.id);
+    // Validate every dependsOn blocker BEFORE creating the row, so a bad/cross-repo id rejects cleanly
+    // with no orphan row left behind — mirrors the create_job host-tool ordering guarantee.
+    const dependsOn = toStringArray(body.dependsOn);
+    if (dependsOn.length > 0) {
+      await this.jobDeps.assertDependenciesValid({
+        orgId: org.id,
+        repoId: repo.id,
+        dependsOnJobIds: dependsOn,
+      });
+    }
     // The frontend-derived first line seeds the row as an INSTANT placeholder; the mini-model upgrades it
     // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
     const placeholder = body.title ?? null;
@@ -870,21 +967,61 @@ export class WebSurfaceController {
         ? renderReviewSeedXml(prNumber, repo.slug)
         : null;
     const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
-    // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
-    this.surface.receiveFromClient(repo.id, bodyText, {
-      orgId: org.id,
-      threadTs: thread.id,
-      ...operatorAuthor(user),
-      ...(attach
-        ? {
-            card: {
-              type: 'attachments_card',
-              items: attach.items,
-              ...(operatorText ? { message: operatorText } : {}),
-            },
-          }
-        : {}),
-    });
+    // Wire each requested blocker edge, tracking whether any of them is still LIVE (born-blocks the job).
+    // seed=bodyText so a woken job replays the exact first-turn body (review/attachment XML included).
+    let anyBlocked = false;
+    try {
+      for (const dependsOnJobId of dependsOn) {
+        const { blocked } = await this.jobDeps.addDependency({
+          orgId: org.id,
+          repoId: repo.id,
+          jobId: thread.id,
+          dependsOnJobId,
+          seed: bodyText,
+        });
+        anyBlocked ||= blocked;
+      }
+    } catch (err) {
+      // The thread row already exists at this point (unlike the pre-creation assertDependenciesValid
+      // check above) — mirrors the create_job host-tool, which returns `{ ok: false, jobId, reason }`
+      // on the same failure rather than swallowing the id. Surface jobId here too so the caller/operator
+      // isn't left with an invisible zombie thread with no first message ever injected.
+      this.logger.warn(
+        `web createJob: dependency wiring failed for ${thread.id}: ${err}`,
+      );
+      throw new HttpException(
+        {
+          message:
+            err instanceof Error
+              ? err.message
+              : 'failed to wire one or more dependsOn blockers',
+          jobId: thread.id,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (!anyBlocked) {
+      // No dependencies, or every requested blocker was already terminal — start immediately (unchanged
+      // behavior). The chat bridge resolves the thread by its real id and triages it.
+      this.surface.receiveFromClient(repo.id, bodyText, {
+        orgId: org.id,
+        threadTs: thread.id,
+        ...operatorAuthor(user),
+        ...(attach
+          ? {
+              card: {
+                type: 'attachments_card',
+                items: attach.items,
+                ...(operatorText ? { message: operatorText } : {}),
+              },
+            }
+          : {}),
+      });
+    }
+    // anyBlocked: the row is parked 'blocked' with bodyText stored as blocked_seed_message — the wake
+    // funnel (onBlockerResolved → wakeUnblockedJob → startFollowUpJob) replays it once every blocker
+    // resolves, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
+
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
       .generateAndApply(
@@ -1364,6 +1501,43 @@ export class WebSurfaceController {
    * can't both win); only the winner seeds the delivery turn (carrying this card's `questionId`), whose
    * success tail stamps the card `deliveredAt`, and `create_decision` attaches the Q&A.
    */
+  /**
+   * Apply ONE operator answer to an `ask_question` card — the shared gate used by both `/answer-question`
+   * and `/answer-batch`. Does NO seeding/waking; returns what the caller needs to seed (see `ApplyResult`).
+   * Preserves the `origin:'build'` short-circuit: a `request_operator_input` card is consumed by the DRIVER
+   * (which stamps `deliveredAt` when it reads the answer), so it is stamped here but returns a non-brain
+   * `noop` — the caller must NOT seed a brain turn for it.
+   */
+  private async applyQuestionAnswer(
+    jobId: string,
+    _orgId: string,
+    _repoId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<ApplyResult> {
+    const card = await this.messages.findOne({
+      where: { job_id: jobId, ts: questionId, kind: 'card' },
+    });
+    const payload = card?.card as WebQuestionCard | undefined;
+    if (!card || payload?.type !== 'question_card') return { status: 'notfound' };
+    if (payload.deliveredAt) return { status: 'stale' };
+    if (payload.withdrawnAt) return { status: 'withdrawn' };
+    if (payload.answer != null) return { status: 'noop' };
+    // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
+    // open-question counter); a concurrent loser is an idempotent no-op with no second delivery turn.
+    const { firstAnswer } = await this.store.markQuestionAnswered(jobId, questionId, answer);
+    if (!firstAnswer) return { status: 'noop' };
+    if (payload.origin === 'build') return { status: 'noop' };
+    const question = (payload.question ?? '').trim();
+    return {
+      status: 'applied',
+      notice: answeredQuestionBody(question, answer),
+      seedId: questionId,
+      kind: 'question',
+      chunkKey: chunkKey.qa(jobId, questionId),
+    };
+  }
+
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/answer-question')
   @UseGuards(OrgMembershipGuard)
   async answerQuestion(
@@ -1376,41 +1550,24 @@ export class WebSurfaceController {
       throw new BadRequestException('questionId and answer are required');
     }
     const thread = await this.requireThread(jobId, org.id);
-    const card = await this.messages.findOne({
-      where: { job_id: jobId, ts: body.questionId, kind: 'card' },
-    });
-    const payload = card?.card as WebQuestionCard | undefined;
-    if (!card || payload?.type !== 'question_card') {
-      throw new BadRequestException('no such question on this thread');
-    }
-    // Stale (already delivered) → no-op. Already answered (delivery in flight) → idempotent ok. These are
-    // cheap fast-paths off the snapshot; `markQuestionAnswered` below is the authoritative conditional gate.
-    if (payload.deliveredAt) return { ok: false, ts: '' };
-    // Withdrawn by the brain (`withdraw_question`) → terminal, no longer answerable. No-op.
-    if (payload.withdrawnAt) return { ok: false, ts: '' };
-    if (payload.answer != null) return { ok: true, ts: '' };
-    // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
-    // open-question counter); a concurrent loser returns ok without firing a second delivery turn.
-    const { firstAnswer } = await this.store.markQuestionAnswered(
+    const r = await this.applyQuestionAnswer(
       jobId,
+      org.id,
+      thread.repo_id,
       body.questionId,
       answer,
     );
-    if (!firstAnswer) return { ok: true, ts: '' };
-    // A `request_operator_input` card (origin 'build') is consumed by the DRIVER, not the brain: the paused
-    // build turn polls this card for `answer`. `markQuestionAnswered` above already stamped it + decremented
-    // the needs-you counter, so there is nothing more to do — do NOT seed a brain turn (there is no brain
-    // question to deliver). The driver stamps `deliveredAt` when it reads the answer.
-    if (payload.origin === 'build') return { ok: true, ts: '' };
+    if (r.status === 'notfound') {
+      throw new BadRequestException('no such question on this thread');
+    }
+    if (r.status !== 'applied') return { ok: r.status === 'noop', ts: '' };
     // Deliver the answer to the brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT
     // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
     // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
-    const question = (payload.question ?? '').trim();
-    const notice = answeredQuestionBody(question, answer);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
       orgId: org.id,
-      deliveredQuestionId: body.questionId,
-      seedRow: { label: notice, chunkKey: chunkKey.qa(jobId, body.questionId) },
+      deliveredQuestionId: r.seedId!,
+      seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
     });
     return { ok: true, ts };
   }
@@ -1468,6 +1625,109 @@ export class WebSurfaceController {
    * else. Gated on the thread's durable `awaiting_secret_id`; stamps the card `provided_at` (not the value)
    * and delivers a MASKED confirmation to the brain, whose success tail stamps delivered + clears the gate.
    */
+  /**
+   * Apply ONE provided DURABLE/MCP secret value — the shared gate used by both `/provide-secret` (durable +
+   * mcp lanes) and `/answer-batch`. Does NO seeding/waking/rehydrate; returns what the caller needs to seed
+   * (see `ApplyResult`). REFUSES ephemeral cards (`status:'noop'`) — the ephemeral lane is single-slot and
+   * immediate, handled inline by the endpoint, and MUST NEVER enter the batch path. The value's only resting
+   * place is the encrypted store (worktree for durable, `mcp_servers.secrets_enc` for mcp).
+   */
+  private async applySecretProvide(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    requestId: string,
+    value: string,
+  ): Promise<ApplyResult> {
+    const card = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const payload = card?.card as WebSecretInputCard | undefined;
+    if (!card || payload?.type !== 'secret_input_card') return { status: 'notfound' };
+    if (payload.ephemeral) return { status: 'noop' };
+    if (payload.withdrawnAt) return { status: 'withdrawn' };
+    if (payload.delivered_at) return { status: 'stale' };
+    if (payload.provided_at != null) return { status: 'noop' };
+
+    // MCP-TARGET lane — the value is a credential slot (header/env) for a repo-scoped MCP server. It writes
+    // into `mcp_servers.secrets_enc` (NOT the worktree store), on THIS thread's repo scope (re-derived here,
+    // never trusted from the card), and does NOT grant/rehydrate — MCP secrets are resolved per-turn by
+    // `McpResolver`. After writing we best-effort re-probe a remote server so the masked confirmation can
+    // report whether it now connects.
+    if (payload.mcp) {
+      const { server, slot, key } = payload.mcp;
+      // Authoritative guard: an OAuth server's Authorization is minted by the console "Connect" flow, never a
+      // pasted secret. Refuse a secret write to an `auth_kind='oauth'` row (no setSecret, no probe) even if a
+      // stale card slipped past the brain-side check — the row is the source of truth. Terminal (withdrawn)
+      // with a failure notice the SINGLE endpoint seeds; the batch simply excludes a withdrawn card.
+      const target = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
+      if (target?.auth_kind === 'oauth') {
+        await this.store.withdrawSecretRequest(
+          jobId,
+          requestId,
+          'MCP server uses OAuth — not a fillable secret slot',
+        );
+        return {
+          status: 'withdrawn',
+          notice: mcpSecretOauthRefused(server),
+          chunkKey: chunkKey.mcpSecret(jobId, server, key, 'oauth'),
+        };
+      }
+      const wrote = await this.mcpStore.setSecret(
+        orgId,
+        repoId,
+        server,
+        slot === 'header' ? 'headers' : 'env',
+        key,
+        value,
+      );
+      if (!wrote) {
+        // The server row is gone (deleted between propose/approve and provide) — terminal (withdrawn).
+        await this.store.withdrawSecretRequest(jobId, requestId, 'MCP server row is gone');
+        return {
+          status: 'withdrawn',
+          notice: mcpSecretStoreFailed(key, server),
+          chunkKey: chunkKey.mcpSecret(jobId, server, key, 'fail'),
+        };
+      }
+      // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
+      // in-sandbox). Never throws — a failure is persisted as the server's validation state.
+      const row = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
+      if (row) {
+        const result = await this.mcpProbe.validate(row);
+        await this.mcpStore.recordValidation(orgId, repoId, server, result).catch(() => undefined);
+      }
+      // Per-card lane: stamp provided_at AND decrement the open-secret counter in one transaction. No
+      // rehydrate — mcp secrets don't render into the worktree.
+      await this.store.markSecretProvidedPerCard(jobId, requestId);
+      return {
+        status: 'applied',
+        notice: mcpSecretStored(key, server, slot),
+        seedId: requestId,
+        kind: 'secret',
+        chunkKey: chunkKey.mcpSecret(jobId, server, key),
+      };
+    }
+
+    if (!payload.path) {
+      throw new BadRequestException('secret request is missing its destination path');
+    }
+    // Write the value to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
+    // authority. `payload.name` rides along as the display label. This is the value's only resting place.
+    await this.secrets.write(orgId, repoId, payload.path, value, payload.name);
+    // Per-card lane: stamp provided_at AND decrement the open-secret counter in one transaction. `rehydrate`
+    // tells the caller to render the newly-written value into the running sandbox before the confirm turn.
+    await this.store.markSecretProvidedPerCard(jobId, requestId);
+    return {
+      status: 'applied',
+      notice: secretStored(payload.name, payload.path),
+      seedId: requestId,
+      kind: 'secret',
+      chunkKey: chunkKey.secret(jobId, payload.name),
+      rehydrate: true,
+    };
+  }
+
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/provide-secret')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async provideSecret(
@@ -1489,19 +1749,19 @@ export class WebSurfaceController {
     if (!card || payload?.type !== 'secret_input_card') {
       throw new BadRequestException('no such secret request on this thread');
     }
-    // Gate against stale / already-handled cards (idempotent — e.g. a double submit): only the thread's
-    // currently-open secret request is fillable, and only once.
-    if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
-      return { ok: false, ts: '' };
-    }
-    if (payload.provided_at != null) {
-      return { ok: true, ts: '' }; // already provided; a delivery turn is in flight / queued
-    }
 
     // EPHEMERAL lane — a one-time value (an OAuth code, a 2FA code) piped STRAIGHT into the running process
-    // and NEVER stored: no encrypted store, no grant, no rehydrate. If the target process isn't reading (dead
-    // reader → the write times out), clear the gate and tell the brain to restart the login rather than wedge.
+    // and NEVER stored: single-slot, immediate, NEVER batched (so it stays inline here, not in the shared
+    // apply helper). Gate: only the thread's currently-pointed request is fillable, and only once. If the
+    // target process isn't reading (dead reader → the write times out), clear the gate and tell the brain to
+    // restart the login rather than wedge.
     if (payload.ephemeral) {
+      if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
+        return { ok: false, ts: '' };
+      }
+      if (payload.provided_at != null) {
+        return { ok: true, ts: '' };
+      }
       const deliverTo = payload.deliver_to ?? '';
       if (!deliverTo) {
         throw new BadRequestException(
@@ -1544,91 +1804,37 @@ export class WebSurfaceController {
       return { ok: true, ts };
     }
 
-    // MCP-TARGET lane — the value is a credential slot (header/env) for a repo-scoped MCP server. It writes
-    // into `mcp_servers.secrets_enc` (NOT the worktree store), on THIS thread's repo scope (re-derived here,
-    // never trusted from the card), and does NOT grant/rehydrate — MCP secrets are resolved per-turn by
-    // `McpResolver`. After writing we best-effort re-probe a remote server so the masked confirmation can
-    // report whether it now connects. The value's only resting place is the encrypted blob.
-    if (payload.mcp) {
-      const { server, slot, key } = payload.mcp;
-      // Authoritative guard: an OAuth server's Authorization is minted by the console "Connect" flow, never a
-      // pasted secret. Refuse a secret write to an `auth_kind='oauth'` row (no setSecret, no probe) even if a
-      // stale card slipped past the brain-side check — the row is the source of truth.
-      const target = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
-      if (target?.auth_kind === 'oauth') {
-        await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = mcpSecretOauthRefused(server);
-        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-          orgId: org.id,
-          seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key, 'oauth') },
-        });
-        return { ok: false, ts };
+    // DURABLE + MCP lanes — shared with the batch path via the apply helper.
+    const r = await this.applySecretProvide(
+      jobId,
+      org.id,
+      thread.repo_id,
+      body.requestId,
+      value,
+    );
+    if (r.status === 'applied') {
+      if (r.rehydrate) {
+        // Render the newly-written value into the RUNNING sandbox now, so it is on disk before the brain's
+        // confirmation turn runs. Best-effort — the next turn's ensureContainer hydrates it otherwise.
+        await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
       }
-      const wrote = await this.mcpStore.setSecret(
-        org.id,
-        thread.repo_id,
-        server,
-        slot === 'header' ? 'headers' : 'env',
-        key,
-        value,
-      );
-      if (!wrote) {
-        // The server row is gone (deleted between propose/approve and provide) — clear the gate and tell the
-        // brain rather than wedge on a stale card.
-        await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = mcpSecretStoreFailed(key, server);
-        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-          orgId: org.id,
-          seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key, 'fail') },
-        });
-        return { ok: false, ts };
-      }
-      // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
-      // in-sandbox). Never throws — a failure is persisted as the server's validation state.
-      const row = await this.mcpStore.rawRow(org.id, thread.repo_id, server).catch(() => null);
-      if (row) {
-        const result = await this.mcpProbe.validate(row);
-        await this.mcpStore
-          .recordValidation(org.id, thread.repo_id, server, result)
-          .catch(() => undefined);
-      }
-      card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
-      await this.messages.save(card);
-      const notice = mcpSecretStored(key, server, slot);
-      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
+      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
         orgId: org.id,
-        deliveredSecretId: body.requestId,
-        seedRow: { label: notice, chunkKey: chunkKey.mcpSecret(jobId, server, key) },
+        deliveredSecretId: r.seedId!,
+        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
       });
       return { ok: true, ts };
     }
-
-    if (!payload.path) {
-      throw new BadRequestException(
-        'secret request is missing its destination path',
-      );
+    // MCP terminal failure (oauth server / row gone): the helper already withdrew the card; seed its failure
+    // notice and report not-ok (byte-identical to the pre-refactor behavior).
+    if (r.status === 'withdrawn' && r.notice) {
+      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice, {
+        orgId: org.id,
+        seedRow: { label: r.notice, chunkKey: r.chunkKey! },
+      });
+      return { ok: false, ts };
     }
-    // Write the value to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
-    // authority. `payload.name` rides along as the display label. This is the value's only resting place;
-    // everything downstream is masked.
-    await this.secrets.write(org.id, thread.repo_id, payload.path, value, payload.name);
-    // Render the newly-written value into the RUNNING sandbox now, so it is on disk before the brain's
-    // confirmation turn runs (otherwise it wouldn't appear until the next lazy provision). Best-effort —
-    // a failure here still lets the next turn's ensureContainer hydrate it.
-    await this.threadLifecycle
-      .rehydrateThread(jobId, org.id)
-      .catch(() => undefined);
-    // Stamp the card PROVIDED (no value), then deliver a MASKED confirmation. The gate clears only on the
-    // delivery turn's success tail, so a crash before it re-delivers on boot (at-least-once).
-    card.card = { ...(card.card ?? {}), provided_at: new Date().toISOString() };
-    await this.messages.save(card);
-    const notice = secretStored(payload.name, payload.path);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      deliveredSecretId: body.requestId,
-      seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
-    });
-    return { ok: true, ts };
+    return { ok: r.status === 'noop', ts: '' };
   }
 
   /**
@@ -1961,6 +2167,58 @@ export class WebSurfaceController {
    * so several file requests can be filled in any order. The store key is repo-scoped (`file:<repoId>:<path>`)
    * so two repos wanting the same relative path don't collide at the org-scoped secret name.
    */
+  /**
+   * Apply ONE uploaded file to a `request_file` card — the shared gate used by both `/provide-file` and
+   * `/answer-batch`. Does NO seeding/waking/rehydrate; returns what the caller needs to seed (see
+   * `ApplyResult`). Enforces the per-file `MAX_FILE_UPLOAD_BYTES` cap here (throws) so it gates every item
+   * even on the batch path. The contents' only resting place is the encrypted store.
+   */
+  private async applyFileUpload(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    requestId: string,
+    filename: string,
+    content: string,
+  ): Promise<ApplyResult> {
+    const name = filename?.trim() || 'upload';
+    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_UPLOAD_BYTES) {
+      throw new BadRequestException(
+        `file exceeds the ${Math.floor(MAX_FILE_UPLOAD_BYTES / 1024)} KB upload limit`,
+      );
+    }
+    const card = await this.messages.findOne({
+      where: { job_id: jobId, ts: requestId, kind: 'card' },
+    });
+    const payload = card?.card as WebFileRequestCard | undefined;
+    if (!card || payload?.type !== 'file_request_card') return { status: 'notfound' };
+    // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
+    // an idempotent no-op (double submit); a withdrawn card was retracted by the brain, so refuse the upload
+    // rather than write a secret to a path it abandoned.
+    if (payload.withdrawnAt) return { status: 'withdrawn' };
+    if (payload.delivered_at) return { status: 'stale' };
+    if (payload.provided_at != null) return { status: 'noop' };
+    // Write the contents to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
+    // authority. This is the contents' only resting place; everything downstream is masked.
+    await this.secrets.write(orgId, repoId, payload.path, content, name);
+    // Stamp the card PROVIDED (+ filename, no contents). `rehydrate` tells the caller to render it into the
+    // running sandbox before the confirm turn.
+    card.card = {
+      ...(card.card ?? {}),
+      provided_at: new Date().toISOString(),
+      filename: name,
+    };
+    await this.messages.save(card);
+    return {
+      status: 'applied',
+      notice: fileUploaded(payload.path),
+      seedId: requestId,
+      kind: 'file',
+      chunkKey: chunkKey.file(jobId, payload.path),
+      rehydrate: true,
+    };
+  }
+
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/provide-file')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async provideFile(
@@ -1975,47 +2233,174 @@ export class WebSurfaceController {
         'requestId and non-empty file content are required',
       );
     }
-    if (Buffer.byteLength(content, 'utf8') > MAX_FILE_UPLOAD_BYTES) {
-      throw new BadRequestException(
-        `file exceeds the ${Math.floor(MAX_FILE_UPLOAD_BYTES / 1024)} KB upload limit`,
+    const thread = await this.requireThread(jobId, org.id);
+    const r = await this.applyFileUpload(
+      jobId,
+      org.id,
+      thread.repo_id,
+      body.requestId,
+      filename,
+      content,
+    );
+    if (r.status === 'notfound') {
+      throw new BadRequestException('no such file request on this thread');
+    }
+    if (r.status !== 'applied') return { ok: r.status === 'noop', ts: '' };
+    // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
+    if (r.rehydrate) {
+      await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
+    }
+    // Deliver a MASKED confirmation carrying this card's id so the delivery turn's success tail stamps
+    // exactly THIS card delivered (at-least-once).
+    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
+      orgId: org.id,
+      deliveredFileId: r.seedId!,
+      seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
+    });
+    return { ok: true, ts };
+  }
+
+  /**
+   * `POST …/jobs/:jobId/answer-batch` — apply a batch of staged card answers (question answers, file
+   * uploads, durable/mcp secret values) plus an optional operator note, and deliver them to the brain as
+   * exactly ONE combined seed → ONE turn (instead of one wake per answer). The brain's `collectPendingForTurn`
+   * delivers system seeds one-at-a-time, so a single combined seed row (carrying arrays of card ids, whose
+   * success tail stamps every card delivered) is the only way to coalesce.
+   *
+   * MEMBERSHIP-guarded — any org member may answer questions. OWNER is enforced PER-ITEM: a batch carrying a
+   * file or secret item requires `org.role === 'owner'` (writing a secret file/value is an Administer action).
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/answer-batch')
+  @UseGuards(OrgMembershipGuard)
+  async answerBatch(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+    @Body() body: AnswerBatchDto,
+  ): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+    if (!Array.isArray(body?.items) || body.items.length === 0) {
+      throw new BadRequestException('items must be a non-empty array');
+    }
+    if (body.items.length > MAX_BATCH_ITEMS) {
+      throw new BadRequestException(`batch may contain at most ${MAX_BATCH_ITEMS} items`);
+    }
+    const items = body.items.map((item) => normalizeAnswerBatchItem(item));
+    // Owner is required only when the batch carries a file/secret — a question-only batch stays
+    // membership-only (the web routes even question-only sends through here). `@CurrentOrg()` already carries
+    // the resolved role, so check it directly rather than re-querying membership.
+    const needsOwner = items.some(
+      (i) => i.kind === 'file' || i.kind === 'secret',
+    );
+    if (needsOwner && org.role !== 'owner') {
+      throw new ForbiddenException('providing files/secrets requires an org owner');
+    }
+    const totalBytes = items.reduce(
+      (n, i) =>
+        n +
+        ('content' in i
+          ? Buffer.byteLength(i.content, 'utf8')
+          : 'value' in i
+            ? Buffer.byteLength(i.value, 'utf8')
+            : 0),
+      0,
+    );
+    if (totalBytes > MAX_BATCH_BYTES) {
+      throw new BadRequestException('batch content exceeds size limit');
+    }
+    // Only the leader processes turns — same rationale as `say`/`review-comments`.
+    if (!this.election.isLeader()) {
+      throw new ServiceUnavailableException(
+        'Atlas is handing off — retry momentarily.',
       );
     }
     const thread = await this.requireThread(jobId, org.id);
-    const card = await this.messages.findOne({
-      where: { job_id: jobId, ts: body.requestId, kind: 'card' },
-    });
-    const payload = card?.card as WebFileRequestCard | undefined;
-    if (!card || payload?.type !== 'file_request_card') {
-      throw new BadRequestException('no such file request on this thread');
+    const applied: Array<{
+      id: string;
+      notice: AgentMessage;
+      kind: 'question' | 'file' | 'secret';
+    }> = [];
+    const results: Array<{ id: string; status: string }> = [];
+    let wroteToStore = false;
+    for (const item of items) {
+      const id = item.kind === 'question' ? item.questionId : item.requestId;
+      const r =
+        item.kind === 'question'
+          ? await this.applyQuestionAnswer(
+              jobId,
+              org.id,
+              thread.repo_id,
+              item.questionId,
+              item.answer,
+            )
+          : item.kind === 'file'
+            ? await this.applyFileUpload(
+                jobId,
+                org.id,
+                thread.repo_id,
+                item.requestId,
+                item.filename,
+                item.content,
+              )
+            : await this.applySecretProvide(
+                jobId,
+                org.id,
+                thread.repo_id,
+                item.requestId,
+                item.value,
+              );
+      results.push({ id, status: r.status });
+      if (r.status === 'applied' && r.seedId && r.notice) {
+        applied.push({ id: r.seedId, notice: r.notice, kind: item.kind });
+        if (item.kind !== 'question') wroteToStore = true;
+      }
     }
-    // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
-    // an idempotent no-op (double submit — a delivery turn is in flight / queued); a withdrawn card was
-    // retracted by the brain, so refuse the upload rather than write a secret to a path it abandoned.
-    if (payload.withdrawnAt) return { ok: false, ts: '' };
-    if (payload.delivered_at) return { ok: false, ts: '' };
-    if (payload.provided_at != null) return { ok: true, ts: '' };
-    // Write the contents to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
-    // authority. This is the contents' only resting place; everything downstream is masked.
-    await this.secrets.write(org.id, thread.repo_id, payload.path, content, filename);
-    // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
-    await this.threadLifecycle
-      .rehydrateThread(jobId, org.id)
-      .catch(() => undefined);
-    // Stamp the card PROVIDED (+ filename, no contents), then deliver a MASKED confirmation carrying this
-    // card's id so the delivery turn's success tail stamps exactly THIS card delivered (at-least-once).
-    card.card = {
-      ...(card.card ?? {}),
-      provided_at: new Date().toISOString(),
-      filename,
-    };
-    await this.messages.save(card);
-    const notice = fileUploaded(payload.path);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      deliveredFileId: body.requestId,
-      seedRow: { label: notice, chunkKey: chunkKey.file(jobId, payload.path) },
+    // One rehydrate for the whole batch if anything landed in the worktree secret store (see the single
+    // file/secret endpoints, which rehydrate per-item). Best-effort.
+    if (wroteToStore) {
+      await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
+    }
+    const ts = this.deliverBatchSeed(
+      thread.repo_id,
+      jobId,
+      org.id,
+      applied,
+      body.message?.trim() || undefined,
+    );
+    return { ok: true, ts, results };
+  }
+
+  /**
+   * Deliver a whole applied batch as ONE combined system seed → ONE brain turn. The body joins each applied
+   * card's notice (via the hub composer `batchAnswerBody`, which also splices the operator note), and the
+   * seed carries the ARRAYS of card ids so its lone delivery turn's success tail stamps every card delivered.
+   * Returns '' (no seed) when there is nothing to say (no applied cards and no note).
+   */
+  private deliverBatchSeed(
+    repoId: string,
+    jobId: string,
+    orgId: string,
+    applied: Array<{ id: string; notice: AgentMessage; kind: 'question' | 'file' | 'secret' }>,
+    note?: string,
+  ): string {
+    if (applied.length === 0 && !note) return '';
+    const body = batchAnswerBody(
+      applied.map((a) => a.notice),
+      note,
+    );
+    const ids = applied.map((a) => a.id);
+    return this.surface.seedSystemNotification(repoId, jobId, body, {
+      orgId,
+      deliveredQuestionIds: applied
+        .filter((a) => a.kind === 'question')
+        .map((a) => a.id),
+      deliveredFileIds: applied.filter((a) => a.kind === 'file').map((a) => a.id),
+      deliveredSecretIds: applied
+        .filter((a) => a.kind === 'secret')
+        .map((a) => a.id),
+      seedRow: {
+        label: `The operator sent ${applied.length} answer(s)`,
+        chunkKey: chunkKey.batch(jobId, ids),
+      },
     });
-    return { ok: true, ts };
   }
 
   /** `GET …/threads/:jobId/pipeline` — current pipeline state (or `{ status: 'no_job' }`). */
@@ -2298,7 +2683,7 @@ export class WebSurfaceController {
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
     if (!dir) return { services: [] };
     const markers = readServiceMarkers(dir);
-    // Preserve `expose` alongside each marker so URL rendering can honor an opt-out, then project to the
+    // Preserve `expose` alongside each marker so URL rendering can honor the opt-in, then project to the
     // wire shape (status/url filled below).
     const byId = new Map(markers.map((m) => [m.id, m] as const));
     const services: ServiceInfo[] = markers
@@ -2327,7 +2712,7 @@ export class WebSurfaceController {
     const exposure = this.exposure;
     for (const s of services) {
       s.status = serviceStatus(s, probe);
-      const expose = byId.get(s.id)?.expose ?? true;
+      const expose = byId.get(s.id)?.expose ?? false;
       const live = s.port != null && expose && s.status === 'running';
       // urlFor already returns null when exposure is disabled, so this is null unless a base domain is set.
       s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;
@@ -2687,7 +3072,7 @@ export class WebSurfaceController {
         status: t.status,
         activity: t.activity,
         openQuestion: t.open_question_count > 0,
-        awaitingSecret: t.awaiting_secret_id != null,
+        awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
         halted: t.halted || t.halt != null,
       }),
       createdAt: t.created_at,
@@ -2716,7 +3101,7 @@ export class WebSurfaceController {
         status: t.status,
         activity: t.activity,
         openQuestion: t.open_question_count > 0,
-        awaitingSecret: t.awaiting_secret_id != null,
+        awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
         halted: t.halted || t.halt != null,
       }),
       createdAt: t.created_at,

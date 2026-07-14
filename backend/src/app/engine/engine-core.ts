@@ -1,4 +1,4 @@
-import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallback, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
@@ -17,6 +17,7 @@ const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
+import type { PromptCtx } from '../prompt-kit/system/prompt-ctx';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import {
@@ -29,6 +30,8 @@ import {
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
+  detectInstallCommand,
+  installAwarenessRule,
 } from '../prompt-kit/jit';
 import {
   EngineAuthError,
@@ -44,6 +47,7 @@ import {
   type RunEngineArgs,
   type StructuredPatchHunk,
   resolveContextLimit,
+  INTERNAL_PROFILE_AWARENESS_TOOL,
 } from './engine.types';
 import type { AdapterRunArgs, EngineCapability, EngineLocalHooks } from '@workspace/agent-engine';
 import {
@@ -340,6 +344,13 @@ const LSP_WRITE_TOOLS = qualifyLspToolNames(LSP_TOOL_NAMES);
 // can Write/Edit (only the calling turn changes files). `test` is the one exception to "read-only": it
 // gets Bash so it can RUN the repo's verification, but it still cannot edit/commit. This keeps delegated
 // work token-cheap and side-effect-free, while letting a worker push noisy test output off its context.
+//
+// EFFORT: each subagent pins its own `effort`. A subagent that OMITS `effort` inherits the SESSION effort
+// (the spawning orchestrator's — brain/builder run at `high`, see thread-kind/registry.ts), so leaving it
+// unset spends `high` even on mechanical stages. We split by how effort-sensitive the stage is: the
+// mechanical FETCHERS run cheaper (`low`/`medium`) while the judgment WRITERS/reviewers stay `high`. The
+// value is the Claude SDK's own effort enum (`Options['agents'][k].effort`); `low|medium|high` pass
+// through verbatim (no `toClaudeEffort` mapping needed).
 const SUBAGENTS: NonNullable<Options['agents']> = {
   explore: {
     description:
@@ -351,6 +362,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Self-directs repo search; recall matters (not `low`), but the orchestrator can re-ask (not `high`).
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
   docs: {
@@ -361,6 +374,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Pure external doc lookup — mechanical fetch, cheapest tier.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
   review: {
@@ -371,6 +386,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Review quality is the most effort-sensitive dimension — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
   debug: {
@@ -380,6 +397,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Root-cause tracing is judgment-heavy — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
   test: {
@@ -390,6 +409,9 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs verification + returns a diagnosis — mostly mechanical. Watch diagnosis quality; bump to
+    // `medium` if it regresses.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.TEST),
   },
 };
@@ -416,6 +438,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'claude-sonnet-5',
+    // Writing code is effort-sensitive — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
   'implement-deep': {
@@ -426,6 +450,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
     tools: WRITER_TOOLS,
     model: 'opus',
+    // The Opus escalation writer — the hardest slices. Keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
 };
@@ -449,6 +475,8 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs e2e but must judge pass/fail — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.VALIDATE),
   },
 };
@@ -468,6 +496,8 @@ const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
       'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Authors a design-fidelity mockup — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.PROTOTYPE),
   },
 };
@@ -483,21 +513,43 @@ const CONVENTION_FACING_SUBAGENTS: Record<string, Agent> = {
   review: Agent.REVIEW_AGENT,
 };
 
+// The build-facing subagent whose persona must carry the repo's saved PREVIEW RECIPE, read-only — `validate`
+// is the only in-sandbox subagent that ever needs to stand a live preview up. Distinct map (not merged into
+// `CONVENTION_FACING_SUBAGENTS`) since it gates on a different per-run signal (`previewInstructions`, not
+// `repoConventions`).
+const PREVIEW_FACING_SUBAGENTS: Record<string, Agent> = {
+  validate: Agent.VALIDATE,
+};
+
 /**
- * Fold the repo's house-style envelope into the build-facing subagent prompts. When the turn carries no
- * attached profile (`repoConventions` absent/null) this returns the map UNCHANGED — byte-identical to today.
- * Otherwise it re-renders each convention-facing subagent's `prompt` WITH the conventions ctx (a subagent
- * not present in this turn's map — e.g. the writers on a non-execute turn — is simply skipped).
+ * Fold per-run host context (the repo's house-style envelope, its saved preview recipe) into the build-facing
+ * subagent prompts. When the turn carries neither (`repoConventions` absent/null AND `previewInstructions`
+ * absent/blank) this returns the map UNCHANGED — byte-identical to today. Otherwise it re-renders the UNION of
+ * convention-facing + preview-facing subagents present in this turn's map, each with only the ctx it actually
+ * gates on (a subagent not present in this turn's map — e.g. the writers on a non-execute turn — is simply
+ * skipped).
  */
-export function applyConventionsToAgents(
+export function applyPerRunCtxToAgents(
   agents: NonNullable<Options['agents']>,
-  repoConventions: RunEngineArgs['repoConventions'],
+  args: { repoConventions: RunEngineArgs['repoConventions']; previewInstructions?: string | null },
 ): NonNullable<Options['agents']> {
-  if (!repoConventions) return agents;
-  const ctx = { settings: { repoConventions } };
+  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
+  if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
-  for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) {
-    if (out[name]) out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
+  const targets = new Map<string, Agent>();
+  if (args.repoConventions) {
+    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  if (preview) {
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  for (const [name, agent] of targets) {
+    if (!out[name]) continue;
+    const ctx: PromptCtx = {
+      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
+      ...(preview ? { previewInstructions: preview } : {}),
+    };
+    out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
   }
   return out;
 }
@@ -771,7 +823,7 @@ export class EngineCore {
     bridgeToolNames?: string[],
     hooks?: EngineLocalHooks,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge } =
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge, bridgeCall } =
       args;
 
     const abortController = new AbortController();
@@ -977,6 +1029,56 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
+    // Install-awareness (PostToolUse hook, added to `options` below): a Bash install is detected in-container
+    // (cheap regex gate) and round-tripped to the reserved `__profile_awareness` host tool via `bridgeCall`.
+    // Only wired when this turn carries a tool bridge — otherwise the round-trip has no transport (fail-silent).
+    const installAwarenessEnabled = installAwarenessRule.enabled && !!bridgeCall;
+
+    // Bound the host round-trip so a slow host / Haiku call never delays the model's next step.
+    const INSTALL_AWARENESS_TIMEOUT_MS = 5_000;
+
+    // PostToolUse Bash hooks, one callback per enabled feature (built before `options` so the literal just
+    // spreads the assembled array). The atlas-svc nudge is delivered through the engine-local
+    // `postToolUseContext` hook (shared with the Codex adapter — see `buildEngineLocalHooks` above);
+    // install-awareness rides the SAME `Bash` matcher. Callbacks capture `contextTokens` (declared via `let`
+    // below) by reference and only run later, mid-query.
+    const bashPostToolUseHooks: HookCallback[] = [];
+    if (hooks?.postToolUseContext) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: unknown };
+        const additionalContext = hooks.postToolUseContext!(
+          inp.tool_name ?? '',
+          inp.tool_input,
+          contextTokens ?? 0,
+        );
+        if (additionalContext == null) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse' as const,
+            additionalContext,
+          },
+        };
+      });
+    }
+    if (installAwarenessEnabled) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+        if (inp.tool_name !== 'Bash') return {};
+        const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+        if (!detectInstallCommand(cmd)) return {};
+        try {
+          const text = await Promise.race([
+            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, { command: cmd, sessionType: sandboxKey.type }),
+            new Promise<null>((r) => setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS)),
+          ]);
+          if (typeof text !== 'string' || !text) return {};
+          return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: text } };
+        } catch {
+          return {};
+        }
+      });
+    }
+
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
     const options: Options = {
@@ -1000,11 +1102,11 @@ export class EngineCore {
       // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
       // file-mutating or evidence-writing subagent. See
       // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
-      agents: applyConventionsToAgents(
+      agents: applyPerRunCtxToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
-        args.repoConventions,
+        { repoConventions: args.repoConventions, previewInstructions: args.previewInstructions },
       ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
@@ -1040,39 +1142,14 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
-      // Post-tool-use JIT context (capability-gated): after a Bash tool result, ask the hook whether to
-      // attach free-form context to it (today: the atlas-svc nudge — when Atlas runs a long-running command,
-      // point it at the `atlas-svc` supervisor). Delivered as PostToolUse `additionalContext` (a string yielded
-      // to the model after the tool result — verified against the shipped CLI; `updatedToolOutput` is
-      // shape-validated against Bash's output and would error). The hook owns the match/throttle/render; here
-      // we only wrap a non-null result. Present only when the caller wires `hooks.postToolUseContext`.
-      ...(hooks?.postToolUseContext
-        ? {
-            hooks: {
-              PostToolUse: [
-                {
-                  matcher: 'Bash',
-                  hooks: [
-                    async (input) => {
-                      const inp = input as { tool_name?: string; tool_input?: unknown };
-                      const additionalContext = hooks.postToolUseContext!(
-                        inp.tool_name ?? '',
-                        inp.tool_input,
-                        contextTokens ?? 0,
-                      );
-                      if (additionalContext == null) return {};
-                      return {
-                        hookSpecificOutput: {
-                          hookEventName: 'PostToolUse' as const,
-                          additionalContext,
-                        },
-                      };
-                    },
-                  ],
-                },
-              ],
-            },
-          }
+      // PostToolUse Bash hooks: the atlas-svc nudge (via the engine-local `postToolUseContext` hook, shared
+      // with the Codex adapter) plus install-awareness — both assembled into `bashPostToolUseHooks` above and
+      // spread here under a single `Bash` matcher. Each callback only ATTACHES `additionalContext` to a Bash
+      // tool result (a free-form string yielded to the model after the tool result — verified against the
+      // shipped CLI; `updatedToolOutput` is shape-validated against Bash's output and would error), never
+      // altering the command or its output.
+      ...(bashPostToolUseHooks.length > 0
+        ? { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: bashPostToolUseHooks }] } }
         : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
@@ -1350,6 +1427,17 @@ export class EngineCore {
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
+          // The CLI sometimes reports a subscription wall as an `is_error` result whose subtype is still
+          // `success` — its `result` string is the printed limit line — then exits non-zero (the SDK then
+          // throws "Claude Code returned an error result: …"). That is NOT a genuine answer: latch the hit
+          // and break to the clean-park return, so the caller parks + auto-resumes instead of surfacing the
+          // limit line as the turn result (or letting the thrown exit-error fail the build). The structured
+          // `rate_limit_event` path keeps its existing success handling below (its result carries no limit text).
+          const errResult = message as { is_error?: boolean; result?: string };
+          if (errResult.is_error === true && errResult.result && detectSessionLimitText(errResult.result)) {
+            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            break;
+          }
           if (message.subtype === 'success') {
             result = message.result;
             onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
@@ -1427,11 +1515,19 @@ export class EngineCore {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
-      // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
-      // graceful end — fall through to the normal post-loop return with the partial result + live session,
-      // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
-      // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
-      if (!(streaming && abortController.signal.aborted)) throw err;
+      // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
+      // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
+      // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
+      // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
+      if (detectSessionLimitText(msg)) {
+        sessionLimit ??= { resetAt: parseResetAt(msg) };
+      } else if (!(streaming && abortController.signal.aborted)) {
+        // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
+        // graceful end — fall through to the normal post-loop return with the partial result + live session,
+        // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
+        // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
+        throw err;
+      }
     } finally {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;

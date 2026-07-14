@@ -25,6 +25,11 @@ type ReplyRouteJson = NonNullable<StimulusEntity['reply_route']> & {
   seedQuestionId?: string;
   seedSecretId?: string;
   seedFileId?: string;
+  /** BATCH delivery: arrays of card ids a single combined `answer-batch` seed stamps on its success
+   *  tail (plural of the singular `seed*Id` keys — same jsonb piggyback, no schema change). */
+  seedQuestionIds?: string[];
+  seedSecretIds?: string[];
+  seedFileIds?: string[];
 };
 
 /** A persisted event stimulus + the thread it seeded. */
@@ -308,6 +313,10 @@ export class StimulusStoreService {
     seedSecretId?: string;
     /** DELIVERY SEED (file variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedFileId`). */
     seedFileId?: string;
+    /** BATCH DELIVERY SEED — arrays of card ids a single combined seed stamps (see `ChatStimulus.seedQuestionIds`). */
+    seedQuestionIds?: string[];
+    seedSecretIds?: string[];
+    seedFileIds?: string[];
   }): Promise<ChatStimulus> {
     // ATOMIC: the operator-visible row (a plain bubble, a curated pill, or nothing) and the `stimuli` row
     // that DRIVES the brain turn must commit together. Two separate saves let a crash between them (e.g. a
@@ -320,6 +329,9 @@ export class StimulusStoreService {
       ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+      ...(input.seedQuestionIds?.length ? { seedQuestionIds: input.seedQuestionIds } : {}),
+      ...(input.seedSecretIds?.length ? { seedSecretIds: input.seedSecretIds } : {}),
+      ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
     };
 
     const row = await this.dataSource.transaction(async (m) => {
@@ -389,6 +401,9 @@ export class StimulusStoreService {
       ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
+      ...(input.seedQuestionIds?.length ? { seedQuestionIds: input.seedQuestionIds } : {}),
+      ...(input.seedSecretIds?.length ? { seedSecretIds: input.seedSecretIds } : {}),
+      ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
       ...(input.author.id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
   }
@@ -539,17 +554,30 @@ export class StimulusStoreService {
       .where('s.kind = :k', { k: 'chat' })
       .andWhere('s.job_id = :j', { j: jobId })
       .andWhere('s.delivered_at IS NULL');
+    // Each target must match EITHER the singular key OR the plural array (a combined `answer-batch` seed
+    // carries the id inside `seed*Ids`, never the singular `seed*Id`). `jsonb_exists(arr, :id)` is the
+    // function form of the `?` array-contains operator, used to avoid a bare `?` colliding with the pg
+    // driver's placeholder syntax; it is NULL-safe when the plural key is absent.
     let hasTarget = false;
     if (target.seedQuestionId) {
-      qb.andWhere("s.reply_route ->> 'seedQuestionId' = :q", { q: target.seedQuestionId });
+      qb.andWhere(
+        "(s.reply_route ->> 'seedQuestionId' = :q OR jsonb_exists(s.reply_route -> 'seedQuestionIds', :q))",
+        { q: target.seedQuestionId },
+      );
       hasTarget = true;
     }
     if (target.seedSecretId) {
-      qb.andWhere("s.reply_route ->> 'seedSecretId' = :sec", { sec: target.seedSecretId });
+      qb.andWhere(
+        "(s.reply_route ->> 'seedSecretId' = :sec OR jsonb_exists(s.reply_route -> 'seedSecretIds', :sec))",
+        { sec: target.seedSecretId },
+      );
       hasTarget = true;
     }
     if (target.seedFileId) {
-      qb.andWhere("s.reply_route ->> 'seedFileId' = :f", { f: target.seedFileId });
+      qb.andWhere(
+        "(s.reply_route ->> 'seedFileId' = :f OR jsonb_exists(s.reply_route -> 'seedFileIds', :f))",
+        { f: target.seedFileId },
+      );
       hasTarget = true;
     }
     if (!hasTarget) return false;
@@ -689,6 +717,9 @@ export class StimulusStoreService {
       ...(replyRoute?.seedQuestionId ? { seedQuestionId: replyRoute.seedQuestionId } : {}),
       ...(replyRoute?.seedSecretId ? { seedSecretId: replyRoute.seedSecretId } : {}),
       ...(replyRoute?.seedFileId ? { seedFileId: replyRoute.seedFileId } : {}),
+      ...(replyRoute?.seedQuestionIds?.length ? { seedQuestionIds: replyRoute.seedQuestionIds } : {}),
+      ...(replyRoute?.seedSecretIds?.length ? { seedSecretIds: replyRoute.seedSecretIds } : {}),
+      ...(replyRoute?.seedFileIds?.length ? { seedFileIds: replyRoute.seedFileIds } : {}),
       ...(row.author_id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
   }

@@ -14,6 +14,7 @@ import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-
 import { composePreviewPrepSeed } from '../system/fragments';
 import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
+import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import { planApprovedRule } from './plan-approved';
 import { type JitRule, validateJitRules } from './rule';
@@ -39,6 +40,21 @@ export const svcNudgeRule: JitRule = {
   delivery: 'postToolUse-additionalContext',
   throttle: { deltaTokens: SVC_NUDGE_DELTA_TOKENS },
   render: (ctx) => agentMessage(renderSvcNudge(ctx.command ?? '')),
+};
+
+/**
+ * Install-awareness nudge — when Atlas runs a Bash command that installs/removes profile-relevant tooling,
+ * the engine-local hook makes a host round-trip (`ProfileAwarenessService`, thread 1) that dedups against the
+ * per-repo `profile_seen_tooling` ledger and returns a deterministic checklist; the hook injects it via
+ * `ctx.installAwarenessText`. NO throttle: the ledger transition itself is the dedup, so distinct new tools
+ * installed in quick succession must each nudge — a token-throttle would wrongly swallow them.
+ */
+export const installAwarenessRule: JitRule = {
+  id: 'install-awareness',
+  enabled: true,
+  trigger: { kind: 'tool-match', tool: 'Bash', match: (c) => detectInstallCommand(c)?.label ?? null },
+  delivery: 'postToolUse-additionalContext',
+  render: (ctx) => agentMessage(ctx.installAwarenessText ?? ''),
 };
 
 /**
@@ -106,6 +122,7 @@ export const memoryPrependRule: JitRule = {
 /** The declarative catalog every executor reads. */
 export const JIT_RULES: JitRule[] = [
   svcNudgeRule,
+  installAwarenessRule,
   legRotationRule,
   bgTaskCapRule,
   previewPrepRule,

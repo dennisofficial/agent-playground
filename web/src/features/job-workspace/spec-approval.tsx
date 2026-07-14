@@ -375,6 +375,27 @@ export function NavigatorMergeButton({
   );
 }
 
+// ── Navigator header auto-merging indicator ─────────────────────────────────────────────────────────
+/** The disabled twin of {@link NavigatorMergeButton}, shown in its place while AUTO-MERGE is armed on an
+ *  open PR. The host performs the merge from OUTSIDE the sandbox once GitHub reports the PR green, so
+ *  there is no operator click to make — but the manual merge gate isn't "ready" while CI is still
+ *  pending, which would otherwise leave the sticky header EMPTY and make the job look stalled. Rendering
+ *  a disabled, spinner-topped "Auto merging…" affordance keeps the merge gate visible and tells the
+ *  operator the job is waiting to auto-merge, not stuck. Display-only — no mutation. */
+export function NavigatorAutoMergingButton() {
+  return (
+    <Button
+      variant="primary"
+      loading
+      loadingText="Auto merging…"
+      className="w-full justify-center text-[11px]"
+      style={{ borderRadius: "7px", padding: "7px 0" }}
+    >
+      Auto merging…
+    </Button>
+  );
+}
+
 // ── Navigator header "Spin up preview" button ─────────────────────────────────────────────────────────
 /** The sidebar-header twin of the ship card's `ShipCardPreviewButton` (approval-card.tsx): requests a
  *  demo-ready live preview of the just-built change via the SAME {@link useSpinUpPreview} mutation and

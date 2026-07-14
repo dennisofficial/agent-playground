@@ -46,6 +46,9 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 const FALLBACK_CLAUDE_CODE_VERSION = '2.1.204';
 
+const errorText = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
+
 type LiveCacheEntry = {
   usage: OrgUsage;
   fetchedAtMs: number;
@@ -103,18 +106,25 @@ export class OauthUsageService {
       // when the frame omits `utilization`, and default an unlabeled rejection to the session window (the
       // binding day-to-day one). Non-rejected frames still require a real `utilization` to record.
       const rejected = info.status === 'rejected';
-      const utilization = rejected ? 100 : toPercentUtilization(info.utilization);
+      const utilization = rejected
+        ? 100
+        : toPercentUtilization(info.utilization);
       if (utilization == null) return;
-      const rateLimitType = info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
+      const rateLimitType =
+        info.rateLimitType ?? (rejected ? 'five_hour' : undefined);
       if (!rateLimitType) return;
       const key = RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType];
       if (!key) return;
       const changed = await this.store.mergeClaudeUsageWindow(
-        orgId, key, { utilization, resetsAt }, Date.now(), info.credentialId,
+        orgId,
+        key,
+        { utilization, resetsAt },
+        Date.now(),
+        info.credentialId,
       );
       if (changed) void this.publishHarvested(orgId);
     } catch (err) {
-      this.logger.warn(`applyHarvest failed org=${orgId}: ${err}`);
+      this.logger.warn(`applyHarvest failed org=${orgId}: ${errorText(err)}`);
     }
   }
 
@@ -138,17 +148,22 @@ export class OauthUsageService {
       let secret = auth.secret;
       if (auth.kind === 'personal' && auth.refreshBack?.credentialId) {
         try {
-          secret = await this.credRefresh.ensureFresh(orgId, auth.refreshBack.credentialId);
+          secret = await this.credRefresh.ensureFresh(
+            orgId,
+            auth.refreshBack.credentialId,
+          );
         } catch (err) {
-          this.logger.warn(`usage refresh failed org=${orgId}: ${err}`);
+          this.logger.warn(
+            `usage refresh failed org=${orgId}: ${errorText(err)}`,
+          );
           return degradedUsage();
         }
       }
       const accessToken = bearerTokenFromSecret(secret, auth.kind);
       if (!accessToken) return degradedUsage();
-      return this.fetchUsageWithToken(accessToken);
+      return await this.fetchUsageWithToken(accessToken);
     } catch (err) {
-      this.logger.warn(`usage fetch failed org=${orgId}: ${err}`);
+      this.logger.warn(`usage fetch failed org=${orgId}: ${errorText(err)}`);
       return degradedUsage();
     }
   }
@@ -183,8 +198,13 @@ export class OauthUsageService {
    * through THAT credential's own token (never the org-level harvested snapshot, which is keyed to whichever
    * credential was selected when turns ran). Setup tokens and unknown ids degrade to `ok:false` (d1/d3).
    */
-  async getForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
-    const row = (await this.claudeStore.list(orgId)).find((r) => r.id === credentialId);
+  async getForCredential(
+    orgId: string,
+    credentialId: string,
+  ): Promise<OrgUsage> {
+    const row = (await this.claudeStore.list(orgId)).find(
+      (r) => r.id === credentialId,
+    );
     if (!row || row.kind !== 'personal') return degradedUsage();
     return this.liveCredentialSnapshot(orgId, credentialId);
   }
@@ -203,15 +223,19 @@ export class OauthUsageService {
     // Trust the harvested snapshot ONLY when it was produced by the currently-selected credential.
     // A snapshot tagged to a now-deselected account (or an untagged legacy/reattach snapshot) must
     // not shadow the live per-account read — that is the account-switch staleness bug.
-    const harvestTrusted = !!snapshot?.credentialId && snapshot.credentialId === selectedId;
+    const harvestTrusted =
+      !!snapshot?.credentialId && snapshot.credentialId === selectedId;
     // Drop any harvested window whose reset instant has already passed: the window has rolled over, so its
     // stored utilization (e.g. a latched 100% from a session-limit hit) is stale and must NOT keep shadowing
     // the live snapshot's fresh post-reset value — otherwise a maxed window never visibly "resets to 0".
     const now = Date.now();
-    const harvestWindows: Partial<Record<ClaudeUsageWindowKey, StoredUsageWindow>> = {};
+    const harvestWindows: Partial<
+      Record<ClaudeUsageWindowKey, StoredUsageWindow>
+    > = {};
     if (harvestTrusted) {
       for (const [key, w] of Object.entries(snapshot?.windows ?? {})) {
-        if (w && new Date(w.resetsAt).getTime() > now) harvestWindows[key as ClaudeUsageWindowKey] = w;
+        if (w && new Date(w.resetsAt).getTime() > now)
+          harvestWindows[key as ClaudeUsageWindowKey] = w;
       }
     }
     const harvestIsEmpty = Object.keys(harvestWindows).length === 0;
@@ -232,12 +256,15 @@ export class OauthUsageService {
     const hasLive = live.ok;
     const harvestAtMs = snapshot?.fetchedAt;
     const liveAtMs = new Date(live.fetchedAt).getTime();
-    const harvestWins = hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
+    const harvestWins =
+      hasHarvest && (!hasLive || (harvestAtMs ?? 0) >= liveAtMs);
     const liveWins = !harvestWins && hasLive;
 
     // Whichever source won leads per-window; the other backfills the windows the winner doesn't carry.
     const pick = (key: ClaudeUsageWindowKey): UsageWindow =>
-      harvestWins ? harvestWindows[key] ?? live[key] ?? null : live[key] ?? harvestWindows[key] ?? null;
+      harvestWins
+        ? (harvestWindows[key] ?? live[key] ?? null)
+        : (live[key] ?? harvestWindows[key] ?? null);
 
     // Stamp the served data's own capture time: the harvest snapshot's when harvest won, the live-fetch time
     // when live won, else assembly time (both sources unknown → degraded).
@@ -279,17 +306,22 @@ export class OauthUsageService {
    * The binding window's `resetsAt` for the park logic — prefers `rateLimitType`'s window, else
    * `fiveHour`. Pure snapshot read (no HTTP): the park path needs an answer NOW, not after a 10s probe.
    */
-  async getResetAt(orgId: string, rateLimitType?: string): Promise<string | undefined> {
+  async getResetAt(
+    orgId: string,
+    rateLimitType?: string,
+  ): Promise<string | undefined> {
     const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
     if (!snapshot) return undefined;
-    const key = (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
+    const key =
+      (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
     return snapshot.windows[key]?.resetsAt;
   }
 
   /** `fetchLive`, cached for {@link LIVE_FLOOR_MS} so repeated `get()` calls don't hammer the endpoint. */
   private async liveSnapshot(orgId: string): Promise<OrgUsage> {
     const cached = this.liveCache.get(orgId);
-    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS) return cached.usage;
+    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS)
+      return cached.usage;
     const usage = await this.fetchLive(orgId);
     this.liveCache.set(orgId, { usage, fetchedAtMs: Date.now() });
     return usage;
@@ -306,7 +338,9 @@ export class OauthUsageService {
     try {
       this.bus.publish({ orgId, usage: await this.get(orgId) });
     } catch (err) {
-      this.logger.warn(`publishHarvested failed org=${orgId}: ${err}`);
+      this.logger.warn(
+        `publishHarvested failed org=${orgId}: ${errorText(err)}`,
+      );
     }
   }
 
@@ -327,17 +361,24 @@ export class OauthUsageService {
         plan: planLabel(display.subscriptionType),
       };
     } catch (err) {
-      this.logger.warn(`withAccount failed org=${orgId}: ${err}`);
+      this.logger.warn(`withAccount failed org=${orgId}: ${errorText(err)}`);
       return usage;
     }
   }
 
   /** `fetchLiveForCredential`, cached per credential id for {@link LIVE_FLOOR_MS} so repeat settings visits don't re-hit the endpoint. */
-  private async liveCredentialSnapshot(orgId: string, credentialId: string): Promise<OrgUsage> {
+  private async liveCredentialSnapshot(
+    orgId: string,
+    credentialId: string,
+  ): Promise<OrgUsage> {
     const cached = this.credentialLiveCache.get(credentialId);
-    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS) return cached.usage;
+    if (cached && Date.now() - cached.fetchedAtMs < LIVE_FLOOR_MS)
+      return cached.usage;
     const usage = await this.fetchLiveForCredential(orgId, credentialId);
-    this.credentialLiveCache.set(credentialId, { usage, fetchedAtMs: Date.now() });
+    this.credentialLiveCache.set(credentialId, {
+      usage,
+      fetchedAtMs: Date.now(),
+    });
     return usage;
   }
 
@@ -348,20 +389,27 @@ export class OauthUsageService {
    * rotating refresh token or silently swallow a dead-token failure. Best-effort: any failure (including
    * `CredentialNeedsReauthError`, after the row is already marked) degrades to `ok:false`.
    */
-  private async fetchLiveForCredential(orgId: string, credentialId: string): Promise<OrgUsage> {
+  private async fetchLiveForCredential(
+    orgId: string,
+    credentialId: string,
+  ): Promise<OrgUsage> {
     let secret: string;
     try {
       secret = await this.credRefresh.ensureFresh(orgId, credentialId);
     } catch (err) {
-      this.logger.warn(`cred usage refresh failed ${credentialId}: ${err}`);
+      this.logger.warn(
+        `cred usage refresh failed ${credentialId}: ${errorText(err)}`,
+      );
       return degradedUsage();
     }
     try {
       const accessToken = bearerTokenFromSecret(secret, 'personal');
       if (!accessToken) return degradedUsage();
-      return this.fetchUsageWithToken(accessToken);
+      return await this.fetchUsageWithToken(accessToken);
     } catch (err) {
-      this.logger.warn(`cred usage fetch failed ${credentialId}: ${err}`);
+      this.logger.warn(
+        `cred usage fetch failed ${credentialId}: ${errorText(err)}`,
+      );
       return degradedUsage();
     }
   }
@@ -372,7 +420,9 @@ export class OauthUsageService {
  * Undefined for a null/blank type (setup-tokens carry none → no badge). A value that already reads like a
  * plan is titlecased as-is rather than gaining a second "plan".
  */
-function planLabel(subscriptionType: string | null | undefined): string | undefined {
+function planLabel(
+  subscriptionType: string | null | undefined,
+): string | undefined {
   const t = subscriptionType?.trim();
   if (!t) return undefined;
   const titled = t.charAt(0).toUpperCase() + t.slice(1);
@@ -387,14 +437,22 @@ function planLabel(subscriptionType: string | null | undefined): string | undefi
  * fraction to a percent; a value already `> 1` is treated as an already-percent scale (defensive against
  * CLI/SDK drift) and passes through. Clamped + rounded to 0–100 to match `parseWindow`. Undefined in → undefined out.
  */
-export function toPercentUtilization(utilization: number | undefined): number | undefined {
+export function toPercentUtilization(
+  utilization: number | undefined,
+): number | undefined {
   if (utilization == null) return undefined;
   const percent = utilization <= 1 ? utilization * 100 : utilization;
   return Math.round(Math.min(100, Math.max(0, percent)));
 }
 
 function degradedUsage(): OrgUsage {
-  return { ...EMPTY_WINDOWS, fetchedAt: new Date().toISOString(), source: 'stale', ok: false, modelWindows: [] };
+  return {
+    ...EMPTY_WINDOWS,
+    fetchedAt: new Date().toISOString(),
+    source: 'stale',
+    ok: false,
+    modelWindows: [],
+  };
 }
 
 /**
@@ -403,15 +461,24 @@ function degradedUsage(): OrgUsage {
  * top-level `seven_day_*` keys don't carry these. `percent` is already a 0–100 value here (NOT the SDK
  * fraction). Anything malformed is skipped. Returns [] when there's no usable array.
  */
-export function parseModelWindows(root: Record<string, unknown>): ModelUsageWindow[] {
+export function parseModelWindows(
+  root: Record<string, unknown>,
+): ModelUsageWindow[] {
   const limits = root.limits;
   if (!Array.isArray(limits)) return [];
   const out: ModelUsageWindow[] = [];
   for (const raw of limits) {
     if (!raw || typeof raw !== 'object') continue;
-    const l = raw as { kind?: unknown; percent?: unknown; resets_at?: unknown; scope?: unknown };
+    const l = raw as {
+      kind?: unknown;
+      percent?: unknown;
+      resets_at?: unknown;
+      scope?: unknown;
+    };
     if (l.kind !== 'weekly_scoped') continue;
-    const label = (l.scope as { model?: { display_name?: unknown } } | undefined)?.model?.display_name;
+    const label = (
+      l.scope as { model?: { display_name?: unknown } } | undefined
+    )?.model?.display_name;
     if (typeof label !== 'string' || label.length === 0) continue;
     if (typeof l.percent !== 'number') continue;
     out.push({
@@ -428,11 +495,15 @@ export function parseModelWindows(root: Record<string, unknown>): ModelUsageWind
  * token; a `personal` credential's secret is a `{claudeAiOauth:{accessToken,…}}` JSON blob, so pull the
  * accessToken out of it. Null when the personal blob is malformed or missing its access token.
  */
-function bearerTokenFromSecret(secret: string, kind: 'setup-token' | 'personal' | undefined): string | null {
+function bearerTokenFromSecret(
+  secret: string,
+  kind: 'setup-token' | 'personal' | undefined,
+): string | null {
   if (kind !== 'personal') return secret;
   try {
-    const t = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth
-      ?.accessToken;
+    const t = (
+      JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }
+    ).claudeAiOauth?.accessToken;
     return typeof t === 'string' && t.length > 0 ? t : null;
   } catch {
     return null;
@@ -455,7 +526,10 @@ function parseWindow(raw: unknown): UsageWindow {
       ? new Date(w.resets_at).getTime()
       : NaN;
   if (Number.isNaN(resetsAtMs)) return null;
-  return { utilization: Math.round(Math.min(100, Math.max(0, utilization))), resetsAt: new Date(resetsAtMs).toISOString() };
+  return {
+    utilization: Math.round(Math.min(100, Math.max(0, utilization))),
+    resetsAt: new Date(resetsAtMs).toISOString(),
+  };
 }
 
 /**
@@ -483,7 +557,13 @@ function parseUsageResponse(body: unknown): OrgUsage {
   // a 200 + parseable body, so this is always a successful response. Marking it `ok` lets the UI tell
   // "Waiting for next turn" (responded, window not started) apart from "Usage unavailable" (a real fetch
   // failure, which routes through `degradedUsage()` with `ok:false`).
-  return { ...windows, fetchedAt: new Date().toISOString(), source: 'usage_api', ok: true, modelWindows };
+  return {
+    ...windows,
+    fetchedAt: new Date().toISOString(),
+    source: 'usage_api',
+    ok: true,
+    modelWindows,
+  };
 }
 
 /**

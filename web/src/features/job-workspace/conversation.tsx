@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from "./idle-premeasure";
 import { compensateAboveViewportResize } from "./scroll-compensation";
 import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
@@ -50,7 +51,7 @@ import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
-import { mermaidReservePx } from "./markdown";
+import { extractMermaidSources, mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -178,6 +179,13 @@ export function TranscriptView({
   // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
+
+  // Touch capability is a stable device property, but Client Components still render once on the server.
+  // Compute it after hydration so the SSR guard does not permanently pin touch devices to `false`.
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    setIsTouch(isTouchCapableDevice());
+  }, []);
 
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
@@ -363,11 +371,21 @@ export function TranscriptView({
     estimateSize: (index) => items[index].estimate,
     overscan: 8,
     getItemKey: (index) => items[index].key,
+    // Native bottom-anchoring (@tanstack/virtual-core ≥3.16): when the view is at/near the bottom, a row
+    // resizing (a fresh row measuring taller than its estimate, an async Mermaid SVG landing) keeps the
+    // bottom edge pinned via the total-size delta instead of the top-anchored predicate below — and on iOS
+    // the adjustment rides the built-in deferred-scrollTop path (held through touch/momentum, flushed once on
+    // settle) so it never lands as a mid-gesture jump. `scrollEndThreshold` matches useTailFollow's 80px
+    // "stuck to bottom" band so the two agree on what counts as "at the end".
+    anchorTo: "end",
+    scrollEndThreshold: 80,
   });
 
   // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
   // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
-  // directly here rather than inside the options object above.
+  // directly here rather than inside the options object above. It governs the SCROLLED-UP case only: when
+  // NOT at the end, `anchorTo:'end'` defers to this predicate, which compensates any above-viewport resize
+  // (the desktop Cause-B backstop) — again through the iOS deferred-scrollTop path when on iOS.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   pinRef.current = () => {
@@ -395,6 +413,31 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — so a fresh tall row
+  // (long markdown/code, a Mermaid diagram) already has its real height BEFORE it scrolls into view and
+  // therefore never triggers a first-measure resize/scroll-compensation on iOS. The pass measures silently
+  // (no scroll writes) and seeds all rows in one synchronous settle, so it's safe to run while pinned at the
+  // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
+  // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
+  const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
+  // Every ```mermaid fence in the lane-filtered durable transcript, deduped by the warm helper — handed to the
+  // idle pass so it can warm the render cache off-screen BEFORE a diagram row is pre-measured.
+  const warmSources = useMemo(
+    () =>
+      premeasureEnabled
+        ? log.flatMap((m) =>
+            extractMermaidSources(typeof m.text === "string" ? m.text : ""),
+          )
+        : [],
+    [log, premeasureEnabled],
+  );
+  const premeasureLayer = useIdlePremeasure({
+    items,
+    virtualizer,
+    enabled: premeasureEnabled,
+    warmSources,
+  });
+
   // Scroll to the next unanswered question (cycles oldest→newest on repeated clicks) and flash its card.
   const jumpToOpenQuestion = () => {
     if (openQuestions.length === 0) return;
@@ -417,7 +460,8 @@ export function TranscriptView({
         onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] px-7 pt-5"
       >
-        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
+        <div className="relative mx-auto flex max-w-[880px] flex-col gap-[9px]">
+          {premeasureLayer}
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               Loading conversation…

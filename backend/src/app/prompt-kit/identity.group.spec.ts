@@ -3,28 +3,37 @@ import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
 /**
- * The CURRENT JOB orientation block (`identity.group.currentJob`) — injects the per-job repo/branch/cwd
+ * The CURRENT JOB orientation block (`identity.group.currentJob`) — injects the per-job repo/branch
  * facts into the build brain when the call site supplies `ctx.job`, and vanishes (byte-identical prompt)
  * when it does not: the no-misfire invariant that keeps subagents + the boot smoke-test probes untouched.
+ * The working directory is deliberately NOT rendered here (the worktree host path doesn't exist inside
+ * the container; the FILESYSTEM MAP fragment owns where the `/workspace` checkout lives).
  */
 const HEADER = 'CURRENT JOB';
 
 describe('identity.group — CURRENT JOB orientation block', () => {
-  it('renders repo, working directory, and branch·base for the build brain', () => {
+  it('renders repo and branch·base for the build brain', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
       jobKind: 'feature',
-      job: { repoName: 'acme/widgets', cwd: '/workspace', branch: 'feat/x', baseBranch: 'main' },
+      job: { repoName: 'acme/widgets', branch: 'feat/x', baseBranch: 'main' },
     });
     expect(out).toContain(HEADER);
     expect(out).toContain('- Repo: acme/widgets');
-    expect(out).toContain('- Working directory: /workspace');
     expect(out).toContain('- Branch: feat/x  ·  Base: main');
+  });
+
+  it('never renders a Working directory line (owned by the FILESYSTEM MAP fragment)', () => {
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'feature',
+      job: { repoName: 'acme/widgets', branch: 'feat/x', baseBranch: 'main' },
+    });
+    expect(out).not.toContain('- Working directory:');
   });
 
   it('collapses to a single Base line when no feature branch is cut yet', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
       jobKind: 'feature',
-      job: { repoName: 'acme/widgets', cwd: '/workspace', baseBranch: 'main' },
+      job: { repoName: 'acme/widgets', baseBranch: 'main' },
     });
     expect(out).toContain('- Base branch: main');
     expect(out).not.toContain('- Branch:');
@@ -41,14 +50,14 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   it('is withheld from review jobs (build-brain only)', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
       jobKind: 'review',
-      job: { repoName: 'acme/widgets', cwd: '/workspace' },
+      job: { repoName: 'acme/widgets' },
     });
     expect(out).not.toContain(HEADER);
   });
 
   it('never reaches a worker agent, even with a job ctx', () => {
     const out = renderAgentPrompt(Agent.WORKER, {
-      job: { repoName: 'acme/widgets', cwd: '/workspace', baseBranch: 'main' },
+      job: { repoName: 'acme/widgets', baseBranch: 'main' },
     });
     expect(out).not.toContain(HEADER);
   });

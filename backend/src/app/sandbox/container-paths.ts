@@ -233,3 +233,47 @@ export function isReservedContainerPath(path: string): boolean {
     return norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`);
   });
 }
+
+/** Coerce `write_workspace_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
+export function normalizeMounts(raw: unknown): {
+  mounts: MountSpec[];
+  warnings: string[];
+} {
+  if (!Array.isArray(raw)) return { mounts: [], warnings: [] };
+  const out: MountSpec[] = [];
+  const warnings: string[] = [];
+  for (const e of raw) {
+    const o = e as Record<string, unknown>;
+    const path = String(o?.['path'] ?? '').trim();
+    if (
+      !path ||
+      path.split('/').includes('..') ||
+      path.length > MAX_MOUNT_PATH_LEN
+    )
+      continue;
+    if (isExternalMountPath(path)) {
+      // ABSOLUTE path = an EXTERNAL durable mount at that exact container location (e.g. a tool's default
+      // `~/.config/gcloud` → `/root/.config/gcloud`), bound OUTSIDE /workspace so nothing lands in the
+      // repo. Guarded so it can't shadow a system bind or OS root.
+      if (isReservedContainerPath(path)) {
+        warnings.push(
+          `mount "${path}" targets a reserved/system container path (do not mount it) — dropped`,
+        );
+        continue;
+      }
+    } else if (isReservedMountPath(path)) {
+      // Worktree-relative reserved paths (e.g. `.pnpm-store`) are system-managed caches with no
+      // legitimate reason to be mounted into a repo's own worktree — drop + warn.
+      warnings.push(
+        `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
+      );
+      continue;
+    }
+    const mode: MountMode =
+      o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw'
+        ? o['mode']
+        : 'per-thread';
+    out.push({ path, mode });
+  }
+  return { mounts: out, warnings };
+}

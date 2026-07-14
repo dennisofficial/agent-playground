@@ -9,6 +9,7 @@
  */
 import { Agent, ENGINE_SUBAGENTS } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
+import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DESIGN_DISCIPLINE_NOTE,
@@ -20,6 +21,7 @@ import {
   MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
+  renderBuildLanePreviewRecipe,
   REPORT_ONLY_NOTE,
   REVIEW_SCOPE_NOTE,
   SOLE_AUTHOR_NOTE,
@@ -149,6 +151,13 @@ export class SubagentsGroup {
         '(2) the EXACT evidence paths you wrote under `$ATLAS_EVIDENCE_DIR` — so the orchestrator references ' +
         'your bundle instead of recapturing it. Be concise; conclusions and evidence paths, not a transcript.',
     ].join(' ');
+  }
+
+  /** The repo's saved preview recipe, injected READ-ONLY into `validate` so it can follow/adapt it instead of
+   *  re-discovering the preview setup. Only when a recipe exists. */
+  @Fragment({ usedBy: [Agent.VALIDATE], order: 110, condition: (c) => !!c.previewInstructions?.trim() })
+  validatePreviewRecipe(ctx: PromptCtx): string {
+    return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }
 
   /** `prototype` — design-fidelity mockup author. Writes ONE static HTML preview into /context/artifacts,

@@ -142,6 +142,12 @@ export type ToolImpl = (args: Record<string, unknown>) => Promise<unknown>;
  * The in-container entrypoint will host a thin MCP server whose tools proxy back to the host via
  * the frame protocol; the host dispatches each `tool_request` using `tools`.
  */
+/**
+ * Reserved host-tool name for the install-awareness round-trip. The `__` prefix marks it internal so
+ * `buildSpec` filters it out of the model-facing tool list while host dispatch still finds it.
+ */
+export const INTERNAL_PROFILE_AWARENESS_TOOL = '__profile_awareness';
+
 export interface ToolBridgeOptions {
   /**
    * The thread that owns this exec. Used to enforce per-thread scoping: any `tool_request` that
@@ -326,6 +332,12 @@ export interface RunEngineArgs {
    */
   repoConventions?: { name: string; body: string } | null;
   /**
+   * The repo's saved preview recipe, forwarded verbatim so the in-sandbox engine can fold it into the
+   * `validate` subagent prompt (the host assembles the WORKER main prompt itself). Absent ⇒ nothing
+   * injected, byte-identical to today.
+   */
+  previewInstructions?: string | null;
+  /**
    * This turn's skills, RESOLVED host-side (`SkillResolver.resolveForTurn`) as `{name, description, dirPath,
    * managed?}` — dirs, not bodies. Merges the code-defined SYSTEM tier (`managed: true`) with the
    * `workspace_skills` rows whose `surfaces` include this turn's surface, base-layer-then-overrides (see
@@ -418,6 +430,13 @@ export interface RunEngineArgs {
    */
   toolBridge?: ToolBridgeOptions;
   /**
+   * In-container round-trip callback. Built inside the entrypoint (like `onEvent`) when a Claude turn
+   * carries a tool bridge: it XADDs a `tool_request` and resolves with the correlated host reply. The
+   * install-awareness PostToolUse hook uses it to reach the reserved `__profile_awareness` host tool.
+   * Host-only closure — NEVER serialized into the turn spec.
+   */
+  bridgeCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  /**
    * Optional registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and
    * `ENGINE_TRANSPORT=redis`), the runner records an `active_turns` row so a fresh backend can
    * re-attach to this turn after a restart. Ignored by the pipe runner. See ADR 0001.
@@ -442,7 +461,7 @@ export interface RunEngineArgs {
 /** Fields that NEVER cross to the container (host-only handles/closures/callbacks + the host-side registry
  *  context). `turnMeta` drives the host's `active_turns` re-attach row; it is not read in-container. */
 type HostOnlyArgKey =
-  | 'onEvent' | 'signal' | 'steerInput' | 'onTurnRegistered' | 'target' | 'toolBridge' | 'turnMeta';
+  | 'onEvent' | 'signal' | 'steerInput' | 'onTurnRegistered' | 'target' | 'toolBridge' | 'bridgeCall' | 'turnMeta';
 /** Fields TRANSFORMED at the boundary (mapped to container-space by `buildSpec`, not copied verbatim). */
 type TransformedArgKey = 'cwd' | 'writableRoots' | 'auth' | 'persistAuthRefresh';
 /** Everything else is copied VERBATIM. Derived from `keyof RunEngineArgs` — this is the load-bearing line:
@@ -454,7 +473,7 @@ export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | Tran
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
   'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'repoConventions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'userMcpServers', 'repoConventions', 'previewInstructions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple

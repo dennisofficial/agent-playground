@@ -640,7 +640,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
           }
         : {}),
       // Tool-bridge: the host closure can't cross — send only the tool NAMES so the entrypoint builds the proxy.
-      ...(args.toolBridge ? { toolBridgeTools: Object.keys(args.toolBridge.tools) } : {}),
+      // `__`-prefixed names are reserved internal host tools (e.g. install-awareness) — never model-facing, so
+      // they're filtered out here even though host dispatch still resolves them by their bare name.
+      ...(args.toolBridge
+        ? { toolBridgeTools: Object.keys(args.toolBridge.tools).filter((n) => !n.startsWith('__')) }
+        : {}),
     };
   }
 

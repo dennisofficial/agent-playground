@@ -24,15 +24,15 @@ function makeStore(): { store: GithubAppStateStore; redis: FakeRedis } {
 }
 
 describe('GithubAppStateStore', () => {
-  it('stash then consume round-trips the orgId', async () => {
+  it('stash then consume round-trips the orgId + userId', async () => {
     const { store } = makeStore();
-    const nonce = await store.stash('org1');
-    await expect(store.consume(nonce)).resolves.toBe('org1');
+    const nonce = await store.stash('org1', 'user1');
+    await expect(store.consume(nonce)).resolves.toEqual({ orgId: 'org1', userId: 'user1' });
   });
 
   it('consume is single-use — a second consume of the same nonce returns null', async () => {
     const { store } = makeStore();
-    const nonce = await store.stash('org1');
+    const nonce = await store.stash('org1', 'user1');
     await store.consume(nonce);
     await expect(store.consume(nonce)).resolves.toBeNull();
   });
@@ -42,10 +42,17 @@ describe('GithubAppStateStore', () => {
     await expect(store.consume('never-stashed')).resolves.toBeNull();
   });
 
+  it('a legacy nonce holding a bare orgId string degrades to userId: null', async () => {
+    const { store, redis } = makeStore();
+    // Simulate a nonce stashed by the pre-userId code path: the raw Redis value is just the orgId.
+    await redis.set('github_app_state:legacy-nonce', 'org1');
+    await expect(store.consume('legacy-nonce')).resolves.toEqual({ orgId: 'org1', userId: null });
+  });
+
   it('mints a distinct random nonce on every stash', async () => {
     const { store } = makeStore();
-    const a = await store.stash('org1');
-    const b = await store.stash('org1');
+    const a = await store.stash('org1', 'user1');
+    const b = await store.stash('org1', 'user1');
     expect(a).not.toBe(b);
   });
 });
