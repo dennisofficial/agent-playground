@@ -1291,15 +1291,20 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * Post a "master_review paused — Codex outage" notice (build lane). Mirrors {@link relaySessionLimitPaused}
-   * (durable-first via the block sink, best-effort live post on top, `hasRecentSystemOperatorNotice` dedup on
-   * a STABLE text so a re-drive that re-holds on the same clock doesn't stack near-identical boxes) but marks
-   * the block `codexReviewUnavailable` so the UI can render the outage card + its "Ship without review"
-   * affordance.
+   * (durable-first via the block sink, best-effort live post on top) but the dedup can't rely on an exact-text
+   * match over the default 120s window the way the session-limit park does: `session_limit`'s `resumeAt` is an
+   * EXTERNAL absolute reset instant that stays constant across re-parks of the same limit, while this hold's
+   * clock is a SELF-imposed `now + CODEX_REVIEW_OUTAGE_RETRY_MS` recomputed fresh on every retry cycle — and
+   * the sweep re-drives (and thus re-holds) on exactly that cadence, well outside 120s. So the notice text
+   * here is kept STABLE (it never embeds `resumeAt`) and the dedup window is widened to span one full retry
+   * cycle, so a same-outage re-hold matches the previous notice instead of stacking a near-identical box every
+   * `CODEX_REVIEW_OUTAGE_RETRY_MS`. Marks the block `codexReviewUnavailable` so the UI can render the outage
+   * card + its "Ship without review" affordance.
    */
   private async relayCodexReviewOutage(jobId: string, resumeAt?: string): Promise<void> {
-    const text = `:hourglass: Master review is paused — Codex is unreachable. Auto-retries ${resumeAt ? `around ${fmtReset(resumeAt)}` : 'in a few minutes'}; you can also “Ship without review” to skip the automated review and proceed to the ship gate now.`;
+    const text = `:hourglass: Master review is paused — Codex is unreachable. It auto-retries every few minutes; you can also “Ship without review” to skip the automated review and proceed to the ship gate now.`;
     const alreadyPosted = await this.store
-      .hasRecentSystemOperatorNotice(jobId, text)
+      .hasRecentSystemOperatorNotice(jobId, text, CODEX_REVIEW_OUTAGE_RETRY_MS + 60_000)
       .catch(() => false);
     if (!alreadyPosted) {
       await this.blockSink
