@@ -15,7 +15,7 @@ SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/.atlas/supervisor}"
 mkdir -p "$SVC_DIR" 2>/dev/null || true
 
 usage() {
-  echo "usage: atlas-svc run --name <id> [--port <n>] [--no-expose] -- <cmd...>" >&2
+  echo "usage: atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd...>" >&2
   echo "       atlas-svc logs <id> [-n N] [-f]" >&2
   echo "       atlas-svc ps" >&2
   echo "       atlas-svc stop <id>" >&2
@@ -40,12 +40,12 @@ is_alive() { # <pgid> — a process group is alive if kill -0 on the negative pg
 }
 
 cmd_run() {
-  local name="" port="" no_expose=0
+  local name="" port="" expose=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="${2:-}"; shift 2 || { usage; return 2; } ;;
       --port) port="${2:-}"; shift 2 || { usage; return 2; } ;;
-      --no-expose) no_expose=1; shift ;;
+      --expose) expose=1; shift ;;
       --) shift; break ;;
       *) echo "atlas-svc run: unexpected arg '$1' (did you forget '--' before the command?)" >&2; return 2 ;;
     esac
@@ -58,8 +58,13 @@ cmd_run() {
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
       echo "atlas-svc: --port must be an integer 1-65535" >&2; return 2
     fi
-    if [ "$no_expose" = 0 ] && ! [[ "$name" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,50}[a-z0-9])$ ]]; then
-      echo "atlas-svc: exposed --port service names must be DNS-safe: [a-z0-9-], 1-52 chars, start/end alphanumeric (or pass --no-expose)" >&2
+  fi
+  if [ "$expose" = 1 ]; then
+    if [ -z "$port" ]; then
+      echo "atlas-svc: --expose requires --port <n>" >&2; return 2
+    fi
+    if ! [[ "$name" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,50}[a-z0-9])$ ]]; then
+      echo "atlas-svc: exposed service names must be DNS-safe: [a-z0-9-], 1-52 chars, start/end alphanumeric" >&2
       return 2
     fi
   fi
@@ -81,12 +86,12 @@ cmd_run() {
   setsid bash -lc "$cmd" >>"$log" 2>&1 &
   local pid=$!   # for a setsid leader, the process-group id equals this pid.
 
-  # `port` defaults to null (not an HTTP service); `expose` defaults to true unless --no-expose. Old
-  # markers without these fields still parse — the backend treats a missing port as null / missing expose
-  # as true.
+  # `port` defaults to null; `expose` defaults to FALSE unless --expose is passed — secure-by-default,
+  # public exposure is opt-in. Old markers without these fields still parse — the backend treats a
+  # missing/absent expose as NOT exposed.
   printf '{"name":%s,"cmd":%s,"pid":%d,"pgid":%d,"startedAt":"%s","port":%s,"expose":%s}\n' \
     "$(json_str "$name")" "$(json_str "$cmd")" "$pid" "$pid" "$(date -u +%FT%TZ)" \
-    "${port:-null}" "$([ "$no_expose" = 1 ] && echo false || echo true)" > "$marker"
+    "${port:-null}" "$([ "$expose" = 1 ] && echo true || echo false)" > "$marker"
   echo "atlas-svc: started '$name' (pid $pid) — tail with: atlas-svc logs -f $name"
 }
 
