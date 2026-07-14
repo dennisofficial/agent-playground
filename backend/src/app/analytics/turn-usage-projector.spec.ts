@@ -1,13 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineUsage } from '../engine';
+import type { AppVersionService } from '../cluster/app-version.service';
 import { TurnUsageProjector } from './turn-usage-projector.service';
 
 function make() {
   const stats = { create: vi.fn((x) => x), save: vi.fn(async (x) => ({ ...x, id: 'stat-1' })) };
   const modelUsage = { create: vi.fn((x) => x), save: vi.fn(async (x) => x) };
   const jobs = { findOne: vi.fn(async () => ({ org_id: 'org-resolved' })) };
-  const projector = new TurnUsageProjector(stats as never, modelUsage as never, jobs as never);
-  return { projector, stats, modelUsage, jobs };
+  const version = { sha: 'sha-abc1234' } as unknown as AppVersionService;
+  const projector = new TurnUsageProjector(stats as never, modelUsage as never, jobs as never, version);
+  return { projector, stats, modelUsage, jobs, version };
 }
 
 const usage: EngineUsage = {
@@ -48,6 +50,7 @@ describe('TurnUsageProjector', () => {
         lane: 'thread:th-1',
         kind: 'step',
         engine: 'claude',
+        credentialId: 'cred-1',
         metaTag: { phaseId: 'st-1', batchOrdinal: 2 },
       },
       usage,
@@ -62,6 +65,8 @@ describe('TurnUsageProjector', () => {
       step_id: 'st-1', // lifted from metaTag.phaseId
       kind: 'step',
       engine: 'claude',
+      credential_id: 'cred-1',
+      engine_git_sha: 'sha-abc1234',
       model: 'claude-opus-4-8',
       input_tokens: 1000,
       output_tokens: 200,
@@ -120,5 +125,17 @@ describe('TurnUsageProjector', () => {
     );
     expect(stats.save).toHaveBeenCalledOnce();
     expect(modelUsage.save).not.toHaveBeenCalled();
+  });
+
+  it('stamps engine_git_sha on every row but leaves credential_id null when the caller has none (Codex/d3)', async () => {
+    const { projector, stats } = make();
+    await projector.record(
+      { jobId: 'j', orgId: 'o', lane: 'thread:t', kind: 'review', engine: 'codex' },
+      { inputTokens: 10, outputTokens: 5 },
+    );
+    expect(stats.save.mock.calls[0][0]).toMatchObject({
+      credential_id: null,
+      engine_git_sha: 'sha-abc1234',
+    });
   });
 });

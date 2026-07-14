@@ -335,6 +335,7 @@ export class TurnRunnerService {
         lane: input.turnMeta?.lane ?? 'main',
         kind: input.turnMeta?.kind ?? 'step',
         engine,
+        credentialId: result.credentialId ?? null,
         ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
       },
       result.usage,
