@@ -1218,6 +1218,17 @@ export class EngineCore {
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
+          // The CLI sometimes reports a subscription wall as an `is_error` result whose subtype is still
+          // `success` — its `result` string is the printed limit line — then exits non-zero (the SDK then
+          // throws "Claude Code returned an error result: …"). That is NOT a genuine answer: latch the hit
+          // and break to the clean-park return, so the caller parks + auto-resumes instead of surfacing the
+          // limit line as the turn result (or letting the thrown exit-error fail the build). The structured
+          // `rate_limit_event` path keeps its existing success handling below (its result carries no limit text).
+          const errResult = message as { is_error?: boolean; result?: string };
+          if (errResult.is_error === true && errResult.result && detectSessionLimitText(errResult.result)) {
+            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            break;
+          }
           if (message.subtype === 'success') {
             result = message.result;
             onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
@@ -1295,11 +1306,19 @@ export class EngineCore {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
-      // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
-      // graceful end — fall through to the normal post-loop return with the partial result + live session,
-      // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
-      // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
-      if (!(streaming && abortController.signal.aborted)) throw err;
+      // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
+      // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
+      // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
+      // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
+      if (detectSessionLimitText(msg)) {
+        sessionLimit ??= { resetAt: parseResetAt(msg) };
+      } else if (!(streaming && abortController.signal.aborted)) {
+        // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
+        // graceful end — fall through to the normal post-loop return with the partial result + live session,
+        // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
+        // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
+        throw err;
+      }
     } finally {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;
