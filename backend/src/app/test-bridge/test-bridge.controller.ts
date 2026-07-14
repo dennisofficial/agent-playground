@@ -8,6 +8,7 @@ import {
   Inject,
   Logger,
   NotFoundException,
+  Optional,
   Param,
   Post,
   Query,
@@ -24,6 +25,7 @@ import {
 } from '../agent-surface';
 import { DecisionApprovalService } from '../brain';
 import { ThreadDriver, LANE_SEEDER, type LaneSeeder } from '../driver';
+import { JobBootstrapService } from '../job-bootstrap';
 import { laneFor } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -99,6 +101,9 @@ export class TestBridgeController {
     private readonly turns: Repository<ActiveTurnEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
+    // Bootstraps a freshly-created job's ONE planning stage + thread (d7: `stage_id` is never null). From
+    // the @Global JobBootstrapModule. @Optional (trailing), same reason as the other ambient deps here.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /**
@@ -175,6 +180,9 @@ export class TestBridgeController {
         }),
       );
       jobId = thread.id;
+      // Bootstrap the new job's ONE planning stage + thread — d7: `stage_id` is never null, even for a
+      // job that never gets a plan proposed (mirrors every other job-creation seam).
+      await this.jobBootstrap?.ensurePlanningStage(thread.id, repo.org_id);
     }
 
     // Snapshot the outbox cursor BEFORE sending so we only collect posts triggered by this message.

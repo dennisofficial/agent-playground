@@ -4051,44 +4051,6 @@ export class AgentSessionManager
         };
       },
 
-      note_cleared_block: async (args) => {
-        // Retrieve-vs-author audit (the retrieve-vs-author rule): the brain CLEARED a builder's halt by
-        // RETRIEVING an answer that already existed (the access was present; a spec/convention already
-        // decided it) — NOT by authoring a new decision. Record the cited evidence to the durable
-        // cleared-blocks audit (a non-blocking FYI card + a re-projected `atlas-cleared-blocks.md`) BEFORE
-        // re-driving. Call this only when you actually hold the answer and intend to `retry_thread` next.
-        const threadId = String(args['threadId'] ?? '').trim();
-        const reason = String(args['reason'] ?? '').trim();
-        const evidence = String(args['evidence'] ?? '').trim();
-        if (!threadId || !evidence) {
-          return {
-            ok: false,
-            reason:
-              'threadId and evidence are required — evidence is the existing source you retrieved (the ' +
-              'access you verified, or the spec/convention you cited). If you had to CHOOSE an answer, do ' +
-              'not clear it: ask the operator instead.',
-          };
-        }
-        const gen = stimulus.seedHaltWake?.gen ?? 0;
-        await this.store
-          .appendClearedBlockCard(stimulus.jobId, {
-            threadId,
-            gen,
-            reason: reason || 'question',
-            evidence,
-            text: `FYI: cleared a ${reason || 'blocked'} block on a build thread by retrieving an existing answer — ${evidence.slice(0, 160)}`,
-          })
-          .catch(() => undefined);
-        await this.writeClearedBlocksMd(stimulus.jobId, stimulus.orgId).catch(
-          () => undefined,
-        );
-        return {
-          ok: true,
-          message:
-            'Recorded to the cleared-blocks audit. Now call `retry_thread` with the retrieved answer as guidance.',
-        };
-      },
-
       start_direct_build: async (args) => {
         // FAST PATH — a small, localized change the brain implements ITSELF (no threads/steps). Still
         // gated by a lightweight approval; on approval an autonomous implementation turn runs.
