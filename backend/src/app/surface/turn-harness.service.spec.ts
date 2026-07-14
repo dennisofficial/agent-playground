@@ -4,6 +4,7 @@ import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import {
   type BlockSink,
   EntityTaskEventSink,
+  type SubagentStore,
   type TaskEventSink,
   TurnHarnessFactory,
 } from './turn-harness.service';
@@ -15,10 +16,14 @@ import {
  */
 function setup() {
   const live = new LiveTurnStore();
-  const persisted: Array<{ jobId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
+  const persisted: Array<{
+    jobId: string;
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; subagentId?: string };
+  }> = [];
   const sink: BlockSink = {
     appendBlock: vi.fn(async (jobId, block) => {
       persisted.push({ jobId, block });
+      return `msg-${persisted.length - 1}`;
     }),
     appendBlockOnce: vi.fn(async (jobId, promptKey, block) => {
       // Mirror MessageBlockSink: skip if an agent_prompt row already carries this key; else stamp it in.
@@ -34,7 +39,20 @@ function setup() {
   };
   const taskSink: TaskEventSink = { applyTaskEvent: vi.fn(async () => undefined) };
   const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
-  return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink, usage) };
+  const subagentUpserts: Array<Parameters<SubagentStore['upsert']>[0]> = [];
+  const subagentStore: SubagentStore = {
+    upsert: vi.fn(async (input) => {
+      subagentUpserts.push(input);
+    }),
+  };
+  return {
+    live,
+    persisted,
+    taskSink,
+    subagentStore,
+    subagentUpserts,
+    factory: new TurnHarnessFactory(live, sink, taskSink, usage, subagentStore),
+  };
 }
 
 describe('TurnHarnessFactory — the shared transcript spine', () => {
@@ -336,6 +354,59 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       await h.finish();
 
       expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('subagent tracking (d4)', () => {
+    it('a spawned Task upserts a subagents row on finish, and tags its child blocks with the same subagent_id', async () => {
+      const { persisted, subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      h.onEvent({ kind: 'text', text: 'exploring…', parentToolUseId: 'task-1' });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0]).toMatchObject({ agentType: 'explore', status: 'done', threadId: 'th1' });
+      expect(subagentUpserts[0].parentMessageId).toBeTruthy();
+
+      const child = persisted.find((p) => p.block.kind === 'chat')!;
+      expect(child.block.subagentId).toBe(subagentUpserts[0].id);
+
+      const anchor = persisted.find((p) => p.block.kind === 'tool')!;
+      expect(anchor.block.subagentId).toBeUndefined();
+    });
+
+    it('an explicit bg_task settlement before finish wins over the finish-sweep', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'implement' } });
+      h.onEvent({ kind: 'bg_task', status: 'failed', parentToolUseId: 'task-1' });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].status).toBe('failed');
+    });
+
+    it('abort leaves a still-running subagent as running (no fabricated completion)', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      await h.abort();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].status).toBe('running');
+    });
+
+    it('resolves the eventual model from the LATEST subagent-tagged usage frame', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 5_000, contextModel: 'claude-sonnet-5', contextLimit: 1_000_000 });
+      h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 9_000, contextModel: 'claude-opus-4-8', contextLimit: 1_000_000 });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].model).toBe('claude-opus-4-8');
     });
   });
 });

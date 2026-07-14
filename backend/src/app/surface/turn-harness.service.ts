@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
+import { JobEntity, MessageEntity, SubagentEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope, taskScopeForLane } from './thread-registry';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -15,6 +16,9 @@ import { OauthUsageService } from '../onboarding/oauth-usage.service';
  * module (and the cycle that would create). Implemented by {@link MessageBlockSink}.
  */
 export interface BlockSink {
+  /** Returns the written row's `id` (or the existing row's `id`, on an idempotent no-op) so a caller can
+   *  resolve a just-written block's row — e.g. a subagent's spawning anchor's `id` becomes that subagent's
+   *  `subagents.parent_message_id`. */
   appendBlock(
     jobId: string,
     block: {
@@ -24,8 +28,11 @@ export interface BlockSink {
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
       idemKey?: string;
+      /** The subagent this block belongs to (its OWN transcript, not its spawning anchor) — stamped onto
+       *  `messages.subagent_id`. Absent for a block that isn't part of a subagent's own transcript. */
+      subagentId?: string;
     },
-  ): Promise<void>;
+  ): Promise<string | undefined>;
   /**
    * Insert-once by a durable idempotency key: append the block ONLY if no `agent_prompt` row for this
    * job already carries `meta.promptKey === promptKey`. This is what makes the per-turn prompt block
@@ -63,8 +70,9 @@ export class MessageBlockSink implements BlockSink {
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
       idemKey?: string;
+      subagentId?: string;
     },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const row = {
       job_id: jobId,
       thread_id: block.threadId,
@@ -74,20 +82,26 @@ export class MessageBlockSink implements BlockSink {
       text: block.text ?? '',
       kind: block.kind,
       meta: block.meta ?? null,
+      subagent_id: block.subagentId ?? null,
       ...(block.createdAt ? { created_at: block.createdAt } : {}),
     };
     if (block.idemKey) {
       // ON CONFLICT DO NOTHING on the partial unique index `ux_messages_idem_key`: a repeat write of the same
       // `${turn_id}:${ordinal}` (two racing finishers, a redelivery) is a no-op instead of a duplicate row.
-      await this.messages
+      const result = await this.messages
         .createQueryBuilder()
         .insert()
         .values({ ...row, idem_key: block.idemKey } as QueryDeepPartialEntity<MessageEntity>)
         .orIgnore()
         .execute();
-    } else {
-      await this.messages.save(this.messages.create(row));
+      const insertedId = result.identifiers?.[0]?.id as string | undefined;
+      if (insertedId) return insertedId;
+      // A conflict (ON CONFLICT DO NOTHING) may not report an id — look up the existing row by its key.
+      const existing = await this.messages.findOne({ where: { idem_key: block.idemKey }, select: { id: true } });
+      return existing?.id;
     }
+    const saved = await this.messages.save(this.messages.create(row));
+    return saved.id;
   }
 
   async appendBlockOnce(
@@ -189,6 +203,78 @@ export class EntityTaskEventSink implements TaskEventSink {
 }
 
 /**
+ * The destination for one subagent's lifecycle row — a narrow port (mirrors {@link BlockSink}) so the
+ * harness can populate `subagents` (d4) WITHOUT a module cycle. Implemented by {@link EntitySubagentStore}.
+ */
+export interface SubagentStore {
+  /**
+   * Insert (or, on a repeat call with the SAME `id`, upsert) one subagent's row. The harness generates
+   * `id` client-side once per spawn and always upserts that SAME id, so a re-drive/re-persist of the same
+   * turn converges instead of duplicating. Best-effort — never throws into the turn.
+   */
+  upsert(input: {
+    id: string;
+    threadId: string;
+    parentMessageId: string;
+    toolUseId: string;
+    agentType: string | null;
+    model: string | null;
+    status: 'running' | 'done' | 'failed';
+    startedAt: Date;
+    endedAt: Date | null;
+  }): Promise<void>;
+}
+
+/** DI token for {@link SubagentStore}. */
+export const SUBAGENT_STORE = Symbol('SUBAGENT_STORE');
+
+/** A no-op {@link SubagentStore} — the constructor default for a call site that builds a
+ *  {@link TurnHarnessFactory} directly (bypassing Nest DI, e.g. an existing test) without one. */
+const NOOP_SUBAGENT_STORE: SubagentStore = { upsert: async () => undefined };
+
+/** The default {@link SubagentStore} — upserts straight into `subagents`. */
+@Injectable()
+export class EntitySubagentStore implements SubagentStore {
+  private readonly logger = new Logger(EntitySubagentStore.name);
+
+  constructor(
+    @InjectRepository(SubagentEntity, DB_CONNECTION)
+    private readonly subagents: Repository<SubagentEntity>,
+  ) {}
+
+  async upsert(input: {
+    id: string;
+    threadId: string;
+    parentMessageId: string;
+    toolUseId: string;
+    agentType: string | null;
+    model: string | null;
+    status: 'running' | 'done' | 'failed';
+    startedAt: Date;
+    endedAt: Date | null;
+  }): Promise<void> {
+    try {
+      await this.subagents.upsert(
+        {
+          id: input.id,
+          thread_id: input.threadId,
+          parent_message_id: input.parentMessageId,
+          tool_use_id: input.toolUseId,
+          agent_type: input.agentType,
+          model: input.model,
+          status: input.status,
+          started_at: input.startedAt,
+          ended_at: input.endedAt,
+        },
+        ['id'],
+      );
+    } catch (err) {
+      this.logger.warn(`subagent upsert failed (ignored): ${err}`);
+    }
+  }
+}
+
+/**
  * Turn-end accounting, rendered as a durable `turn_meta` block (the per-turn divider + context ring in the
  * web). All optional — pass nothing (or no `usage`) and no block is written.
  */
@@ -272,6 +358,7 @@ export class TurnHarnessFactory {
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
     private readonly usage: OauthUsageService,
+    @Inject(SUBAGENT_STORE) private readonly subagentStore: SubagentStore = NOOP_SUBAGENT_STORE,
   ) {}
 
   /**
@@ -308,6 +395,18 @@ export class TurnHarnessFactory {
       emittedAt: Date;
     };
     const blocks: DurableBlock[] = [];
+
+    type PendingSubagent = {
+      id: string;
+      toolUseId: string;
+      agentType: string | null;
+      model: string | null;
+      status: 'running' | 'done' | 'failed';
+      startedAt: Date;
+      endedAt: Date | null;
+    };
+    const subagentsByToolUse = new Map<string, PendingSubagent>();
+
     let lastEmitMs = 0;
     // Strictly-monotonic emission stamps so blocks never tie within a turn (ms granularity); an interleaved
     // mid-turn user message (persisted at its real send time) then sorts correctly against them.
@@ -333,7 +432,9 @@ export class TurnHarnessFactory {
       for (let i = 0; i < blocks.length; i++) {
         const b = blocks[i];
         const idemKey = persistTurnId ? `${persistTurnId}:${i}` : undefined;
-        await this.sink
+        const parentToolUseId = b.meta?.parentToolUseId as string | undefined;
+        const subagentId = parentToolUseId ? subagentsByToolUse.get(parentToolUseId)?.id : undefined;
+        const messageId = await this.sink
           .appendBlock(jobId, {
             kind: b.kind,
             threadId,
@@ -341,8 +442,30 @@ export class TurnHarnessFactory {
             ...(b.text != null ? { text: b.text } : {}),
             ...(b.meta ? { meta: b.meta } : {}),
             ...(idemKey ? { idemKey } : {}),
+            ...(subagentId ? { subagentId } : {}),
           })
-          .catch((err) => this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`));
+          .catch((err) => {
+            this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`);
+            return undefined;
+          });
+
+        // This block IS a subagent's spawning anchor (a tracked Task tool_use) — now that its own message
+        // row is persisted, upsert the `subagents` row with a real `parent_message_id`. Best-effort/
+        // fire-and-forget: never blocks or fails the turn.
+        const pending = b.kind === 'tool' && b.toolId ? subagentsByToolUse.get(b.toolId) : undefined;
+        if (pending && messageId) {
+          void this.subagentStore.upsert({
+            id: pending.id,
+            threadId,
+            parentMessageId: messageId,
+            toolUseId: pending.toolUseId,
+            agentType: pending.agentType,
+            model: pending.model,
+            status: pending.status,
+            startedAt: pending.startedAt,
+            endedAt: pending.endedAt,
+          });
+        }
       }
       this.liveTurns.end(channel, jobId, lane); // fans turn_end + drops the in-flight buffer
     };
@@ -402,6 +525,22 @@ export class TurnHarnessFactory {
               },
               emittedAt: stamp(),
             });
+            // A subagent SPAWN: a top-level `Task` tool_use (not itself a subagent's own nested Task call — a
+            // subagent spawning a subagent is out of scope). Track it so its children can be tagged with
+            // `subagent_id` and its `subagents` row created once its own anchor message is persisted (persistAll).
+            if (e.name === 'Task' && !e.parentToolUseId) {
+              const rawInput = e.input as { subagent_type?: unknown } | undefined;
+              const agentType = typeof rawInput?.subagent_type === 'string' ? rawInput.subagent_type : null;
+              subagentsByToolUse.set(toolId, {
+                id: randomUUID(),
+                toolUseId: toolId,
+                agentType,
+                model: null,
+                status: 'running',
+                startedAt: new Date(),
+                endedAt: null,
+              });
+            }
             break;
           }
           case 'tool_result': {
@@ -443,6 +582,8 @@ export class TurnHarnessFactory {
             // still shows its context ring + real model after the turn ends. Untagged (main-agent) usage
             // stays live-only — the turn-end `turn_meta` already carries the orchestrator's occupancy.
             if (e.parentToolUseId) {
+              const pendingUsage = subagentsByToolUse.get(e.parentToolUseId);
+              if (pendingUsage && e.contextModel) pendingUsage.model = e.contextModel;
               for (let i = blocks.length - 1; i >= 0; i--) {
                 const b = blocks[i];
                 if (b.kind === 'tool' && b.meta?.id === e.parentToolUseId) {
@@ -454,6 +595,19 @@ export class TurnHarnessFactory {
                   };
                   break;
                 }
+              }
+            }
+            break;
+          }
+          case 'bg_task': {
+            // Settlement of a backgrounded Task SUBAGENT (not a bare bg Bash task, which carries no
+            // `parentToolUseId`). 'stopped' (operator/host cancel) is folded into 'failed' — the subagents
+            // lifecycle is a 3-state (running|done|failed), not a superset of the SDK's task states.
+            if (e.parentToolUseId && (e.status === 'completed' || e.status === 'failed' || e.status === 'stopped')) {
+              const pending = subagentsByToolUse.get(e.parentToolUseId);
+              if (pending) {
+                pending.status = e.status === 'completed' ? 'done' : 'failed';
+                pending.endedAt = new Date();
               }
             }
             break;
@@ -549,6 +703,16 @@ export class TurnHarnessFactory {
               ...(workedMs != null ? { workedMs } : {}),
             },
           });
+        }
+        // Best-effort: a subagent still 'running' when the turn finishes naturally (no explicit bg_task
+        // settlement observed) is treated as done — the engine holds the turn open until backgrounded
+        // subagents settle, so by a natural `finish` they should already be settled; this is a defensive
+        // fallback.
+        for (const pending of subagentsByToolUse.values()) {
+          if (pending.status === 'running') {
+            pending.status = 'done';
+            pending.endedAt = new Date();
+          }
         }
         await persistAll();
       },
