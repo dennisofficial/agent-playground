@@ -118,6 +118,7 @@ afterAll(async () => {
 });
 
 const diffUrl = `/web/orgs/${ORG_ID}/repos/${REPO_ID}/jobs/${JOB_ID}/diff`;
+const diffSummaryUrl = `/web/orgs/${ORG_ID}/repos/${REPO_ID}/jobs/${JOB_ID}/diff/summary`;
 
 describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git worktree)', () => {
   it('GET .../diff → 200, structured files with committed + uncommitted changes merged', async () => {
@@ -150,5 +151,39 @@ describe('WebSurfaceController jobDiff — LIVE HTTP (real Nest app, real git wo
     console.log(`OBSERVED GET ${diffUrl} (no sandbox) →`, res.status, JSON.stringify(res.body));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ files: [], truncated: false });
+  });
+
+  it('GET .../diff/summary → 200, lightweight files with status and no hunks', async () => {
+    const res = await request(server).get(diffSummaryUrl);
+    console.log(`OBSERVED GET ${diffSummaryUrl} →`, res.status, JSON.stringify(res.body));
+
+    expect(res.status).toBe(200);
+    expect(res.body).not.toHaveProperty('truncated');
+
+    const foo = res.body.files.find((f: { path: string }) => f.path === 'foo.ts');
+    expect(foo).toMatchObject({
+      path: 'foo.ts',
+      status: 'modified',
+      binary: false,
+    });
+    expect(foo.additions).toBeGreaterThan(0);
+    expect(foo.deletions).toBeGreaterThan(0);
+    expect(foo).not.toHaveProperty('hunks');
+
+    const bar = res.body.files.find((f: { path: string }) => f.path === 'bar.ts');
+    expect(bar).toMatchObject({
+      path: 'bar.ts',
+      status: 'added',
+      binary: false,
+    });
+    expect(bar).not.toHaveProperty('hunks');
+  });
+
+  it('GET .../diff/summary with no sandbox → 200 { files: [] }', async () => {
+    findSandbox.mockResolvedValueOnce(null);
+    const res = await request(server).get(diffSummaryUrl);
+    console.log(`OBSERVED GET ${diffSummaryUrl} (no sandbox) →`, res.status, JSON.stringify(res.body));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ files: [] });
   });
 });

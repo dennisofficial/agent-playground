@@ -8,12 +8,14 @@ export type JobDiffHunk = {
   lines: string[];
 };
 
+export type JobDiffStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
 export type JobDiffFile = {
   /** post-rename, repo-relative POSIX path (`a/`/`b/` prefixes stripped). */
   path: string;
   /** set only when the file was renamed. */
   oldPath?: string;
-  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  status: JobDiffStatus;
   binary: boolean;
   additions: number;
   deletions: number;
@@ -25,11 +27,21 @@ export type JobDiff = { files: JobDiffFile[]; truncated: boolean };
 
 export type JobDiffNumstatEntry = { path: string; additions: number; deletions: number; binary: boolean };
 
-export type JobDiffSummary = { files: JobDiffNumstatEntry[] };
+export type JobDiffNameStatusEntry = { path: string; oldPath?: string; status: JobDiffStatus };
+
+export type JobDiffSummaryFile = JobDiffNumstatEntry & Pick<JobDiffNameStatusEntry, 'status' | 'oldPath'>;
+
+export type JobDiffSummary = { files: JobDiffSummaryFile[] };
 
 /** Summary-only view (numstat, no hunks) for the sidebar's +/- totals. */
-export function buildDiffSummary(numstat: JobDiffNumstatEntry[]): JobDiffSummary {
-  return { files: numstat };
+export function buildDiffSummary(numstat: JobDiffNumstatEntry[], nameStatus: JobDiffNameStatusEntry[] = []): JobDiffSummary {
+  const statusByPath = new Map(nameStatus.map((entry) => [entry.path, entry]));
+  return {
+    files: numstat.map((entry) => {
+      const status = statusByPath.get(entry.path);
+      return { ...entry, ...(status?.oldPath ? { oldPath: status.oldPath } : {}), status: status?.status ?? 'modified' };
+    }),
+  };
 }
 
 /** Strip a leading `a/` or `b/` diff prefix; `/dev/null` and undefined pass through unchanged. */
@@ -68,7 +80,7 @@ export function parseGitDiff(raw: string, numstat: JobDiffNumstatEntry[], opts: 
     const isAdded = strippedOld === undefined || strippedOld === '/dev/null';
     const isDeleted = strippedNew === undefined || strippedNew === '/dev/null';
     const isRenamed = !isAdded && !isDeleted && strippedOld !== strippedNew;
-    const status: JobDiffFile['status'] = isAdded ? 'added' : isDeleted ? 'deleted' : isRenamed ? 'renamed' : 'modified';
+    const status: JobDiffStatus = isAdded ? 'added' : isDeleted ? 'deleted' : isRenamed ? 'renamed' : 'modified';
     const path = (status === 'deleted' ? strippedOld : strippedNew) ?? '';
 
     const numstatEntry = numstatByPath.get(path);

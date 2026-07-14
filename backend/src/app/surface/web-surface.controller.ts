@@ -2613,8 +2613,8 @@ export class WebSurfaceController {
   }
 
   /**
-   * `GET …/jobs/:jobId/diff/summary` — cheap numstat-only view of the same diff as `jobDiff()` above
-   * (per-file path/additions/deletions/binary, NO hunks). For the always-mounted sidebar's +/- totals,
+   * `GET …/jobs/:jobId/diff/summary` — cheap no-hunks view of the same diff as `jobDiff()` above
+   * (per-file path/additions/deletions/status/binary, NO hunks). For the always-mounted sidebar's +/- totals,
    * which don't need — and shouldn't pay for — the full hunk payload.
    */
   @Get('orgs/:orgId/repos/:repoId/jobs/:jobId/diff/summary')
@@ -2627,8 +2627,11 @@ export class WebSurfaceController {
     const sandbox = await this.threadLifecycle.findSandbox(jobId, org.id);
     if (!sandbox) return { files: [] };
     const baseRef = `origin/${await this.threadLifecycle.resolveBaseBranch(jobId, org.id)}`;
-    const numstat = await this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef);
-    return buildDiffSummary(numstat);
+    const [numstat, nameStatus] = await Promise.all([
+      this.git.diffNumstatFromMergeBase(sandbox.worktreePath, baseRef),
+      this.git.diffNameStatusFromMergeBase(sandbox.worktreePath, baseRef),
+    ]);
+    return buildDiffSummary(numstat, nameStatus);
   }
 
   /**

@@ -752,9 +752,11 @@ export interface JobDiff {
   truncated: boolean;
 }
 
-/** One file's line totals in the cheap diff summary — mirrors the backend `JobDiffNumstatEntry`. */
+/** One file's line totals/status in the cheap diff summary — mirrors the backend `JobDiffSummaryFile`. */
 export interface JobDiffSummaryFile {
   path: string;
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
   additions: number;
   deletions: number;
   binary: boolean;

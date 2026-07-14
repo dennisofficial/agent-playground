@@ -130,7 +130,34 @@ Binary files a/src/image.png and b/src/image.png differ
 });
 
 describe('buildDiffSummary', () => {
-  it('wraps the numstat entries unchanged, including binary files', () => {
-    expect(buildDiffSummary(NUMSTAT).files).toEqual(NUMSTAT);
+  it('joins numstat totals with lightweight status entries, including binary files', () => {
+    expect(
+      buildDiffSummary(NUMSTAT, [
+        { path: 'src/foo.ts', status: 'modified' },
+        { path: 'src/new.ts', status: 'added' },
+        { path: 'src/old.ts', status: 'deleted' },
+        { path: 'src/renamed-to.ts', oldPath: 'src/renamed-from.ts', status: 'renamed' },
+        { path: 'src/image.png', status: 'modified' },
+      ]).files,
+    ).toEqual([
+      { path: 'src/foo.ts', additions: 2, deletions: 0, binary: false, status: 'modified' },
+      { path: 'src/new.ts', additions: 2, deletions: 0, binary: false, status: 'added' },
+      { path: 'src/old.ts', additions: 0, deletions: 2, binary: false, status: 'deleted' },
+      {
+        path: 'src/renamed-to.ts',
+        oldPath: 'src/renamed-from.ts',
+        additions: 1,
+        deletions: 1,
+        binary: false,
+        status: 'renamed',
+      },
+      { path: 'src/image.png', additions: 0, deletions: 0, binary: true, status: 'modified' },
+    ]);
+  });
+
+  it('defaults to modified when git omits a name-status entry', () => {
+    expect(buildDiffSummary([NUMSTAT[0]]).files).toEqual([
+      { path: 'src/foo.ts', additions: 2, deletions: 0, binary: false, status: 'modified' },
+    ]);
   });
 });
