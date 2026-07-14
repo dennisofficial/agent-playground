@@ -198,7 +198,7 @@ export class CodexClient {
         // Don't reject on abort — interrupt and let the server's turn/completed (status:interrupted)
         // settle the promise with a clean CodexTurnResult the caller can still inspect.
         if (active.turnId) {
-          void this.interrupt(threadId, active.turnId);
+          this.fireInterrupt(active, active.turnId);
         } else {
           active.interruptRequested = true;
         }
@@ -226,7 +226,7 @@ export class CodexClient {
           const id = result?.turn?.id;
           if (id && !active.turnId) {
             active.turnId = id;
-            if (active.interruptRequested) void this.interrupt(threadId, id);
+            if (active.interruptRequested) this.fireInterrupt(active, id);
           }
         })
         .catch((err) => active.fail(err instanceof Error ? err : new Error(String(err))));
@@ -263,6 +263,14 @@ export class CodexClient {
     return this.client;
   }
 
+  // Fires an interrupt at most once per abort: clears the flag first so the two independent
+  // call sites (turn/start response, turn/started notification) can't both fire it, and swallows
+  // rejections since this is a fire-and-forget best-effort request.
+  private fireInterrupt(active: ActiveTurn, turnId: string): void {
+    active.interruptRequested = false;
+    void this.interrupt(active.threadId, turnId).catch(() => {});
+  }
+
   private registerApprovalHandlers(client: AppServerClient): void {
     for (const [method, kind] of Object.entries(APPROVAL_METHODS)) {
       client.onServerRequest(method, async (params) => {
@@ -294,7 +302,7 @@ export class CodexClient {
 
     if (event.type === 'turnStarted') {
       active.turnId = event.turnId;
-      if (active.interruptRequested) void this.interrupt(active.threadId, event.turnId);
+      if (active.interruptRequested) this.fireInterrupt(active, event.turnId);
     } else if (event.type === 'tokenUsageUpdated') {
       // `tokenUsage.total` on the wire is already the server-accumulated cumulative snapshot for
       // this turn — no manual field-by-field merge needed, just take the latest snapshot verbatim.
@@ -317,12 +325,10 @@ export class CodexClient {
 
   private resolveActive(event: CodexEvent): ActiveTurn | undefined {
     const threadId = 'threadId' in event ? event.threadId : undefined;
-    if (threadId) {
-      const byThread = this.activeTurns.get(threadId);
-      if (byThread) return byThread;
-    }
-    // Events without a usable threadId (e.g. 'unknown') route to the sole active turn when there is
-    // exactly one, so nothing is dropped under this SDK's single-turn model.
+    // A present-but-unmatched threadId (e.g. a late event for a turn that already settled) must
+    // not fall through to the single-active-turn fallback below — that would misroute it to an
+    // unrelated concurrent turn. Only a truly threadId-less event (e.g. 'unknown') falls through.
+    if (threadId) return this.activeTurns.get(threadId);
     if (this.activeTurns.size === 1) return this.activeTurns.values().next().value;
     return undefined;
   }
