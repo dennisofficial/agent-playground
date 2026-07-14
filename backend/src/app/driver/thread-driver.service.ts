@@ -3428,7 +3428,12 @@ export class ThreadDriver implements JobDispatcher {
       await harness.abort();
       throw err;
     }
-    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+    await harness.finish(
+      result.report,
+      result.usage
+        ? { usage: result.usage, credentialId: result.credentialId ?? null }
+        : undefined,
+    );
     return result;
   }
 
@@ -3491,11 +3496,16 @@ export class ThreadDriver implements JobDispatcher {
     });
     try {
       const reattachCredentialId = (row.ctx as { credentialId?: string } | null)?.credentialId;
+      const spec = threadKindSpec(thread.kind);
       const result = await this.turn.reattach({
         turnId: row.turn_id,
         containerId: row.container_id!,
         jobId: job.id,
+        orgId: row.org_id,
         stepId: anchorStepId,
+        lane: row.lane,
+        kind: row.kind,
+        engine: spec.engine,
         onEvent: (e) => harness.onEvent(e),
         // Re-supply the host tool closure — the in-sandbox session may have an in-flight
         // `request_operator_input` request whose response the re-attached host must still serve.
@@ -3503,7 +3513,12 @@ export class ThreadDriver implements JobDispatcher {
         // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
         ...(reattachCredentialId ? { credentialId: reattachCredentialId } : {}),
       });
-      await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+      await harness.finish(
+        result.report,
+        result.usage
+          ? { usage: result.usage, credentialId: result.credentialId ?? null }
+          : undefined,
+      );
       return result;
     } catch (err) {
       if (isEngineDetachedError(err)) {
@@ -3768,7 +3783,12 @@ export class ThreadDriver implements JobDispatcher {
       throw err;
     }
     // Engine turn done — persist the transcript (+ fallback) and end the live lane.
-    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+    await harness.finish(
+      result.report,
+      result.usage
+        ? { usage: result.usage, credentialId: result.credentialId ?? null }
+        : undefined,
+    );
     return result;
   }
 

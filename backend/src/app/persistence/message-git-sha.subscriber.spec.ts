@@ -1,0 +1,38 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { InsertEvent } from 'typeorm';
+import type { AppVersionService } from '../cluster/app-version.service';
+import { MessageGitShaSubscriber } from './message-git-sha.subscriber';
+import type { MessageEntity } from './entities';
+
+function make(sha = 'sha-abc1234') {
+  const dataSource = { subscribers: [] as unknown[] };
+  const version = { sha } as unknown as AppVersionService;
+  const subscriber = new MessageGitShaSubscriber(dataSource as never, version);
+  return { subscriber, dataSource };
+}
+
+describe('MessageGitShaSubscriber', () => {
+  it('registers itself on the datasource at construction', () => {
+    const { subscriber, dataSource } = make();
+    expect(dataSource.subscribers).toContain(subscriber);
+  });
+
+  it('listens to MessageEntity', () => {
+    const { subscriber } = make();
+    expect(subscriber.listenTo()).toBeDefined();
+  });
+
+  it('stamps engine_git_sha on insert when unset', () => {
+    const { subscriber } = make('sha-abc1234');
+    const entity = { engine_git_sha: null } as unknown as MessageEntity;
+    subscriber.beforeInsert({ entity } as InsertEvent<MessageEntity>);
+    expect(entity.engine_git_sha).toBe('sha-abc1234');
+  });
+
+  it('does not clobber an already-set engine_git_sha', () => {
+    const { subscriber } = make('sha-current');
+    const entity = { engine_git_sha: 'sha-preset' } as unknown as MessageEntity;
+    subscriber.beforeInsert({ entity } as InsertEvent<MessageEntity>);
+    expect(entity.engine_git_sha).toBe('sha-preset');
+  });
+});
