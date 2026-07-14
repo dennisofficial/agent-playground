@@ -12,20 +12,26 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
-import { normalizeMounts, type MountSpec } from '../sandbox/container-paths';
+import {
+  normalizeMounts,
+  type MountMode,
+  type MountSpec,
+} from '../sandbox/container-paths';
 import { WorkspaceConfigStore } from './workspace-config.store';
 import { WorkspaceSecretFileStore } from './workspace-secret.store';
 
 class SetMountDto {
   @IsString() @MinLength(1) path!: string;
-  @IsOptional() @IsString() mode?: string;
+  @IsOptional()
+  @IsIn(['per-thread', 'shared-ro', 'shared-rw'])
+  mode?: MountMode;
 }
 
 class RemoveMountDto {

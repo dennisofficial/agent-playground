@@ -57,6 +57,8 @@ const fakeCreds = {
 // ── Sentinel tenant (fixed ids → kept distinct from every other int test) ────────────────────────────
 
 const ORG = '66666666-6666-4666-8666-666666666661';
+const OTHER_ORG = '66666666-6666-4666-8666-666666666662';
+const OTHER_REPO = '66666666-6666-4666-8666-666666666663';
 const OWNER_EMAIL = 'workspace-profile-it-owner@example.test';
 const MEMBER_EMAIL = 'workspace-profile-it-member@example.test';
 const PASSWORD = 'workspace-profile-it-pw-12345';
@@ -87,16 +89,18 @@ async function register(
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
+    .query(`DELETE FROM jobs WHERE org_id = ANY($1)`, [[ORG, OTHER_ORG]])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
+    .query(`DELETE FROM repos WHERE org_id = ANY($1)`, [[ORG, OTHER_ORG]])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
+    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [
+      [ORG, OTHER_ORG],
+    ])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
+    .query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG, OTHER_ORG]])
     .catch(() => undefined);
   await ds
     .query(
@@ -149,12 +153,26 @@ beforeAll(async () => {
     [ORG, 'Org workspace-profile-it', 'workspace-profile-it'],
   );
   await ds.query(
+    `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`,
+    [OTHER_ORG, 'Other workspace-profile-it', 'workspace-profile-it-other'],
+  );
+  await ds.query(
     `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
     [ORG, owner.id],
   );
   await ds.query(
     `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member')`,
     [ORG, member.id],
+  );
+  await ds.query(
+    `INSERT INTO repos (id, org_id, slug, name, git_url) VALUES ($1, $2, $3, $4, $5)`,
+    [
+      OTHER_REPO,
+      OTHER_ORG,
+      'other-workspace-profile-repo',
+      'other-workspace-profile-repo',
+      'https://github.com/atlas-it/other-workspace-profile-repo.git',
+    ],
   );
 
   if (prevSurface === undefined) delete process.env.SURFACE;
@@ -214,6 +232,49 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
     expect(raw).not.toContain('"value"');
   });
 
+  it('owner: secret file writes reject unsafe destination paths', async () => {
+    const res = await request(server)
+      .put(`/web/orgs/${ORG}/workspace-secrets/files`)
+      .set('Cookie', ownerCookie)
+      .send({
+        repoId,
+        path: '../evil',
+        value: 'super-secret-value',
+        label: 'Bad path',
+      });
+    expect(res.status).toBe(400);
+
+    const get = await request(server)
+      .get(profilePath(ORG, repoId))
+      .set('Cookie', ownerCookie);
+    expect(get.body.secretFiles).toEqual([]);
+  });
+
+  it('owner: secret file writes/deletes require the repo to belong to the current org', async () => {
+    const put = await request(server)
+      .put(`/web/orgs/${ORG}/workspace-secrets/files`)
+      .set('Cookie', ownerCookie)
+      .send({
+        repoId: OTHER_REPO,
+        path: '.env.secret',
+        value: 'super-secret-value',
+        label: 'Wrong org',
+      });
+    expect(put.status).toBe(404);
+
+    const del = await request(server)
+      .delete(`/web/orgs/${ORG}/workspace-secrets/files`)
+      .set('Cookie', ownerCookie)
+      .send({ repoId: OTHER_REPO, path: '.env.secret' });
+    expect(del.status).toBe(404);
+
+    const rows = await ds.query(
+      `SELECT 1 FROM org_workspace_secret_files WHERE org_id = $1 AND repo_id = $2`,
+      [ORG, OTHER_REPO],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
   it('owner: PUT mounts with a valid mount persists and is reflected by a follow-up GET', async () => {
     const put = await request(server)
       .put(`${profilePath(ORG, repoId)}/mounts`)
@@ -235,6 +296,14 @@ describe('WorkspaceProfileController HTTP (auth + owner/membership guards, live 
       .put(`${profilePath(ORG, repoId)}/mounts`)
       .set('Cookie', ownerCookie)
       .send({ path: '../evil' });
+    expect(res.status).toBe(400);
+  });
+
+  it('owner: PUT mounts with an invalid mode is rejected with 400', async () => {
+    const res = await request(server)
+      .put(`${profilePath(ORG, repoId)}/mounts`)
+      .set('Cookie', ownerCookie)
+      .send({ path: 'some/cache', mode: 'world-writable' });
     expect(res.status).toBe(400);
   });
 

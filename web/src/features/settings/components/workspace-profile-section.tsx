@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, FileKey, Package, Plus, Trash2 } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  FileKey,
+  Package,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -201,9 +208,7 @@ function RepoProfile({
               {s.title}
             </div>
             {s.subtitle ? (
-              <div className="mt-0.5 text-[11px] text-faint">
-                {s.subtitle}
-              </div>
+              <div className="mt-0.5 text-[11px] text-faint">{s.subtitle}</div>
             ) : null}
           </div>
           {s.render(ctx)}
@@ -238,7 +243,11 @@ function Flasher({ flash }: { flash: Flash | null }) {
       {ok ? (
         <Check size={14} strokeWidth={2.2} style={{ color: "var(--green)" }} />
       ) : (
-        <AlertCircle size={14} strokeWidth={2} style={{ color: "var(--red)" }} />
+        <AlertCircle
+          size={14}
+          strokeWidth={2}
+          style={{ color: "var(--red)" }}
+        />
       )}
       <span
         className="text-[12px] font-medium"
@@ -278,7 +287,11 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
     if (!value) return setError("Enter a value.");
     setError("");
     try {
-      await save.mutateAsync({ path: p, value, label: label.trim() || undefined });
+      await save.mutateAsync({
+        path: p,
+        value,
+        label: label.trim() || undefined,
+      });
       resetForm();
     } catch (e) {
       setError((e as Error)?.message || "Could not save.");
@@ -354,7 +367,12 @@ function SecretFilesSection({ orgId, repoId, data, canManage }: ProfileCtx) {
           />
           {error ? <p className="text-[11.5px] text-red">{error}</p> : null}
           <div className="flex gap-2.5">
-            <Button size="sm" onClick={submit} loading={save.isPending} loadingText="Saving…">
+            <Button
+              size="sm"
+              onClick={submit}
+              loading={save.isPending}
+              loadingText="Saving…"
+            >
               Save file
             </Button>
             <Button size="sm" variant="ghost" onClick={resetForm}>
@@ -392,7 +410,10 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
       { path: p },
       {
         onSuccess: () =>
-          setFlash({ tone: "green", text: `Removed mount ${p} — ${RESTART_NOTE}` }),
+          setFlash({
+            tone: "green",
+            text: `Removed mount ${p} — ${RESTART_NOTE}`,
+          }),
         onError: (e) =>
           setFlash({
             tone: "red",
@@ -411,7 +432,10 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
         { path: p, mode },
         {
           onSuccess: () =>
-            setFlash({ tone: "green", text: `Saved mount ${p} — ${RESTART_NOTE}` }),
+            setFlash({
+              tone: "green",
+              text: `Saved mount ${p} — ${RESTART_NOTE}`,
+            }),
         },
       );
       setAdding(false);
@@ -476,7 +500,7 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
             <input
               value={path}
               onChange={(e) => setPath(e.target.value)}
-              placeholder="mount path (e.g. /workspace/.cache)"
+              placeholder="mount path (e.g. .cache or /root/.config/gcloud)"
               className="flex-1 rounded-md border border-border-2 bg-surface px-3 py-2 font-mono text-[12.5px] text-text outline-none placeholder:text-faint"
             />
             <select
@@ -495,7 +519,12 @@ function MountsSection({ orgId, repoId, data, canManage }: ProfileCtx) {
           </div>
           {error ? <p className="text-[11.5px] text-red">{error}</p> : null}
           <div className="flex gap-2.5">
-            <Button size="sm" onClick={submit} loading={save.isPending} loadingText="Saving…">
+            <Button
+              size="sm"
+              onClick={submit}
+              loading={save.isPending}
+              loadingText="Saving…"
+            >
               Save mount
             </Button>
             <Button
@@ -583,7 +612,13 @@ function ScriptEditor({
       {error ? <p className="mt-1.5 text-[11.5px] text-red">{error}</p> : null}
       {canManage ? (
         <div className="mt-3 flex gap-2.5">
-          <Button size="sm" onClick={save} disabled={!dirty} loading={saving} loadingText="Saving…">
+          <Button
+            size="sm"
+            onClick={save}
+            disabled={!dirty}
+            loading={saving}
+            loadingText="Saving…"
+          >
             Save
           </Button>
           <Button
@@ -651,8 +686,8 @@ function DetectedStackSection({ data }: ProfileCtx) {
         </div>
       )}
       <p className="mt-3 text-[11px] leading-relaxed text-faint">
-        Live drift needs a running sandbox, so it isn’t computed here — this
-        is the acknowledged manifest set.
+        Live drift needs a running sandbox, so it isn’t computed here — this is
+        the acknowledged manifest set.
       </p>
     </>
   );
