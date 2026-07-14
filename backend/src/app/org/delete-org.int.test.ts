@@ -2,7 +2,7 @@
  * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
  *
  * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
- * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/steps/
+ * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/stages/
  * decision_records/stimuli/job_sandboxes plus the org-direct org_credentials/org_invites/
  * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
  * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
@@ -35,7 +35,6 @@ import {
   OrgInviteEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
-  StepEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
@@ -135,7 +134,7 @@ async function purge(): Promise<void> {
     if (ids.length) {
       await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [ids]);
     }
-    for (const table of ['steps', 'threads', 'decision_records', 'stimuli', 'job_sandboxes', 'jobs', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
+    for (const table of ['threads', 'stages', 'decision_records', 'stimuli', 'job_sandboxes', 'jobs', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
       await ds.query(`DELETE FROM ${table} WHERE org_id = $1`, [org]);
     }
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]);
@@ -155,12 +154,15 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 
 /** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
 async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
-  await ds.query(`INSERT INTO messages (job_id, author, author_id, text) VALUES ($1, 'U', 'u', 'hi')`, [jobId]);
-  const [thread] = await ds.query(
-    `INSERT INTO threads (job_id, org_id, ordinal, brief, kind) VALUES ($1, $2, 10, 'b', 'builder') RETURNING id`,
+  const [stage] = await ds.query(
+    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [jobId, orgId],
   );
-  await ds.query(`INSERT INTO steps (thread_id, job_id, org_id, ordinal, brief) VALUES ($1, $2, $3, 10, 'b')`, [thread.id, jobId, orgId]);
+  const [thread] = await ds.query(
+    `INSERT INTO threads (job_id, org_id, stage_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
+    [jobId, orgId, stage.id],
+  );
+  await ds.query(`INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`, [jobId, thread.id]);
   await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, jobId]);
   await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, jobId]);
 }
@@ -193,7 +195,6 @@ beforeEach(async () => {
           RepoEntity,
           MessageEntity,
           ThreadEntity,
-          StepEntity,
           DecisionRecordEntity,
           StimulusEntity,
         ],
@@ -280,7 +281,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('repos', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('steps', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('stages', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('decision_records', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
@@ -306,7 +307,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('repos', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('steps', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('stages', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('stimuli', 'org_id', OTHER_ORG_ID)).toBe(2);
     expect(await countWhere('job_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);

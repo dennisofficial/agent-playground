@@ -9,6 +9,9 @@ export interface PostCtx {
   jobId: string;
   orgId: string;
   repoId: string;
+  /** The human who authored the message, for transcript attribution. Absent for programmatic posters, which
+   *  fall back to a System author (so those callers stay byte-identical to before this field existed). */
+  author?: { id: string; displayName: string };
 }
 
 /** A registered transport for one input-accepting thread kind (`input: 'operator' | 'agent'`). */

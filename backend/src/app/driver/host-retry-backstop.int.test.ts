@@ -259,18 +259,37 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      await threads.save(
-        threads.create({
-          job_id: job.id,
-          org_id: ORG_ID,
-          kind: 'builder',
-          ordinal: 10,
-          brief: 'Backend — host retry backstop',
-          status: 'pending',
-          condition: 'none',
-          decision_record_id: record.id,
-        }),
-      );
+      // Every job carries one planning stage-thread at job start — the anchor job-level operator notices are
+      // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
+      const planningStage = await store.createStage({
+        jobId: job.id,
+        orgId: ORG_ID,
+        kind: 'planning',
+        title: 'Planning',
+      });
+      await store.createThreadInStage({
+        stageId: planningStage.id,
+        jobId: job.id,
+        orgId: ORG_ID,
+        role: 'planning',
+        ordinal: 0,
+        brief: 'Main',
+      });
+      const stage = await store.createStage({
+        jobId: job.id,
+        orgId: ORG_ID,
+        kind: 'build',
+        title: 'Backend',
+        decisionRecordId: record.id,
+      });
+      await store.createThreadInStage({
+        stageId: stage.id,
+        jobId: job.id,
+        orgId: ORG_ID,
+        role: 'builder',
+        ordinal: 10,
+        brief: 'Backend — host retry backstop',
+      });
 
       // ── assemble the real driver ────────────────────────────────────────────────────────────────────
       const { turn, calls } = makeTransientTurn(3);
@@ -405,9 +424,15 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         judge,
         staticJudge,
         taskSink,
-        undefined,
-        undefined,
-        undefined,
+        undefined, // exposure
+        undefined, // conventions
+        undefined, // claudeCreds
+        undefined, // stimulusStore
+        undefined, // jit
+        {
+          planningThreadId: async (jid: string) =>
+            (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+        } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
       // Spy on the REAL store's setJobHalt (call-through, real Postgres write still goes through) so we can
@@ -455,7 +480,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       expect(finalRow.halt).toBeNull();
       expect(finalRow.pr_url).toBeTruthy();
 
-      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, kind: 'builder' } });
+      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, role: 'builder' } });
       expect(threadRow.status).toBe('done');
 
       // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.

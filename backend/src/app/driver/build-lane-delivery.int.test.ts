@@ -1,8 +1,9 @@
 /**
  * Build-lane host-seed delivery (Thread 2) — DB-query proof against LIVE Postgres.
  *
- * A build lane (`thread:<threadId>`) rides the SAME lane-generic `DeliveryPump` the brain uses, carrying HOST
- * SEEDS (build lanes are operator-read-only, d1). This proves the delivery contract end-to-end over real rows:
+ * A build lane (`thread:<threadId>`) rides the SAME lane-generic `DeliveryPump` the brain uses. These tests
+ * prove the HOST-SEED delivery contract end-to-end over real rows (the operator-input transport that now also
+ * rides this lane is a separately-registered handler — see (d)):
  *
  *  (a) `recordHostSeed` writes ONLY the durable `stimuli` row (no operator `messages` bubble), on the build
  *      lane, System-authored, with `priority` piggybacked into `reply_route` — the delivery ledger works while
@@ -12,7 +13,8 @@
  *      NOT yet delivered — the engine `input_ack` (simulated via `markChatDelivered`) stamps `delivered_at`.
  *  (c) SLOW PATH: a `queue` seed with NO live turn stays PENDING (no steer, `delivered_at` null) and remains
  *      eligible for the next-Leg drain; stamping it delivered (the register hand-off) removes it from the queue.
- *  (d) A build lane stays operator-read-only — `canPost('thread:<id>')` is false.
+ *  (d) A build lane accepts operator input once a handler registers — `canPost('thread:<id>')` is true — while
+ *      a genuinely read-only kind (`input:'none'`, e.g. autofix-lens) stays `canPost === false`.
  *
  * Integration: real Postgres (atlas_test schema), StimulusStoreService + DeliveryPump + TurnRegistry wired
  * against a real DataSource, mirroring driver/driver-store.int.test.ts's bootstrap. The TurnRunner + the two
@@ -33,6 +35,7 @@ import { ThreadInputService } from '../surface/thread-input.service';
 import { laneFor } from '../surface/thread-registry';
 import type { TurnRunnerService } from '../runner';
 import type { DriverStoreService } from './driver-store.service';
+import type { ThreadDriver } from './thread-driver.service';
 import { BuildLaneDeliveryService } from './build-lane-delivery.service';
 
 const ORG_ID = '52222222-2222-4222-8222-222222222222';
@@ -78,6 +81,10 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     stepsForThread: async () => [],
     recordBuildSystemChunk: async () => undefined,
   } as unknown as DriverStoreService;
+  // Delivery-mechanics tests exercise seedLane/pump only — the operator-input transport (which is the sole
+  // consumer of these two) is not registered here, so bare stubs suffice.
+  const fakeThreadInput = { register: () => undefined } as unknown as ThreadInputService;
+  const fakeThreadDriver = {} as unknown as ThreadDriver;
 
   let seeder: BuildLaneDeliveryService;
 
@@ -97,7 +104,15 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     registry = mod.get(TurnRegistry);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    seeder = new BuildLaneDeliveryService(pump, store, registry, fakeRunner, fakeDriverStore);
+    seeder = new BuildLaneDeliveryService(
+      pump,
+      store,
+      registry,
+      fakeRunner,
+      fakeDriverStore,
+      fakeThreadInput,
+      fakeThreadDriver,
+    );
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
@@ -247,9 +262,16 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(mainPending.map((p) => p.id)).toContain(seed.id);
   });
 
-  it('(d) a build lane stays operator-read-only — canPost(thread:<id>) is false', () => {
+  it('(d) a build lane accepts operator input once a handler is registered; a genuinely read-only kind never does', () => {
     const input = new ThreadInputService();
+    // Before any handler registers, even an input-enabled lane can't be posted to (boot-order gate).
     expect(input.canPost(lane)).toBe(false);
+    input.register('builder', { post: async () => undefined });
+    expect(input.canPost(lane)).toBe(true);
+
+    // A kind that stays `input:'none'` (autofix-lens) is never postable — the read-only gate still holds even
+    // with no handler in the way.
+    expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(false);
   });
 
   it('(e) pump() re-drives a pending `now` seed into a live steerable Leg — the build-lane sweep backstop', async () => {

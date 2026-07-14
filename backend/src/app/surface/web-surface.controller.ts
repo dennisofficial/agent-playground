@@ -75,6 +75,7 @@ import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
+import { ThreadInputService } from './thread-input.service';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import { resolveMergeApproval } from './resolve-merge-approval';
@@ -365,6 +366,10 @@ function coerceOperatorKind(raw: string | undefined): JobKind | null {
 
 interface SayDto {
   text: string;
+  /** Target thread coordinate (`thread:<threadId>`). Absent or `'main'` targets the job's planning thread
+   *  (today's behavior, unchanged); a `thread:<id>` lane targets that builder thread — steering it mid-turn or
+   *  re-driving it if halted. */
+  lane?: string;
 }
 /** One highlighted-and-annotated selection in a review-comments batch. */
 interface ReviewCommentItemDto {
@@ -660,6 +665,10 @@ export class WebSurfaceController {
     // `JobEntity` row (d7: `stage_id` is never null). From the @Global JobBootstrapModule. @Optional
     // (trailing), same reason as `exposure`/`jit`/`configStore` above.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
+    // The shared thread-input send seam — routes a lane-targeted `/say` (`lane=thread:<id>`) into the thread
+    // that owns the lane (steer-if-live / re-drive-if-halted), instead of always the planning brain. From the
+    // @Global LiveTurnModule. @Optional (trailing), same reason as `exposure`/`jit` above.
+    @Optional() private readonly threadInput?: ThreadInputService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -993,6 +1002,33 @@ export class WebSurfaceController {
       ? await this.ingestAttachments(org.id, jobId, files)
       : null;
     const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
+
+    // A lane-targeted message (`thread:<id>`) routes through the shared send seam to the thread that owns the
+    // lane — steering a live builder turn, or re-driving a halted one with the text as guidance. Absent or
+    // `'main'` keeps the byte-identical planning-brain path below.
+    const targetLane = body?.lane;
+    if (targetLane && targetLane !== 'main') {
+      const seam = this.threadInput;
+      if (!seam) {
+        throw new ServiceUnavailableException('thread messaging is unavailable — retry momentarily.');
+      }
+      if (!seam.canPost(targetLane)) {
+        throw new BadRequestException(`thread "${targetLane}" is not accepting messages right now`);
+      }
+      const author = operatorAuthor(user);
+      await seam.postToThread(
+        targetLane,
+        {
+          jobId,
+          orgId: org.id,
+          repoId: thread.repo_id,
+          author: { id: author.authorId, displayName: author.authorName },
+        },
+        bodyText,
+      );
+      return { ts: new Date().toISOString() };
+    }
+
     const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
       orgId: org.id,
       threadTs: jobId,

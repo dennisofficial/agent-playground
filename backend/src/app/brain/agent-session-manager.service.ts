@@ -579,15 +579,15 @@ export class AgentSessionManager
     // routes to these existing paths (see `ThreadInputService`).
     //
     // `main` (a chat turn to the brain): persist the message as a durable chat stimulus, then hand it to the
-    // same at-least-once pump the web composer uses (steer a live turn / coalesce into a fresh one). Authored
-    // `System` because a programmatic post is not the human operator typing.
+    // same at-least-once pump the web composer uses (steer a live turn / coalesce into a fresh one). A real
+    // operator post carries `author`; a programmatic post omits it and falls back to `System`.
     this.threadInput.register('main', {
-      post: async ({ jobId, orgId, repoId }, message) => {
+      post: async ({ jobId, orgId, repoId, author }, message) => {
         const recorded = await this.stimulusStore.recordChatStimulus({
           orgId,
           repoId,
           jobId,
-          author: { id: 'U-SYSTEM', displayName: 'System' },
+          author: author ?? { id: 'U-SYSTEM', displayName: 'System' },
           replyRoute: { surfaceId: 'web', jobRef: jobId },
           body: message,
         });
