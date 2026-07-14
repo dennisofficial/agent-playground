@@ -1612,11 +1612,15 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
   // Drift guard: every tool the brain actually registers — across every curated kind — MUST have a
   // TOOL_SHAPES entry, or the SDK bridge would silently strip every argument that tool's handler reads
-  // (a strict zod object drops unknown keys before the handler ever sees them).
+  // (a strict zod object drops unknown keys before the handler ever sees them). `__`-prefixed tools
+  // (e.g. `__profile_awareness`) are reserved-internal: they're invoked only via the raw `bridgeCall`
+  // round-trip and are filtered out of `toolBridgeTools` before the container ever builds an SDK proxy
+  // tool for them, so they never pass through TOOL_SHAPES and are exempt from this guard.
   it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
     for (const kind of [null, 'review', 'onboarding']) {
       const tools = manager.buildTools(fakeStimulus, kind);
       for (const name of Object.keys(tools)) {
+        if (name.startsWith('__')) continue;
         expect(
           TOOL_SHAPES,
           `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`,
@@ -1635,7 +1639,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
       for (const name of Object.keys(manager.buildTools(fakeStimulus, kind))) {
-        if (!profile.has(name)) registered.add(name);
+        // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
+        if (!profile.has(name) && !name.startsWith('__')) registered.add(name);
       }
     }
     const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);

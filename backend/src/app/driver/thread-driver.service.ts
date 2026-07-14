@@ -44,7 +44,9 @@ import {
   HOST_TRANSPORT_TRANSIENT_RE,
   MAX_HOST_RETRIES,
   isTransientAuthError,
+  INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '../engine/engine.types';
+import { ProfileAwarenessService } from '../workspace-profile';
 import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
@@ -307,6 +309,9 @@ export class ThreadDriver implements JobDispatcher {
     // `composeTurn` + `collectOperatorPrepends` rail the brain uses (d4). @Global BrainModule. @Optional so the
     // unit test constructs without it (undefined → the inert empty memory rail, byte-identical framing).
     @Optional() private readonly jit?: JitHostExecutor,
+    // @Optional so the direct-construction unit test constructs without it (undefined → the
+    // `__profile_awareness` tool is a silent no-op); DI (the @Global WorkspaceProfileModule) supplies it live.
+    @Optional() private readonly profileAwareness?: ProfileAwarenessService,
   ) {}
 
   /**
@@ -2300,6 +2305,16 @@ export class ThreadDriver implements JobDispatcher {
         : { ok: false, error: stop };
     };
     const tools: Record<string, ToolImpl> = {
+        [INTERNAL_PROFILE_AWARENESS_TOOL]: (args) =>
+          this.profileAwareness
+            ? this.profileAwareness.handle({
+                orgId: job.orgId,
+                repoId: job.repoId,
+                jobId: job.id,
+                sessionType: 'build',
+                command: String(args['command'] ?? ''),
+              })
+            : Promise.resolve(null),
         complete_thread: async (args) => {
           if (terminated) {
             return afterTerminal('done');

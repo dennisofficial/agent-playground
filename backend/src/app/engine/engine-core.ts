@@ -1,4 +1,4 @@
-import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallback, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
@@ -26,6 +26,8 @@ import {
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
+  detectInstallCommand,
+  installAwarenessRule,
 } from '../prompt-kit/jit';
 import {
   EngineAuthError,
@@ -41,6 +43,7 @@ import {
   type RunEngineArgs,
   type StructuredPatchHunk,
   resolveContextLimit,
+  INTERNAL_PROFILE_AWARENESS_TOOL,
 } from './engine.types';
 
 /**
@@ -632,7 +635,7 @@ export class EngineCore {
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge } =
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge, bridgeCall } =
       args;
 
     const abortController = new AbortController();
@@ -845,6 +848,55 @@ export class EngineCore {
     const svcNudgeEnabled = svcNudgeRule.enabled;
     const svcNudgeDeltaTokens = svcNudgeRule.throttle!.deltaTokens;
 
+    // Install-awareness (PostToolUse hook, added to `options` below): a Bash install is detected in-container
+    // (cheap regex gate) and round-tripped to the reserved `__profile_awareness` host tool via `bridgeCall`.
+    // Only wired when this turn carries a tool bridge — otherwise the round-trip has no transport (fail-silent).
+    const installAwarenessEnabled = installAwarenessRule.enabled && !!bridgeCall;
+
+    // Bound the host round-trip so a slow host / Haiku call never delays the model's next step.
+    const INSTALL_AWARENESS_TIMEOUT_MS = 5_000;
+
+    // Each enabled feature contributes one callback under the single `Bash` PostToolUse matcher. Built before
+    // `options` so the literal just spreads the assembled array; the callbacks capture `contextTokens` /
+    // `lastSvcNudgeTokens` (declared via `let` below) by reference and only run later, mid-query.
+    const bashPostToolUseHooks: HookCallback[] = [];
+    if (svcNudgeEnabled) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+        if (inp.tool_name !== 'Bash') return {};
+        const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+        if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd)) return {};
+        const now = contextTokens ?? 0;
+        // First matching command always fires; then at most once per delta of context growth.
+        if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
+        lastSvcNudgeTokens = now;
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse' as const,
+            additionalContext: svcNudgeRule.render({ command: cmd }),
+          },
+        };
+      });
+    }
+    if (installAwarenessEnabled) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+        if (inp.tool_name !== 'Bash') return {};
+        const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+        if (!detectInstallCommand(cmd)) return {};
+        try {
+          const text = await Promise.race([
+            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, { command: cmd, sessionType: sandboxKey.type }),
+            new Promise<null>((r) => setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS)),
+          ]);
+          if (typeof text !== 'string' || !text) return {};
+          return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: text } };
+        } catch {
+          return {};
+        }
+      });
+    }
+
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
     const options: Options = {
@@ -913,34 +965,8 @@ export class EngineCore {
       // model after the tool result — verified against the shipped CLI; `updatedToolOutput` is shape-validated
       // against Bash's output and would error). Throttled by context-token growth so back-to-back commands
       // don't spam. Fires post-execution and only ATTACHES context — never alters the command or its output.
-      ...(svcNudgeEnabled
-        ? {
-            hooks: {
-              PostToolUse: [
-                {
-                  matcher: 'Bash',
-                  hooks: [
-                    async (input) => {
-                      const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
-                      if (inp.tool_name !== 'Bash') return {};
-                      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
-                      if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd)) return {};
-                      const now = contextTokens ?? 0;
-                      // First matching command always fires; then at most once per delta of context growth.
-                      if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
-                      lastSvcNudgeTokens = now;
-                      return {
-                        hookSpecificOutput: {
-                          hookEventName: 'PostToolUse' as const,
-                          additionalContext: svcNudgeRule.render({ command: cmd }),
-                        },
-                      };
-                    },
-                  ],
-                },
-              ],
-            },
-          }
+      ...(bashPostToolUseHooks.length > 0
+        ? { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: bashPostToolUseHooks }] } }
         : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.

@@ -169,6 +169,7 @@ import {
 import {
   WorkspaceProfileService,
   detectRepoManifests,
+  ProfileAwarenessService,
 } from '../workspace-profile';
 import {
   CONTAINER_CONTEXT,
@@ -208,6 +209,7 @@ import {
   MAX_HOST_RETRIES,
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
+  INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '../engine/engine.types';
 import type {
   EngineEvent,
@@ -501,6 +503,9 @@ export class AgentSessionManager
     // Live-turn fan-out for the mid-turn "Reconnecting…" indicator during a host-backstop retry. @Optional
     // so unit tests construct the manager without it; DI (@Global LiveTurnModule) supplies it live.
     @Optional() private readonly liveTurns?: LiveTurnStore,
+    // @Optional so unit tests can construct the manager without it (undefined → the `__profile_awareness`
+    // tool is a silent no-op); DI (the @Global WorkspaceProfileModule) supplies it live.
+    @Optional() private readonly profileAwareness?: ProfileAwarenessService,
   ) {}
 
   /**
@@ -3506,6 +3511,16 @@ export class AgentSessionManager
     let directBuildVerification: VerificationEvidence[] = [];
 
     const tools: Record<string, ToolImpl> = {
+      [INTERNAL_PROFILE_AWARENESS_TOOL]: (args) =>
+        this.profileAwareness
+          ? this.profileAwareness.handle({
+              orgId: stimulus.orgId,
+              repoId: stimulus.repoId,
+              jobId: stimulus.jobId,
+              sessionType: 'brain',
+              command: String(args['command'] ?? ''),
+            })
+          : Promise.resolve(null),
       report_verification: async (args) => {
         const passed = args['passed'] === true;
         directBuildVerified = passed;
@@ -4760,6 +4775,7 @@ export class AgentSessionManager
     // the build/plan/ship tools is enforced (un-callable, not just discouraged).
     if (review) {
       return {
+        [INTERNAL_PROFILE_AWARENESS_TOOL]: tools[INTERNAL_PROFILE_AWARENESS_TOOL],
         ask_question: tools.ask_question,
         withdraw_question: tools.withdraw_question,
         set_job_kind: tools.set_job_kind,
@@ -4778,6 +4794,7 @@ export class AgentSessionManager
     // makes sense when there is no other in-flight build PR to fold the config change into.
     if (!onboarding) return { ...tools, ...intake, ...atlasProd };
     return {
+      [INTERNAL_PROFILE_AWARENESS_TOOL]: tools[INTERNAL_PROFILE_AWARENESS_TOOL],
       ask_question: tools.ask_question,
       withdraw_question: tools.withdraw_question,
       recall: tools.recall,

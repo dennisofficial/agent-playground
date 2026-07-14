@@ -5,3 +5,4 @@ export {
   type ProfileGap,
 } from './workspace-profile.service';
 export { detectRepoManifests, KNOWN_MANIFESTS } from './manifest-detect';
+export { ProfileAwarenessService } from './profile-awareness.service';

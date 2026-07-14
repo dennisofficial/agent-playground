@@ -435,6 +435,33 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
     expect(events.some((e) => (e as { kind?: string; text?: string }).text === 'tool-ok')).toBe(true);
   });
 
+  it('filters __-prefixed tool names out of the model-facing toolBridgeTools projection', async () => {
+    const redis = new InMemoryRedisStream();
+    let capturedSpec: Record<string, unknown> | undefined;
+    const containers = {
+      execDetached: vi.fn(async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
+        const turnId = opts?.env?.TURN_ID;
+        if (turnId) {
+          const k = turnKeys(turnId);
+          const specFrames = await redis.xread({ stream: k.spec, lastId: '0-0', count: 10, blockMs: 50 });
+          capturedSpec = specFrames[0]?.data as Record<string, unknown> | undefined;
+          void redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
+        }
+        return {};
+      }),
+    } as unknown as ContainerEngine;
+    const bridge = {
+      jobId: 'th1',
+      tools: {
+        submit_plan: async () => ({ ok: true }),
+        __profile_awareness: async () => null,
+      },
+    };
+    const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+    await runner.run({ ...baseArgs(() => undefined), toolBridge: bridge as never });
+    expect(capturedSpec?.toolBridgeTools).toEqual(['submit_plan']);
+  });
+
   it('injects authenticated git into the exec env when target.gitAuth carries a github token', async () => {
     const redis = new InMemoryRedisStream();
     const frames = [{ t: 'final', r: { result: 'DONE' } }];
