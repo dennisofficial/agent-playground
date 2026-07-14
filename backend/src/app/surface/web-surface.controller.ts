@@ -508,6 +508,50 @@ interface AnswerBatchDto {
 }
 /** Total inline content cap across a batch's items (must stay ≤ the JSON body-parser limit in `main.ts`). */
 const MAX_BATCH_BYTES = 4 * 1024 * 1024;
+/** Hard cap on staged answers per submit, to bound per-item DB/file-store work even when bodies are small. */
+const MAX_BATCH_ITEMS = 50;
+
+function requiredBatchString(value: unknown, field: string): string {
+  const s = String(value ?? '').trim();
+  if (!s) throw new BadRequestException(`${field} is required`);
+  return s;
+}
+
+function requiredBatchValue(value: unknown, field: string): string {
+  const s = String(value ?? '');
+  if (!s) throw new BadRequestException(`${field} is required`);
+  return s;
+}
+
+function normalizeAnswerBatchItem(item: unknown): AnswerBatchItem {
+  if (item == null || typeof item !== 'object') {
+    throw new BadRequestException('each item must be an object');
+  }
+  const raw = item as Record<string, unknown>;
+  if (raw.kind === 'question') {
+    return {
+      kind: 'question',
+      questionId: requiredBatchString(raw.questionId, 'questionId'),
+      answer: requiredBatchString(raw.answer, 'answer'),
+    };
+  }
+  if (raw.kind === 'file') {
+    return {
+      kind: 'file',
+      requestId: requiredBatchString(raw.requestId, 'requestId'),
+      filename: String(raw.filename ?? 'upload').trim() || 'upload',
+      content: requiredBatchValue(raw.content, 'content'),
+    };
+  }
+  if (raw.kind === 'secret') {
+    return {
+      kind: 'secret',
+      requestId: requiredBatchString(raw.requestId, 'requestId'),
+      value: requiredBatchValue(raw.value, 'value'),
+    };
+  }
+  throw new BadRequestException('unsupported batch item kind');
+}
 
 /**
  * The outcome of applying ONE staged card answer (question/file/secret), shared by the single endpoints and
@@ -2178,16 +2222,20 @@ export class WebSurfaceController {
     if (!Array.isArray(body?.items) || body.items.length === 0) {
       throw new BadRequestException('items must be a non-empty array');
     }
+    if (body.items.length > MAX_BATCH_ITEMS) {
+      throw new BadRequestException(`batch may contain at most ${MAX_BATCH_ITEMS} items`);
+    }
+    const items = body.items.map((item) => normalizeAnswerBatchItem(item));
     // Owner is required only when the batch carries a file/secret — a question-only batch stays
     // membership-only (the web routes even question-only sends through here). `@CurrentOrg()` already carries
     // the resolved role, so check it directly rather than re-querying membership.
-    const needsOwner = body.items.some(
+    const needsOwner = items.some(
       (i) => i.kind === 'file' || i.kind === 'secret',
     );
     if (needsOwner && org.role !== 'owner') {
       throw new ForbiddenException('providing files/secrets requires an org owner');
     }
-    const totalBytes = body.items.reduce(
+    const totalBytes = items.reduce(
       (n, i) =>
         n +
         ('content' in i
@@ -2214,7 +2262,7 @@ export class WebSurfaceController {
     }> = [];
     const results: Array<{ id: string; status: string }> = [];
     let wroteToStore = false;
-    for (const item of body.items) {
+    for (const item of items) {
       const id = item.kind === 'question' ? item.questionId : item.requestId;
       const r =
         item.kind === 'question'

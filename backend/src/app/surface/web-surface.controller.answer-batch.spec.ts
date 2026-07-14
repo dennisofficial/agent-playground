@@ -159,6 +159,28 @@ describe('WebSurfaceController — answer-batch', () => {
     );
   });
 
+  it('rejects malformed batch items before any per-card write', async () => {
+    const { controller, store, secrets } = makeController();
+    await expect(
+      controller.answerBatch(owner, 'job-1', {
+        items: [{ kind: 'question', questionId: 'q-1', answer: '   ' }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.answerBatch(owner, 'job-1', {
+        items: [{ kind: 'file', requestId: 'f-1', filename: 'empty.env', content: '' }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.answerBatch(owner, 'job-1', {
+        items: [{ kind: 'bogus', requestId: 'f-1', content: 'A=1' } as never],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(store.markQuestionAnswered).not.toHaveBeenCalled();
+    expect(secrets.write).not.toHaveBeenCalled();
+  });
+
   it('a NON-owner member can submit a question-only batch, but is 403d on a batch containing a file or secret item', async () => {
     const { controller, seedCalls } = makeController();
     // Question-only — membership suffices, no 403.
@@ -193,6 +215,21 @@ describe('WebSurfaceController — answer-batch', () => {
     expect(secrets.write).not.toHaveBeenCalled();
     expect(seedCalls).toHaveLength(0);
     expect(res.ts).toBe('');
+  });
+
+  it('rejects a batch with too many items before any write', async () => {
+    const { controller, store, secrets } = makeController();
+    await expect(
+      controller.answerBatch(owner, 'job-1', {
+        items: Array.from({ length: 51 }, () => ({
+          kind: 'question' as const,
+          questionId: 'q-1',
+          answer: 'Postgres',
+        })),
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(store.markQuestionAnswered).not.toHaveBeenCalled();
+    expect(secrets.write).not.toHaveBeenCalled();
   });
 
   it('rejects a batch whose total inline content exceeds MAX_BATCH_BYTES with 400', async () => {
