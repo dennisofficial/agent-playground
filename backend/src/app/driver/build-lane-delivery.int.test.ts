@@ -23,6 +23,7 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
+import type { ModuleRef } from '@nestjs/core';
 import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -35,7 +36,6 @@ import { ThreadInputService } from '../surface/thread-input.service';
 import { laneFor } from '../surface/thread-registry';
 import type { TurnRunnerService } from '../runner';
 import type { DriverStoreService } from './driver-store.service';
-import type { ThreadDriver } from './thread-driver.service';
 import { BuildLaneDeliveryService } from './build-lane-delivery.service';
 
 const ORG_ID = '52222222-2222-4222-8222-222222222222';
@@ -84,7 +84,9 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
   // Delivery-mechanics tests exercise seedLane/pump only — the operator-input transport (which is the sole
   // consumer of these two) is not registered here, so bare stubs suffice.
   const fakeThreadInput = { register: () => undefined } as unknown as ThreadInputService;
-  const fakeThreadDriver = {} as unknown as ThreadDriver;
+  // redriveThread (the halted-thread path) is not exercised by these delivery-mechanics tests — a
+  // ModuleRef stub that's never actually asked to resolve ThreadDriver suffices.
+  const fakeModuleRef = { get: () => ({}) } as unknown as ModuleRef;
 
   let seeder: BuildLaneDeliveryService;
 
@@ -111,7 +113,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       fakeRunner,
       fakeDriverStore,
       fakeThreadInput,
-      fakeThreadDriver,
+      fakeModuleRef,
     );
 
     await ds.query(

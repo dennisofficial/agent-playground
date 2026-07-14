@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import type { CollectedPending, DeliveryLane } from '../stimulus';
 import { DeliveryPump, StimulusStoreService } from '../stimulus';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -6,7 +7,7 @@ import { TurnRunnerService } from '../runner';
 import { laneFor, ThreadInputService } from '../surface';
 import { fromExternal } from '../prompt-kit/message';
 import { DriverStoreService } from './driver-store.service';
-import { ThreadDriver } from './thread-driver.service';
+import type { ThreadDriver } from './thread-driver.service';
 
 /** DI token a host-seed dispatcher (`JitHostExecutor`) binds to reach the build-lane seed path without a
  *  SurfaceModule↔DriverModule cycle. Bound to {@link BuildLaneDeliveryService}. */
@@ -54,8 +55,15 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
     private readonly turnRunner: TurnRunnerService,
     private readonly driverStore: DriverStoreService,
     private readonly threadInput: ThreadInputService,
-    private readonly threadDriver: ThreadDriver,
+    // Lazily resolved (avoiding a static module cycle: thread-driver.service.ts pulls in this file
+    // transitively via jit-host-executor) — same pattern as surface/resolve-merge-approval.ts.
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  private async resolveThreadDriver(): Promise<ThreadDriver> {
+    const { ThreadDriver } = await import('./thread-driver.service.js');
+    return this.moduleRef.get(ThreadDriver, { strict: false });
+  }
 
   /**
    * Register the OPERATOR transport for every builder-lane thread on the shared send seam, so a generic
@@ -80,7 +88,8 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
 
         const halted = (await this.driverStore.haltOutcome(threadId).catch(() => null)) != null;
         if (halted) {
-          await this.threadDriver.redriveThread(jobId, threadId, message);
+          const threadDriver = await this.resolveThreadDriver();
+          await threadDriver.redriveThread(jobId, threadId, message);
           return;
         }
 
