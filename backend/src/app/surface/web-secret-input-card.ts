@@ -74,6 +74,16 @@ export interface WebSecretInputCard {
    * `provided_at != null && delivered_at == null` card a crash left stranded (at-least-once).
    */
   delivered_at?: string;
+  /**
+   * ISO-8601 time a durable/mcp request was WITHDRAWN — either by the brain via `withdraw_secret_request`
+   * (no longer needed / wrong target) or by the provide endpoint stamping a terminal failure (an MCP
+   * OAuth refusal, a vanished MCP server row) in place of the old single-slot clear. Terminal + mutually
+   * exclusive with `provided_at`. Its presence greys the card out and makes a racing provide a no-op. Not
+   * used by the EPHEMERAL lane, which keeps its single-slot `awaiting_secret_id` pointer instead.
+   */
+  withdrawnAt?: string;
+  /** The optional one-line rationale for the withdrawal (shown on the greyed card). */
+  withdrawnReason?: string;
 }
 
 /** Build a `WebSecretInputCard` from the brain's `request_secret` args. */

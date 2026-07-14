@@ -507,6 +507,11 @@ export const PREVIEW_PREP_SEED_BODY = [
 
 const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
 
+/** The fenced-markdown rendering of a recipe body, shared by the operator seed and the build-lane view. */
+export function fencedRecipe(recipeBody: string): string {
+  return '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```';
+}
+
 /** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
  *  run. Spliced into both footer branches of {@link composePreviewPrepSeed}. */
 const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
@@ -524,10 +529,7 @@ export function composePreviewPrepSeed(instructions: string | null): string {
   const recipeBody = recipe ?? PREVIEW_RECIPE_NONE;
   const block =
     'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):\n' +
-    '```md\n' +
-    recipeBody +
-    (recipeBody.endsWith('\n') ? '' : '\n') +
-    '```';
+    fencedRecipe(recipeBody);
   const footer = recipe
     ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
       'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
@@ -542,6 +544,21 @@ export function composePreviewPrepSeed(instructions: string | null): string {
       'preview is instant instead of re-discovered. ' +
       PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE;
   return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
+}
+
+/** Build-lane READ-ONLY view of the saved recipe (the brain owns writes). '' when none, so a gating
+ *  fragment drops entirely. Same fenced formatting as the operator seed. */
+export function renderBuildLanePreviewRecipe(instructions: string | null): string {
+  const recipe = instructions?.trim() ? instructions : null;
+  if (!recipe) return '';
+  return [
+    'REPO PREVIEW RECIPE — this repo has a saved, Atlas-managed recipe for standing up a live preview',
+    '(envs, ports, docker compose / migrate / seed, the deep-link). If your work requires booting the app',
+    'or exposing a service for live validation, FOLLOW/ADAPT it instead of re-discovering the setup. It is',
+    'READ-ONLY here — the job brain maintains it; do not attempt to change it.',
+    '',
+    fencedRecipe(recipe),
+  ].join('\n');
 }
 
 // ── BEHAVIORAL (the three asks) ─────────────────────────────────────────────────────────────────────

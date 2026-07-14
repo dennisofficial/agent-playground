@@ -150,6 +150,9 @@ export class StimulusIntake {
       seedQuestionId: stimulus.seedQuestionId,
       seedSecretId: stimulus.seedSecretId,
       seedFileId: stimulus.seedFileId,
+      seedQuestionIds: stimulus.seedQuestionIds,
+      seedSecretIds: stimulus.seedSecretIds,
+      seedFileIds: stimulus.seedFileIds,
     });
     // Durable hand-off: the row is persisted; the pump owns steer-vs-turn + the delivered/sweep guarantee.
     // NOT the old `await handleChat` (a fire-and-forget turn that could be steered into a dead engine and

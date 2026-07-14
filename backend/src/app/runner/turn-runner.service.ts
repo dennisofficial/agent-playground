@@ -68,6 +68,11 @@ export interface RunTurnInput {
    */
   skills?: ResolvedSkill[];
   /**
+   * The repo's saved preview recipe, forwarded to the in-sandbox engine for the `validate` subagent
+   * prompt. Absent ⇒ nothing injected.
+   */
+  previewInstructions?: string | null;
+  /**
    * Authenticated-git for this turn (resolved repo url + org PAT) so the agent can fetch/push/merge from
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
    * `gitUrl`/no token). Set by build/execute dispatch; the runner puts it on the docker `target`.
@@ -140,7 +145,7 @@ type TurnInputDerivedOrRequiredKey =
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
 const TURN_INPUT_FORWARD_KEYS = [
-  'auth', 'userMcpServers', 'skills', 'model', 'modelReasoningEffort',
+  'auth', 'userMcpServers', 'skills', 'previewInstructions', 'model', 'modelReasoningEffort',
   'richStream', 'steerable', 'rotationNudge', 'toolBridge', 'turnMeta',
 ] as const satisfies readonly TurnInputForwardKey[];
 const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>] extends [never]

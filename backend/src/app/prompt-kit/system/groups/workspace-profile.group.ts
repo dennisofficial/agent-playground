@@ -103,7 +103,9 @@ export class WorkspaceProfileGroup {
       'and NEVER print, cat, echo, or repeat one back. Call request_secret({ name, path, description }): the',
       'operator enters it through a secure field that stores it ENCRYPTED + grants it to `path`; you see only a',
       'masked "✓ NAME provided" confirmation. Once provided, the value is RENDERED into your live worktree at',
-      '`path` (real, gitignored) so you can boot the app — use it, never echo it. Request ONE at a time and wait.',
+      '`path` (real, gitignored) so you can boot the app — use it, never echo it. request_secret is per-card',
+      '(like request_file): you may open SEVERAL at once and need not wait one at a time; withdraw_secret_request',
+      'retracts any you no longer need.',
       'To take a WHOLE env file at once (better than 20 keys), or a file the operator must UPLOAD — a',
       'service-account JSON, a keystore/.pem, a gitignored .env.keys — call request_file({ path, description }):',
       'the operator uploads it, contents stored ENCRYPTED + granted to `path` (which MUST be gitignored). Both',
@@ -111,7 +113,8 @@ export class WorkspaceProfileGroup {
       'For a ONE-TIME, short-lived value that must go to a RUNNING process, not a file — an OAuth verification',
       'code, a 2FA/OTP, a sudo password — call request_secret({ ephemeral: true, deliver_to, description }):',
       'the value is piped straight into `deliver_to` (an absolute path, usually a FIFO you set up) in the live',
-      'sandbox and NEVER stored. See AUTH / CAPABILITY ACCESS for the full interactive-login recipe.',
+      'sandbox and NEVER stored. The ephemeral lane IS single-slot — request ONE at a time and wait for it, since',
+      'it blocks on a live process. See AUTH / CAPABILITY ACCESS for the full interactive-login recipe.',
     ].join('\n');
   }
 

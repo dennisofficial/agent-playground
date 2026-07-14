@@ -162,6 +162,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   request_file: { path: 'config/local.json', description: 'Local override config.' },
   withdraw_file_request: { requestId: 'r1', reason: 'No longer needed.' },
+  withdraw_secret_request: { requestId: 's1', reason: 'No longer needed.' },
   write_workspace_config: {
     mounts: [{ path: '/x', mode: 'cache' }],
     secrets: { name: 'X' },

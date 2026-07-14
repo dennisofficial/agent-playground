@@ -16,6 +16,13 @@ function stateKey(nonce: string): string {
   return `github_app_state:${nonce}`;
 }
 
+/** What a consumed nonce resolves to: the org that started the install + the user who initiated it. */
+export interface GithubAppConnectState {
+  orgId: string;
+  /** The initiating user — drives the common-ownership reuse gate. `null` only for a legacy nonce. */
+  userId: string | null;
+}
+
 /**
  * Short-lived, single-use, un-forgeable `state` nonce for the GitHub App connect flow. GitHub's Setup URL
  * callback is un-scoped — it only echoes back the `state` we handed it, not the org — so this is the ONLY
@@ -28,16 +35,30 @@ function stateKey(nonce: string): string {
 export class GithubAppStateStore {
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
-  /** Mint a fresh nonce bound to `orgId`, expiring after {@link STATE_TTL_SECONDS}. */
-  async stash(orgId: string): Promise<string> {
+  /** Mint a fresh nonce bound to `orgId` + the initiating `userId`, expiring after {@link STATE_TTL_SECONDS}. */
+  async stash(orgId: string, userId: string): Promise<string> {
     const nonce = randomBytes(32).toString('hex');
-    await this.redis.set(stateKey(nonce), orgId, 'EX', STATE_TTL_SECONDS);
+    const value = JSON.stringify({ orgId, userId } satisfies GithubAppConnectState);
+    await this.redis.set(stateKey(nonce), value, 'EX', STATE_TTL_SECONDS);
     return nonce;
   }
 
-  /** Read + delete the orgId for `nonce` — single-use. Null when absent/expired/already consumed. */
-  async consume(nonce: string): Promise<string | null> {
-    const orgId = await this.redis.eval(CONSUME_SCRIPT, 1, stateKey(nonce));
-    return typeof orgId === 'string' ? orgId : null;
+  /**
+   * Read + delete the state for `nonce` — single-use. Null when absent/expired/already consumed. A legacy
+   * nonce (a bare orgId string stashed before this shape existed) degrades to `userId: null`, so the reuse
+   * gate can't confirm ownership and fails closed rather than crashing.
+   */
+  async consume(nonce: string): Promise<GithubAppConnectState | null> {
+    const raw = await this.redis.eval(CONSUME_SCRIPT, 1, stateKey(nonce));
+    if (typeof raw !== 'string') return null;
+    try {
+      const parsed = JSON.parse(raw) as GithubAppConnectState;
+      if (parsed && typeof parsed.orgId === 'string') {
+        return { orgId: parsed.orgId, userId: typeof parsed.userId === 'string' ? parsed.userId : null };
+      }
+    } catch {
+      // Not JSON — a legacy nonce holding a bare orgId.
+    }
+    return { orgId: raw, userId: null };
   }
 }

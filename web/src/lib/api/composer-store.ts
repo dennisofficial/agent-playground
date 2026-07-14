@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useSyncExternalStore } from "react";
-import type { JobRef } from "./job-api";
+import type { JobMessage, JobRef } from "./job-api";
 import type { PendingAttachment } from "./job-queries";
 import type { ReviewComment } from "@/features/job-workspace/review-comments";
 
@@ -35,6 +35,17 @@ export interface QueuedMessage {
   attachments: PendingAttachment[];
 }
 
+/**
+ * One card's answer staged (not yet sent) into the tray above the Composer — a question pick, a picked
+ * file, or a durable/MCP secret value. `cardId` is the card's own id (`questionId`/`requestId`); one entry
+ * per `cardId` (re-staging replaces). Held in memory only — file/secret content is sensitive (never
+ * serialized to sessionStorage), and question answers are cheap to re-enter after a reload.
+ */
+export type StagedAnswer =
+  | { kind: "question"; cardId: string; label: string; answer: string }
+  | { kind: "file"; cardId: string; label: string; filename: string; content: string }
+  | { kind: "secret"; cardId: string; label: string; value: string };
+
 export interface ComposerDraft {
   /** Captured so the offline-send flusher can POST without a mounted view (no ref to rebuild otherwise). */
   ref: JobRef;
@@ -45,6 +56,8 @@ export interface ComposerDraft {
   comments: ReviewComment[];
   /** Per-Job offline-send queue. Its serializable metadata persists; its attachments do not. */
   outbox: QueuedMessage[];
+  /** In-memory ONLY — never persisted. One staged answer per card, awaiting a batched Send. */
+  stagedAnswers: StagedAnswer[];
 }
 
 interface Entry {
@@ -60,6 +73,7 @@ const EMPTY: ComposerDraft = Object.freeze({
   attachments: [],
   comments: [],
   outbox: [],
+  stagedAnswers: [],
 }) as ComposerDraft;
 
 const KEY_PREFIX = "atlas.composer.draft.";
@@ -139,6 +153,7 @@ class ComposerStore {
       text: persisted?.text ?? "",
       attachments: [],
       comments: persisted?.comments ?? [],
+      stagedAnswers: [],
       // An attachments-only queued item (no text, no comments) hydrates with nothing to send — its Files
       // can't be restored, so drop it rather than leave a dead entry the flusher would silently discard.
       outbox: (persisted?.outbox ?? [])
@@ -162,7 +177,13 @@ class ComposerStore {
     if (!entry) {
       // Defensive: a subscriber before `ensure`. Create a bare entry so its listeners survive.
       entry = {
-        state: { ...EMPTY, attachments: [], comments: [], outbox: [] },
+        state: {
+          ...EMPTY,
+          attachments: [],
+          comments: [],
+          outbox: [],
+          stagedAnswers: [],
+        },
         listeners: new Set(),
       };
       this.entries.set(jobId, entry);
@@ -204,6 +225,45 @@ class ComposerStore {
     const prev = this.getDraft(ref.jobId).attachments;
     // Attachments are never persisted, so no schedulePersist here.
     this.replace(ref, { attachments: updater(prev) });
+  }
+
+  setStagedAnswers(
+    ref: JobRef,
+    updater: (prev: StagedAnswer[]) => StagedAnswer[],
+  ): void {
+    this.ensure(ref);
+    const prev = this.getDraft(ref.jobId).stagedAnswers;
+    // Staged answers are never persisted, so no schedulePersist here.
+    this.replace(ref, { stagedAnswers: updater(prev) });
+  }
+
+  /** Stage (or re-stage) one card's answer — upserts by `cardId` so re-answering the same card replaces its
+   *  prior staged entry rather than duplicating it. */
+  stageAnswer(ref: JobRef, answer: StagedAnswer): void {
+    this.setStagedAnswers(ref, (prev) => [
+      ...prev.filter((a) => a.cardId !== answer.cardId),
+      answer,
+    ]);
+  }
+
+  /** Drop one staged answer (the tray's remove `X`, or a card's own "Remove" reverting it to answerable). */
+  removeStagedAnswer(ref: JobRef, cardId: string): void {
+    this.setStagedAnswers(ref, (prev) => prev.filter((a) => a.cardId !== cardId));
+  }
+
+  /**
+   * Drop any staged answer whose card has gone stale — withdrawn by the brain, or already answered/
+   * provided (e.g. from another tab) — since it was staged, so the tray can't submit a dead card. Called on
+   * every `threadMessages` refetch. A card with NO match in `messages` is KEPT (the message list may be
+   * paginated/incomplete, so absence isn't evidence the card is gone).
+   */
+  pruneStagedAnswers(ref: JobRef, messages: JobMessage[]): void {
+    const entry = this.entries.get(ref.jobId);
+    if (!entry) return;
+    const prev = entry.state.stagedAnswers;
+    const next = prev.filter((a) => !isStagedAnswerStale(a, messages));
+    if (next.length === prev.length) return; // no-op guard, avoid churn on every refetch
+    this.replace(ref, { stagedAnswers: next });
   }
 
   setOutbox(
@@ -376,6 +436,28 @@ class ComposerStore {
   }
 }
 
+/**
+ * Whether a staged answer's card has already gone stale (withdrawn, or answered/provided by another tab)
+ * since it was staged. Matches by the card's own kind + id (`questionId`/`requestId`) against `cardId`; a
+ * card that isn't found at all in `messages` is NOT stale — the list may be paginated/incomplete.
+ */
+function isStagedAnswerStale(answer: StagedAnswer, messages: JobMessage[]): boolean {
+  for (const m of messages) {
+    const card = m.card;
+    if (!card) continue;
+    if (answer.kind === "question" && card.type === "question_card" && card.questionId === answer.cardId) {
+      return card.withdrawnAt != null || card.answer != null;
+    }
+    if (answer.kind === "file" && card.type === "file_request_card" && card.requestId === answer.cardId) {
+      return card.withdrawnAt != null || card.provided_at != null;
+    }
+    if (answer.kind === "secret" && card.type === "secret_input_card" && card.requestId === answer.cardId) {
+      return card.withdrawnAt != null || card.provided_at != null;
+    }
+  }
+  return false;
+}
+
 export const composerStore = new ComposerStore();
 composerStore.restorePersistedOutboxes();
 
@@ -429,6 +511,21 @@ export function useComposerComments(ref: JobRef): ReviewComment[] {
     [ref.jobId],
   );
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.comments);
+}
+
+/** Slice-aware subscription — a Job's staged-answers tray only, so `<StagedAnswersTray>` and each card's
+ *  compact "staged" state re-render on stage/remove without subscribing to text/attachments/comments. */
+export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
+  composerStore.ensure(ref);
+  const subscribe = useCallback(
+    (cb: () => void) => composerStore.subscribe(ref.jobId, cb),
+    [ref.jobId],
+  );
+  const getSnapshot = useCallback(
+    () => composerStore.getDraft(ref.jobId).stagedAnswers,
+    [ref.jobId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.stagedAnswers);
 }
 
 /** Slice-aware subscription — a Job's offline-send outbox only, so `<QueuedTray>` re-renders on enqueue/
