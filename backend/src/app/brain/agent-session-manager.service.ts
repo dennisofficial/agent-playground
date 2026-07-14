@@ -1498,6 +1498,54 @@ export class AgentSessionManager
           );
       }
     }
+    // BATCH seed: a single combined `answer-batch` seed carries arrays of ids. Loop each with the SAME
+    // per-kind guarded logic as the singular blocks above — per-id best-effort (`.catch` + continue), so a
+    // transient failure on one card leaves it owed for the sweep without stranding the rest of the batch.
+    for (const questionId of stimulus.seedQuestionIds ?? []) {
+      const card = await this.store
+        .getQuestionCard(stimulus.jobId, questionId)
+        .catch(() => null);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store
+          .markQuestionDelivered(stimulus.jobId, questionId)
+          .catch((err) =>
+            this.logger.warn(`markQuestionDelivered (batch steer) failed: ${err}`),
+          );
+      }
+    }
+    for (const secretId of stimulus.seedSecretIds ?? []) {
+      const card = await this.store
+        .getSecretCard(stimulus.jobId, secretId)
+        .catch(() => null);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store
+            .markSecretDelivered(stimulus.jobId, secretId)
+            .catch((err) =>
+              this.logger.warn(`markSecretDelivered (batch legacy seed) failed: ${err}`),
+            );
+        }
+        // Unconditional compare-and-clear — a no-op for durable/mcp per-card secrets (no pointer), same as
+        // the singular block above.
+        await this.store
+          .clearAwaitingSecret(stimulus.jobId, secretId)
+          .catch((err) =>
+            this.logger.warn(`clearAwaitingSecret (batch legacy seed) failed: ${err}`),
+          );
+      }
+    }
+    for (const fileId of stimulus.seedFileIds ?? []) {
+      const card = await this.store
+        .getFileCard(stimulus.jobId, fileId)
+        .catch(() => null);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store
+          .markFileDelivered(stimulus.jobId, fileId)
+          .catch((err) =>
+            this.logger.warn(`markFileDelivered (batch steer) failed: ${err}`),
+          );
+      }
+    }
   }
 
   /**
@@ -1514,7 +1562,15 @@ export class AgentSessionManager
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
     if (!stimulus) return false;
-    const { jobId, seedQuestionId, seedSecretId, seedFileId } = stimulus;
+    const {
+      jobId,
+      seedQuestionId,
+      seedSecretId,
+      seedFileId,
+      seedQuestionIds,
+      seedSecretIds,
+      seedFileIds,
+    } = stimulus;
 
     if (seedQuestionId) {
       // No .catch here: getQuestionCard returns null for a genuinely-absent card, and a THROWN error is
@@ -1548,6 +1604,32 @@ export class AgentSessionManager
       const card = await this.store.getFileCard(jobId, seedFileId);
       if (card?.provided_at != null && card.delivered_at == null) {
         await this.store.markFileDelivered(jobId, seedFileId);
+      }
+    }
+
+    // BATCH seed: loop the id arrays a combined `answer-batch` seed carries. NO `.catch` here (unlike
+    // `stampLegacySeedCard`): this function's invariant is that a transient error PROPAGATES so the caller
+    // skips the trailing `markChatDelivered` and the sweep re-drives the whole idempotent sequence — a card
+    // is never left stranded behind a delivered row.
+    for (const questionId of seedQuestionIds ?? []) {
+      const card = await this.store.getQuestionCard(jobId, questionId);
+      if (card?.answer != null && card.deliveredAt == null) {
+        await this.store.markQuestionDelivered(jobId, questionId);
+      }
+    }
+    for (const secretId of seedSecretIds ?? []) {
+      const card = await this.store.getSecretCard(jobId, secretId);
+      if (card?.provided_at != null) {
+        if (card.delivered_at == null) {
+          await this.store.markSecretDelivered(jobId, secretId);
+        }
+        await this.store.clearAwaitingSecret(jobId, secretId);
+      }
+    }
+    for (const fileId of seedFileIds ?? []) {
+      const card = await this.store.getFileCard(jobId, fileId);
+      if (card?.provided_at != null && card.delivered_at == null) {
+        await this.store.markFileDelivered(jobId, fileId);
       }
     }
     return true;
@@ -2140,6 +2222,9 @@ export class AgentSessionManager
         seedQuestionId?: string;
         seedSecretId?: string;
         seedFileId?: string;
+        seedQuestionIds?: string[];
+        seedSecretIds?: string[];
+        seedFileIds?: string[];
         // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
         // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
         deliveryStimulusId?: string;
@@ -2183,6 +2268,9 @@ export class AgentSessionManager
         ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
         ...(ctx.seedSecretId ? { seedSecretId: ctx.seedSecretId } : {}),
         ...(ctx.seedFileId ? { seedFileId: ctx.seedFileId } : {}),
+        ...(ctx.seedQuestionIds?.length ? { seedQuestionIds: ctx.seedQuestionIds } : {}),
+        ...(ctx.seedSecretIds?.length ? { seedSecretIds: ctx.seedSecretIds } : {}),
+        ...(ctx.seedFileIds?.length ? { seedFileIds: ctx.seedFileIds } : {}),
         // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
         // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
         ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
@@ -2933,6 +3021,17 @@ export class AgentSessionManager
             ? { seedSecretId: stimulus.seedSecretId }
             : {}),
           ...(stimulus.seedFileId ? { seedFileId: stimulus.seedFileId } : {}),
+          // BATCH seed: persist the id arrays so a re-attached combined-batch delivery turn still stamps
+          // every card on success (else the boot sweep would re-seed each card on every restart forever).
+          ...(stimulus.seedQuestionIds?.length
+            ? { seedQuestionIds: stimulus.seedQuestionIds }
+            : {}),
+          ...(stimulus.seedFileIds?.length
+            ? { seedFileIds: stimulus.seedFileIds }
+            : {}),
+          ...(stimulus.seedSecretIds?.length
+            ? { seedSecretIds: stimulus.seedSecretIds }
+            : {}),
           // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
           // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
           // Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag their id through the tail.
@@ -8159,7 +8258,15 @@ function isOperatorAuthored(stimulus: ChatStimulus): boolean {
  *  TOGETHER on the consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or
  *  registration — so a register-then-fail turn re-drives instead of stranding a card behind a delivered row. */
 function isSeedCardDelivery(s: ChatStimulus): boolean {
-  return !!s.seed && (!!s.seedQuestionId || !!s.seedSecretId || !!s.seedFileId);
+  return (
+    !!s.seed &&
+    (!!s.seedQuestionId ||
+      !!s.seedSecretId ||
+      !!s.seedFileId ||
+      (s.seedQuestionIds?.length ?? 0) > 0 ||
+      (s.seedFileIds?.length ?? 0) > 0 ||
+      (s.seedSecretIds?.length ?? 0) > 0)
+  );
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
