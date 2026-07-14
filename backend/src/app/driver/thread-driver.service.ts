@@ -336,7 +336,8 @@ export class ThreadDriver implements JobDispatcher {
    *  a build — it just means the recipe is omitted this turn. */
   private async previewRecipeFor(job: Job): Promise<string | null> {
     try {
-      return (await this.configStore?.getPreviewInstructions(job.orgId, job.repoId)) ?? null;
+      const recipe = await this.configStore?.getPreviewInstructions(job.orgId, job.repoId);
+      return recipe?.trim() ? recipe : null;
     } catch {
       return null;
     }
@@ -3210,7 +3211,7 @@ export class ThreadDriver implements JobDispatcher {
     const repoConventions = await this.repoConventionsFor(job);
     // The repo's saved preview recipe — threaded the same way as the batch turn (see kickBatchTurn) so a
     // `validate` subagent spawned during a commit-nudge turn (Agent.WORKER, execute mode) also gets it.
-    const previewInstructions = await this.previewRecipeFor(job);
+    const previewInstructions = thread.kind === 'builder' ? await this.previewRecipeFor(job) : null;
     const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
@@ -3444,7 +3445,7 @@ export class ThreadDriver implements JobDispatcher {
     const repoConventions = await this.repoConventionsFor(job);
     // The repo's saved preview recipe, folded into the WORKER's system prompt READ-ONLY AND forwarded on the
     // run args so the in-container `validate` subagent this turn spawns gets the same recipe.
-    const previewInstructions = await this.previewRecipeFor(job);
+    const previewInstructions = thread.kind === 'builder' ? await this.previewRecipeFor(job) : null;
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
