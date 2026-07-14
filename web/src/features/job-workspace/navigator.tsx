@@ -57,6 +57,7 @@ import {
 import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
+  NavigatorAutoMergingButton,
   NavigatorMergeButton,
   NavigatorShipButton,
 } from "./spec-approval";
@@ -641,8 +642,15 @@ export function Navigator({
             />
           </div>
         ) : null}
-        {/* Merge PR — the THIRD human gate, pinned once the PR is GitHub-mergeable. */}
-        {mergeReady && mergeValue ? (
+        {/* Merge PR — the THIRD human gate, pinned once the PR is GitHub-mergeable. When AUTO-MERGE is
+            armed on an open PR the host clicks it for us (from outside the sandbox) the moment CI goes
+            green, so we show a disabled "Auto merging…" indicator instead of a live button — otherwise
+            the header sits empty during the CI wait and the job looks stalled. */}
+        {autoMerge && job?.prState === "open" ? (
+          <div className="mt-2">
+            <NavigatorAutoMergingButton />
+          </div>
+        ) : mergeReady && mergeValue ? (
           <div className="mt-2">
             <NavigatorMergeButton jobRef={jobRef} value={mergeValue} />
           </div>

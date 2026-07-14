@@ -442,11 +442,12 @@ export const PLAYGROUND_NOTE =
  * reuses it verbatim as the head of its LIVE-SERVICE ACCESSIBILITY guidance so both teach the SAME ordering.
  */
 export const PUBLIC_EXPOSURE_NOTE = [
-  'PUBLIC PREVIEW URLS: a supervised service started with a port is automatically exposed on the public',
-  'internet so the operator can test your branch live. Start it as `atlas-svc run --name <svc> --port <n>',
-  '-- <cmd>` and it is reachable at `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars',
-  'are expected in every build-brain sandbox; if either is somehow absent, treat that as Atlas harness infra',
-  'being broken, not as a feature-level preview opt-out.',
+  'PUBLIC PREVIEW URLS: a supervised service started with a port is INTERNAL (sandbox-only) by default. To',
+  'expose it on the public internet so the operator can test your branch live, add `--expose`: start it as',
+  '`atlas-svc run --name <svc> --port <n> --expose -- <cmd>` and it is reachable at',
+  '`https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`. Those two vars are expected in every build-brain',
+  'sandbox; if either is somehow absent, treat that as Atlas harness infra being broken, not as a',
+  'feature-level preview opt-out.',
   'The URL is DETERMINISTIC: you know it BEFORE you start anything, which is load-bearing because a frontend',
   'bakes its API base URL at build/start time and a backend bakes its cookie domain + CORS allow-list at',
   'boot. So the ordering is not optional:',
@@ -456,15 +457,16 @@ export const PUBLIC_EXPOSURE_NOTE = [
   "     the backend's cookie domain + allowed CORS origin → the frontend service's URL. Both are subdomains",
   '     of the same registrable domain, so a `Secure; SameSite=Lax` cookie is sent cross-subdomain; CORS must',
   '     allow-list the EXACT frontend origin with credentials enabled.',
-  '  3. THEN start each service with `atlas-svc run --name <svc> --port <n> -- <cmd>`.',
+  '  3. THEN start each service with `atlas-svc run --name <svc> --port <n> --expose -- <cmd>`.',
   'CRITICAL — BIND TO 0.0.0.0, NOT localhost: the proxy reaches your service from OUTSIDE its container, so a',
   'server listening on `127.0.0.1` shows as "running" but the public URL 502s. Start every exposed dev server',
   'on `0.0.0.0:<port>` — Next `next dev -H 0.0.0.0 -p <n>`, Vite `vite --host 0.0.0.0 --port <n>`, Nest/Express',
   "`app.listen(<n>, '0.0.0.0')`, or set `HOST=0.0.0.0`.",
   'After starting, `curl https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` and confirm a real response,',
   'not a 502, before telling the operator it is up.',
-  'Use `--no-expose` for an internal-only service you do not want a public URL for. Naming: the `<svc>` name',
-  'becomes the subdomain label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
+  'Plain `--port` (no `--expose`) is internal-only — no public URL, sidebar shows an "internal" badge — so',
+  'omit `--expose` unless a public URL is actually wanted. Naming: the `<svc>` name becomes the subdomain',
+  'label, so keep names short and DNS-safe: lowercase letters/digits/hyphens only,',
   'start/end alphanumeric, max 52 chars (`web`, `api`, `admin-ui`).',
 ].join('\n');
 
@@ -489,12 +491,13 @@ export const PREVIEW_PREP_SEED_BODY = [
   '     is actually visible.',
   '  4. Where possible, deep-link the handover URL straight to the relevant page/state so a click lands the',
   '     operator INSIDE the change, not on a cold home/login screen.',
-  '  5. `atlas-svc run --name <svc> --port <n>` to start+expose; `curl` it and confirm a real response (not a',
+  '  5. `atlas-svc run --name <svc> --port <n> --expose` to start+expose; `curl` it and confirm a real response (not a',
   '     502) BEFORE handing it over. Never hand over a not-yet-ready URL.',
   'CHOOSE THE DEMONSTRATION STRATEGY per feature (your judgment; you MAY ask the operator): drive the REAL',
   'end-to-end flow when reaching the real state is cheap; SEED the DB directly when the real state is',
   'expensive/absurd to reach (e.g. do NOT create five real jobs to show a redesigned badge — seed one row);',
-  'build a temporary isolated DEMO PAGE served as its own `--port` service when even seeding is impractical.',
+  'build a temporary isolated DEMO PAGE served as its own `--port <n> --expose` service when even seeding is',
+  '     impractical.',
   'Partial demonstration is fine when it FAITHFULLY shows the diff.',
   'HAND OVER IN CHAT: the clickable URL, any test credentials the operator needs (create a throwaway login',
   "via the app's own signup/seed if required), and ONE line on what they'll see / where to look. The live URL",
@@ -509,6 +512,15 @@ export function fencedRecipe(recipeBody: string): string {
   return '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```';
 }
 
+/** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
+ *  run. Spliced into both footer branches of {@link composePreviewPrepSeed}. */
+const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
+  'The recipe is REPO-scoped, JOB-AGNOSTIC memory that ANY future job on this repo reuses — NOT a log of ' +
+  'this run: capture only the repeatable stand-up procedure, and STRIP everything specific to the change ' +
+  'you just previewed (this run\'s deep-link target, feature-only fixtures/seed scripts, and any ' +
+  '"verified for <feature>" note). For the deep-link, record HOW to build one into the area under test, ' +
+  'not the literal URL for this feature.';
+
 /** Compose the Spin-up-preview seed: the standing procedure, then the Atlas-managed recipe as a
  *  fenced block, then an Atlas-facing footer that (empty) nudges saving one or (present) nudges updating a
  *  stale one — the "stop re-discovering" memory loop (d4). */
@@ -521,10 +533,16 @@ export function composePreviewPrepSeed(instructions: string | null): string {
   const footer = recipe
     ? 'Follow/adapt this saved recipe to stand the preview up fast. If it is stale or wrong once you have the ' +
       'preview working, UPDATE it with `write_preview_instructions` (it REPLACES the whole recipe — ' +
-      '`read_preview_instructions` first to amend). To edit it any time, use those two tools.'
-    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable steps (envs to set, ' +
-      'ports, docker compose / migrate / seed commands, the deep-link) with `write_preview_instructions` so the ' +
-      'NEXT Spin up preview is instant instead of re-discovered.';
+      '`read_preview_instructions` first to amend). To edit it any time, use those two tools. ' +
+      PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE +
+      ' While you are in there, PRUNE any residue a previous author left — a hard-coded deep-link to some ' +
+      'other feature, one-off fixtures/seed scripts, a "verified for <feature>" stamp — so the recipe stays ' +
+      'the clean repeatable procedure.'
+    : 'No recipe saved yet — once you get this preview working, SAVE the exact repeatable stand-up procedure ' +
+      '(envs to set, ports, docker compose / migrate / seed the BASELINE demo data, start, verify, and HOW to ' +
+      'construct a deep-link into the area under test) with `write_preview_instructions` so the NEXT Spin up ' +
+      'preview is instant instead of re-discovered. ' +
+      PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE;
   return [PREVIEW_PREP_SEED_BODY, '', block, '', footer].join('\n');
 }
 
