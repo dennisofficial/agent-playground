@@ -24,11 +24,11 @@ function mockHarness(): {
   return { factory: { create } as unknown as TurnHarnessFactory, create, finish, abort };
 }
 
-/** A context that supplies its own diff/changedFiles so the stage never shells out to git for review. */
+/** A context that supplies its own changedFiles so the stage never shells out to git for the review framing. */
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
   sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
-  diff: 'diff --git a/x.ts b/x.ts\n+const y = 1;',
+  gitRange: 'abc123..HEAD',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',
   label: 'backend',
@@ -306,7 +306,7 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
     const summary = await stage.autofixThread(
-      { ...ctx, worktreePath: '/tmp', diff: '', changedFiles: [] },
+      { ...ctx, worktreePath: '/tmp', changedFiles: [] },
       { lenses: LENSES },
     );
 

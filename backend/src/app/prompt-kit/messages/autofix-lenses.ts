@@ -33,11 +33,11 @@ Assign severity honestly — do NOT inflate:
 
 /** The scope clause — how far the pass may look. The narrow lenses stay diff-only; holistic may read out. */
 const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
-  diff: 'ONLY report issues introduced by (or directly within) the change set below — never pre-existing issues outside it.',
+  diff: 'ONLY report issues introduced by (or directly within) the change set — never pre-existing issues outside it.',
   holistic:
     'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
   framework:
-    'Report ONLY violations of the injected framework best-practices, and only within the change set below — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
+    'Report ONLY violations of the injected framework best-practices, and only within the change set — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
 };
 
 /** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
@@ -65,14 +65,31 @@ function frameworkInjection(ctx: AutoFixContext): string {
   return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
 }
 
+/**
+ * The change set the pass reviews — delivered as GIT COMMANDS the reviewer runs itself (it has `Bash`),
+ * NOT the full diff inlined. A large diff inlined here would balloon the prompt (and be duplicated across
+ * every concurrent lens); pulling it via the reviewer's own tools lets each lens read only what its focus
+ * needs and fetch enclosing context on demand. Scoped to `ctx.gitRange` (the thread's start-sha range),
+ * falling back to `HEAD` when the driver couldn't resolve one. Mirrors the master-review + external-PR-review
+ * surfaces, which already hand the agent a `git diff` / `gh pr diff` command instead of inlining.
+ */
+function changeSetBlock(ctx: AutoFixContext): string {
+  const range = ctx.gitRange ?? 'HEAD';
+  const files = ctx.changedFiles?.length
+    ? `Changed files (${ctx.changedFiles.length}):\n${ctx.changedFiles.map((f) => `- ${f}`).join('\n')}\n\n`
+    : '';
+  return (
+    `\nThe change set under review (pull it yourself with your tools — do NOT expect it inlined):\n` +
+    files +
+    `- \`git diff --stat ${range}\` — the map of what changed.\n` +
+    `- \`git diff ${range}\` — the full unified diff. On a large change set, page it per file with` +
+    ` \`git diff ${range} -- <path>\` rather than reading it all at once, and \`Read\` the enclosing` +
+    ` function of each hunk for context.\n`
+  );
+}
+
 /** Build one read-only review pass's prompt for a given lens + context. */
 export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentMessage {
-  const files = ctx.changedFiles?.length
-    ? `\nChanged files:\n${ctx.changedFiles.map((f) => `- ${f}`).join('\n')}\n`
-    : '';
-  const diffBlock = ctx.diff
-    ? `\nDiff under review:\n\n\`\`\`diff\n${ctx.diff}\n\`\`\`\n`
-    : '\n(No diff was supplied — inspect the worktree git state to review the change set.)\n';
   const scope = lens.scope ?? 'diff';
   const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return agentMessage(
@@ -81,8 +98,7 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentM
       `\nFocus of THIS pass: ${lens.focus}`,
       `\nWhat the change was meant to do (intent):\n${fence('intent', ctx.intent)}`,
       frameworkBlock,
-      files,
-      diffBlock,
+      changeSetBlock(ctx),
       'This is a READ-ONLY review turn — do not modify any files. You may read files for context.',
       reviewOutputContract(scope),
     ].join('\n'),
