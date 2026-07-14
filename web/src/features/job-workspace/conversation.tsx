@@ -371,11 +371,21 @@ export function TranscriptView({
     estimateSize: (index) => items[index].estimate,
     overscan: 8,
     getItemKey: (index) => items[index].key,
+    // Native bottom-anchoring (@tanstack/virtual-core ≥3.16): when the view is at/near the bottom, a row
+    // resizing (a fresh row measuring taller than its estimate, an async Mermaid SVG landing) keeps the
+    // bottom edge pinned via the total-size delta instead of the top-anchored predicate below — and on iOS
+    // the adjustment rides the built-in deferred-scrollTop path (held through touch/momentum, flushed once on
+    // settle) so it never lands as a mid-gesture jump. `scrollEndThreshold` matches useTailFollow's 80px
+    // "stuck to bottom" band so the two agree on what counts as "at the end".
+    anchorTo: "end",
+    scrollEndThreshold: 80,
   });
 
   // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
   // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
-  // directly here rather than inside the options object above.
+  // directly here rather than inside the options object above. It governs the SCROLLED-UP case only: when
+  // NOT at the end, `anchorTo:'end'` defers to this predicate, which compensates any above-viewport resize
+  // (the desktop Cause-B backstop) — again through the iOS deferred-scrollTop path when on iOS.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   pinRef.current = () => {
@@ -403,8 +413,12 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
-  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — iOS/touch-only and
-  // only on transcripts long enough for the residual scroll-up shift to matter (see idle-premeasure.tsx).
+  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — so a fresh tall row
+  // (long markdown/code, a Mermaid diagram) already has its real height BEFORE it scrolls into view and
+  // therefore never triggers a first-measure resize/scroll-compensation on iOS. The pass measures silently
+  // (no scroll writes) and seeds all rows in one synchronous settle, so it's safe to run while pinned at the
+  // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
+  // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
   const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
   const premeasureLayer = useIdlePremeasure({ items, virtualizer, enabled: premeasureEnabled });
 

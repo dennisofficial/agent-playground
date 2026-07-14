@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createContext } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
 
 /** True inside the hidden off-screen pre-measurement layer below — rows rendered there are read for
@@ -27,13 +28,15 @@ const DEFAULT_CHUNK_SIZE = 24;
 /** Matches the real windowed row wrapper's bottom gap (conversation.tsx's `paddingBottom: 9`) so a row
  *  pre-measured here comes out the same height the live viewport will later measure for the same content. */
 const ROW_PADDING_BOTTOM = 9;
-/** How often to re-check "at rest" while a touch/scroll gesture holds up the next chunk. */
-const REST_POLL_MS = 100;
+/** Within this many px of the bottom counts as "pinned to the tail" — matches useTailFollow's 80px band. */
+const AT_BOTTOM_PX = 80;
 /** `requestIdleCallback` timeout so a chunk isn't starved indefinitely on a busy main thread. */
 const IDLE_TIMEOUT_MS = 200;
 
 type PremeasureItem = { key: string; node: React.ReactNode };
 
+/** Bottom-up scan for the next `chunkSize` not-yet-measured row indexes (returned top-to-bottom for a
+ *  natural DOM render order). Pure + exported for unit testing. */
 export function premeasureChunkIndexes(
   items: ReadonlyArray<{ key: string }>,
   cursor: number,
@@ -52,11 +55,9 @@ export function premeasureChunkIndexes(
   return indexes;
 }
 
-type PremeasureChunk = { indexes: number[] };
-
 /** Schedule `cb` during idle time — `requestIdleCallback` where available (desktop), else a MessageChannel
  *  yielder (iOS Safari has no default `requestIdleCallback`). Returns a cancel function. */
-function scheduleChunk(cb: () => void): () => void {
+function scheduleIdle(cb: () => void): () => void {
   if (typeof requestIdleCallback === "function") {
     const handle = requestIdleCallback(cb, { timeout: IDLE_TIMEOUT_MS });
     return () => cancelIdleCallback(handle);
@@ -76,136 +77,111 @@ function scheduleChunk(cb: () => void): () => void {
   };
 }
 
-/** Is the scroll container currently mid-touch or mid-scroll? Seeding an above-viewport row while either is
- *  true makes `resizeItem` trigger virtual-core's iOS-deferred scroll adjustment — exactly the jump this
- *  pass exists to eliminate — so the next chunk must wait until this reads true. */
-function isAtRest<
-  TScrollElement extends Element | Window,
-  TItemElement extends Element,
->(
-  virtualizer: Virtualizer<TScrollElement, TItemElement>,
-  touching: { current: boolean },
-): boolean {
-  return !virtualizer.isScrolling && !touching.current;
-}
+type Virt = Virtualizer<HTMLDivElement, Element>;
 
 /**
- * Idle, bottom-up, chunked off-screen measurement pass that pre-populates EXACT row heights for the
- * not-yet-seen backlog of a virtualized transcript, seeding them into the live virtualizer via
- * `resizeItem` (a no-op once a row's real height matches — `delta === 0`). This makes a fresh tall row
- * behave like an already-seen cached row when it later scrolls into view, so its first real measurement
- * never triggers an above-viewport scroll adjustment (the mechanism behind the iOS content-shift this
- * eliminates). Purely additive: never touches scroll position / tail-follow itself.
+ * Off-screen pre-measurement that gives every not-yet-seen transcript row its EXACT height BEFORE the user
+ * scrolls into it, so a fresh tall row (long markdown/code, a Mermaid diagram) never triggers a
+ * first-measure resize / scroll-compensation on iOS. Returns the hidden measurement layer to render inside
+ * the transcript's content column, or `null` once done / disabled (zero cost).
  *
- * Returns the hidden measurement layer to render inside the transcript's content column (a positioning
- * context), or `null` when `enabled` is false, the pass has completed, or there are no items — zero cost.
+ * Two strictly-separated phases — this split is the whole point:
+ *   1. MEASURE (idle, invisible): render the backlog off-screen in bottom-up chunks and record each row's
+ *      `offsetHeight` into a map. This NEVER calls `resizeItem`, so it never changes the live virtualizer's
+ *      total size and never moves the scroll position — nothing is visible, no matter where the user is.
+ *   2. SEED (one synchronous burst): once every row is measured, apply ALL heights via `resizeItem` in a
+ *      single synchronous loop. The many above-viewport scroll-position corrections it triggers are
+ *      coalesced by the browser into ONE paint — a single, barely-perceptible settle — instead of the
+ *      hundreds of separate frames (the visible "jumping on load") that a measure-and-seed-per-chunk pass
+ *      produced. If the view is pinned at the tail, it re-pins to the bottom on the next frame so the settle
+ *      leaves the latest message exactly where it was.
  */
 export function useIdlePremeasure(opts: {
   items: PremeasureItem[];
-  virtualizer: Virtualizer<HTMLDivElement, Element>;
+  virtualizer: Virt;
   enabled: boolean;
   chunkSize?: number;
 }): React.ReactNode {
   const { items, virtualizer, enabled, chunkSize = DEFAULT_CHUNK_SIZE } = opts;
 
-  // Exclusive upper bound for the next bottom-up scan. Re-armed from the tail whenever a new unmeasured key
-  // appears; only keys this pass has measured are skipped. The virtualizer's own size cache is not used as
-  // a skip signal because it can contain non-premeasured entries; `resizeItem` is already idempotent when a
-  // row was genuinely measured to the same exact height.
-  const [chunk, setChunk] = useState<PremeasureChunk>({ indexes: [] });
-  const measuredKeysRef = useRef<Set<string>>(new Set());
-
-  useLayoutEffect(() => {
-    if (!enabled) {
-      setChunk({ indexes: [] });
-      return;
-    }
-    const liveKeys = new Set(items.map((item) => item.key));
-    for (const key of measuredKeysRef.current) {
-      if (!liveKeys.has(key)) measuredKeysRef.current.delete(key);
-    }
-    const indexes = premeasureChunkIndexes(
-      items,
-      items.length,
-      chunkSize,
-      (key) => measuredKeysRef.current.has(key),
-    );
-    setChunk({ indexes });
-  }, [enabled, items, chunkSize]);
-
-  const chunkIndexes = chunk.indexes;
-  const active = enabled && chunkIndexes.length > 0;
-
+  const measuredRef = useRef<Map<string, number>>(new Map());
+  const [seeded, setSeeded] = useState(false);
+  // Rows measured so far, counted from the tail up. The hidden layer renders the next unmeasured chunk.
+  const [cursor, setCursor] = useState(0);
   const layerRef = useRef<HTMLDivElement>(null);
-  const touchingRef = useRef(false);
+
+  // Re-arm from the tail whenever the top of the list changes identity (older history prepended) — a plain
+  // append leaves the backlog untouched (new tail rows measure on-screen normally), so it must NOT re-run.
+  const topKey = items[0]?.key ?? null;
+  const prevTopKey = useRef(topKey);
+  if (prevTopKey.current !== topKey) {
+    prevTopKey.current = topKey;
+    measuredRef.current = new Map();
+    if (seeded) setSeeded(false);
+    if (cursor !== 0) setCursor(0);
+  }
+
+  const measuring = enabled && !seeded && items.length > 0;
+  // The next bottom-up chunk of not-yet-measured rows. `cursor` is how many rows (from the tail) are already
+  // handled; the scan starts just above that and skips anything already in the map.
+  const chunkIndexes = measuring
+    ? premeasureChunkIndexes(items, items.length - cursor, chunkSize, (key) =>
+        measuredRef.current.has(key),
+      )
+    : [];
+  const active = chunkIndexes.length > 0;
 
   useLayoutEffect(() => {
-    if (!active) return;
+    if (!measuring) return;
 
-    const layer = layerRef.current;
-    if (layer) {
-      layer.querySelectorAll<HTMLElement>("[data-pindex]").forEach((el) => {
-        const idx = Number(el.getAttribute("data-pindex"));
-        const item = items[idx];
-        if (!item || measuredKeysRef.current.has(item.key)) return;
-        const h = el.offsetHeight;
-        virtualizer.resizeItem(idx, h);
-        measuredKeysRef.current.add(item.key);
-      });
+    if (active) {
+      // Record the rendered chunk's heights (measure only — never `resizeItem` here, so the live
+      // virtualizer's total size and the scroll position are untouched and nothing is visible).
+      const layer = layerRef.current;
+      if (layer) {
+        layer.querySelectorAll<HTMLElement>("[data-pindex]").forEach((el) => {
+          const idx = Number(el.getAttribute("data-pindex"));
+          const item = items[idx];
+          if (item) measuredRef.current.set(item.key, el.offsetHeight);
+        });
+      }
+      // Advance above the chunk we just measured, then schedule the next one on idle time.
+      const nextCursor = items.length - chunkIndexes[0];
+      const cancel = scheduleIdle(() => setCursor(nextCursor));
+      return cancel;
     }
 
-    const nextCursor = chunkIndexes[0];
-
-    let cancelScheduled: (() => void) | null = null;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
-
-    const scrollEl = virtualizer.scrollElement;
-    const onTouchStart = () => {
-      touchingRef.current = true;
-    };
-    const onTouchEnd = () => {
-      touchingRef.current = false;
-    };
-    scrollEl?.addEventListener("touchstart", onTouchStart, { passive: true });
-    scrollEl?.addEventListener("touchend", onTouchEnd, { passive: true });
-    scrollEl?.addEventListener("touchcancel", onTouchEnd, { passive: true });
-
-    const advance = () => {
-      setChunk({
-        indexes: premeasureChunkIndexes(items, nextCursor, chunkSize, (key) =>
-          measuredKeysRef.current.has(key),
-        ),
+    // No unmeasured rows left → the whole backlog is measured → SEED every row in ONE synchronous loop. The
+    // many above-viewport scroll-position corrections `resizeItem` triggers are coalesced by the browser into
+    // a single paint (one barely-perceptible settle) rather than the hundreds of separate frames that read as
+    // "jumping on load".
+    const el = virtualizer.scrollElement;
+    const wasAtBottom =
+      !!el && el.scrollHeight - el.scrollTop - el.clientHeight < AT_BOTTOM_PX;
+    for (let i = 0; i < items.length; i++) {
+      const h = measuredRef.current.get(items[i].key);
+      if (h != null) virtualizer.resizeItem(i, h);
+    }
+    // Keep the latest message pinned across the settle (anchorTo:'end' should already hold it; this is a
+    // belt-and-suspenders re-pin for the tail case).
+    if (wasAtBottom && el) {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
       });
-    };
-
-    // Only advance to the next chunk once the container is at rest — mid-gesture, hold and poll instead of
-    // scheduling, so a seed's adjustment always applies immediately/invisibly rather than getting deferred.
-    const tryScheduleWhenAtRest = () => {
-      if (cancelled) return;
-      if (isAtRest(virtualizer, touchingRef)) {
-        cancelScheduled = scheduleChunk(advance);
-      } else {
-        pollTimer = setTimeout(tryScheduleWhenAtRest, REST_POLL_MS);
-      }
-    };
-    tryScheduleWhenAtRest();
-
-    return () => {
-      cancelled = true;
-      cancelScheduled?.();
-      if (pollTimer) clearTimeout(pollTimer);
-      scrollEl?.removeEventListener("touchstart", onTouchStart);
-      scrollEl?.removeEventListener("touchend", onTouchEnd);
-      scrollEl?.removeEventListener("touchcancel", onTouchEnd);
-    };
-  }, [active, chunkIndexes, chunkSize, items, virtualizer]);
+    }
+    setSeeded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measuring, active, cursor]);
 
   if (!active) return null;
+
+  const lo = chunkIndexes[0];
+  const hi = chunkIndexes[chunkIndexes.length - 1] + 1;
 
   return (
     <div
       ref={layerRef}
+      aria-hidden
       style={{
         position: "absolute",
         visibility: "hidden",
@@ -215,14 +191,14 @@ export function useIdlePremeasure(opts: {
       }}
     >
       <PremeasureContext.Provider value={true}>
-        {chunkIndexes.map((idx) => (
+        {items.slice(lo, hi).map((it, i) => (
           <div
-            key={items[idx].key}
-            data-pindex={idx}
+            key={it.key}
+            data-pindex={lo + i}
             className="w-full"
             style={{ paddingBottom: ROW_PADDING_BOTTOM }}
           >
-            {items[idx].node}
+            {it.node}
           </div>
         ))}
       </PremeasureContext.Provider>
