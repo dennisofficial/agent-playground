@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { EngineHomeKey } from '@workspace/agent-engine';
 import { repoStateDir } from '../state-root';
 
 /**
@@ -26,18 +27,9 @@ import { repoStateDir } from '../state-root';
  * compound string (`brain-<org>-<repo>-<job>`, `<repoId>--<branch>`, …) — old homes are simply abandoned, no
  * migration (a resumed session under the old path starts fresh, same as any other home rename).
  */
-export type EngineHomeType = 'brain' | 'build' | 'plan-review' | 'autofix' | 'review';
-
-/** The structured parts that key an engine home — see the module doc for the resulting layout. */
-export interface EngineHomeKey {
-  orgId: string;
-  repoId: string;
-  jobId: string;
-  type: EngineHomeType;
-  /** Extra path segment for a parallel sub-session sharing this (org,repo,job,type) — e.g. an autofix
-   *  review-lens/fix id. Absent for the one primary session per type. */
-  subId?: string;
-}
+// `EngineHomeType` / `EngineHomeKey` moved to `@workspace/agent-engine`; re-exported here so existing
+// import sites (and the resolver functions below) keep resolving them from this module.
+export type { EngineHomeKey, EngineHomeType } from '@workspace/agent-engine';
 
 export function atlasEngineHomeDir(
   root: string | undefined,
