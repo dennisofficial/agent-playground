@@ -15,7 +15,11 @@ import type { PrStateDelta } from '../domain';
 
 function makeSync() {
   const lifecycle = { applyGithubPrState: vi.fn() } as unknown as JobLifecycleService;
-  const driverStore = { setPrReady: vi.fn() } as unknown as DriverStoreService;
+  const driverStore = {
+    setPrReady: vi.fn(),
+    // The post-ship seam (d14): onPrOpened ensures the `ci` stage-thread exists once the PR is recorded.
+    ensureCiThread: vi.fn(async () => ({ stageId: 'stage-ci', threadId: 'ci-1' })),
+  } as unknown as DriverStoreService;
   const stimStore = {
     findOwningJobByBranch: vi.fn(),
     findOwningJobByPrNumber: vi.fn(),

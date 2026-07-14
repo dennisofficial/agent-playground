@@ -44,7 +44,16 @@ export class GithubPrStateSync {
       this.logger.debug(`pr #${number} opened — no owning job for branch "${headRef}" in ${repoId} (ignored)`);
       return;
     }
-    if (job.pr_number == null) await this.driverStore.setPrReady(job.id, url, number);
+    if (job.pr_number == null) {
+      await this.driverStore.setPrReady(job.id, url, number);
+      // Post-ship seam (d14): mirror build-ship's ensureCiThread — the webhook fast path is a second route
+      // to "PR recorded", so it must ensure the ci stage-thread exists too, not just the driver's own latchPr.
+      await this.driverStore.ensureCiThread({
+        jobId: job.id,
+        orgId: job.org_id,
+        decisionRecordId: job.decision_record_id ?? null,
+      });
+    }
   }
 
   /** A PR merged or closed-without-merge — apply the terminal state via the shared apply-logic. */

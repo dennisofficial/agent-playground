@@ -1690,6 +1690,54 @@ export class DriverStoreService {
     return { stageId: created.id, threadId: thread.id };
   }
 
+  /**
+   * Find (or lazily create) the job's `ci` stage-thread — the post-ship seam (d14). Created once the PR is
+   * recorded (`setPrReady`); starts with `session_id = null` (a fresh session, isolated from planning) and
+   * sits idle (`ci` is a render-only, non-driver-executed role — see `thread-kind/registry.ts`) until inbound
+   * GitHub/CI events are routed onto its lane (`lane=thread:<ciThreadId>`) by the stimulus-intake seam. That
+   * routing is OUT OF SCOPE here (thread 4 territory — see `/context/specs/sections/04-messaging-chat.md`
+   * §CI-routing); this method only ensures the stage-thread EXISTS for that routing to target. Idempotent:
+   * `setPrReady` may be reached more than once for a job (the driver path, the reconciler, and the GitHub
+   * webhook fast path all call it), so a matching stage is re-looked-up rather than duplicated.
+   */
+  async ensureCiThread(input: {
+    jobId: string;
+    orgId: string;
+    decisionRecordId: string | null;
+  }): Promise<{ stageId: string; threadId: string }> {
+    const stage = await this.stages
+      .createQueryBuilder('s')
+      .where('s.job_id = :jobId', { jobId: input.jobId })
+      .andWhere('s.kind = :kind', { kind: 'ci' })
+      .andWhere('s.decision_record_id IS NOT DISTINCT FROM :decisionRecordId', {
+        decisionRecordId: input.decisionRecordId,
+      })
+      .orderBy('s.ordinal', 'ASC')
+      .getOne();
+    if (stage) {
+      const [thread] = await this.threadsForStage(stage.id);
+      if (thread) return { stageId: stage.id, threadId: thread.id };
+    }
+    const created =
+      stage ??
+      (await this.createStage({
+        jobId: input.jobId,
+        orgId: input.orgId,
+        kind: 'ci',
+        decisionRecordId: input.decisionRecordId,
+        title: null,
+        type: null,
+      }));
+    const thread = await this.createThreadInStage({
+      stageId: created.id,
+      jobId: input.jobId,
+      orgId: input.orgId,
+      role: 'ci',
+      brief: 'CI — post-ship checks',
+    });
+    return { stageId: created.id, threadId: thread.id };
+  }
+
   /** Read a thread's live engine session id (d5 — `session_id` moved onto the thread row). */
   async threadSessionId(threadId: string): Promise<string | null> {
     const row = await this.threads.findOne({

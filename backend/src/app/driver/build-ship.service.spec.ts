@@ -65,6 +65,8 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setCurrentBranch: vi.fn(async () => undefined),
       // The ship path ensures a fresh `post_build` stage-thread and runs the open-PR turn on its session.
       ensurePostBuildThread: vi.fn(async () => ({ stageId: 'stage1', threadId: 'pb1' })),
+      // latchPr ensures the `ci` stage-thread exists once the PR is recorded (post-ship seam, d14).
+      ensureCiThread: vi.fn(async () => ({ stageId: 'stage2', threadId: 'ci1' })),
       ...over,
     } as unknown as DriverStoreService;
   }
