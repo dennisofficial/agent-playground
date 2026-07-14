@@ -62,6 +62,7 @@ import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { CredentialResolver } from '../onboarding';
 import { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
+import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { McpResolver, McpOAuthService } from '../mcp';
 import { ConventionProfileResolver, type ResolvedConventions } from '../conventions';
 import { SkillResolver } from '../skills';
@@ -298,6 +299,10 @@ export class ThreadDriver implements JobDispatcher {
     // auth-halt classifier skips the transient-race branch and always surfaces the halt). Used to resolve
     // the org's selected credential + mark it `needs_reauth` when a refresh is unrecoverable.
     @Optional() private readonly claudeCreds?: ClaudeCredentialStore,
+    // @Global OnboardingModule. @Optional so unit tests construct the driver without it (undefined → the
+    // preview recipe reader always returns null, so nothing is injected). Used to read the repo's saved
+    // preview recipe for the WORKER + `validate` prompts.
+    @Optional() private readonly configStore?: WorkspaceConfigStore,
     // The durable inbound ledger — stamps a build-lane host seed `delivered_at` at the engine `input_ack`
     // (live steer) and at the Leg-kick hand-off (fresh-turn drain). StimulusModule is plain-imported into
     // DriverModule.imports (not @Global). @Optional so the direct-construction unit test constructs without
@@ -325,6 +330,16 @@ export class ThreadDriver implements JobDispatcher {
   private async repoConventionsFor(job: Job): Promise<ResolvedConventions | null> {
     if (!this.conventions) return null;
     return this.conventions.resolveForRepo(job.orgId, job.repoId).catch(() => null);
+  }
+
+  /** The repo's saved preview recipe, or null when none/unavailable. Best-effort: a lookup hiccup never sinks
+   *  a build — it just means the recipe is omitted this turn. */
+  private async previewRecipeFor(job: Job): Promise<string | null> {
+    try {
+      return (await this.configStore?.getPreviewInstructions(job.orgId, job.repoId)) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -3422,10 +3437,14 @@ export class ThreadDriver implements JobDispatcher {
     // The repo's house-style, folded into the builder's system prompt AND forwarded on the run args so the
     // FAN_OUT writer subagents this turn spawns in-container render the same envelope (Layer B).
     const repoConventions = await this.repoConventionsFor(job);
+    // The repo's saved preview recipe, folded into the WORKER's system prompt READ-ONLY AND forwarded on the
+    // run args so the in-container `validate` subagent this turn spawns gets the same recipe.
+    const previewInstructions = await this.previewRecipeFor(job);
     const systemPrompt = renderAgentPrompt(spec.agent, {
       jobKind: job.kind,
       settings: { repoConventions },
       turnPhase: 'batch',
+      ...(previewInstructions ? { previewInstructions } : {}),
     });
     // Leg-rotation occupancy watch: fires SOFT once, then a REMINDER on each further +delta as this builder
     // session's main-agent context fills. Codex/master-review turns emit no per-call occupancy, so the watch
@@ -3484,6 +3503,7 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
+          ...(previewInstructions ? { previewInstructions } : {}),
           // Authenticated git IN the sandbox: the execute turn (orchestrator) can fetch/merge origin,
           // resolve conflicts, and push its own branch. Sourced from the RESOLVED repo (not `sandbox`).
           gitAuth: await this.resolveTurnGitAuth(
