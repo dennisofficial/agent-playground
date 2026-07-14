@@ -174,6 +174,9 @@ export const HALT_FIX_ATTEMPT_CAP = 2;
  *  self-heal patiently, then rest for the operator. The ~30s owed-wake sweep paces each re-drive. */
 export const JUDGE_UNAVAILABLE_REDRIVE_CAP = 20;
 
+/** How long a master_review Codex-outage hold waits before the resume sweep re-attempts the Codex review. */
+export const CODEX_REVIEW_OUTAGE_RETRY_MS = 5 * 60_000;
+
 /** A thread's PURE LINEAR STEP — explicit, resumable. The driver `await`s each transition. Pause/failure/
  *  skip are NOT steps; they live on the orthogonal {@link ThreadCondition} overlay. */
 export type ThreadStatus =

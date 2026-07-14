@@ -51,7 +51,8 @@ export type JobHaltKind =
   | 'blocked_credentials'
   | 'budget_exhausted'
   | 'incomplete'
-  | 'session_limit'; // parked on a Claude session/usage limit; auto-resumes at resumeAt
+  | 'session_limit' // parked on a Claude session/usage limit; auto-resumes at resumeAt
+  | 'codex_review_unavailable'; // parked on a master_review Codex outage (network/auth-to-Codex); auto-resumes on the resume clock, or the operator can 'ship without review'.
 export type JobHalt = {
   kind: JobHaltKind;
   /** Short human string (what `relayFailure` already computes via `shortReason`). */

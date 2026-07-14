@@ -54,7 +54,7 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
-import { JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS, JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
 import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type {
   LiveVerificationJudge,
@@ -5390,10 +5390,10 @@ describe('ThreadDriver — 401 auth recovery', () => {
   });
 
   it('a Codex no-credential halt does not touch Claude credential recovery state', async () => {
+    // A BUILDER thread (not master_review) — the codex_review_unavailable scope guard only engages while
+    // master_review is in flight (see the "ThreadDriver — master_review Codex-outage hold" describe block),
+    // so this stays on the ordinary blocked_credentials path being asserted here.
     const state = freshState();
-    state.threads = [
-      thread('sec-review', 10, 'Master review', 'pending', true),
-    ];
     const getSelectedRefreshMeta = vi.fn(async () => ({
       id: 'claude-cred',
       lastRefreshedAt: new Date(),
@@ -5439,6 +5439,165 @@ describe('ThreadDriver — 401 auth recovery', () => {
     const h = assemble(state);
     await h.driver.resumePaused(state.job.id);
     expect(state.job.status).toBe('running'); // the ping itself does not flip a non-paused job
+  });
+});
+
+// ── master_review Codex outage: HOLD (not fail) + auto re-wake + "ship without review" escape hatch ──
+
+describe('ThreadDriver — master_review Codex-outage hold', () => {
+  function masterReviewState(): StoreState {
+    return {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('mr', 10, 'Master review', 'pending', true)],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+  }
+
+  it('a fatal Codex EngineAuthError during master_review HOLDS (codex_review_unavailable), not blocked_credentials', async () => {
+    const state = masterReviewState();
+    const turn = {
+      runTurn: vi.fn(async () => {
+        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
+      }),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+
+    const before = Date.now();
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'codex_review_unavailable');
+
+    expect(state.job.halt?.kind).toBe('codex_review_unavailable');
+    const resumeAt = state.job.halt?.resumeAt;
+    expect(resumeAt).toBeDefined();
+    const resumeMs = new Date(resumeAt as string).getTime();
+    expect(resumeMs).toBeGreaterThanOrEqual(
+      before + CODEX_REVIEW_OUTAGE_RETRY_MS - 5_000,
+    );
+    expect(resumeMs).toBeLessThanOrEqual(
+      before + CODEX_REVIEW_OUTAGE_RETRY_MS + 5_000,
+    );
+    // master_review is left non-done so a re-drive re-runs it.
+    expect(state.threads[0].status).not.toBe('done');
+    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith('mr', 'done');
+  });
+
+  it('a transient/network error exhausting the host-retry budget during master_review HOLDS (codex_review_unavailable), not failed', async () => {
+    const state = masterReviewState();
+    const { turn } = makeTurn({ transientFailures: MAX_HOST_RETRIES + 1 });
+    const h = assemble(state, { turn });
+
+    await withInstantHostRetryBackoff(async () => {
+      await h.driver.dispatch(state.job);
+      await flushUntil(() => state.job.halt?.kind === 'codex_review_unavailable');
+    });
+
+    expect(state.job.halt?.kind).toBe('codex_review_unavailable');
+    expect(state.threads[0].status).not.toBe('done');
+  });
+
+  it('the SAME fatal Codex auth error while a BUILDER (not master_review) is in flight stays blocked_credentials', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const turn = {
+      runTurn: vi.fn(async () => {
+        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
+      }),
+      canReattach: () => false,
+    } as unknown as TurnRunnerService;
+    const h = assemble(state, { turn });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+
+    expect(state.job.halt?.kind).toBe('blocked_credentials');
+  });
+
+  it('resumePaused re-drives a codex_review_unavailable hold to completion', async () => {
+    const state = masterReviewState();
+    state.job = makeJob({
+      status: 'running',
+      halt: {
+        kind: 'codex_review_unavailable',
+        reason: 'Master review is paused — Codex is unreachable.',
+        at: new Date().toISOString(),
+        resumeAt: new Date(
+          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
+        ).toISOString(),
+      },
+    });
+    const h = assemble(state);
+
+    await h.driver.resumePaused(state.job.id);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.status).toBe('done');
+    expect(state.job.halt).toBeNull();
+    expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('operatorShipWithoutReview marks master_review done and reaches the ship-review gate (no PR yet)', async () => {
+    const state = masterReviewState();
+    state.job = makeJob({
+      status: 'running',
+      halt: {
+        kind: 'codex_review_unavailable',
+        reason: 'Master review is paused — Codex is unreachable.',
+        at: new Date().toISOString(),
+        resumeAt: new Date(
+          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
+        ).toISOString(),
+      },
+    });
+    const h = assemble(state, { autoShipApprove: false });
+
+    const r = await h.driver.operatorShipWithoutReview(state.job.id);
+
+    expect(r.ok).toBe(true);
+    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
+      'mr',
+      expect.objectContaining({ status: 'done' }),
+    );
+    expect(h.store.setThreadStatus).toHaveBeenCalledWith('mr', 'done');
+    expect(h.store.clearJobHalt).toHaveBeenCalledWith(state.job.id);
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      null,
+      null,
+    );
+    expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'running');
+
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    expect(state.job.status).toBe('awaiting_ship_review'); // ship gate reached — human diff review still runs
+    expect(state.job.prUrl).toBeNull();
+    expect(h.opened).toHaveLength(0);
+  });
+
+  it('operatorShipWithoutReview REFUSES when the job is not on a codex_review_unavailable hold', async () => {
+    const state = masterReviewState(); // no halt at all
+    const h = assemble(state);
+
+    const r = await h.driver.operatorShipWithoutReview(state.job.id);
+    expect(r.ok).toBe(false);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
+
+    state.job.halt = {
+      kind: 'blocked_credentials',
+      reason: '401',
+      at: new Date().toISOString(),
+    };
+    const r2 = await h.driver.operatorShipWithoutReview(state.job.id);
+    expect(r2.ok).toBe(false);
+    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
   });
 });
 
