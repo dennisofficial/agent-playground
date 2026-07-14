@@ -2705,8 +2705,8 @@ export class AgentSessionManager
         : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
-      ...(threadKindSpec('main').reasoningEffort
-        ? { modelReasoningEffort: threadKindSpec('main').reasoningEffort }
+      ...(threadKindSpec('planning').reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec('planning').reasoningEffort }
         : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
@@ -6461,7 +6461,7 @@ export class AgentSessionManager
 
   /**
    * Re-render `/context/generated/atlas-cleared-blocks.md` — the audit of build blocks Atlas CLEARED itself by
-   * retrieving an existing answer (via `note_cleared_block`). A pure PROJECTION of the durable `cleared:*` FYI
+   * retrieving an existing answer. A pure PROJECTION of the durable `cleared:*` FYI
    * card rows (mirrors `writeDecisionRecordMd`): the card rows are the source of truth (they survive sandbox
    * teardown), the file is a re-render, so idempotency falls out of re-projecting a deduped store. This is a
    * job-scoped audit only — NOT ADR-promotable; Atlas never authors significant decisions on its own.
@@ -6930,6 +6930,7 @@ export class AgentSessionManager
     const seed = `${CONTINUATION_PREAMBLE}\n\n${summary}`;
     const pillText =
       '🗜️ Compacted the planning conversation into a lean handoff — the build is running and future turns start fresh.';
+    const threadId = await this.planningThreadId(jobId);
     let lastErr: unknown;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -6941,6 +6942,7 @@ export class AgentSessionManager
           );
           await mgr.insert(MessageEntity, {
             job_id: jobId,
+            thread_id: threadId,
             author: 'Atlas',
             author_id: 'atlas',
             author_bot_id: 'atlas',

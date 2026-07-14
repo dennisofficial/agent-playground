@@ -1404,14 +1404,20 @@ export class ThreadDriver implements JobDispatcher {
       const firstBuilder = builders[0];
       const lastBuilder = builders[builders.length - 1];
       if (firstBuilder && lastBuilder) {
-        const stageStartSha = await this.resolveThreadStartSha(firstBuilder, sandbox);
-        await this.runReviewChildren(
-          job, route, sandbox, lastBuilder, record, stageStartSha, repo, coerceThreadType(stage.type),
-        );
-        // `runReviewChildren` flips the parent builder to `auto_fixing` (the review-window affordance) but,
-        // now that review runs AFTER the builder is already done, nothing restores it — so flip the last
-        // builder back to `done` here (in the old per-thread flow `runThread` did this right after review).
-        await this.store.setThreadStatus(lastBuilder.id, 'done').catch(() => undefined);
+        const existingReview = await this.store.reviewChildren(lastBuilder.id).catch(() => []);
+        const reviewAlreadyTerminal =
+          existingReview.length > 0 &&
+          existingReview.every((c) => c.status === 'done' || c.condition === 'failed');
+        if (!reviewAlreadyTerminal) {
+          const stageStartSha = await this.resolveThreadStartSha(firstBuilder, sandbox);
+          await this.runReviewChildren(
+            job, route, sandbox, lastBuilder, record, stageStartSha, repo, coerceThreadType(stage.type),
+          );
+          // `runReviewChildren` flips the parent builder to `auto_fixing` (the review-window affordance) but,
+          // now that review runs AFTER the builder is already done, nothing restores it — so flip the last
+          // builder back to `done` here (in the old per-thread flow `runThread` did this right after review).
+          await this.store.setThreadStatus(lastBuilder.id, 'done').catch(() => undefined);
+        }
       }
     }
     return { kind: 'advanced', handoff };
@@ -3012,7 +3018,8 @@ export class ThreadDriver implements JobDispatcher {
       const rotationArmed =
         legRotationRule.enabled &&
         thread.kind === 'builder' &&
-        threadKindSpec(thread.kind).engine === 'claude';
+        threadKindSpec(thread.kind).engine === 'claude' &&
+        (thread as DriverThread & { config?: { rotationCapped?: unknown } }).config?.rotationCapped !== true;
       const rotationThresholds = resolveRotationThresholds();
       const rotationState = freshLegRotationState();
       const toolBridge = this.buildTurnBridge(
@@ -3668,17 +3675,16 @@ export class ThreadDriver implements JobDispatcher {
     const handoff = state.handoff;
     if (!handoff) return false;
 
-    // PER-STAGE LEG CAP (d1): refuse to append yet another builder row once the stage already holds
-    // MAX_LEGS_PER_STAGE of them — a runaway rotate-every-turn thread must not grow the stage forever.
-    // Refusing to rotate leaves this builder without a `done` assertion, so `runBatch` resolves it
-    // `incomplete` and the drive HALTS it (surfaced to the operator) rather than spinning.
+    // PER-STAGE LEG CAP (d1): once the stage already holds MAX_LEGS_PER_STAGE builder rows, append exactly one
+    // final capped builder row and disarm rotation for it. A runaway rotate-every-turn thread still gets one
+    // fresh, steerable session to finish from the handoff, but it cannot grow the stage forever.
     const legCount = await this.store.builderLegCountForStage(thread.id).catch(() => 0);
-    if (legCount >= MAX_LEGS_PER_STAGE) {
+    const rotationCapped = legCount >= MAX_LEGS_PER_STAGE;
+    if (rotationCapped) {
       this.logger.warn(
         `leg-rotation: thread ${thread.ordinal} hit MAX_LEGS_PER_STAGE (${MAX_LEGS_PER_STAGE}) builder legs — ` +
-          `refusing further rotation; the thread will halt as incomplete for the operator to triage`,
+          `rotating once more to a capped final leg with rotation disabled`,
       );
-      return false;
     }
 
     // The seed carries the preamble + handoff + the OPEN task list (the SDK's in-memory todo dies with the
@@ -3689,6 +3695,7 @@ export class ThreadDriver implements JobDispatcher {
         anchorStepId: anchor.id,
         handoff,
         seed,
+        ...(rotationCapped ? { rotationCapped: true } : {}),
         ...(state.peakTokens != null ? { contextTokensPeak: state.peakTokens } : {}),
       })
       .catch((err) => {

@@ -72,15 +72,17 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
             FROM "jobs" j
         `);
         // Convert an existing role='main' thread onto its job's planning stage (role → 'planning').
+        // Planning threads are ordinal 0 so the final job/parent/ordinal unique index cannot collide
+        // with existing top-level builder threads after decision_record_id is removed from the key.
         await queryRunner.query(`
-            UPDATE "threads" t SET "role" = 'planning', "stage_id" = s."id"
+            UPDATE "threads" t SET "role" = 'planning', "stage_id" = s."id", "ordinal" = 0
             FROM "stages" s
             WHERE s."kind" = 'planning' AND s."job_id" = t."job_id" AND t."role" = 'main'
         `);
         // Synthesize a fresh planning thread for any planning stage still without one (orphan/chat jobs).
         await queryRunner.query(`
             INSERT INTO "threads" ("id", "job_id", "org_id", "stage_id", "ordinal", "brief", "role")
-            SELECT uuid_generate_v4(), s."job_id", s."org_id", s."id", s."ordinal", 'Planning', 'planning'
+            SELECT uuid_generate_v4(), s."job_id", s."org_id", s."id", 0, 'Planning', 'planning'
             FROM "stages" s
             WHERE s."kind" = 'planning' AND NOT EXISTS (SELECT 1 FROM "threads" t WHERE t."stage_id" = s."id")
         `);

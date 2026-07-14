@@ -65,11 +65,43 @@ import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
 import type { EnvService } from '@core/config/env/env.service';
 import { retryResumeNudge } from '../prompt-kit/harness';
+import type { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
 }
+
+const mockJobBootstrap = {
+  planningThreadId: vi.fn(async (jobId: string) => `planning-${jobId}`),
+} as unknown as JobBootstrapService;
+
+const optionalTail = (
+  opts: {
+    env?: EnvService;
+    jit?: JitHostExecutor;
+    liveTurns?: LiveTurnStore;
+  } = {},
+) =>
+  [
+    undefined, // usageProjector
+    opts.env, // env
+    undefined, // conventions
+    undefined, // workspaceProfile
+    undefined, // skills
+    undefined, // skillStore
+    undefined, // skillFiles
+    undefined, // skillInstaller
+    undefined, // mcpStore
+    undefined, // scheduler
+    undefined, // brainGateway
+    undefined, // reattachRegistry
+    opts.jit, // jit
+    undefined, // prodDiagnostics
+    undefined, // repoRows
+    opts.liveTurns, // liveTurns
+    mockJobBootstrap, // jobBootstrap
+  ] as const;
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -593,19 +625,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
-      undefined, // usageProjector
-      undefined, // env
-      undefined, // conventions
-      undefined, // workspaceProfile
-      undefined, // skills
-      undefined, // skillStore
-      undefined, // skillFiles
-      undefined, // skillInstaller
-      undefined, // mcpStore
-      undefined, // scheduler
-      undefined, // brainGateway
-      undefined, // reattachRegistry
-      mockJit, // jit
+      ...optionalTail({ jit: mockJit }),
     );
   });
 
@@ -3435,26 +3455,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
-      // The remaining tail params (usageProjector, env, conventions, workspaceProfile, skills, skillStore,
-      // skillFiles, skillInstaller, mcpStore, scheduler, brainGateway, reattachRegistry, jit,
-      // prodDiagnostics, repoRows) are all @Optional — omitted (undefined) except the LAST, `liveTurns`,
-      // which the host-retry backstop tests need to assert on.
-      undefined, // usageProjector
-      undefined, // env
-      undefined, // conventions
-      undefined, // workspaceProfile
-      undefined, // skills
-      undefined, // skillStore
-      undefined, // skillFiles
-      undefined, // skillInstaller
-      undefined, // mcpStore
-      undefined, // scheduler
-      undefined, // brainGateway
-      undefined, // reattachRegistry
-      undefined, // jit
-      undefined, // prodDiagnostics
-      undefined, // repoRows
-      liveTurns,
+      ...optionalTail({ liveTurns }),
     );
     return {
       manager,
@@ -4864,6 +4865,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return { manager, store };
   }
@@ -5077,6 +5079,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return { manager, store, lifecycle, ship, repos };
   }
@@ -5207,6 +5210,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
+      ...optionalTail(),
     );
     return {
       manager,
@@ -5459,6 +5463,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return {
       manager,
@@ -5744,6 +5749,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)
         { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        ...optionalTail(),
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi
@@ -5923,8 +5929,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       {} as unknown as LiveVerificationJudge,
       { getResetAt: () => undefined } as unknown as OauthUsageService,
-      undefined, // usageProjector
-      env,
+      ...optionalTail({ env }),
     );
     return manager as unknown as {
       buildMemoryRecallPrefix(

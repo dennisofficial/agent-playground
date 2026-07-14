@@ -730,14 +730,17 @@ export class DriverStoreService {
   /**
    * ROTATE a builder thread's build session (d1): insert the NEXT builder-thread row under the SAME stage,
    * carrying the handoff forward as `handoff_in` and the continuation seed as `config.pendingLegSeed`, on a
-   * fresh (null) session. The `anchorStepId` is the CURRENT builder thread's id. `fromLeg` is that thread's
-   * 1-based position among the stage's builder threads (ORDER BY ordinal); the new row is `toLeg = fromLeg+1`
-   * at the next gap-numbered ordinal. Returns null (no-op) when there is no live session to rotate.
+   * fresh (null) session. `rotationCapped` marks the final safety-valve leg: it receives the seed and remains
+   * operator-steerable, but the driver does not expose another `record_leg_handoff` tool. The `anchorStepId` is
+   * the CURRENT builder thread's id. `fromLeg` is that thread's 1-based position among the stage's builder
+   * threads (ORDER BY ordinal); the new row is `toLeg = fromLeg+1` at the next gap-numbered ordinal. Returns
+   * null (no-op) when there is no live session to rotate.
    */
   async completeLegRotation(input: {
     anchorStepId: string;
     handoff: string;
     seed: string;
+    rotationCapped?: boolean;
     contextTokensPeak?: number | null;
   }): Promise<{ fromLeg: number; toLeg: number; abandonedSessionId: string } | null> {
     return this.dataSource.transaction(async (m) => {
@@ -766,7 +769,10 @@ export class DriverStoreService {
           handoff_in: input.handoff,
           session_id: null,
           status: 'pending',
-          config: { pendingLegSeed: input.seed },
+          config: {
+            pendingLegSeed: input.seed,
+            ...(input.rotationCapped ? { rotationCapped: true } : {}),
+          },
         }),
       );
       return { fromLeg, toLeg, abandonedSessionId };
