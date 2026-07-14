@@ -4,11 +4,10 @@ import { Injectable, Logger } from '@nestjs/common';
  * The typed contract the DRIVER uses to reach the BRAIN. It is implemented by the concrete brain
  * (`AgentSessionManager`), which registers itself via {@link BrainGateway.bind} on bootstrap.
  *
- * All five calls carry plain data and return `Promise<void>`:
+ * Both calls carry plain data and return `Promise<void>`:
  *  - `openPrAtShip` — REQUEST/RESPONSE: awaited to completion (the ship step latches the PR only after it).
- *  - the four wakes — fire-and-forget notifications the driver awaits only to log per-attempt failures;
- *    at-least-once retry is driven by the driver's periodic sweeps (the brain stamps a dedup marker on
- *    the wake turn's success tail, so a failed wake stays owed).
+ *  - `wakeUnblockedJob` — fire-and-forget notification the driver awaits only to log per-attempt failures;
+ *    at-least-once retry is driven by the JobUnblockSweep.
  */
 export interface BrainGatewayHandler {
   openPrAtShip(input: {
@@ -19,18 +18,6 @@ export interface BrainGatewayHandler {
     defaultBranch: string;
     title: string;
   }): Promise<void>;
-  notifyThreadHalted(
-    jobId: string,
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-    gen: number,
-  ): Promise<void>;
-  notifyThreadDone(
-    jobId: string,
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void>;
-  wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void>;
   wakeUnblockedJob(
     jobId: string,
     orgId: string,
@@ -80,27 +67,6 @@ export class BrainGateway implements BrainGatewayHandler {
 
   openPrAtShip(input: Parameters<BrainGatewayHandler['openPrAtShip']>[0]): Promise<void> {
     return this.require().openPrAtShip(input);
-  }
-
-  notifyThreadHalted(
-    jobId: string,
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-    gen: number,
-  ): Promise<void> {
-    return this.require().notifyThreadHalted(jobId, threadId, outcome, gen);
-  }
-
-  notifyThreadDone(
-    jobId: string,
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void> {
-    return this.require().notifyThreadDone(jobId, threadId, reason);
-  }
-
-  wakeForProvisioningFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
-    return this.require().wakeForProvisioningFailure(jobId, orgId, repoId);
   }
 
   wakeUnblockedJob(

@@ -730,62 +730,6 @@ export class ThreadDriver implements JobDispatcher {
     return { ok: true };
   }
 
-  /**
-   * Phase 3 (ADR 0004 rider 4) — deliver any OWED thread-halt brain wakes. Called from `drive()` once a job
-   * leaves the active window (one job) and from the leader boot sweep (all jobs). For each owed thread: wake
-   * the brain to triage the halt, then stamp the dedup marker (generation-keyed CAS). Fire-and-forget per
-   * thread; a wake-turn failure leaves the marker un-stamped so the boot sweep re-fires (at-least-once).
-   */
-  async deliverOwedHaltWakes(jobId?: string): Promise<void> {
-    const owed = await this.store.threadsAwaitingHaltWake(jobId).catch(() => []);
-    for (const t of owed) {
-      void this.deliverOneHaltWake(t).catch((err) =>
-        this.logger.warn(
-          `halt wake failed for thread=${t.threadId} (boot sweep will retry): ${err}`,
-        ),
-      );
-    }
-  }
-
-  private async deliverOneHaltWake(t: {
-    jobId: string;
-    threadId: string;
-    gen: number;
-    outcome: 'blocked' | 'incomplete' | 'failed';
-  }): Promise<void> {
-    // The stamp is NOT here — the brain stamps `halt_waked_at` on the wake turn's SUCCESS tail (keyed by the
-    // captured `gen`), so a wake turn that fails/steers/detaches leaves the halt owed for the sweeps to retry.
-    await this.brainGateway.notifyThreadHalted(t.jobId, t.threadId, t.outcome, t.gen);
-  }
-
-  /**
-   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`). Called from the periodic
-   * chat-delivery sweep and the leader boot sweep (all jobs). For each owed thread: wake the brain, which
-   * stamps the dedup marker on its own success tail. Fire-and-forget per thread; a wake-turn failure leaves
-   * the marker un-stamped so the boot sweep re-fires (at-least-once).
-   */
-  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
-    const owed = await this.store.threadsAwaitingDoneWake(jobId).catch(() => []);
-    for (const t of owed) {
-      if (this.active.has(t.jobId)) continue; // defer — NEVER wake during an active drive (a notable wake can fire mid-build; the build continues; deliver on the next quiescent sweep tick)
-      void this.deliverOneDoneWake(t).catch((err) =>
-        this.logger.warn(
-          `done wake failed for thread=${t.threadId} (boot sweep will retry): ${err}`,
-        ),
-      );
-    }
-  }
-
-  private async deliverOneDoneWake(t: {
-    jobId: string;
-    threadId: string;
-    reason: 'final' | 'notable';
-  }): Promise<void> {
-    // Stamp is NOT here — the brain stamps `done_waked_at` on the wake turn's SUCCESS tail, so a
-    // failed/steered/detached wake stays owed for the sweeps.
-    await this.brainGateway.notifyThreadDone(t.jobId, t.threadId, t.reason);
-  }
-
   // ── the pipeline ───────────────────────────────────────────────────────────────────────────────
 
   /** Guard the job against a concurrent drive, then run it to a PR (or `failed`). */
@@ -911,13 +855,6 @@ export class ThreadDriver implements JobDispatcher {
     } finally {
       this.active.delete(jobId);
     }
-    // Phase 3 (ADR 0004 rider 4): the owed thread-halt brain wake is delivered by the PERIODIC sweep
-    // (`startChatDeliverySweep` → `deliverOwedHaltWakes`), NOT fired inline here. Live validation showed an
-    // eager inline wake (≈7s after the build turn ends) systematically errors with `error_during_execution`:
-    // it resumes the brain session while `dispatch_build`'s compaction turn is still nulling/rewriting it (see
-    // engine-core's session-resume note). The sweep fires once the session has settled and works reliably; it
-    // also runs strictly outside any active drive, so a brain `retry_thread` → `redriveThread` re-enters
-    // cleanly. The boot sweep backstops a crash. (deliverOwedHaltWakes stays a public seam for both sweeps.)
   }
 
   /**
@@ -1530,15 +1467,6 @@ export class ThreadDriver implements JobDispatcher {
       `ship-review:${job.id}`,
       'The build finished and passed master review; it is parked awaiting your ship-review approval before the PR opens.',
     ).catch(() => undefined);
-    // Decision d1 — the FINAL wake, additive to the milestone above. Carried by the job's master-review
-    // thread (the whole-build carrier). If none resolves, skip the wake rather than guess — the milestone
-    // still informs.
-    const masterReviewId = await this.store.masterReviewThreadId(job.id).catch(() => null);
-    if (masterReviewId) {
-      await this.store
-        .setDoneWakeOwed(masterReviewId, 'final')
-        .catch((e) => this.logger.warn(`could not set final done-wake for job=${job.id}: ${e}`));
-    }
     // AUTO-APPROVE (per-job opt-in): the Ship card is posted above for audit; now immediately apply the SAME
     // resolution the operator's "Ship it" click would. Re-read the flag FRESH here — the `job` argument was
     // loaded at runJob start and a build can run for minutes; an operator may enable auto-approve mid-build
@@ -2002,17 +1930,6 @@ export class ThreadDriver implements JobDispatcher {
       `Thread "${thread.brief}" finished building.` +
         (droppedTasks > 0 ? ` (${droppedTasks} unreconciled task(s) dropped)` : ''),
     );
-    // Decision d1 — a clean `done` is normally cheap note-and-queue; a NOTABLE one (gaps left) also owes an
-    // autonomous brain wake so the operator isn't the first to notice. The wake resolves the transcript anchor
-    // itself at delivery time. (No live-verification sub-clause here: a runtime-touched-but-inadequate record is
-    // already downgraded to `blocked` upstream, so a `done` record's verdict is always adequate.)
-    const term = await this.store.getTerminalRecord(thread.id).catch(() => null);
-    const isNotable = term != null && (term.gaps?.length ?? 0) > 0;
-    if (isNotable) {
-      await this.store
-        .setDoneWakeOwed(thread.id, 'notable')
-        .catch((e) => this.logger.warn(`could not set notable done-wake for thread=${thread.id}: ${e}`));
-    }
     await this.post(route, `:white_check_mark: Thread done — *${thread.brief}*`);
     // Free the RAM: this thread (a builder or the master review — the only kinds `runThread` executes) may
     // have booted services under the supervisor for testing. Threads run sequentially in one per-job

@@ -3757,8 +3757,6 @@ async function sweepDeliversWake(
   // wake re-enters cleanly. Firing while `drive` is still unwinding would hit the `active` no-op.
   const active = (h.driver as unknown as { active?: Set<string> }).active;
   await flushUntil(() => !active?.has(state.job.id));
-  await h.driver.deliverOwedHaltWakes();
-  await flushUntil(() => h.wakes.length > 0);
 }
 
 describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bounded fix)', () => {
@@ -3831,28 +3829,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       () => (state.threads[0].orientation ?? '') === 'grant the env and retry',
     );
     expect(state.threads[0].orientation).toBe('grant the env and retry');
-  });
-
-  it('is idempotent: a re-run of deliverOwedHaltWakes after a wake does NOT re-fire (dedup marker)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const { turn } = makeTurn({
-      blockThread: { reason: 'question', detail: 'which API version?' },
-    });
-    const h = assemble(state, { turn });
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-    expect(h.wakes).toHaveLength(1);
-    // Re-running the owed-wake sweep (as the boot sweep would) finds nothing owed — already stamped.
-    await h.driver.deliverOwedHaltWakes(state.job.id);
-    await flush();
-    expect(h.wakes).toHaveLength(1); // NOT re-fired
   });
 
   it('terminal latch: a stray complete_thread AFTER block_thread does not overwrite the blocked assertion', async () => {

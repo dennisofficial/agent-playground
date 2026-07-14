@@ -102,10 +102,6 @@ import {
   renderRequestChangesDelivery,
   renderEventDelivery,
   renderFollowUpJobSeed,
-  haltWakeFraming,
-  renderHaltDelivery,
-  haltRecordBody,
-  doneWakeFraming,
   renderDoneDelivery,
   doneRecordBody,
   frameAnswer,
@@ -113,7 +109,6 @@ import {
   composeSeedTurn,
   maskedSecretNotice,
   maskedFileNotice,
-  wakeForProvisioningFailureBody,
   wakeUnblockedJobBody,
   wakeForAmendApprovedBody,
   retryResumeNudge,
@@ -630,21 +625,6 @@ export class AgentSessionManager
       // Same leader cadence re-drives WORK-OWED Codex reviews (a `review_plan` stranded `running` after its
       // brain turn was finalized on the non-detached path — reattach can't recover it). Leader-guarded.
       void this.reconcileWorkOwedReviews();
-      // ADR 0004 Phase 3: backstop the thread-halt brain wake. The driver fires it inline once a job leaves
-      // the active window, but that inline fire can lose a race with the just-ending build turn (a wake turn
-      // that throws never stamps `halt_waked_at`). This periodic pass re-delivers any owed-but-unwaked halt
-      // within a sweep interval — steady-state at-least-once, without waiting for a restart's boot sweep.
-      void this.dispatcher
-        .deliverOwedHaltWakes()
-        .catch((err) =>
-          this.logger.warn(`periodic halt-wake sweep failed: ${err}`),
-        );
-      // Decision d1: same at-least-once backstop for the completion wake (`'final'`/`'notable'`).
-      void this.dispatcher
-        .deliverOwedDoneWakes()
-        .catch((err) =>
-          this.logger.warn(`periodic done-wake sweep failed: ${err}`),
-        );
     }, CHAT_SWEEP_INTERVAL_MS);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
     this.scheduler.addInterval(CHAT_SWEEP_INTERVAL, iv);
@@ -835,23 +815,6 @@ export class AgentSessionManager
       this.logger.warn(`event-delivery reconciliation failed: ${err}`);
     }
 
-    // Thread-halt wake reconciliation (ADR 0004 Phase 3, same at-least-once shape): a thread that halted
-    // (`blocked`/`incomplete`/`failed`) records an owed brain wake on its row (`halt_outcome` set,
-    // `halt_waked_at` null). If the host died between the halt and the wake turn, re-fire it. The driver owns
-    // the query + wake + generation-keyed stamp; this just kicks the all-jobs pass. Idempotent.
-    try {
-      await this.dispatcher.deliverOwedHaltWakes();
-    } catch (err) {
-      this.logger.warn(`halt-wake reconciliation failed: ${err}`);
-    }
-
-    // Same at-least-once reconciliation for the completion wake (decision d1).
-    try {
-      await this.dispatcher.deliverOwedDoneWakes();
-    } catch (err) {
-      this.logger.warn(`done-wake reconciliation failed: ${err}`);
-    }
-
     // Operator-chat delivery reconciliation (the durable-inbox at-least-once boot half): a plain operator
     // message is a `stimuli` row persisted at intake; `delivered_at` is stamped only on a positive brain
     // hand-off. Clear leases first (a row mid-attempt at crash never reached the registered hand-off — a
@@ -929,14 +892,6 @@ export class AgentSessionManager
   }
 
   /**
-   * Phase 3 (ADR 0004 rider 4) — WAKE the job brain to triage a halted build thread. Called by the driver
-   * (via the lazy `BrainSurface`) once a thread halts `blocked`/`incomplete`/`failed`, and again by the boot
-   * sweep on crash recovery. Runs a TRUSTED harness turn (not the untrusted event lane, whose framing tells
-   * the brain to propose-a-plan-before-any-build and would suppress the autonomous fix): the brain reads
-   * `/context/generated/threads/<ordinal>-<slug>/completion.md` + the fenced record in the body, then either re-drives with guidance
-   * (`retry_thread`) or escalates. A no-op if the thread is no longer owed a wake (already re-driven / done).
-   */
-  /**
    * ESCALATE any still-undelivered build-lane host seed at thread end (spec step 6, d2). When a thread
    * reaches its final Leg terminal its build lane (`thread:<threadId>`) may still hold pending host seeds —
    * `queue`/`later` rows that never drained, or a `now` seed whose steer was swallowed. Re-key each onto the
@@ -957,146 +912,6 @@ export class AgentSessionManager
         this.logger.warn(`build-lane escalation re-key for ${s.id} failed (thread=${threadId}): ${err}`),
       );
     }
-  }
-
-  async notifyThreadHalted(
-    jobId: string,
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-    gen: number,
-  ): Promise<void> {
-    const job = await this.driverStore.loadJob(jobId).catch(() => null);
-    if (!job) return;
-    const thread = await this.driverStore.getThread(threadId).catch(() => null);
-    if (!thread) return;
-    const term = await this.driverStore
-      .getTerminalRecord(threadId)
-      .catch(() => null);
-    // A `done` record means the thread was re-driven and shipped between the owed-wake read and here —
-    // nothing to triage. (`incomplete` legitimately has no record; still wake for it.)
-    if (term?.status === 'done') return;
-    // Resolve the transcript anchor DIRECTLY from steps/legs (not the record) so a null `term` (an
-    // `incomplete` halt) still carries the session id — the exact class that most needs raw-transcript forensics.
-    const anchor = await this.driverStore
-      .resolveSessionAnchor(threadId)
-      .catch(() => undefined);
-    await this.escalateBuildLaneLeftovers(jobId, threadId);
-    const stimulus = haltDeliveryStimulus({
-      jobId,
-      orgId: job.orgId,
-      repoId: job.repoId,
-      body: renderHaltDelivery(thread, outcome, term, anchor),
-      seedHaltWake: { threadId, gen },
-      // The halted thread's own (untrusted) record → a visible `untrusted` pill; keyed by thread+gen.
-      seedRow: {
-        kind: 'untrusted',
-        label: haltRecordBody(term, anchor),
-        chunkKey: `seed:halt:${threadId}:${gen}`,
-        untrustedSource: `thread-halt:${threadId}`,
-        severity: outcome,
-        framing: haltWakeFraming(thread, outcome, term),
-      },
-    });
-    await this.handleChatTurn(stimulus);
-  }
-
-  /**
-   * Decision d1 — WAKE the job brain for a CLEAN completion owed a wake: `'final'` (the whole build parked
-   * at the ship gate) or `'notable'` (a thread finished `done` but carrying gaps/unverified items). Called
-   * by the driver (via `BrainSurface`) and again by the periodic + boot sweeps. Runs a TRUSTED harness turn
-   * (same convention as {@link notifyThreadHalted}) so the brain can investigate/report/retry within the d2
-   * autonomy boundary. A no-op if the thread has vanished.
-   */
-  async notifyThreadDone(
-    jobId: string,
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void> {
-    const job = await this.driverStore.loadJob(jobId).catch(() => null);
-    if (!job) return;
-    const thread = await this.driverStore.getThread(threadId).catch(() => null);
-    if (!thread) return;
-    const term = await this.driverStore
-      .getTerminalRecord(threadId)
-      .catch(() => null);
-    // Claim a fresh completion-wake generation for THIS delivery, then supersede any prior (dead) attempt's
-    // truncated partial before we stream the fresh summary. `claimDoneWakeGen` returns null when the wake is
-    // no longer owed (already delivered by a racing sweep) → no-op. The supersede is deliberately NOT wrapped
-    // in `.catch()`: if the delete fails we must NOT go on to stamp `done_waked_at`, else the stale partial is
-    // orphaned with no later sweep to clean it — let it throw so the sweep's per-thread catch retries the
-    // whole delivery (owed stays true; the gen already bumped so the retry's higher-gen supersede still
-    // sweeps the earlier partial).
-    const gen = await this.driverStore
-      .claimDoneWakeGen(threadId)
-      .catch(() => null);
-    if (gen == null) return;
-    await this.driverStore.supersedeDoneWakeMessages(jobId, threadId, gen);
-    // Resolved DIRECTLY from steps/legs at delivery time (not stored) — mirrors `notifyThreadHalted`.
-    const anchor = await this.driverStore
-      .resolveSessionAnchor(threadId)
-      .catch(() => undefined);
-    let perThreadGaps: { brief: string; gaps: string[] }[] | undefined;
-    if (reason === 'final') {
-      const allThreads = await this.driverStore
-        .threadsForJob(jobId)
-        .catch(() => []);
-      const withGaps = await Promise.all(
-        allThreads.map(async (t) => {
-          const r = await this.driverStore
-            .getTerminalRecord(t.id)
-            .catch(() => null);
-          return r?.gaps?.length ? { brief: t.brief, gaps: r.gaps } : null;
-        }),
-      );
-      perThreadGaps = withGaps.filter(
-        (g): g is { brief: string; gaps: string[] } => g != null,
-      );
-    }
-    await this.escalateBuildLaneLeftovers(jobId, threadId);
-    const stimulus = doneDeliveryStimulus({
-      jobId,
-      orgId: job.orgId,
-      repoId: job.repoId,
-      body: renderDoneDelivery(thread, reason, term, anchor, perThreadGaps),
-      seedDoneWake: { threadId, reason, gen },
-      // The completed thread's own (untrusted) record → a visible `untrusted` pill.
-      seedRow: {
-        kind: 'untrusted',
-        label: doneRecordBody(term, anchor),
-        chunkKey: `seed:done:${threadId}`,
-        untrustedSource: `thread-done:${threadId}`,
-        severity: reason,
-        framing: doneWakeFraming(thread, reason, term, anchor, perThreadGaps),
-      },
-    });
-    await this.handleChatTurn(stimulus);
-  }
-
-  /**
-   * WAKE the job brain because the repo's cold-boot SETUP SCRIPT failed on a fresh sandbox bring-up. Called
-   * by `JobLifecycleService` (via ModuleRef) at `createJob` provisioning — a brand-new job has no turn yet, so
-   * without this the failure would sit until the operator happened to message. Runs a TRUSTED harness turn;
-   * the SPECIFIC error is delivered as a system notice on this
-   * turn (drained from `job_sandboxes.setup_error` in {@link handleChatTurn}), so this body stays generic to
-   * avoid duplicating it. Concurrency-safe via `handleChatTurn` (steers into a live turn / queues behind one).
-   */
-  async wakeForProvisioningFailure(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): Promise<void> {
-    const stimulus = harnessDeliveryStimulus({
-      jobId,
-      orgId,
-      repoId,
-      body: wakeForProvisioningFailureBody(),
-      seedRow: {
-        label:
-          'Repo setup script failed on cold bring-up — checking the environment.',
-        chunkKey: `seed:setup-fail:${jobId}`,
-      },
-    });
-    await this.handleChatTurn(stimulus);
   }
 
   /**
@@ -4191,41 +4006,6 @@ export class AgentSessionManager
           status: 'planning',
           message:
             'Build held — back to planning. Revise the plan against the new base and re-propose (propose_plan), or confirm with the operator.',
-        };
-      },
-
-      retry_thread: async (args) => {
-        // Phase 3 (ADR 0004 rider 4) — the brain's AUTONOMOUS fix of a halted thread it was just woken about.
-        // Claim the durable per-thread re-drive budget FIRST (CAS): over the cap, refuse so the brain escalates
-        // to the operator instead of looping. On success, re-drive the SAME build lane with the brain's
-        // guidance (populates the thread's orientation cheat-sheet, read by the next build turn).
-        const threadId = String(args['threadId'] ?? '').trim();
-        const guidance = String(args['guidance'] ?? '').trim();
-        if (!threadId) {
-          return {
-            ok: false,
-            reason: 'threadId is required (the halted thread to re-drive)',
-          };
-        }
-        // The driver owns the whole precondition chain atomically (active guard → job exists → thread belongs
-        // to this job → claim the bounded budget → re-drive), so a refused/no-op re-drive never spends budget
-        // or touches another job's thread (Codex review High-1/High-2). On any refusal → escalate.
-        const r = await this.dispatcher.redriveThread(
-          stimulus.jobId,
-          threadId,
-          guidance || undefined,
-          HALT_FIX_ATTEMPT_CAP,
-        );
-        if (!r.ok) {
-          return {
-            ok: false,
-            reason: `${r.reason} — post a diagnosis and escalate to the operator instead of re-driving again`,
-          };
-        }
-        return {
-          ok: true,
-          attempt: r.attempt,
-          message: `Thread re-driven with your guidance (attempt ${r.attempt}).`,
         };
       },
 
@@ -8166,68 +7946,6 @@ function eventDeliveryStimulus(input: {
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
-    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
-  };
-}
-
-/**
- * Build the synthetic harness stimulus that delivers a THREAD-HALT wake to the brain (ADR 0004 Phase 3).
- * Same trusted-seed convention as {@link eventDeliveryStimulus} (SYSTEM_SEED_AUTHOR + `seed`, no operator
- * bubble, body NOT `wrapSystemNotification`-wrapped since `renderHaltDelivery` already framed + fenced it).
- */
-function haltDeliveryStimulus(input: {
-  jobId: string;
-  orgId: string;
-  repoId: string;
-  body: AgentMessage;
-  seedHaltWake: { threadId: string; gen: number };
-  seedRow?: SeedRow;
-}): ChatStimulus {
-  return {
-    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
-    orgId: input.orgId,
-    repoId: input.repoId,
-    body: input.body, // already framed + fenced by renderHaltDelivery
-    receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
-    jobId: input.jobId,
-    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
-    seed: true,
-    // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
-    seedHaltWake: input.seedHaltWake,
-    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
-  };
-}
-
-/**
- * Build the synthetic harness stimulus that delivers a COMPLETION wake to the brain (decision d1). Same
- * trusted-seed convention as {@link haltDeliveryStimulus} (SYSTEM_SEED_AUTHOR + `seed`, no operator bubble,
- * body NOT `wrapSystemNotification`-wrapped since `renderDoneDelivery` already framed + fenced it).
- */
-function doneDeliveryStimulus(input: {
-  jobId: string;
-  orgId: string;
-  repoId: string;
-  body: AgentMessage;
-  seedDoneWake: { threadId: string; reason: 'final' | 'notable'; gen: number };
-  seedRow?: SeedRow;
-}): ChatStimulus {
-  return {
-    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
-    orgId: input.orgId,
-    repoId: input.repoId,
-    body: input.body, // already framed + fenced by renderDoneDelivery
-    receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
-    jobId: input.jobId,
-    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
-    seed: true,
-    // Stamped on the turn's SUCCESS tail — a failed/guard-hit/detached wake turn stays un-waked for the sweeps.
-    seedDoneWake: input.seedDoneWake,
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
   };
 }

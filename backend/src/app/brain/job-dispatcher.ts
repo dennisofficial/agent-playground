@@ -69,19 +69,6 @@ export interface JobDispatcher {
     jobId: string,
     threadId: string,
   ): Promise<{ ok: boolean; reason?: string }>;
-  /**
-   * Deliver any OWED thread-halt brain wakes (ADR 0004 rider 4) — fired from `drive()` once the job leaves the
-   * active window (so a re-drive can re-enter cleanly) and from the leader boot sweep (crash recovery). For
-   * each owed thread it wakes the job brain to triage the halt, then stamps the dedup marker. Scoped to one
-   * job when `jobId` is given, else all jobs. Idempotent (generation-keyed stamp). Returns promptly.
-   */
-  deliverOwedHaltWakes(jobId?: string): Promise<void>;
-  /**
-   * Decision d1 — deliver any OWED completion brain wakes (`'final'`/`'notable'`), the clean-completion
-   * mirror of {@link deliverOwedHaltWakes}. Fired from the periodic chat-delivery sweep and the leader boot
-   * sweep. Scoped to one job when `jobId` is given, else all jobs. Idempotent. Returns promptly.
-   */
-  deliverOwedDoneWakes(jobId?: string): Promise<void>;
 }
 
 /**
@@ -137,17 +124,5 @@ export class LoggingJobDispatcher implements JobDispatcher {
       `[no-op operatorAcceptStuckThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will finalize this`,
     );
     return { ok: true };
-  }
-
-  async deliverOwedHaltWakes(jobId?: string): Promise<void> {
-    this.logger.log(
-      `[no-op deliverOwedHaltWakes] ${jobId ?? '(all)'} — W4 ThreadDriver will wake the brain`,
-    );
-  }
-
-  async deliverOwedDoneWakes(jobId?: string): Promise<void> {
-    this.logger.log(
-      `[no-op deliverOwedDoneWakes] ${jobId ?? '(all)'} — W4 ThreadDriver will wake the brain`,
-    );
   }
 }
