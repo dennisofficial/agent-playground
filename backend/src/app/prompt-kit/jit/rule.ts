@@ -49,6 +49,8 @@ export type JitDelivery =
 export type JitFireCtx = {
   /** The Bash command that matched (tool-match rules). */
   command?: string;
+  /** The host-produced install-awareness checklist text (tool-match rules) — see `installAwarenessRule`. */
+  installAwarenessText?: string;
   /** Which context-pressure band fired (token-threshold rules): `soft` on the first crossing, else `reminder`. */
   phase?: 'soft' | 'reminder';
   /** The job this fire targets (lifecycle rules — feeds the seed's dedup key). */
