@@ -475,14 +475,17 @@ export function UsageRingView({
   // `critical` is the red treatment on the label: a maxed window, or a session heading into its cap.
   const critical = maxed || (!!session && sessionPct >= SESSION_LIMIT_THRESHOLD);
 
+  // Before the first turn of a reset session, the 5h window has no data yet ("waiting for next turn"),
+  // but usage is genuinely 0% — so show "0%" rather than a bare middot that reads as broken. Only a real
+  // endpoint failure (not responded) falls through to the "–" placeholder.
   const labelText = maxedCountdown
     ? maxedCountdown
     : session
       ? `${Math.round(sessionPct * 100)}%`
       : responded
-        ? "·"
+        ? "0%"
         : "–";
-  const labelClassName = critical ? "" : session ? "text-dim" : "text-faint";
+  const labelClassName = critical ? "" : session || responded ? "text-dim" : "text-faint";
   const labelStyle = critical ? { color: "var(--red)" } : undefined;
 
   const title = maxedCountdown
@@ -492,7 +495,7 @@ export function UsageRingView({
           session.resetsAt,
         )}) — click for details`
       : responded
-        ? "Claude usage · waiting for next turn — click for details"
+        ? "Session usage · 0% — waiting for next turn — click for details"
         : "Claude usage · unavailable right now — click for details";
 
   return (
