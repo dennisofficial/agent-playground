@@ -3,6 +3,15 @@ import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /**
+ * ESM banner for the sandbox bundles. esbuild's `format: 'esm'` output does NOT provide the CommonJS
+ * globals `require`/`__filename`/`__dirname`, yet bundled-in code references them — e.g. engine-core's
+ * `createRequire(__filename)` (used to resolve the `@openai/codex` binary). Without these shims the whole
+ * ESM bundle throws `__filename is not defined in ES module scope` on load, killing every engine turn.
+ */
+const NODE_CJS_SHIM_BANNER =
+  "import { createRequire as __cr } from 'node:module'; import { fileURLToPath as __ftu } from 'node:url'; import { dirname as __dname } from 'node:path'; const require = __cr(import.meta.url); const __filename = __ftu(import.meta.url); const __dirname = __dname(__filename);";
+
+/**
  * Bundle the in-container engine entrypoint into a single self-contained ESM file. The two engine SDKs
  * are kept EXTERNAL (installed in the sandbox image, dynamically imported at runtime); everything else
  * (EngineCore + helpers) is bundled in.
@@ -106,7 +115,7 @@ export async function bundleEngine(): Promise<string> {
     // The dev runtime is `nest start --watch` → bundles the COMPILED (CommonJS) entry, whose
     // `require("node:crypto")` becomes esbuild's throwing `__require` shim in ESM output. Provide a real
     // `require` so those dynamic requires of Node builtins resolve. (Harmless when the entry is TS/ESM.)
-    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    banner: { js: NODE_CJS_SHIM_BANNER },
     logLevel: 'silent',
   });
   // Mirror to the live bind-mount location when it differs (containerized backend → host-resolvable path).
@@ -165,7 +174,7 @@ export async function bundleMcpBridge(): Promise<string> {
     platform: 'node',
     format: 'esm',
     target: 'node22',
-    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    banner: { js: NODE_CJS_SHIM_BANNER },
     logLevel: 'silent',
   });
   const live = mcpBridgeBundlePath();
@@ -199,7 +208,7 @@ export async function bundleMcpHub(): Promise<string> {
     platform: 'node',
     format: 'esm',
     target: 'node22',
-    banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    banner: { js: NODE_CJS_SHIM_BANNER },
     logLevel: 'silent',
   });
   const live = mcpHubBundlePath();
