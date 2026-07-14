@@ -1436,6 +1436,21 @@ export class WebSurfaceController {
   }
 
   /**
+   * `POST …/jobs/:jobId/ship-without-review` — the operator escape hatch on a `codex_review_unavailable`
+   * hold: skips master_review (marks it done) and proceeds to the normal ship-review gate. Refuses when the
+   * job isn't in that hold. Scoped to the caller's org via the membership guard + `requireThread`.
+   */
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/ship-without-review')
+  @UseGuards(OrgMembershipGuard)
+  async shipWithoutReview(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Param('jobId') jobId: string,
+  ): Promise<{ ok: boolean; reason?: string }> {
+    await this.requireThread(jobId, org.id);
+    return this.dispatcher.operatorShipWithoutReview(jobId);
+  }
+
+  /**
    * `POST …/jobs/:jobId/threads/:threadId/retry-verification` — the "Retry now" lever on a thread held on a
    * verification-judge outage (`judge_unavailable`). Re-arms the judge-cap re-drive budget and re-drives.
    * Scoped to the caller's org via the membership guard + `requireThread` (job ownership).

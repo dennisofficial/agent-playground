@@ -169,6 +169,8 @@ jobs:
           context: .
           file: infra/backend.Dockerfile
           push: true
+          build-args: |
+            GIT_SHA=${{ steps.meta.outputs.sha_tag }}
           tags: |
             ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.sha_tag }}
             ${{ steps.meta.outputs.backend_image }}:latest

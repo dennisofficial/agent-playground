@@ -360,6 +360,9 @@ export interface EngineRunResult {
    * non-redis / test paths.
    */
   turnId?: string;
+  /** The claude_credentials.id this turn authed on (host-resolved at the runner seam; from the reattach
+   *  registry ctx on a re-attach). Absent for Codex / no-credential turns. */
+  credentialId?: string;
 }
 
 /**

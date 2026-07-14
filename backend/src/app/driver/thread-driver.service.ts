@@ -25,7 +25,7 @@ import type {
   SessionEngine,
   ThreadCondition,
 } from '../domain';
-import { HALT_FIX_ATTEMPT_CAP, JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS, HALT_FIX_ATTEMPT_CAP, JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
 import {
   EngineAuthError,
   EngineSessionLimitError,
@@ -214,6 +214,17 @@ function isTransientDriveError(err: unknown): boolean {
   // failure as transient — we only paper over the connection/sandbox hiccups that produced the phantom
   // "errors" a plain retry cleared (ADR 0004, failure #1).
   return HOST_TRANSPORT_TRANSIENT_RE.test(msg);
+}
+
+/**
+ * Whether a drive-loop error, encountered while `master_review` is the in-flight thread, is a genuine
+ * Codex-outage shape (network/transport unreachable, or a Codex auth failure) rather than a real defect —
+ * the scope guard for {@link isCodexReviewOutageError}'s callers, which additionally confirm the in-flight
+ * thread is `master_review` before treating this as a hold-worthy outage (see d1: never for real findings).
+ */
+function isCodexReviewOutageError(err: unknown): boolean {
+  if (err instanceof EngineAuthError) return err.engine === 'codex';
+  return isTransientDriveError(err); // network/transport shapes, retries already exhausted upstream
 }
 
 /**
@@ -464,9 +475,12 @@ export class ThreadDriver implements JobDispatcher {
    */
   async resumePaused(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
-    // Resumes a credential/401 halt OR a session-limit park (the auto-resume sweep + the operator ping both
-    // route here). Any other halt kind (or none) is ignored.
-    if (!job || !['blocked_credentials', 'session_limit'].includes(job.halt?.kind ?? '')) {
+    // Resumes a credential/401 halt, a session-limit park, OR a master_review Codex-outage hold (the
+    // auto-resume sweep + the operator ping both route here). Any other halt kind (or none) is ignored.
+    if (
+      !job ||
+      !['blocked_credentials', 'session_limit', 'codex_review_unavailable'].includes(job.halt?.kind ?? '')
+    ) {
       this.logger.warn(
         `resumePaused job=${jobId}: not a resumable halt (${job?.halt?.kind ?? 'gone'}) — ignoring`,
       );
@@ -728,6 +742,43 @@ export class ThreadDriver implements JobDispatcher {
   }
 
   /**
+   * "Ship without review" — the operator escape hatch on a `codex_review_unavailable` hold (d1: shipping
+   * without the automated Codex whole-diff pass is always an explicit operator choice, never automatic).
+   * Marks `master_review` skipped/done (so the drive loop's `status !== 'done'` scan passes over it) and
+   * re-drives, landing the job at the normal `awaiting_ship_review` gate — the human diff review still runs.
+   */
+  async operatorShipWithoutReview(jobId: string): Promise<{ ok: boolean; reason?: string }> {
+    if (this.active.has(jobId)) {
+      return { ok: false, reason: 'the build is running right now — retry momentarily' };
+    }
+    const job = await this.store.loadJob(jobId).catch(() => null);
+    if (!job) return { ok: false, reason: 'job not found' };
+    if (job.halt?.kind !== 'codex_review_unavailable') {
+      return { ok: false, reason: 'not a Codex-outage hold' };
+    }
+    const threads = await this.store.threadsForJob(jobId).catch(() => []);
+    const mr = threads.find((t) => t.kind === 'master_review');
+    if (!mr) return { ok: false, reason: 'no master review thread' };
+    await this.store
+      .recordThreadTermination(mr.id, {
+        status: 'done',
+        summary: 'Master review skipped — shipped without the automated Codex review (operator, Codex outage).',
+      })
+      .catch(() => undefined);
+    for (const p of await this.store.stepsForThread(mr.id)) {
+      await this.store.setStepState(p.id, 'done', 'done').catch(() => undefined);
+    }
+    await this.store.setThreadStatus(mr.id, 'done').catch(() => undefined);
+    await this.store.clearJobHalt(jobId).catch(() => undefined);
+    await this.store.setSessionResume(jobId, null, null).catch(() => undefined);
+    await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    void this.drive(jobId).catch((err) =>
+      this.logger.error(`operatorShipWithoutReview job=${jobId} crashed: ${err}`),
+    );
+    return { ok: true };
+  }
+
+  /**
    * Phase 3 (ADR 0004 rider 4) — deliver any OWED thread-halt brain wakes. Called from `drive()` once a job
    * leaves the active window (one job) and from the leader boot sweep (all jobs). For each owed thread: wake
    * the brain to triage the halt, then stamp the dedup marker (generation-keyed CAS). Fire-and-forget per
@@ -891,6 +942,17 @@ export class ThreadDriver implements JobDispatcher {
           })
           .catch(() => undefined);
         await this.relaySessionLimitPaused(jobId, resumeAt);
+      } else if (
+        isCodexReviewOutageError(err) &&
+        (await this.inFlightThreadIsMasterReview(jobId))
+      ) {
+        // A network/transport blip that exhausted `runJobWithTransientRetry`'s budget, or a Codex auth
+        // failure, while master_review is in flight — a genuine Codex outage, not a build defect (d1): hold
+        // on a re-waking clock instead of flipping the job to `failed`.
+        this.logger.warn(
+          `job=${jobId} master_review Codex outage — holding (not failing): ${err instanceof Error ? err.message : err}`,
+        );
+        await this.holdForCodexReviewOutage(jobId, err);
       } else {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
@@ -1010,6 +1072,12 @@ export class ThreadDriver implements JobDispatcher {
     // pause notice and wait for the human. Only claim the login is dead (the actionable reconnect copy) when
     // we actually marked it; otherwise fall back to the generic credential-pause notice.
     this.authRetryAttempts.delete(jobId);
+    if (err.engine === 'codex' && (await this.inFlightThreadIsMasterReview(jobId))) {
+      // A Codex auth failure while master_review is in flight is a Codex OUTAGE, not a dead login (d1: never
+      // a blocked_credentials needs-you state here) — hold on a re-waking clock instead.
+      await this.holdForCodexReviewOutage(jobId, err);
+      return;
+    }
     await this.store
       .setJobHalt(jobId, {
         kind: 'blocked_credentials',
@@ -1040,6 +1108,39 @@ export class ThreadDriver implements JobDispatcher {
       (t) => isDriverExecutableKind(t.kind) && t.status !== 'done',
     );
     return thread ? laneFor('builder', thread.id) : MAIN_LANE;
+  }
+
+  /** Whether the job's current in-flight thread (the first non-`done` executable thread) is `master_review`
+   *  — master_review runs LAST, only once every builder is `done`, so this reliably scopes a Codex-outage
+   *  hold to the ship-time review pass rather than a builder's own Codex/Claude use. */
+  private async inFlightThreadIsMasterReview(jobId: string): Promise<boolean> {
+    const threads = await this.store.threadsForJob(jobId).catch(() => []);
+    const thread = threads.find(
+      (t) => isDriverExecutableKind(t.kind) && t.status !== 'done',
+    );
+    return thread?.kind === 'master_review';
+  }
+
+  /**
+   * PARK (don't fail) a job on a genuine Codex outage hit while `master_review` is in flight (d1): the phase
+   * is preserved, master_review is left non-`done` so a re-drive re-runs it, and the leader
+   * `SessionResumeSweep` auto-resumes it once `resumeAt` passes (mirrors the `session_limit` park). The
+   * operator can also jump straight to `operatorShipWithoutReview` instead of waiting out the clock.
+   */
+  private async holdForCodexReviewOutage(jobId: string, err: unknown): Promise<void> {
+    const at = new Date().toISOString();
+    const reason = 'Master review is paused — Codex is unreachable.';
+    const resumeAt = new Date(Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS).toISOString();
+    await this.store
+      .setJobHalt(jobId, { kind: 'codex_review_unavailable', reason, at, resumeAt })
+      .catch(() => undefined);
+    await this.store
+      // `resetSource` is required by the column type but not used for routing — 'usage_api' mirrors the
+      // host-retry park's fixed-clock convention (`scheduleBuildHostRetry`), since this clock isn't a
+      // harvested usage window either.
+      .setSessionResume(jobId, resumeAt, { lane: 'build', reason, resetSource: 'usage_api' })
+      .catch(() => undefined);
+    await this.relayCodexReviewOutage(jobId, resumeAt);
   }
 
   /**
@@ -1185,6 +1286,59 @@ export class ThreadDriver implements JobDispatcher {
       }
     } catch (e) {
       this.logger.warn(`could not live-relay session-limit park for job=${jobId}: ${e}`);
+    }
+  }
+
+  /**
+   * Post a "master_review paused — Codex outage" notice (build lane). Mirrors {@link relaySessionLimitPaused}
+   * (durable-first via the block sink, best-effort live post on top) but the dedup can't rely on an exact-text
+   * match over the default 120s window the way the session-limit park does: `session_limit`'s `resumeAt` is an
+   * EXTERNAL absolute reset instant that stays constant across re-parks of the same limit, while this hold's
+   * clock is a SELF-imposed `now + CODEX_REVIEW_OUTAGE_RETRY_MS` recomputed fresh on every retry cycle — and
+   * the sweep re-drives (and thus re-holds) on exactly that cadence, well outside 120s. So the notice text
+   * here is kept STABLE (it never embeds `resumeAt`) and the dedup window is widened to span one full retry
+   * cycle, so a same-outage re-hold matches the previous notice instead of stacking a near-identical box every
+   * `CODEX_REVIEW_OUTAGE_RETRY_MS`. Marks the block `codexReviewUnavailable` so the UI can render the outage
+   * card + its "Ship without review" affordance.
+   */
+  private async relayCodexReviewOutage(jobId: string, resumeAt?: string): Promise<void> {
+    const text = `:hourglass: Master review is paused — Codex is unreachable. It auto-retries every few minutes; you can also “Ship without review” to skip the automated review and proceed to the ship gate now.`;
+    const alreadyPosted = await this.store
+      .hasRecentSystemOperatorNotice(jobId, text, CODEX_REVIEW_OUTAGE_RETRY_MS + 60_000)
+      .catch(() => false);
+    if (!alreadyPosted) {
+      await this.blockSink
+        .appendBlock(jobId, {
+          kind: 'chat',
+          text,
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            codexReviewUnavailable: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        })
+        .catch((e) =>
+          this.logger.error(`could not durably record codex-review-outage hold for job=${jobId}: ${e}`),
+        );
+    }
+    try {
+      const job = await this.store.loadJob(jobId);
+      const route = await this.store.route(job);
+      if (route.channel && !alreadyPosted) {
+        await this.surface.post(route.channel, text, {
+          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
+          ...(route.orgId ? { orgId: route.orgId } : {}),
+          meta: {
+            source: 'system_operator',
+            severity: 'warning',
+            codexReviewUnavailable: true,
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        });
+      }
+    } catch (e) {
+      this.logger.warn(`could not live-relay codex-review-outage hold for job=${jobId}: ${e}`);
     }
   }
 
@@ -3274,7 +3428,12 @@ export class ThreadDriver implements JobDispatcher {
       await harness.abort();
       throw err;
     }
-    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+    await harness.finish(
+      result.report,
+      result.usage
+        ? { usage: result.usage, credentialId: result.credentialId ?? null }
+        : undefined,
+    );
     return result;
   }
 
@@ -3337,11 +3496,16 @@ export class ThreadDriver implements JobDispatcher {
     });
     try {
       const reattachCredentialId = (row.ctx as { credentialId?: string } | null)?.credentialId;
+      const spec = threadKindSpec(thread.kind);
       const result = await this.turn.reattach({
         turnId: row.turn_id,
         containerId: row.container_id!,
         jobId: job.id,
+        orgId: row.org_id,
         stepId: anchorStepId,
+        lane: row.lane,
+        kind: row.kind,
+        engine: spec.engine,
         onEvent: (e) => harness.onEvent(e),
         // Re-supply the host tool closure — the in-sandbox session may have an in-flight
         // `request_operator_input` request whose response the re-attached host must still serve.
@@ -3349,7 +3513,12 @@ export class ThreadDriver implements JobDispatcher {
         // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
         ...(reattachCredentialId ? { credentialId: reattachCredentialId } : {}),
       });
-      await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+      await harness.finish(
+        result.report,
+        result.usage
+          ? { usage: result.usage, credentialId: result.credentialId ?? null }
+          : undefined,
+      );
       return result;
     } catch (err) {
       if (isEngineDetachedError(err)) {
@@ -3614,7 +3783,12 @@ export class ThreadDriver implements JobDispatcher {
       throw err;
     }
     // Engine turn done — persist the transcript (+ fallback) and end the live lane.
-    await harness.finish(result.report, result.usage ? { usage: result.usage } : undefined);
+    await harness.finish(
+      result.report,
+      result.usage
+        ? { usage: result.usage, credentialId: result.credentialId ?? null }
+        : undefined,
+    );
     return result;
   }
 

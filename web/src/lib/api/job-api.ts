@@ -422,6 +422,17 @@ export function acceptThread(
   });
 }
 
+/** "Ship without review" escape hatch on a `codex_review_unavailable` job hold — marks the ship-time
+ *  master_review thread skipped/done and lands the job at the normal ship-review gate (the human PR gate
+ *  still applies). Refused server-side unless the job is actually held on a Codex outage. */
+export function shipWithoutReview(
+  ref: JobRef,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, "/ship-without-review"), {
+    method: "POST",
+  });
+}
+
 /**
  * The "Resume" button on a `retryable` system→operator error box (a chat-turn that hit a transient
  * engine failure). Distinct from `retryJob` — this re-pokes the SAME engine session with no new operator

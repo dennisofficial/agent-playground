@@ -59,6 +59,14 @@ export class TurnStatsEntity extends TimestampedEntity {
   @Column({ type: 'text' })
   engine!: string;
 
+  /** The claude_credentials.id that authed this turn; NULL for Codex / non-agentic (d3). */
+  @Column({ type: 'uuid', nullable: true })
+  credential_id!: string | null;
+
+  /** Git commit of the backend process that wrote this row (AppVersionService.sha; "dev" locally). */
+  @Column({ type: 'text', nullable: true })
+  engine_git_sha!: string | null;
+
   /** The primary (orchestrator) model id the turn reported; null when the engine surfaced none. */
   @Column({ type: 'text', nullable: true })
   model!: string | null;

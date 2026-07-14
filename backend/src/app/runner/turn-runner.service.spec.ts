@@ -5,6 +5,7 @@ import type { StepEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
 import { agentMessage } from '../prompt-kit/message';
+import type { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 
 /**
  * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
@@ -25,6 +26,12 @@ function fakeSteps(priorSessionId: string | null = null) {
     }),
   } as unknown as Repository<StepEntity>;
   return { repo, updates, last: () => current };
+}
+
+function fakeUsage() {
+  return {
+    record: vi.fn(async () => undefined),
+  } as unknown as TurnUsageProjector & { record: ReturnType<typeof vi.fn> };
 }
 
 const sandbox: FeatureSandbox = {
@@ -253,5 +260,111 @@ describe('TurnRunnerService — evidence dir threading', () => {
     await new TurnRunnerService(engine, repo).runTurn({ ...baseInput, sandbox: rowSourced });
 
     expect(received[0].target?.evidenceDir).toBeUndefined();
+  });
+});
+
+describe('TurnRunnerService — provenance threading', () => {
+  it('returns and records the credential id surfaced by a fresh engine run', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async () => ({
+        result: 'ok',
+        usage: { inputTokens: 10, outputTokens: 2 },
+        credentialId: 'cred-fresh',
+      })),
+    };
+
+    const res = await new TurnRunnerService(engine, repo, usage).runTurn({
+      ...baseInput,
+      turnMeta: {
+        jobId: 'job-1',
+        orgId: 'org-1',
+        channel: 'repo-1',
+        lane: 'thread:t1',
+        kind: 'step',
+      },
+    });
+
+    expect(res.credentialId).toBe('cred-fresh');
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        orgId: 'org-1',
+        lane: 'thread:t1',
+        kind: 'step',
+        engine: 'claude',
+        credentialId: 'cred-fresh',
+      }),
+      expect.objectContaining({ inputTokens: 10, outputTokens: 2 }),
+    );
+  });
+
+  it('records usage for a successful reattach with the dispatch credential id', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      reattach: vi.fn(async () => ({
+        result: 'reattached',
+        sessionId: 'sess-1',
+        usage: { inputTokens: 8, outputTokens: 3 },
+        credentialId: 'cred-reattach',
+      })),
+    };
+
+    const res = await new TurnRunnerService(engine, repo, usage).reattach({
+      turnId: 'turn-1',
+      containerId: 'ctr-1',
+      jobId: 'job-1',
+      orgId: 'org-1',
+      stepId: 'step-1',
+      lane: 'thread:t1',
+      kind: 'step',
+      engine: 'claude',
+      credentialId: 'cred-reattach',
+    });
+
+    expect(res.credentialId).toBe('cred-reattach');
+    expect(engine.reattach).toHaveBeenCalledWith(
+      'turn-1',
+      'ctr-1',
+      expect.objectContaining({ credentialId: 'cred-reattach' }),
+    );
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        orgId: 'org-1',
+        lane: 'thread:t1',
+        kind: 'step',
+        engine: 'claude',
+        credentialId: 'cred-reattach',
+        metaTag: { phaseId: 'step-1' },
+      }),
+      expect.objectContaining({ inputTokens: 8, outputTokens: 3 }),
+    );
+  });
+
+  it('does not record reattach usage when another finisher already claimed the turn', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      reattach: vi.fn(async () => ({
+        result: 'lost',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        credentialId: 'cred-lost',
+        claimed: false,
+      })),
+    };
+
+    await new TurnRunnerService(engine, repo, usage).reattach({
+      turnId: 'turn-1',
+      containerId: 'ctr-1',
+      jobId: 'job-1',
+      credentialId: 'cred-lost',
+    });
+
+    expect(usage.record).not.toHaveBeenCalled();
   });
 });

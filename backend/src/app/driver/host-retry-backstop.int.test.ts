@@ -34,6 +34,7 @@ import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } fr
 import type { TurnRunnerService } from '../runner';
 import type { ChatSurface, TaskEventSink } from '../surface';
 import { LiveTurnStore, MessageBlockSink, TurnHarnessFactory } from '../surface';
+import type { AppVersionService } from '../cluster/app-version.service';
 import type { ToolBridgeOptions } from '../engine';
 import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '../engine';
 import type { CredentialResolver } from '../onboarding';
@@ -300,7 +301,11 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       });
       // REAL block sink — the actual `MessageEntity` repository, so the durable retry notice lands in
       // live Postgres `messages`.
-      const blockSink = new MessageBlockSink(mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION)));
+      const version = { sha: 'dev' } as unknown as AppVersionService;
+      const blockSink = new MessageBlockSink(
+        mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION)),
+        version,
+      );
       const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
       const usage = {
         getResetAt: () => undefined,

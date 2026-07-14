@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { OrmConnectionModule, DB_CONNECTION } from './database.module';
 import { ENTITIES } from './entities';
+import { MessageGitShaSubscriber } from './message-git-sha.subscriber';
 
 /**
  * Atlas v2 persistence root: brings up the named 'app' connection (`OrmConnectionModule`) and
@@ -14,6 +15,7 @@ import { ENTITIES } from './entities';
     OrmConnectionModule,
     TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
   ],
+  providers: [MessageGitShaSubscriber],
   exports: [TypeOrmModule],
 })
 export class PersistenceModule {}

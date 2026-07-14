@@ -44,6 +44,7 @@ import {
   retryVerification,
   sayMessage,
   sayMessageWithFiles,
+  shipWithoutReview,
   spinUpPreview,
   stopJob,
   submitAnswerBatch,
@@ -506,6 +507,21 @@ export function useAcceptThread(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (threadId: string) => acceptThread(ref, threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** "Ship without review" on a `codex_review_unavailable`-held job — skip the unreachable Codex
+ *  master_review and land at the normal ship-review gate. Refreshes the pipeline (the banner clears in
+ *  favor of the ship-review card) + messages + the job list. */
+export function useShipWithoutReview(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => shipWithoutReview(ref),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
