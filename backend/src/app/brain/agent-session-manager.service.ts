@@ -2344,6 +2344,7 @@ export class AgentSessionManager
                 contextLimit: resolveContextLimit(
                   result.usage.contextModel ?? result.usage.model,
                 ),
+                credentialId: result.credentialId ?? null,
               }
             : undefined,
         );
@@ -2365,6 +2366,7 @@ export class AgentSessionManager
             kind: row.kind,
             engine: 'claude',
             turnId: row.turn_id,
+            credentialId: result.credentialId ?? null,
           },
           result.usage,
         );
@@ -3373,6 +3375,7 @@ export class AgentSessionManager
               contextLimit: resolveContextLimit(
                 result.usage.contextModel ?? result.usage.model,
               ),
+              credentialId: result.credentialId ?? null,
             }
           : undefined,
       );
@@ -3383,6 +3386,7 @@ export class AgentSessionManager
           lane: 'main',
           kind: 'brain',
           engine: 'claude',
+          credentialId: result.credentialId ?? null,
         },
         result.usage,
       );
@@ -3418,6 +3422,7 @@ export class AgentSessionManager
             contextLimit: resolveContextLimit(
               result.usage.contextModel ?? result.usage.model,
             ),
+            credentialId: result.credentialId ?? null,
           }
         : undefined,
     );
@@ -3428,6 +3433,7 @@ export class AgentSessionManager
         lane: 'main',
         kind: 'brain',
         engine: 'claude',
+        credentialId: result.credentialId ?? null,
       },
       result.usage,
     );
@@ -7186,6 +7192,7 @@ export class AgentSessionManager
           lane: 'main',
           kind: 'compaction',
           engine: 'claude',
+          credentialId: result.credentialId ?? null,
         },
         result.usage,
       );

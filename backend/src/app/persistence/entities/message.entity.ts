@@ -72,4 +72,8 @@ export class MessageEntity extends TimestampedEntity {
    */
   @Column({ type: 'text', nullable: true })
   idem_key!: string | null;
+
+  /** Git commit of the backend process that wrote this transcript row (auto-stamped). */
+  @Column({ type: 'text', nullable: true })
+  engine_git_sha!: string | null;
 }

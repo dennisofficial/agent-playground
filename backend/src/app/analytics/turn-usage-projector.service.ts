@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { type EngineUsage, resolveContextLimit } from '../engine';
+import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, TurnModelUsageEntity, TurnStatsEntity } from '../persistence/entities';
 
@@ -18,6 +19,8 @@ export interface TurnUsageIdentity {
   engine: string;
   /** The engine turn id when the caller has it; most completion sites don't (minted in the runner). */
   turnId?: string | null;
+  /** The claude_credentials.id that authed this turn (Claude only); null/absent for Codex + non-agentic (d3). */
+  credentialId?: string | null;
   /** Per-turn attribution tags (phaseId → step_id; the rest → `tags`): batchOrdinal/autofixId/lensId/… */
   metaTag?: Record<string, unknown> | null;
 }
@@ -41,6 +44,7 @@ export class TurnUsageProjector {
     private readonly modelUsage: Repository<TurnModelUsageEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
+    private readonly version: AppVersionService,
   ) {}
 
   async record(identity: TurnUsageIdentity, usage: EngineUsage | undefined): Promise<void> {
@@ -72,6 +76,8 @@ export class TurnUsageProjector {
           lane: identity.lane,
           kind: identity.kind,
           engine: identity.engine,
+          credential_id: identity.credentialId ?? null,
+          engine_git_sha: this.version.sha,
           model: usage.model ?? null,
           input_tokens: usage.inputTokens ?? 0,
           output_tokens: usage.outputTokens ?? 0,

@@ -320,7 +320,10 @@ export class AutoFixStage {
         ...(options.auth ? { auth: options.auth } : {}),
         ...this.reasoningEffortFor('review_lens', engine),
       });
-      await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+      await harness?.finish(
+        res.result,
+        res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
+      );
       if (ctx.jobId) {
         void this.usage?.record(
           {
@@ -328,6 +331,7 @@ export class AutoFixStage {
             lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
             kind: 'autofix',
             engine: engine ?? 'claude',
+            credentialId: res.credentialId ?? null,
             metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), lensId: lens.id },
           },
           res.usage,
@@ -449,7 +453,10 @@ export class AutoFixStage {
       await harness?.abort().catch(() => undefined);
       throw err;
     }
-    await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+    await harness?.finish(
+      res.result,
+      res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
+    );
     if (ctx.jobId) {
       void this.usage?.record(
         {
@@ -457,6 +464,7 @@ export class AutoFixStage {
           lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
           kind: 'autofix',
           engine: engine ?? 'claude',
+          credentialId: res.credentialId ?? null,
           metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), fixTurn: true },
         },
         res.usage,
