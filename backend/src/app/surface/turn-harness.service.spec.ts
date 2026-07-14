@@ -412,25 +412,45 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 });
 
 describe('EntityTaskEventSink — the per-scope task fold writer', () => {
+  /** A minimal in-memory `tasks` table stand-in, keyed by row id. */
+  function fakeTasksRepo(seed: Array<{ id: string; title: string; status: string; blocked_by?: string[] }>) {
+    const rows = new Map(seed.map((r) => [r.id, { org_id: 'O', ordinal: 10, brief: null, active_form: null, blocked_by: [], ...r }]));
+    let nextId = 100;
+    return {
+      rows,
+      find: vi.fn(async () => [...rows.values()]),
+      create: vi.fn((partial: Record<string, unknown>) => ({ ...partial })),
+      save: vi.fn(async (partial: Record<string, unknown>) => {
+        const id = String(nextId++);
+        const row = { id, ...partial } as { id: string };
+        rows.set(id, row as never);
+        return row;
+      }),
+      update: vi.fn(async (where: { id: string }, patch: Record<string, unknown>) => {
+        const row = rows.get(where.id);
+        if (row) rows.set(where.id, { ...row, ...patch });
+      }),
+      delete: vi.fn(async (where: { id: string }) => {
+        rows.delete(where.id);
+      }),
+      createQueryBuilder: () => ({
+        select: () => ({
+          where: () => ({ getRawOne: async () => ({ max: 10 }) }),
+        }),
+      }),
+    };
+  }
+
   it('serializes concurrent folds on one scope so a batch of updates never loses a write', async () => {
     // A batch turn fires task events fire-and-forget; unserialized, both folds read the same snapshot
     // and the second write erases the first's change (live-observed as "deleted tasks still showing").
-    let row: { id: string; tasks: unknown[]; main_tasks: Array<{ id: string; subject: string; status: string }> } = {
-      id: 'J',
-      tasks: [],
-      main_tasks: [
-        { id: '1', subject: 'a', status: 'pending' },
-        { id: '2', subject: 'b', status: 'pending' },
-      ],
-    };
-    const jobs = {
-      findOne: vi.fn(async () => ({ ...row, main_tasks: [...row.main_tasks] })),
-      update: vi.fn(async (_where: unknown, patch: Record<string, unknown>) => {
-        row = { ...row, ...(patch as Partial<typeof row>) };
-      }),
-    };
-    const threads = { findOne: vi.fn(), update: vi.fn() };
-    const sink = new EntityTaskEventSink(threads as never, jobs as never);
+    const tasks = fakeTasksRepo([
+      { id: '1', title: 'a', status: 'pending' },
+      { id: '2', title: 'b', status: 'pending' },
+    ]);
+    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threads = { findOne: vi.fn() };
+    const sink = new EntityTaskEventSink(threads as never, stages as never, tasks as never);
 
     await Promise.all([
       sink.applyTaskEvent({ kind: 'main', id: 'J' }, 'taskupdate', { taskId: '1', status: 'deleted' }, {}),
@@ -438,6 +458,23 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
     ]);
 
     // Deletes REMOVE tasks; without serialization one of the two removals is lost.
-    expect(row.main_tasks).toEqual([]);
+    expect([...tasks.rows.keys()]).toEqual([]);
+  });
+
+  it('creates a row for a TaskCreate then updates the SAME row on a later TaskUpdate by its SDK id', async () => {
+    const tasks = fakeTasksRepo([]);
+    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threads = { findOne: vi.fn(async () => ({ id: 'th1', stage_id: 'S', org_id: 'O' })) };
+    const sink = new EntityTaskEventSink(threads as never, stages as never, tasks as never);
+    const scope = { kind: 'thread' as const, id: 'th1' };
+
+    await sink.applyTaskEvent(scope, 'taskcreate', { subject: 'Write tests' }, 'Task #8 created successfully');
+    expect([...tasks.rows.values()]).toHaveLength(1);
+    const [created] = [...tasks.rows.values()];
+    expect((created as { title: string }).title).toBe('Write tests');
+
+    await sink.applyTaskEvent(scope, 'taskupdate', { taskId: '8', status: 'in_progress' }, 'Task #8 updated');
+    expect([...tasks.rows.values()]).toHaveLength(1);
+    expect((tasks.rows.get((created as { id: string }).id) as { status: string }).status).toBe('in_progress');
   });
 });

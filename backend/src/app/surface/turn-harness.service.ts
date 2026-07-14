@@ -5,7 +5,14 @@ import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, MessageEntity, SubagentEntity, ThreadEntity } from '../persistence/entities';
+import {
+  MessageEntity,
+  StageEntity,
+  SubagentEntity,
+  TaskEntity,
+  type TaskItem,
+  ThreadEntity,
+} from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope, taskScopeForLane } from './thread-registry';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -144,14 +151,37 @@ export interface TaskEventSink {
 /** DI token for {@link TaskEventSink}. */
 export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
 
-/** The default {@link TaskEventSink} — read-modify-writes the scope's tasks jsonb column directly. */
+/**
+ * One scope's in-memory fold snapshot — the SDK-id-space {@link TaskItem} list `foldTaskEvent` operates
+ * on (byte-identical to the old jsonb blob's shape), plus the mapping from an SDK-authored task id (the
+ * `#8` parsed out of `"Task #8 created…"`, scoped to ONE engine session) to the durable `tasks` row it
+ * became. The SDK's own task-tool id space is only unique WITHIN a session — reconciling it against a
+ * real table (whose PK is a DB-generated uuid, see `TaskEntity.id`) needs this side-map so a later
+ * `TaskUpdate({taskId: "8"})` in the SAME session finds the row `TaskCreate` produced. Rows preloaded
+ * from the DB (the stage's tasks from an earlier session, e.g. after rotation or a process restart) are
+ * seeded with an identity mapping (their own row id doubles as its "sdk id") — a genuine SDK id never
+ * collides with a uuid, so this is a safe, allocation-free default.
+ */
+interface TaskFoldCache {
+  items: TaskItem[];
+  rowIdBySdkId: Map<string, string>;
+}
+
+/**
+ * The default {@link TaskEventSink} — folds `TaskCreate`/`TaskUpdate` tool events (via the existing
+ * `foldTaskEvent`, unchanged) into an in-memory per-scope snapshot, then reconciles that snapshot against
+ * the stage's durable `tasks` rows (d6) — replacing the old direct read-modify-write of the
+ * `threads.tasks` / `jobs.main_tasks` jsonb blobs those columns used to hold.
+ */
 @Injectable()
 export class EntityTaskEventSink implements TaskEventSink {
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(StageEntity, DB_CONNECTION)
+    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(TaskEntity, DB_CONNECTION)
+    private readonly tasks: Repository<TaskEntity>,
   ) {}
 
   /**
@@ -163,6 +193,10 @@ export class EntityTaskEventSink implements TaskEventSink {
    */
   private readonly chains = new Map<string, Promise<void>>();
 
+  /** The in-memory fold snapshot per scope key (see {@link TaskFoldCache}) — lazily seeded from the
+   *  stage's current `tasks` rows on this scope's first event since process start. */
+  private readonly cache = new Map<string, TaskFoldCache>();
+
   applyTaskEvent(
     scope: TaskScope,
     toolName: string,
@@ -171,7 +205,7 @@ export class EntityTaskEventSink implements TaskEventSink {
   ): Promise<void> {
     const key = `${scope.kind}:${scope.id}`;
     const run = (this.chains.get(key) ?? Promise.resolve()).then(() =>
-      this.apply(scope, toolName, input, result),
+      this.apply(key, scope, toolName, input, result),
     );
     // Keep the chain alive past a rejection, and drop the map entry once this tail settles (no growth).
     const tail = run.catch(() => undefined).finally(() => {
@@ -181,25 +215,143 @@ export class EntityTaskEventSink implements TaskEventSink {
     return run;
   }
 
+  /** Resolve the stage that owns this scope's shared checklist: a `thread` scope's own `stage_id`, or a
+   *  `main` scope's job's `planning` stage (mirrors `DriverStoreService.planningThreadId`'s lookup). */
+  private async resolveStageId(scope: TaskScope): Promise<{ stageId: string; orgId: string } | null> {
+    if (scope.kind === 'thread') {
+      const thread = await this.threads.findOne({
+        where: { id: scope.id },
+        select: { id: true, stage_id: true, org_id: true },
+      });
+      return thread ? { stageId: thread.stage_id, orgId: thread.org_id } : null;
+    }
+    // scope.kind === 'main' — the job's planning stage owns the brain's own checklist.
+    const stage = await this.stages.findOne({
+      where: { job_id: scope.id, kind: 'planning' },
+      order: { ordinal: 'ASC' },
+      select: { id: true, org_id: true },
+    });
+    return stage ? { stageId: stage.id, orgId: stage.org_id } : null;
+  }
+
+  private async seedCache(key: string, stageId: string): Promise<TaskFoldCache> {
+    const existing = this.cache.get(key);
+    if (existing) return existing;
+    const rows = await this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+    const rowIdBySdkId = new Map<string, string>();
+    const items = rows.map((row) => {
+      rowIdBySdkId.set(row.id, row.id); // identity seed — see TaskFoldCache's doc comment
+      return toTaskItem(row);
+    });
+    const seeded: TaskFoldCache = { items, rowIdBySdkId };
+    this.cache.set(key, seeded);
+    return seeded;
+  }
+
   private async apply(
+    key: string,
     scope: TaskScope,
     toolName: string,
     input: Record<string, unknown>,
     result: unknown,
   ): Promise<void> {
-    if (scope.kind === 'thread') {
-      const thread = await this.threads.findOne({ where: { id: scope.id } });
-      if (!thread) return;
-      const tasks = foldTaskEvent(thread.tasks ?? [], toolName, input, result);
-      await this.threads.update({ id: scope.id }, { tasks });
-      return;
+    const resolved = await this.resolveStageId(scope);
+    if (!resolved) return;
+    const { stageId, orgId } = resolved;
+    const before = await this.seedCache(key, stageId);
+    const after = foldTaskEvent(before.items, toolName, input, result);
+    if (after === before.items) return; // a read-only task tool (TaskList/TaskGet) — no-op fold
+
+    const rowIdBySdkId = new Map(before.rowIdBySdkId);
+    const beforeById = new Map(before.items.map((t) => [t.id, t]));
+    const afterIds = new Set(after.map((t) => t.id));
+
+    // Resolve an item's DB row id (blockedBy edges reference OTHER items by their sdk/pseudo id) — an
+    // edge that doesn't resolve within this scope's known rows is dropped rather than left dangling.
+    const resolveRowId = (sdkId: string): string | undefined => rowIdBySdkId.get(sdkId);
+
+    // Deletions: an id that fell out of the fold is gone from the checklist (foldTaskEvent's `deleted`
+    // semantics) — remove its row.
+    for (const prev of before.items) {
+      if (afterIds.has(prev.id)) continue;
+      const rowId = resolveRowId(prev.id);
+      if (rowId) await this.tasks.delete({ id: rowId });
+      rowIdBySdkId.delete(prev.id);
     }
-    // scope.kind === 'main' — the brain's own checklist on `jobs.main_tasks`.
-    const job = await this.jobs.findOne({ where: { id: scope.id } });
-    if (!job) return;
-    const main_tasks = foldTaskEvent(job.main_tasks ?? [], toolName, input, result);
-    await this.jobs.update({ id: scope.id }, { main_tasks });
+
+    // Creates + updates, in the fold's own order (its ordinal). Only look up the stage's current max
+    // ordinal when there's at least one genuine create to gap-number — a pure update/delete fold never
+    // touches it.
+    const hasCreate = after.some((item) => !resolveRowId(item.id));
+    let ordinal = hasCreate ? await this.maxTaskOrdinal(stageId) : 0;
+    for (const item of after) {
+      const blockedBy = (item.blockedBy ?? [])
+        .map((b) => resolveRowId(b))
+        .filter((id): id is string => Boolean(id));
+      const prev = beforeById.get(item.id);
+      const rowId = resolveRowId(item.id);
+      if (!rowId) {
+        ordinal += 10;
+        const created = await this.tasks.save(
+          this.tasks.create({
+            stage_id: stageId,
+            org_id: orgId,
+            ordinal,
+            title: item.subject,
+            brief: item.description ?? null,
+            active_form: item.activeForm ?? null,
+            status: item.status,
+            blocked_by: blockedBy,
+          }),
+        );
+        rowIdBySdkId.set(item.id, created.id);
+        continue;
+      }
+      if (
+        !prev ||
+        prev.subject !== item.subject ||
+        prev.status !== item.status ||
+        prev.description !== item.description ||
+        prev.activeForm !== item.activeForm ||
+        JSON.stringify(prev.blockedBy ?? []) !== JSON.stringify(blockedBy)
+      ) {
+        await this.tasks.update(
+          { id: rowId },
+          {
+            title: item.subject,
+            brief: item.description ?? null,
+            active_form: item.activeForm ?? null,
+            status: item.status,
+            blocked_by: blockedBy,
+          },
+        );
+      }
+    }
+
+    this.cache.set(key, { items: after, rowIdBySdkId });
   }
+
+  private async maxTaskOrdinal(stageId: string): Promise<number> {
+    const row = await this.tasks
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.stage_id = :stageId', { stageId })
+      .getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
+  }
+}
+
+/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
+ *  `DriverStoreService`'s own copy — kept local to avoid a cross-module dependency on the driver). */
+function toTaskItem(row: TaskEntity): TaskItem {
+  return {
+    id: row.id,
+    subject: row.title,
+    status: row.status as TaskItem['status'],
+    ...(row.brief != null ? { description: row.brief } : {}),
+    ...(row.active_form != null ? { activeForm: row.active_form } : {}),
+    ...(row.blocked_by?.length ? { blockedBy: row.blocked_by } : {}),
+  };
 }
 
 /**

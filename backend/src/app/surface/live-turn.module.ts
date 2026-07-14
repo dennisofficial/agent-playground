@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, MessageEntity, SubagentEntity, ThreadEntity } from '../persistence/entities';
+import { MessageEntity, StageEntity, SubagentEntity, TaskEntity, ThreadEntity } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';
 import {
@@ -25,7 +25,9 @@ import {
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([MessageEntity, ThreadEntity, JobEntity, SubagentEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature([MessageEntity, ThreadEntity, StageEntity, TaskEntity, SubagentEntity], DB_CONNECTION),
+  ],
   providers: [
     LiveTurnStore,
     MessageBlockSink,
