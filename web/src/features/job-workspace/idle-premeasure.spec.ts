@@ -1,5 +1,6 @@
 import { Virtualizer } from "@tanstack/react-virtual";
 import { describe, expect, it } from "vitest";
+import { premeasureChunkIndexes } from "./idle-premeasure";
 
 /**
  * Deterministic RED→GREEN for the pre-measurement seeding mechanism `useIdlePremeasure` relies on:
@@ -78,5 +79,31 @@ describe("useIdlePremeasure seeding mechanism", () => {
 
     expect(v.getTotalSize()).toBe(totalAfterSeed);
     expect(adjustmentsPassed).toEqual([]);
+  });
+});
+
+describe("premeasure chunk planning", () => {
+  it("measures tail appends without skipping the older unmeasured backlog", () => {
+    const items = Array.from({ length: 7 }, (_, i) => ({ key: String(i) }));
+    const measured = new Set<string>();
+    const isMeasured = (key: string) => measured.has(key);
+
+    const tail = premeasureChunkIndexes(items, items.length, 3, isMeasured);
+    expect(tail).toEqual([4, 5, 6]);
+    for (const idx of tail) measured.add(items[idx].key);
+
+    const appended = [...items, { key: "7" }];
+    const appendedChunk = premeasureChunkIndexes(
+      appended,
+      appended.length,
+      3,
+      isMeasured,
+    );
+    expect(appendedChunk).toEqual([2, 3, 7]);
+    for (const idx of appendedChunk) measured.add(appended[idx].key);
+
+    expect(
+      premeasureChunkIndexes(appended, appendedChunk[0], 3, isMeasured),
+    ).toEqual([0, 1]);
   });
 });

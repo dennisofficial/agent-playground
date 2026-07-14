@@ -15,9 +15,12 @@ export const PREMEASURE_MIN_ROWS = 60;
 
 /** Is this a touch-capable device? SSR-guarded. The residual scroll-up shift the pass eliminates is
  *  iOS/touch-only (desktop already compensates for above-viewport resizes immediately), so callers should
- *  compute this ONCE per mount (`useState(() => isTouchCapableDevice())`), not on every render. */
+ *  compute this once after hydration, not during SSR and not on every render. */
 export function isTouchCapableDevice(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(pointer: coarse)").matches
+  );
 }
 
 const DEFAULT_CHUNK_SIZE = 24;
@@ -31,12 +34,36 @@ const IDLE_TIMEOUT_MS = 200;
 
 type PremeasureItem = { key: string; node: React.ReactNode };
 
+export function premeasureChunkIndexes(
+  items: ReadonlyArray<{ key: string }>,
+  cursor: number,
+  chunkSize: number,
+  isMeasured: (key: string) => boolean,
+): number[] {
+  const indexes: number[] = [];
+  for (
+    let i = Math.min(cursor, items.length) - 1;
+    i >= 0 && indexes.length < chunkSize;
+    i--
+  ) {
+    if (!isMeasured(items[i].key)) indexes.push(i);
+  }
+  indexes.reverse();
+  return indexes;
+}
+
+type PremeasureChunk = { indexes: number[] };
+
 /** Schedule `cb` during idle time — `requestIdleCallback` where available (desktop), else a MessageChannel
  *  yielder (iOS Safari has no default `requestIdleCallback`). Returns a cancel function. */
 function scheduleChunk(cb: () => void): () => void {
   if (typeof requestIdleCallback === "function") {
     const handle = requestIdleCallback(cb, { timeout: IDLE_TIMEOUT_MS });
     return () => cancelIdleCallback(handle);
+  }
+  if (typeof MessageChannel === "undefined") {
+    const handle = setTimeout(cb, 0);
+    return () => clearTimeout(handle);
   }
   const channel = new MessageChannel();
   let cancelled = false;
@@ -52,7 +79,10 @@ function scheduleChunk(cb: () => void): () => void {
 /** Is the scroll container currently mid-touch or mid-scroll? Seeding an above-viewport row while either is
  *  true makes `resizeItem` trigger virtual-core's iOS-deferred scroll adjustment — exactly the jump this
  *  pass exists to eliminate — so the next chunk must wait until this reads true. */
-function isAtRest<TScrollElement extends Element | Window, TItemElement extends Element>(
+function isAtRest<
+  TScrollElement extends Element | Window,
+  TItemElement extends Element,
+>(
   virtualizer: Virtualizer<TScrollElement, TItemElement>,
   touching: { current: boolean },
 ): boolean {
@@ -78,57 +108,53 @@ export function useIdlePremeasure(opts: {
 }): React.ReactNode {
   const { items, virtualizer, enabled, chunkSize = DEFAULT_CHUNK_SIZE } = opts;
 
-  // Absolute index boundary: rows at index >= measuredLo have already been processed/seeded. `null` means
-  // the pass hasn't advanced past its first chunk yet, so the boundary tracks the live tail (items.length)
-  // — this must be an ABSOLUTE index, not a count-from-tail, because a tail-only append (new durable message
-  // landing mid-pass) grows items.length without invalidating work already done further up; recomputing the
-  // boundary as `items.length - <stale count>` would silently shift it past not-yet-measured appended rows
-  // and skip them for the rest of the pass.
-  const [measuredLo, setMeasuredLo] = useState<number | null>(null);
-  const [done, setDone] = useState(false);
+  // Exclusive upper bound for the next bottom-up scan. Re-armed from the tail whenever a new unmeasured key
+  // appears; only keys this pass has measured are skipped. The virtualizer's own size cache is not used as
+  // a skip signal because it can contain non-premeasured entries; `resizeItem` is already idempotent when a
+  // row was genuinely measured to the same exact height.
+  const [chunk, setChunk] = useState<PremeasureChunk>({ indexes: [] });
+  const measuredKeysRef = useRef<Set<string>>(new Set());
 
-  // Re-arm guard: a genuine prepend (older history loaded) changes items[0]'s key — restart the pass from
-  // the (new) tail. A tail-only append leaves items[0] unchanged and must NOT reset the pass.
-  const firstKeyRef = useRef(items[0]?.key);
   useLayoutEffect(() => {
-    const firstKey = items[0]?.key;
-    if (firstKey !== firstKeyRef.current) {
-      firstKeyRef.current = firstKey;
-      setMeasuredLo(null);
-      setDone(false);
+    if (!enabled) {
+      setChunk({ indexes: [] });
+      return;
     }
-  }, [items]);
+    const liveKeys = new Set(items.map((item) => item.key));
+    for (const key of measuredKeysRef.current) {
+      if (!liveKeys.has(key)) measuredKeysRef.current.delete(key);
+    }
+    const indexes = premeasureChunkIndexes(
+      items,
+      items.length,
+      chunkSize,
+      (key) => measuredKeysRef.current.has(key),
+    );
+    setChunk({ indexes });
+  }, [enabled, items, chunkSize]);
 
-  const hi = measuredLo ?? items.length;
-  const lo = Math.max(0, hi - chunkSize);
-  const active = enabled && !done && items.length > 0;
+  const chunkIndexes = chunk.indexes;
+  const active = enabled && chunkIndexes.length > 0;
 
   const layerRef = useRef<HTMLDivElement>(null);
   const touchingRef = useRef(false);
 
-  // Keyed on [active, measuredLo] (NOT measuredLo alone): the transcript mounts with `messages = []`, so
-  // `active` starts false; when hydration flips it true, `measuredLo` is still `null`, so a dep list without
-  // `active` would never fire the first chunk.
   useLayoutEffect(() => {
     if (!active) return;
 
-    const cache = (virtualizer as unknown as { itemSizeCache: Map<string, number> })
-      .itemSizeCache;
     const layer = layerRef.current;
     if (layer) {
       layer.querySelectorAll<HTMLElement>("[data-pindex]").forEach((el) => {
         const idx = Number(el.getAttribute("data-pindex"));
         const item = items[idx];
-        if (!item || cache.has(item.key)) return; // already seen/seeded — idempotent, cheap
+        if (!item || measuredKeysRef.current.has(item.key)) return;
         const h = el.offsetHeight;
         virtualizer.resizeItem(idx, h);
+        measuredKeysRef.current.add(item.key);
       });
     }
 
-    if (lo <= 0) {
-      setDone(true);
-      return;
-    }
+    const nextCursor = chunkIndexes[0];
 
     let cancelScheduled: (() => void) | null = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -145,7 +171,13 @@ export function useIdlePremeasure(opts: {
     scrollEl?.addEventListener("touchend", onTouchEnd, { passive: true });
     scrollEl?.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    const advance = () => setMeasuredLo(lo);
+    const advance = () => {
+      setChunk({
+        indexes: premeasureChunkIndexes(items, nextCursor, chunkSize, (key) =>
+          measuredKeysRef.current.has(key),
+        ),
+      });
+    };
 
     // Only advance to the next chunk once the container is at rest — mid-gesture, hold and poll instead of
     // scheduling, so a seed's adjustment always applies immediately/invisibly rather than getting deferred.
@@ -167,24 +199,30 @@ export function useIdlePremeasure(opts: {
       scrollEl?.removeEventListener("touchend", onTouchEnd);
       scrollEl?.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [active, measuredLo]);
+  }, [active, chunkIndexes, chunkSize, items, virtualizer]);
 
   if (!active) return null;
 
   return (
     <div
       ref={layerRef}
-      style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: "100%" }}
+      style={{
+        position: "absolute",
+        visibility: "hidden",
+        left: -99999,
+        top: 0,
+        width: "100%",
+      }}
     >
       <PremeasureContext.Provider value={true}>
-        {items.slice(lo, hi).map((item, i) => (
+        {chunkIndexes.map((idx) => (
           <div
-            key={item.key}
-            data-pindex={lo + i}
+            key={items[idx].key}
+            data-pindex={idx}
             className="w-full"
             style={{ paddingBottom: ROW_PADDING_BOTTOM }}
           >
-            {item.node}
+            {items[idx].node}
           </div>
         ))}
       </PremeasureContext.Provider>

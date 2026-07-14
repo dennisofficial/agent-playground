@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
@@ -180,8 +180,12 @@ export function TranscriptView({
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
 
-  // Touch capability is a stable device property — computed once per mount (not re-checked every render).
-  const [isTouch] = useState(() => isTouchCapableDevice());
+  // Touch capability is a stable device property, but Client Components still render once on the server.
+  // Compute it after hydration so the SSR guard does not permanently pin touch devices to `false`.
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    setIsTouch(isTouchCapableDevice());
+  }, []);
 
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
