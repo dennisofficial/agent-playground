@@ -64,7 +64,7 @@ function fakeClaudeSdk() {
   return {} as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
 
-async function runCodexAppServerTurn(core: EngineCore, mode: 'plan' | 'execute') {
+async function runCodexAppServerTurn(core: EngineCore, mode: 'plan' | 'execute' | 'review') {
   process.env.CODEX_APPSERVER_ENABLED = 'true';
   await core.run({
     engine: 'codex',
@@ -89,6 +89,15 @@ describe('EngineCore — Codex-app-server EngineLocalHooks wiring', () => {
   it('write-guard denies a fileChange approval on a read-only (plan-mode) turn', async () => {
     const core = new EngineCore(fakeClaudeSdk(), fakeCodexSdk(), { homeRoot: HOME_ROOT });
     await runCodexAppServerTurn(core, 'plan');
+
+    const hooks = appServerRunCalls[0].hooks;
+    const verdict = hooks?.writeGuard?.('fileChange', { path: '/tmp/wt/foo.ts' });
+    expect(verdict).toEqual({ allow: false, reason: 'This is a read-only turn — no file writes.' });
+  });
+
+  it("write-guard denies a fileChange approval on plan_review's real mode:'review' turn", async () => {
+    const core = new EngineCore(fakeClaudeSdk(), fakeCodexSdk(), { homeRoot: HOME_ROOT });
+    await runCodexAppServerTurn(core, 'review');
 
     const hooks = appServerRunCalls[0].hooks;
     const verdict = hooks?.writeGuard?.('fileChange', { path: '/tmp/wt/foo.ts' });
