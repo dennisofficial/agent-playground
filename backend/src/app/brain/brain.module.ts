@@ -7,8 +7,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  CodexReviewEntity,
-  StepEntity,
+  StageEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
@@ -57,10 +56,9 @@ import { TurnRecoveryService } from './turn-recovery.service';
       [
         JobEntity,
         MessageEntity,
-        CodexReviewEntity,
+        StageEntity,
         DecisionRecordEntity,
         ThreadEntity,
-        StepEntity,
         StimulusEntity,
         RepoEntity,
         JobSandboxEntity,

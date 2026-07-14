@@ -3,14 +3,14 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { type ObjectLiteral, Repository } from 'typeorm';
 import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
 import type { EngineAuth, EngineHomeKey } from '../engine';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
+import { JobEntity, StageEntity, ThreadEntity } from '../persistence/entities';
 import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
 import {
   Agent,
@@ -47,12 +47,15 @@ export function codexReviewLane(jobId: string): string {
  * findings (adjudication, not blind re-review). No round cap (only a high safety ceiling on `resume_count`).
  * Review is mandatory to RUN but ADVISORY to pass — findings never block; Atlas is the judge.
  *
- * The single {@link CodexReviewEntity} row per job is the slim durability + gate spine:
- * - `codex_session_id` (persisted eagerly on the session event) lets a re-dispatched `review_plan` (after a
- *   host restart mid-review) RESUME the Codex thread instead of starting fresh.
- * - `spec_hash` ties a terminal review to the exact spec version it read, so `propose_plan`'s mandatory-run
- *   gate accepts it only for the plan version being proposed.
- * - `status = 'running'` with no live brain turn is the WORK-OWED signal the backstop re-drives.
+ * The retired `codex_reviews` row folds into the job's single `plan_review` THREAD (d7) — the slim
+ * durability + gate spine:
+ * - the Codex session id lives on `thread.session_id` (persisted eagerly on the session event) so a
+ *   re-dispatched `review_plan` (after a host restart mid-review) RESUMES the Codex thread, not a fresh one.
+ * - `thread.config.specHash` ties a terminal review to the exact spec version it read, so `propose_plan`'s
+ *   mandatory-run gate accepts it only for the plan version being proposed.
+ * - `thread.config.status = 'running'` with no live brain turn is the WORK-OWED signal the backstop re-drives.
+ * `resumeCount`/`findings`/`error` ride the same `config`. {@link PlanReviewRow} is the flat read-model the
+ * service returns, rebuilt from the thread row (the old `CodexReviewEntity` shape callers still consume).
  */
 
 // Re-exported so existing callers (agent-session-manager.service.ts, specs) keep importing them from
@@ -73,6 +76,88 @@ export type ReviewOutcome = {
   ceilingHit?: boolean;
 };
 
+type PlanReviewStatus = 'running' | 'complete' | 'failed';
+
+/**
+ * The plan-review state folded onto the `plan_review` thread's `config` jsonb (retired `codex_reviews`
+ * columns, d7): `specHash`/`resumeCount`/`findings`/`status`/`error`. The Codex session id itself lives on
+ * `thread.session_id`, not here. Findings are stored decoded (parsed `ReviewFinding[]`).
+ */
+export interface PlanReviewConfig {
+  specHash: string | null;
+  resumeCount: number;
+  findings: ReviewFinding[];
+  status: PlanReviewStatus;
+  error: string | null;
+}
+
+/**
+ * The flat read-model the service exposes for one job's plan review — rebuilt from the `plan_review` thread
+ * row + its {@link PlanReviewConfig}. Mirrors the retired `CodexReviewEntity` field names the callers still
+ * read (`codex_session_id`, `spec_hash`, `resume_count`, serialized `findings`), so the propose_plan gate +
+ * work-owed backstop are unchanged; only the storage moved onto the thread.
+ */
+export interface PlanReviewRow {
+  /** The `plan_review` thread id. */
+  id: string;
+  job_id: string;
+  org_id: string;
+  /** The Codex session id (= `thread.session_id`) — the resume handle. */
+  codex_session_id: string | null;
+  spec_hash: string | null;
+  status: PlanReviewStatus;
+  /** Findings SERIALIZED for `deserializeFindings` compatibility (the callers rehydrate it). */
+  findings: string | null;
+  error: string | null;
+  resume_count: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/** Parse a `plan_review` thread's `config` jsonb into the typed {@link PlanReviewConfig}, tolerating the
+ *  migration backfill shape (`codexStatus`, findings stored as the serialized string) as well as forward
+ *  writes (`status`, findings as `ReviewFinding[]`). */
+/** Stages/threads are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
+const ORDINAL_GAP = 10;
+
+/** Rebuild the flat {@link PlanReviewRow} read-model from a `plan_review` thread row + its `config`.
+ *  `findings` is re-serialized so callers can `deserializeFindings` it (the retired column was a string). */
+function toReviewRow(thread: ThreadEntity): PlanReviewRow {
+  const config = readPlanReviewConfig(thread.config);
+  return {
+    id: thread.id,
+    job_id: thread.job_id,
+    org_id: thread.org_id,
+    codex_session_id: thread.session_id,
+    spec_hash: config.specHash,
+    status: config.status,
+    findings: serializeFindings(config.findings),
+    error: config.error,
+    resume_count: config.resumeCount,
+    created_at: thread.created_at,
+    updated_at: thread.updated_at,
+  };
+}
+
+function readPlanReviewConfig(raw: unknown): PlanReviewConfig {
+  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const rawStatus = c['status'] ?? c['codexStatus'];
+  const status: PlanReviewStatus =
+    rawStatus === 'complete' || rawStatus === 'failed' ? rawStatus : 'running';
+  const findings = Array.isArray(c['findings'])
+    ? (c['findings'] as ReviewFinding[])
+    : typeof c['findings'] === 'string'
+      ? deserializeFindings(c['findings'])
+      : [];
+  return {
+    specHash: typeof c['specHash'] === 'string' ? c['specHash'] : null,
+    resumeCount: typeof c['resumeCount'] === 'number' ? c['resumeCount'] : 0,
+    findings,
+    status,
+    error: typeof c['error'] === 'string' ? c['error'] : null,
+  };
+}
+
 @Injectable()
 export class PlanReviewService {
   private readonly logger = new Logger(PlanReviewService.name);
@@ -90,12 +175,12 @@ export class PlanReviewService {
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
     private readonly creds: CredentialResolver,
     private readonly lifecycle: JobLifecycleService,
-    @InjectRepository(CodexReviewEntity, DB_CONNECTION)
-    private readonly reviews: Repository<CodexReviewEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(StageEntity, DB_CONNECTION)
+    private readonly stages: Repository<StageEntity>,
     private readonly turnHarness: TurnHarnessFactory,
     private readonly election: LeaderElectionService,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
@@ -149,12 +234,10 @@ export class PlanReviewService {
     const specHash = await this.hashSpecs(input.jobId, input.orgId);
     const isResume = Boolean(row?.codex_session_id);
 
+    // Find-or-create the job's `plan_review` stage + thread and flip its config to `running`. The thread IS
+    // the authoritative work-owed/recovery source now (retired `codex_reviews`); the driver never executes
+    // it (render-only role). Idempotent — a resume/re-review reuses the same thread.
     row = await this.persistRow(row, input, specHash, 'running', null, null);
-    // Give the plan review a first-class, render/identity-only `plan_review` thread row so it has a place in
-    // the thread tree. Its RUNTIME stays here (this synchronous `review_plan` turn + the `codex_reviews` row,
-    // which remains the authoritative work-owed/recovery source) — the driver never executes the row.
-    // Idempotent + best-effort (a persistPlan re-propose deletes it; the next review re-creates it).
-    await this.ensurePlanReviewThread(input.jobId, input.orgId);
 
     // STABLE per JOB (not per review): the Codex SDK stores its transcript under CODEX_HOME keyed by this
     // sandboxKey, so resuming a prior session only finds it when every review of a job shares ONE home.
@@ -229,8 +312,10 @@ export class PlanReviewService {
             richStream: true,
             onEvent: (e) => {
               if (e.kind === 'session' && e.sessionId) {
-                void this.reviews
-                  .update({ id: row!.id }, { codex_session_id: e.sessionId })
+                // The Codex session id folds onto the plan_review thread's own `session_id` (retired
+                // `codex_reviews.codex_session_id`) — the resume handle a re-dispatched review reads back.
+                void this.threads
+                  .update({ id: row!.id }, { session_id: e.sessionId })
                   .catch(() => undefined);
               }
               harness.onEvent(e);
@@ -315,15 +400,15 @@ export class PlanReviewService {
 
   /**
    * The `propose_plan` mandatory-run gate: has a review actually RUN for the plan version being proposed?
-   * Returns the job's `codex_reviews` row when it is TERMINAL (`complete` OR `failed` — a review that ran,
-   * even if it errored, satisfies the gate so an infra outage can never permanently block approval) AND its
+   * Returns the job's plan-review row when it is TERMINAL (`complete` OR `failed` — a review that ran, even
+   * if it errored, satisfies the gate so an infra outage can never permanently block approval) AND its
    * `spec_hash` matches the CURRENT specs. Null when no terminal review exists or the specs changed since
    * (→ Atlas must run `review_plan` again). Advisory: findings on the row never affect this gate.
    */
   async reviewForCurrentSpecs(
     jobId: string,
     orgId: string,
-  ): Promise<{ row: CodexReviewEntity; specHash: string | null } | null> {
+  ): Promise<{ row: PlanReviewRow; specHash: string | null } | null> {
     const row = await this.loadRow(jobId);
     if (!row || (row.status !== 'complete' && row.status !== 'failed')) return null;
     const currentHash = await this.hashSpecs(jobId, orgId);
@@ -338,96 +423,137 @@ export class PlanReviewService {
     return null;
   }
 
-  /** The single review row for a job (latest if a race ever created more than one). */
-  async loadRow(jobId: string): Promise<CodexReviewEntity | null> {
-    return this.reviews.findOne({
-      where: { job_id: jobId },
+  /** The single plan-review row for a job (latest thread if a race ever created more than one), rebuilt
+   *  from the `plan_review` thread + its `config`. Null when the job has no plan_review thread yet. */
+  async loadRow(jobId: string): Promise<PlanReviewRow | null> {
+    const thread = await this.threads.findOne({
+      where: { job_id: jobId, role: 'plan_review' },
       order: { created_at: 'DESC' },
     });
+    return thread ? toReviewRow(thread) : null;
   }
 
   /**
-   * The WORK-OWED backstop worklist: `codex_reviews` rows still `running` (a `review_plan` was dispatched
-   * but neither completed nor consumed). A running row whose job has no live brain turn is the interrupted-
-   * `review_plan` fingerprint the backstop re-drives (it survives the Redis stream cleanup that wipes
-   * tool-bridge recovery on the alive-grace/watchdog path).
+   * The WORK-OWED backstop worklist: `plan_review` threads whose `config.status` is still `running` (a
+   * `review_plan` was dispatched but neither completed nor consumed). A running row whose job has no live
+   * brain turn is the interrupted-`review_plan` fingerprint the backstop re-drives (it survives the Redis
+   * stream cleanup that wipes tool-bridge recovery on the alive-grace/watchdog path).
    */
-  async findRunningReviews(): Promise<CodexReviewEntity[]> {
-    return this.reviews.find({ where: { status: 'running' } });
+  async findRunningReviews(): Promise<PlanReviewRow[]> {
+    const rows = await this.threads
+      .createQueryBuilder('t')
+      .where("t.role = 'plan_review'")
+      .andWhere("t.config ->> 'status' = 'running'")
+      .getMany();
+    return rows.map(toReviewRow);
   }
 
-  /** Ensure a render/identity-only `plan_review` thread row exists for the job (idempotent, best-effort).
-   *  Root row (parent null), ordinal 5 — before the builders (10, 20, …) and after the `main` row (0). The
-   *  driver never executes it (its kind is render-only); it just gives the plan review a node in the tree. */
-  private async ensurePlanReviewThread(jobId: string, orgId: string): Promise<void> {
-    try {
-      const existing = await this.threads.findOne({
-        where: { job_id: jobId, kind: 'plan_review' },
-        select: { id: true },
-      });
-      if (existing) return;
-      await this.threads.save(
-        this.threads.create({
-          job_id: jobId,
-          org_id: orgId,
-          kind: 'plan_review',
-          parent_thread_id: null,
-          ordinal: 5,
-          brief: 'Plan review',
-          type: 'general',
-          status: 'reviewing',
-        }),
+  /**
+   * Find-or-create the job's ONE `plan_review` stage + its render/identity-only thread; returns the thread
+   * id. The stage appends after existing stages (gap-numbered); the thread is a top-level (parent null) row
+   * whose ordinal is job-GLOBAL-unique (past the highest existing top-level ordinal — the `planning` thread
+   * at 0), to satisfy the job-wide UNIQUE(job_id, parent_thread_id, ordinal). Idempotent: a resume/re-review
+   * reuses the same stage + thread. The driver never executes the row (render-only role).
+   */
+  private async ensurePlanReviewThread(jobId: string, orgId: string): Promise<string> {
+    let stage = await this.stages.findOne({
+      where: { job_id: jobId, kind: 'plan_review' },
+      order: { ordinal: 'ASC' },
+    });
+    if (!stage) {
+      const ordinal = (await this.maxOrdinal(this.stages, jobId)) + ORDINAL_GAP;
+      stage = await this.stages.save(
+        this.stages.create({ job_id: jobId, org_id: orgId, ordinal, kind: 'plan_review', config: {} }),
       );
-    } catch (err) {
-      this.logger.warn(`could not ensure plan_review thread row for job=${jobId}: ${err}`);
     }
+    const existingThread = await this.threads.findOne({
+      where: { stage_id: stage.id, role: 'plan_review' },
+    });
+    if (existingThread) return existingThread.id;
+    const threadOrdinal =
+      (await this.maxOrdinal(this.threads, jobId, 't.parent_thread_id IS NULL')) + ORDINAL_GAP;
+    const thread = await this.threads.save(
+      this.threads.create({
+        stage_id: stage.id,
+        job_id: jobId,
+        org_id: orgId,
+        role: 'plan_review',
+        parent_thread_id: null,
+        ordinal: threadOrdinal,
+        brief: 'Plan review',
+        type: 'general',
+        status: 'reviewing',
+        config: {},
+      }),
+    );
+    return thread.id;
   }
 
-  /** Upsert the job's single review row into a new state. Returns the persisted row. */
+  /**
+   * Upsert the job's plan-review state onto its `plan_review` thread's `config` (find-or-creating the
+   * stage + thread), fold the Codex session onto `thread.session_id` (done by the caller's session event),
+   * and return the flat {@link PlanReviewRow}. A transition to `running` refreshes the spec hash + clears
+   * stale findings; `resumeCount` is the plan-version/round number, bumped ONLY when the specs actually
+   * changed (a genuine re-review). A same-spec_hash re-drive is a RECOVERY of the same round — keep the
+   * count stable so the prompt idempotency key (`codex:<jobId>:<round>`) still dedups and a flaky recovery
+   * can't burn the re-review ceiling.
+   */
   private async persistRow(
-    existing: CodexReviewEntity | null,
+    existing: PlanReviewRow | null,
     input: PlanReviewInput,
     specHash: string | null,
-    status: 'running' | 'complete' | 'failed',
+    status: PlanReviewStatus,
     findings: ReviewFinding[] | null,
     error: string | null,
-  ): Promise<CodexReviewEntity> {
-    if (!existing) {
-      const created = await this.reviews.save(
-        this.reviews.create({
-          job_id: input.jobId,
-          org_id: input.orgId,
-          codex_session_id: null,
-          spec_hash: specHash,
-          status,
-          findings: findings ? serializeFindings(findings) : null,
-          error,
-          resume_count: 0,
-        }),
-      );
-      await this.syncReviewActivity(input.jobId, status);
-      return created;
-    }
-    // A transition to 'running' refreshes the spec hash + clears stale findings. `resume_count` is the
-    // plan-version/round number: bump it ONLY when the specs actually changed (a genuine re-review after
-    // Atlas revised the plan). A same-spec_hash re-drive is a RECOVERY of the same round — keep the count
-    // stable so the prompt idempotency key (`codex:<jobId>:<round>`) still dedups and a flaky recovery
-    // can't burn the re-review ceiling.
-    const patch: Partial<CodexReviewEntity> = { status, error };
+  ): Promise<PlanReviewRow> {
+    const threadId = existing?.id ?? (await this.ensurePlanReviewThread(input.jobId, input.orgId));
+    const thread = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const prev = readPlanReviewConfig(thread.config);
+
+    let next: PlanReviewConfig;
     if (status === 'running') {
-      const sameVersion = existing.spec_hash != null && existing.spec_hash === specHash;
-      patch.resume_count = sameVersion
-        ? existing.resume_count
-        : existing.resume_count + 1;
-      patch.spec_hash = specHash;
-      patch.findings = null;
+      const sameVersion = prev.specHash != null && prev.specHash === specHash;
+      next = {
+        specHash,
+        resumeCount: existing ? (sameVersion ? prev.resumeCount : prev.resumeCount + 1) : 0,
+        findings: [],
+        status,
+        error,
+      };
     } else {
-      if (findings) patch.findings = serializeFindings(findings);
-      if (specHash !== null) patch.spec_hash = specHash;
+      next = {
+        specHash: specHash !== null ? specHash : prev.specHash,
+        resumeCount: prev.resumeCount,
+        findings: findings ?? prev.findings,
+        status,
+        error,
+      };
     }
-    await this.reviews.update({ id: existing.id }, patch);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- TypeORM's QueryDeepPartialEntity
+    // over an index-signature jsonb column (`config: Record<string, unknown>`) does not accept a plain
+    // object even when it structurally matches; the raw-SQL `.set({ config: () => ... })` escape (used
+    // elsewhere in driver-store.service.ts) is overkill for a simple merge-and-write.
+    await this.threads.update({ id: threadId }, {
+      config: { ...(thread.config ?? {}), ...next },
+    } as any);
     await this.syncReviewActivity(input.jobId, status);
-    return (await this.reviews.findOneOrFail({ where: { id: existing.id } }));
+    return toReviewRow(await this.threads.findOneOrFail({ where: { id: threadId } }));
+  }
+
+  /** The highest `ordinal` among a job's rows in `repo` (0 when none). `extraWhere` (aliased `t`) narrows
+   *  the pool — e.g. only top-level threads, which share the job-wide unique ordinal index. */
+  private async maxOrdinal<T extends ObjectLiteral>(
+    repo: Repository<T>,
+    jobId: string,
+    extraWhere?: string,
+  ): Promise<number> {
+    const qb = repo
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.job_id = :jobId', { jobId });
+    if (extraWhere) qb.andWhere(extraWhere);
+    const row = await qb.getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
   }
 
   /**

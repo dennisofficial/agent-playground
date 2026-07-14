@@ -29,7 +29,7 @@ import { type AgentMessage } from '../prompt-kit/message';
 import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { StepEntity } from '../persistence/entities';
+import { ThreadEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 
 /** What one turn needs to run. The sandbox supplies the worktree (the engine cwd) + branch. */
@@ -166,12 +166,13 @@ export interface RunTurnResult {
  * Atlas v2's LOCAL turn-runner — the seam tying engine + git together, host-only. It opens or resumes
  * an engine session INSIDE a per-feature worktree, runs ONE turn (plan or execute) by calling the
  * `EngineRunner` directly, and persists the minimal session state (the engine session id onto
- * `steps.session_id`, returned in a `SessionRef`). It deliberately BYPASSES v1's
+ * `threads.session_id`, returned in a `SessionRef`). It deliberately BYPASSES v1's
  * `SessionRunnerService` (which throws off-daemon). Zero v1 imports.
  *
  * Statelessness: a turn is identified by the sandbox + an optional prior session id (resumed from the
- * step row). The runner holds no in-memory session registry — the source of truth is the step row
- * (durable) and the returned `SessionRef` (the driver's in-memory pointer), so it survives restarts.
+ * thread row — a thread's single step IS the thread row, so the `stepId` the driver passes is the
+ * thread's own id). The runner holds no in-memory session registry — the source of truth is the thread
+ * row (durable) and the returned `SessionRef` (the driver's in-memory pointer), so it survives restarts.
  */
 @Injectable()
 export class TurnRunnerService {
@@ -179,8 +180,8 @@ export class TurnRunnerService {
 
   constructor(
     @Inject(ENGINE_RUNNER) private readonly engine: EngineRunnerPort,
-    @InjectRepository(StepEntity, DB_CONNECTION)
-    private readonly steps: Repository<StepEntity>,
+    @InjectRepository(ThreadEntity, DB_CONNECTION)
+    private readonly threads: Repository<ThreadEntity>,
     // @Optional so unit tests can construct the runner without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usage?: TurnUsageProjector,
     // @Optional so unit tests can construct the runner without the registry; DI (@Global sandbox module)
@@ -191,16 +192,12 @@ export class TurnRunnerService {
   async runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     const { sandbox, stepId, jobId, engine, mode } = input;
 
-    // Resume handle: the step row's prior session id (if any) — durable across restarts. Fetched with the
-    // Leg-rotation markers so the fresh-session birth below can clear them atomically (see clear-on-birth).
-    const priorStep = stepId ? await this.steps.findOne({ where: { id: stepId } }) : null;
-    const priorSessionId = priorStep?.session_id ?? undefined;
-    // After a rotation the driver NULLs `session_id` (so we start fresh here) but leaves `pending_leg_seed` +
-    // `rotating_session_id` set; the fold of that seed into `input.task` already happened driver-side. We must
-    // clear those markers the instant the FRESH Leg session is born — mirrors the brain's compaction-seed
-    // clear. `rotatingSessionId` guards against clearing on a resume of the very session being abandoned.
-    const rotatingSessionId = priorStep?.rotating_session_id ?? null;
-    const hasPendingLegSeed = priorStep?.pending_leg_seed != null;
+    // Resume handle: the thread row's prior session id (if any) — durable across restarts. A thread's single
+    // step IS the thread row, so the `stepId` the driver passes is the thread's own id (see driver-store's
+    // `toSyntheticStep`). Rotation is now "insert the next builder thread row" (d1), so there is no per-step
+    // rotation state to fold here — a rotated Leg is simply a fresh thread row born with `session_id = null`.
+    const priorThread = stepId ? await this.threads.findOne({ where: { id: stepId } }) : null;
+    const priorSessionId = priorThread?.session_id ?? undefined;
 
     // The engine-home key namespaces the isolated home + Codex client cache, so two concurrent jobs never
     // share engine state. Keyed by JOB, not branch — a job owns its branch 1:1 (every step/thread of the
@@ -224,22 +221,9 @@ export class TurnRunnerService {
     // Persist the session id the instant the engine surfaces it (turn START) — so a mid-turn halt
     // (process crash, container/host restart, kill) recovers by RESUMING this same session rather than
     // spawning a fresh one. Best-effort write; the turn-end + auth-error persists below are belt-and-braces.
-    let legSeedCleared = false;
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'session' && stepId && e.sessionId) {
-        // Fresh Leg session born (rotation was pending, and this is a NEW id — not a resume of the abandoned
-        // session): persist the id AND clear the rotation seed markers in ONE write. Otherwise just persist.
-        if (hasPendingLegSeed && !legSeedCleared && e.sessionId !== rotatingSessionId) {
-          legSeedCleared = true;
-          void this.steps
-            .update(
-              { id: stepId },
-              { session_id: e.sessionId, pending_leg_seed: null, rotating_session_id: null },
-            )
-            .catch(() => undefined);
-        } else {
-          void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
-        }
+        void this.threads.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
       }
       input.onEvent?.(e);
     };
@@ -278,7 +262,7 @@ export class TurnRunnerService {
       // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the
       // agent's partial work is on disk in the worktree) instead of starting the step from scratch.
       if (err instanceof EngineAuthError && stepId && err.sessionId) {
-        await this.steps.update({ id: stepId }, { session_id: err.sessionId });
+        await this.threads.update({ id: stepId }, { session_id: err.sessionId });
       }
       throw err;
     }
@@ -299,7 +283,7 @@ export class TurnRunnerService {
     // failing the build. Only the build lane calls runTurn (the brain reads result.sessionLimit directly).
     if (result.sessionLimit) {
       if (stepId && result.sessionId) {
-        await this.steps.update({ id: stepId }, { session_id: result.sessionId });
+        await this.threads.update({ id: stepId }, { session_id: result.sessionId });
       }
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
@@ -308,17 +292,11 @@ export class TurnRunnerService {
       );
     }
 
-    // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread. Belt-and-
-    // braces for the Leg-seed clear too: if the session event never fired the clear but a fresh id surfaced
-    // here, null the rotation markers alongside (see clear-on-birth above).
+    // Persist the engine session id so the next turn (or a post-restart resume) picks up the thread —
+    // belt-and-braces for the turn-START `session` event above (a turn that surfaced no session event
+    // still records its id here).
     if (stepId && result.sessionId) {
-      const alsoClearLegSeed = hasPendingLegSeed && !legSeedCleared && result.sessionId !== rotatingSessionId;
-      await this.steps.update(
-        { id: stepId },
-        alsoClearLegSeed
-          ? { session_id: result.sessionId, pending_leg_seed: null, rotating_session_id: null }
-          : { session_id: result.sessionId },
-      );
+      await this.threads.update({ id: stepId }, { session_id: result.sessionId });
     }
 
     // Durable per-model usage/cost analytics (best-effort; never blocks the turn). Every build/step/
@@ -446,7 +424,7 @@ export class TurnRunnerService {
     const { turnId, containerId, stepId } = input;
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'session' && stepId && e.sessionId) {
-        void this.steps.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+        void this.threads.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
       }
       input.onEvent?.(e);
     };
@@ -458,7 +436,7 @@ export class TurnRunnerService {
       ...(input.credentialId ? { credentialId: input.credentialId } : {}),
     });
     if (stepId && result.sessionId) {
-      await this.steps.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
+      await this.threads.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
     }
     if (result.sessionLimit) {
       const { resetAt, rateLimitType } = result.sessionLimit;

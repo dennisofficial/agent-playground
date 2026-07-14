@@ -1,29 +1,30 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import { EngineAuthError, type EngineRunnerPort, type RunEngineArgs } from '../engine';
-import type { StepEntity } from '../persistence/entities';
+import type { ThreadEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
 import { agentMessage } from '../prompt-kit/message';
 
 /**
  * TurnRunnerService — DURABILITY of the resume handle. The point: a coding session must survive a halt
- * by CONTINUING, not respawning. That hinges on the engine `session_id` being persisted onto the step
- * row the instant it exists (turn START), so a mid-turn crash/kill/restart still has a resume handle.
+ * by CONTINUING, not respawning. That hinges on the engine `session_id` being persisted onto the THREAD
+ * row (a thread's single step IS the thread row, so the driver's `stepId` is the thread's own id) the
+ * instant it exists (turn START), so a mid-turn crash/kill/restart still has a resume handle.
  */
 
-/** A fake steps repo capturing the last persisted session_id; `findOne` returns the prior one. */
+/** A fake threads repo capturing the last persisted session_id; `findOne` returns the prior one. */
 function fakeSteps(priorSessionId: string | null = null) {
   const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];
   let current = priorSessionId;
   const repo = {
-    findOne: vi.fn(async () => (current === null ? null : ({ session_id: current } as StepEntity))),
+    findOne: vi.fn(async () => (current === null ? null : ({ session_id: current } as ThreadEntity))),
     update: vi.fn(async (where: { id: unknown }, patch: { session_id?: string }) => {
       updates.push({ id: where.id, patch });
       if (patch.session_id) current = patch.session_id;
       return { affected: 1 } as never;
     }),
-  } as unknown as Repository<StepEntity>;
+  } as unknown as Repository<ThreadEntity>;
   return { repo, updates, last: () => current };
 }
 
@@ -105,59 +106,6 @@ describe('TurnRunnerService — session-handle durability', () => {
     const runner = new TurnRunnerService(engine, repo);
     await runner.runTurn(baseInput);
     expect(seen).toBe('sess-prior'); // continues the SAME session, not a new one
-  });
-
-  // ── Leg-rotation clear-on-birth: a rotated step starts fresh, and the birth write clears its markers ──
-
-  /** A steps repo pre-seeded with a PENDING rotation (session NULLed, seed + abandon marker still set). */
-  function fakeRotatedSteps(rotatingSessionId: string) {
-    const updates: Array<{ id: unknown; patch: Record<string, unknown> }> = [];
-    const repo = {
-      findOne: vi.fn(
-        async () =>
-          ({
-            session_id: null, // driver NULLed it on rotation → we start fresh
-            rotating_session_id: rotatingSessionId,
-            pending_leg_seed: 'ROTATION SEED',
-          }) as unknown as StepEntity,
-      ),
-      update: vi.fn(async (where: { id: unknown }, patch: Record<string, unknown>) => {
-        updates.push({ id: where.id, patch });
-        return { affected: 1 } as never;
-      }),
-    } as unknown as Repository<StepEntity>;
-    return { repo, updates };
-  }
-
-  it('clears the Leg-rotation markers atomically when a FRESH rotated session is born', async () => {
-    const { repo, updates } = fakeRotatedSteps('sess-fat');
-    const engine: EngineRunnerPort = {
-      run: vi.fn(async (args: RunEngineArgs) => {
-        args.onEvent?.({ kind: 'session', sessionId: 'sess-fresh' });
-        return { result: 'continued', sessionId: 'sess-fresh' };
-      }),
-    };
-    await new TurnRunnerService(engine, repo).runTurn(baseInput);
-    // The birth write nulls the seed + abandon marker in the SAME update as the new session id.
-    const birth = updates.find((u) => u.patch.session_id === 'sess-fresh');
-    expect(birth?.patch).toMatchObject({
-      session_id: 'sess-fresh',
-      pending_leg_seed: null,
-      rotating_session_id: null,
-    });
-  });
-
-  it('does NOT clear the markers if the born session equals the one being abandoned (defensive guard)', async () => {
-    const { repo, updates } = fakeRotatedSteps('sess-fat');
-    const engine: EngineRunnerPort = {
-      run: vi.fn(async (args: RunEngineArgs) => {
-        // Pathological: the engine re-surfaces the abandoned session id — must NOT be treated as a fresh birth.
-        args.onEvent?.({ kind: 'session', sessionId: 'sess-fat' });
-        return { result: 'x', sessionId: 'sess-fat' };
-      }),
-    };
-    await new TurnRunnerService(engine, repo).runTurn(baseInput);
-    expect(updates.every((u) => !('pending_leg_seed' in u.patch))).toBe(true);
   });
 });
 
