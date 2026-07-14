@@ -67,7 +67,6 @@ import {
   ActiveTurnEntity,
   StimulusEntity,
   JobSandboxEntity,
-  CodexReviewEntity,
   MessageEntity,
   RepoEntity,
 } from '../persistence/entities';
@@ -226,7 +225,7 @@ import type {
   ApprovalVerdict,
 } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
-import { PlanReviewService, deserializeFindings } from './plan-review.service';
+import { PlanReviewService, deserializeFindings, type PlanReviewRow } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 
@@ -1862,7 +1861,7 @@ export class AgentSessionManager
    */
   private async reconcileWorkOwedReviews(): Promise<void> {
     if (this.election.getState() !== 'leader') return;
-    let running: CodexReviewEntity[];
+    let running: PlanReviewRow[];
     try {
       running = await this.planReview.findRunningReviews();
     } catch (err) {
@@ -1890,7 +1889,7 @@ export class AgentSessionManager
    * guard). The nudged brain re-invokes `review_plan` → the row goes running-with-a-live-turn or terminal,
    * so it naturally stops matching.
    */
-  private async nudgeWorkOwedReview(review: CodexReviewEntity): Promise<void> {
+  private async nudgeWorkOwedReview(review: PlanReviewRow): Promise<void> {
     const ageMs = Date.now() - new Date(review.updated_at).getTime();
     if (ageMs < PLAN_REVIEW_WEDGE_GRACE_MS) return; // in flight / reattach settling — not stranded yet
     const last = this.workOwedNudgedAt.get(review.job_id) ?? 0;

@@ -89,6 +89,7 @@ import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { parseGitDiff, type JobDiff } from './job-diff';
+import { JobBootstrapService } from '../job-bootstrap';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -655,6 +656,10 @@ export class WebSurfaceController {
     // preview recipe to splice into the seed. From the @Global OnboardingModule. @Optional (trailing),
     // same reason as `exposure`/`jit` above.
     @Optional() private readonly configStore?: WorkspaceConfigStore,
+    // Bootstraps the new thread's ONE planning stage + thread right after `createJob` inserts the bare
+    // `JobEntity` row (d7: `stage_id` is never null). From the @Global JobBootstrapModule. @Optional
+    // (trailing), same reason as `exposure`/`jit`/`configStore` above.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -856,6 +861,9 @@ export class WebSurfaceController {
           : {}),
       }),
     );
+    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for a job
+    // that never gets a plan proposed.
+    await this.jobBootstrap?.ensurePlanningStage(thread.id, org.id);
     const operatorText = text ?? '';
     // Write any attachments to the job's /context/uploads (visible in-sandbox) and PREPEND an
     // <uploaded-files> block to the body so the brain reads them; persist a card for the web transcript.

@@ -15,6 +15,7 @@ import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { LeaderElectionService } from '../cluster';
 import { DecisionGateModule } from '../decision-gate';
+import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -90,6 +91,7 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     RunnerModule,
     DecisionGateModule,
     AutoFixModule,
+    JobBootstrapModule,
     StimulusModule, // the reconciler routes GitHub state-changes back to the owning brain via StimulusIntake
     TypeOrmModule.forFeature(
       [

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
@@ -6,6 +6,7 @@ import type {
   EventStimulus,
   SeedRow,
 } from '../domain';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -78,6 +79,10 @@ export class StimulusStoreService {
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
+    // Bootstraps a freshly-seeded thread's ONE planning stage + thread (d7: `stage_id` is never null).
+    // @Optional (trailing) so the existing direct-construction unit tests (positional args) keep compiling
+    // without a trailing argument.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /**
@@ -105,6 +110,9 @@ export class StimulusStoreService {
         title: input.title,
       }),
     );
+    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for an
+    // event-seeded thread that never gets a plan proposed.
+    await this.jobBootstrap?.ensurePlanningStage(thread.id, input.orgId);
 
     const message = await this.messages.save(
       this.messages.create({

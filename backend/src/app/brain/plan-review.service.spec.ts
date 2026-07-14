@@ -15,7 +15,7 @@ import type { EngineRunnerPort, EngineRunResult } from '../engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
-import type { CodexReviewEntity, JobEntity, ThreadEntity } from '../persistence/entities';
+import type { JobEntity, StageEntity, ThreadEntity } from '../persistence/entities';
 import type { BlockSink, TurnHarnessFactory } from '../surface';
 import type { JobDependencyService } from '../job-deps';
 
@@ -33,7 +33,7 @@ const fakeElection = {
  * The synchronous, Atlas-driven Codex review service:
  *   - parsePlanFindings extracts severity-tagged FINDING lines / recognises NO_FINDINGS.
  *   - serialize/deserialize round-trip findings for the durable row.
- *   - review() runs ONE Codex turn, persists the single `codex_reviews` row, resumes the session.
+ *   - review() runs ONE Codex turn, persists the job's `plan_review` thread, resumes the session.
  *   - reviewForCurrentSpecs is the propose_plan mandatory-run gate (terminal + matching spec_hash).
  */
 
@@ -87,60 +87,154 @@ describe('summarizeEngineError', () => {
 
 // ── review() + the gate ──────────────────────────────────────────────────────────────────────
 
-/** A minimal in-memory fake of the `codex_reviews` repo (one row per job in these tests). */
-function fakeReviewRepo(seed: Partial<CodexReviewEntity>[] = []) {
+/** The retired `codex_reviews` field names these fixtures still accept, translated onto the new
+ *  `plan_review` thread's `config` (see `PlanReviewConfig`) — keeps each test's seed literal unchanged. */
+type PlanReviewThreadSeed = {
+  id?: string;
+  job_id?: string;
+  org_id?: string;
+  resume_count?: number;
+  status?: 'running' | 'complete' | 'failed';
+  findings?: string | null;
+  error?: string | null;
+  codex_session_id?: string | null;
+  spec_hash?: string | null;
+  created_at?: Date;
+  updated_at?: Date;
+};
+
+/** A minimal in-memory fake of `this.threads` (a job's `plan_review`-role thread rows) — the retired
+ *  `codex_reviews` repo now folds onto `ThreadEntity.session_id` + `.config`. */
+function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   const rows = seed.map((r, i) => ({
-    id: r.id ?? `rev-${i}`,
+    id: r.id ?? `thread-${i}`,
     job_id: r.job_id,
     org_id: r.org_id,
-    resume_count: r.resume_count ?? 0,
-    status: r.status ?? 'running',
-    findings: r.findings ?? null,
-    error: r.error ?? null,
-    codex_session_id: r.codex_session_id ?? null,
-    spec_hash: r.spec_hash ?? null,
+    stage_id: 'stage-1',
+    role: 'plan_review',
+    parent_thread_id: null,
+    ordinal: 10,
+    brief: 'Plan review',
+    type: 'general',
+    status: 'reviewing',
+    condition: 'none',
+    session_id: r.codex_session_id ?? null,
+    config: {
+      specHash: r.spec_hash ?? null,
+      resumeCount: r.resume_count ?? 0,
+      findings: r.findings ?? [],
+      status: r.status ?? 'running',
+      error: r.error ?? null,
+    },
     created_at: r.created_at ?? new Date(2026, 0, 1, 0, i),
     updated_at: r.updated_at ?? new Date(2026, 0, 1, 0, i),
-  })) as CodexReviewEntity[];
+  })) as unknown as ThreadEntity[];
+
+  const matches = (row: ThreadEntity, where: Record<string, unknown>) =>
+    Object.entries(where).every(
+      ([k, v]) => v == null || (row as unknown as Record<string, unknown>)[k] === v,
+    );
+
   return {
-    _rows: () => rows,
-    create: (r: Partial<CodexReviewEntity>) => ({ id: 'rev-new', ...r }) as CodexReviewEntity,
-    save: vi.fn(async (r: CodexReviewEntity) => {
-      const existing = rows.find((x) => x.id === r.id);
-      if (existing) Object.assign(existing, r);
-      else
-        rows.push({
-          ...r,
-          created_at: r.created_at ?? new Date(),
-          updated_at: r.updated_at ?? new Date(),
-        } as CodexReviewEntity);
-      return r;
+    create: (r: Partial<ThreadEntity>) => ({ ...r }) as ThreadEntity,
+    save: vi.fn(async (r: ThreadEntity) => {
+      const existing = r.id ? rows.find((x) => x.id === r.id) : undefined;
+      if (existing) {
+        Object.assign(existing, r, { updated_at: new Date() });
+        return existing;
+      }
+      const saved = {
+        ...r,
+        id: r.id ?? `thread-${rows.length}`,
+        created_at: r.created_at ?? new Date(),
+        updated_at: r.updated_at ?? new Date(),
+      } as ThreadEntity;
+      rows.push(saved);
+      return saved;
     }),
-    update: vi.fn(async (where: { id: string }, patch: Partial<CodexReviewEntity>) => {
+    update: vi.fn(async (where: { id: string }, patch: Partial<ThreadEntity>) => {
       const row = rows.find((x) => x.id === where.id);
       if (row) Object.assign(row, patch, { updated_at: new Date() });
     }),
-    findOne: vi.fn(async ({ where }: { where: { job_id?: string; status?: string } }) => {
-      const matches = rows.filter(
-        (x) =>
-          (where.job_id == null || x.job_id === where.job_id) &&
-          (where.status == null || x.status === where.status),
-      );
-      return matches.sort((a, b) => +b.created_at - +a.created_at)[0] ?? null;
-    }),
+    findOne: vi.fn(
+      async ({
+        where,
+        order,
+      }: {
+        where: Record<string, unknown>;
+        order?: { created_at?: 'ASC' | 'DESC' };
+      }) => {
+        const found = rows.filter((r) => matches(r, where));
+        if (order?.created_at === 'DESC') {
+          found.sort((a, b) => +b.created_at - +a.created_at);
+        }
+        return found[0] ?? null;
+      },
+    ),
     findOneOrFail: vi.fn(async ({ where }: { where: { id: string } }) => {
       const r = rows.find((x) => x.id === where.id);
       if (!r) throw new Error('not found');
       return r;
     }),
-    find: vi.fn(async ({ where }: { where: { status?: string } }) =>
-      rows.filter((x) => where.status == null || x.status === where.status),
+    createQueryBuilder: () => {
+      const params: Record<string, unknown> = {};
+      const qb: Record<string, unknown> = {};
+      for (const m of ['select', 'where', 'andWhere']) {
+        qb[m] = (_cond?: unknown, p?: Record<string, unknown>) => {
+          if (p) Object.assign(params, p);
+          return qb;
+        };
+      }
+      qb.getMany = async () =>
+        rows.filter(
+          (r) => r.role === 'plan_review' && (r.config as { status?: string })?.status === 'running',
+        );
+      qb.getRawOne = async () => {
+        const jobId = params['jobId'] as string | undefined;
+        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
+        return { max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0) };
+      };
+      return qb;
+    },
+  } as unknown as Repository<ThreadEntity>;
+}
+
+/** A minimal in-memory fake of `this.stages` — auto-vivifies the job's single `plan_review` stage.
+ *  No test asserts on the stage row itself; it just needs to resolve consistently. */
+function fakeStagesRepo() {
+  const rows: StageEntity[] = [];
+  return {
+    findOne: vi.fn(
+      async ({ where }: { where: { job_id: string; kind: string } }) =>
+        rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ?? null,
     ),
-  } as unknown as Repository<CodexReviewEntity> & { _rows: () => CodexReviewEntity[] };
+    create: (r: Partial<StageEntity>) => ({ ...r }) as StageEntity,
+    save: vi.fn(async (r: StageEntity) => {
+      const saved = { ...r, id: r.id ?? `stage-${rows.length + 1}` } as StageEntity;
+      rows.push(saved);
+      return saved;
+    }),
+    createQueryBuilder: () => {
+      const params: Record<string, unknown> = {};
+      const qb: Record<string, unknown> = {};
+      for (const m of ['select', 'where', 'andWhere']) {
+        qb[m] = (_cond?: unknown, p?: Record<string, unknown>) => {
+          if (p) Object.assign(params, p);
+          return qb;
+        };
+      }
+      qb.getRawOne = async () => {
+        const jobId = params['jobId'] as string | undefined;
+        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
+        return { max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0) };
+      };
+      return qb;
+    },
+  } as unknown as Repository<StageEntity>;
 }
 
 function makeService(opts: {
-  reviews: ReturnType<typeof fakeReviewRepo>;
+  threads: ReturnType<typeof fakePlanReviewThreadsRepo>;
   ensureContainer?: unknown;
   engineRun?: (args: unknown) => Promise<EngineRunResult>;
   contextDirHost?: string;
@@ -172,12 +266,7 @@ function makeService(opts: {
       // accept the update (the live sync is asserted end-to-end in web-surface.halt.int.test.ts).
       update: vi.fn(async () => ({ affected: 1 })),
     } as unknown as Repository<JobEntity>);
-  // The render-only `plan_review` thread row is best-effort — a no-op stub is enough for these tests.
-  const threads = {
-    findOne: async () => null,
-    create: (x: unknown) => x,
-    save: vi.fn(async () => undefined),
-  } as unknown as Repository<ThreadEntity>;
+  const stages = fakeStagesRepo();
   const harness = {
     create: () => ({
       onEvent: () => undefined,
@@ -196,9 +285,9 @@ function makeService(opts: {
     engine,
     fakeCreds,
     lifecycle,
-    opts.reviews as unknown as Repository<CodexReviewEntity>,
     jobs,
-    threads,
+    opts.threads,
+    stages,
     harness,
     fakeElection,
     blockSink,
@@ -216,18 +305,18 @@ const baseInput: PlanReviewInput = {
 
 describe('PlanReviewService.review', () => {
   it('a fresh clean review persists a complete row and returns no findings', async () => {
-    const reviews = fakeReviewRepo();
-    const svc = makeService({ reviews });
+    const threads = fakePlanReviewThreadsRepo();
+    const svc = makeService({ threads });
     const out = await svc.review(baseInput);
     expect(out.status).toBe('complete');
     expect(out.findings).toEqual([]);
-    expect(reviews._rows()[0].status).toBe('complete');
+    expect((await svc.loadRow('job-1'))?.status).toBe('complete');
   });
 
   it('parses + persists severity findings', async () => {
-    const reviews = fakeReviewRepo();
+    const threads = fakePlanReviewThreadsRepo();
     const svc = makeService({
-      reviews,
+      threads,
       engineRun: async () =>
         ({
           result: 'FINDING [BLOCKING]: x — breaks build\nFINDING [ADVISORY]: y — nicer',
@@ -242,35 +331,39 @@ describe('PlanReviewService.review', () => {
     // The invariant that stops the doubled review turn: a re-drive needs status='running', so the row
     // must reach 'complete' before the reply becomes durable. Assert that relative order.
     const order: string[] = [];
-    const reviews = fakeReviewRepo();
-    const origUpdate = (reviews as unknown as { update: (w: unknown, p: { status?: string }) => Promise<void> }).update;
-    (reviews as unknown as { update: unknown }).update = vi.fn(
-      async (where: unknown, patch: { status?: string }) => {
-        if (patch.status === 'complete') order.push('row:complete');
+    const threads = fakePlanReviewThreadsRepo();
+    const origUpdate = (
+      threads as unknown as { update: (w: unknown, p: Partial<ThreadEntity>) => Promise<void> }
+    ).update;
+    (threads as unknown as { update: unknown }).update = vi.fn(
+      async (where: unknown, patch: Partial<ThreadEntity>) => {
+        if ((patch as { config?: { status?: string } }).config?.status === 'complete') {
+          order.push('row:complete');
+        }
         return origUpdate(where, patch);
       },
     );
-    const svc = makeService({ reviews, onFinish: () => order.push('reply:persisted') });
+    const svc = makeService({ threads, onFinish: () => order.push('reply:persisted') });
     await svc.review(baseInput);
     expect(order).toEqual(['row:complete', 'reply:persisted']);
     // The row is terminal, so the backstop worklist no longer sees it → it can never be re-driven.
-    expect(reviews._rows()[0].status).toBe('complete');
+    expect((await svc.loadRow('job-1'))?.status).toBe('complete');
     expect(await svc.findRunningReviews()).toEqual([]);
   });
 
   it('records failed (no throw) when no sandbox can be attached', async () => {
-    const reviews = fakeReviewRepo();
-    const svc = makeService({ reviews, ensureContainer: null });
+    const threads = fakePlanReviewThreadsRepo();
+    const svc = makeService({ threads, ensureContainer: null });
     const out = await svc.review(baseInput);
     expect(out.status).toBe('failed');
-    expect(reviews._rows()[0].status).toBe('failed');
+    expect((await svc.loadRow('job-1'))?.status).toBe('failed');
   });
 
   it('stops at the re-review ceiling without a new engine run', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', resume_count: 8, status: 'complete', codex_session_id: 's' },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     const out = await svc.review(baseInput);
     expect(out.ceilingHit).toBe(true);
   });
@@ -284,21 +377,21 @@ describe('PlanReviewService.review — resume_count is the plan-version/round (D
     await mkdir(specsDir, { recursive: true });
     await writeFile(join(specsDir, 'plan.md'), 'v1');
     try {
-      const reviews = fakeReviewRepo();
-      const svc = makeService({ reviews, contextDirHost: root });
+      const threads = fakePlanReviewThreadsRepo();
+      const svc = makeService({ threads, contextDirHost: root });
 
       // First review of this plan version: fresh row, round 0.
       await svc.review(baseInput);
-      expect(reviews._rows()[0].resume_count).toBe(0);
+      expect((await svc.loadRow('job-1'))?.resume_count).toBe(0);
 
       // Recovery re-drive of the SAME plan version (specs unchanged) → round stays 0.
       await svc.review(baseInput);
-      expect(reviews._rows()[0].resume_count).toBe(0);
+      expect((await svc.loadRow('job-1'))?.resume_count).toBe(0);
 
       // Atlas revised the plan → the specs (and their hash) change → a genuine new round bumps to 1.
       await writeFile(join(specsDir, 'plan.md'), 'v2 — revised');
       await svc.review(baseInput);
-      expect(reviews._rows()[0].resume_count).toBe(1);
+      expect((await svc.loadRow('job-1'))?.resume_count).toBe(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -307,28 +400,28 @@ describe('PlanReviewService.review — resume_count is the plan-version/round (D
 
 describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () => {
   it('returns the row when terminal and spec_hash matches the current specs (both null offline)', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: null },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
     expect(gate?.row.id).toBe('r');
   });
 
   it('a FAILED review still satisfies the gate (a review that ran, even erroring)', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'failed', spec_hash: null, error: 'boom' },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
     expect(gate?.row.status).toBe('failed');
   });
 
   it('refuses when the spec_hash no longer matches (specs changed since review)', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: 'OLDHASH' },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     expect(await svc.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
   });
 
@@ -336,7 +429,7 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
     // Post-ceiling, review() can never re-run, so a later spec edit (mismatched hash) must NOT deadlock
     // propose_plan forever. A terminal review that hit the ceiling is accepted despite the mismatch; a
     // below-ceiling mismatch is still refused (the normal revise → re-review loop).
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       {
         id: 'r',
         job_id: 'job-1',
@@ -346,36 +439,36 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
         resume_count: 8, // >= default ceiling (8)
       },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
     expect(gate?.row.id).toBe('r');
     // currentHash is null (no specs dir) — the escape returns it as-is, not the frozen OLDHASH.
     expect(gate?.specHash).toBeNull();
 
     // One round below the ceiling, the same mismatch is still refused.
-    const belowCeiling = fakeReviewRepo([
+    const belowCeiling = fakePlanReviewThreadsRepo([
       { id: 'r2', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: 'OLDHASH', resume_count: 7 },
     ]);
-    const svc2 = makeService({ reviews: belowCeiling });
+    const svc2 = makeService({ threads: belowCeiling });
     expect(await svc2.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
   });
 
   it('refuses when the only review is still running', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'running', spec_hash: null },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     expect(await svc.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
   });
 });
 
 describe('PlanReviewService.findRunningReviews (backstop worklist)', () => {
   it('returns only running rows', async () => {
-    const reviews = fakeReviewRepo([
+    const threads = fakePlanReviewThreadsRepo([
       { id: 'a', job_id: 'j1', status: 'running' },
       { id: 'b', job_id: 'j2', status: 'complete' },
     ]);
-    const svc = makeService({ reviews });
+    const svc = makeService({ threads });
     const running = await svc.findRunningReviews();
     expect(running.map((r) => r.id)).toEqual(['a']);
   });
@@ -398,18 +491,18 @@ function capturingJobsRepo() {
 
 describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () => {
   it('writes plan_review while running, then idle once the review completes', async () => {
-    const reviews = fakeReviewRepo();
+    const threads = fakePlanReviewThreadsRepo();
     const cap = capturingJobsRepo();
-    const svc = makeService({ reviews, jobs: cap.repo });
+    const svc = makeService({ threads, jobs: cap.repo });
     await svc.review(baseInput);
     // persistRow('running') → plan_review, persistRow('complete') → idle, in that order.
     expect(cap._activities()).toEqual(['plan_review', 'idle']);
   });
 
   it('writes plan_review then idle even when the review fails (no sandbox)', async () => {
-    const reviews = fakeReviewRepo();
+    const threads = fakePlanReviewThreadsRepo();
     const cap = capturingJobsRepo();
-    const svc = makeService({ reviews, jobs: cap.repo, ensureContainer: null });
+    const svc = makeService({ threads, jobs: cap.repo, ensureContainer: null });
     await svc.review(baseInput);
     expect(cap._activities()[cap._activities().length - 1]).toBe('idle');
   });
@@ -432,19 +525,29 @@ function fakeStoreJobs() {
   };
 }
 
+/** `endTurnActivity` now checks a `plan_review`-role thread's `config.status` via
+ *  `this.threads.createQueryBuilder(...).getExists()` (the retired `codex_reviews.status` read). */
+function fakeThreadsRepoForBrainStore(reviewing: boolean) {
+  return {
+    createQueryBuilder: () => {
+      const qb: Record<string, unknown> = {};
+      for (const m of ['where', 'andWhere']) qb[m] = () => qb;
+      qb.getExists = vi.fn(async () => reviewing);
+      return qb;
+    },
+  } as unknown as Repository<ThreadEntity>;
+}
+
 function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEntity> }) {
-  const reviews = {
-    exists: vi.fn(async () => opts.reviewRunning),
-  } as unknown as Repository<CodexReviewEntity>;
+  const threads = fakeThreadsRepoForBrainStore(opts.reviewRunning);
   const stub = {} as never;
   return new BrainStoreService(
     opts.jobs,
     stub, // messages
     stub, // records
-    stub, // threads
-    stub, // steps
+    threads,
+    stub, // stages
     stub, // stimuli
-    reviews,
     stub, // dataSource
     stub, // titler
     { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
@@ -477,7 +580,7 @@ describe('BrainStoreService activity writers', () => {
     expect(jobs._patches()).toEqual([{ activity: 'idle' }]);
   });
 
-  it('endTurnActivity → plan_review while a codex_reviews row still runs (review outlives the turn)', async () => {
+  it('endTurnActivity → plan_review while a plan_review thread still runs (review outlives the turn)', async () => {
     // The §7 crux: the turn finalizes first but a `review_plan` review is still `running`, so activity must
     // stay plan_review (dot suppressed) — never landing idle until the review row itself leaves running.
     const jobs = fakeStoreJobs();

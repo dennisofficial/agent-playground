@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
@@ -24,6 +24,7 @@ import type { AgentMessage } from '../prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
+import { JobBootstrapService } from '../job-bootstrap';
 import {
   DecisionRecordEntity,
   MessageEntity,
@@ -101,6 +102,11 @@ export class BrainStoreService {
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
     private readonly jobDeps: JobDependencyService,
+    // The planning-stage bootstrap now lives in `JobBootstrapService` (every job-creation seam, not just
+    // this brain-module one, needs it — see its module doc for the cycle it avoids). `ensurePlanningStage`
+    // below thin-delegates to it. @Optional (trailing) so the existing direct-construction unit tests
+    // (positional args) keep compiling without a trailing argument.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /**
@@ -1790,48 +1796,13 @@ export class BrainStoreService {
    * Every job owns exactly one planning stage from bootstrap (d7): the brain's conversation session IS this
    * thread's session, and it anchors the job-level card messages (question/ship/amend/merge) that have no
    * build-lane thread of their own (see {@link DriverStoreService.planningThreadId}). Safe to call
-   * repeatedly — a second call with the stage already present is a no-op. Called at plan-persist time and on
-   * follow-up-job creation; other job-creation seams reach it through this same guard on their first write.
+   * repeatedly — a second call with the stage already present is a no-op. Thin delegate over
+   * `JobBootstrapService` (the shared owner of this logic — see its module doc) so `persistPlan` and
+   * `createFollowUpJob` keep calling it as `this.ensurePlanningStage(...)`; every OTHER job-creation seam
+   * calls `JobBootstrapService` directly (a `BrainModule` import would cycle back through `StimulusModule`).
    */
   async ensurePlanningStage(jobId: string, orgId: string): Promise<void> {
-    const existing = await this.stages.findOne({
-      where: { job_id: jobId, kind: 'planning' },
-      order: { ordinal: 'ASC' },
-    });
-    if (existing) {
-      // Heal an interrupted bootstrap (stage written, thread not) so the planning anchor always resolves.
-      const thread = await this.threads.findOne({ where: { stage_id: existing.id } });
-      if (!thread) await this.createPlanningThread(existing.id, jobId, orgId);
-      return;
-    }
-    const stage = await this.stages.save(
-      this.stages.create({
-        job_id: jobId,
-        org_id: orgId,
-        ordinal: ORDINAL_GAP,
-        kind: 'planning',
-        title: 'Planning',
-        config: {},
-      }),
-    );
-    await this.createPlanningThread(stage.id, jobId, orgId);
-  }
-
-  /** The planning stage's single `planning`-role thread — ordinal 0, so builders (gap-numbered after the
-   *  highest top-level ordinal) never collide with it on the job-wide UNIQUE(job_id, parent, ordinal). */
-  private async createPlanningThread(stageId: string, jobId: string, orgId: string): Promise<void> {
-    await this.threads.save(
-      this.threads.create({
-        stage_id: stageId,
-        job_id: jobId,
-        org_id: orgId,
-        role: 'planning',
-        ordinal: 0,
-        brief: 'Main',
-        type: 'general',
-        status: 'pending',
-      }),
-    );
+    await this.jobBootstrap?.ensurePlanningStage(jobId, orgId);
   }
 
   /** Load a draft/approved decision record (overview + decisions + thread titles) for the approval card. */

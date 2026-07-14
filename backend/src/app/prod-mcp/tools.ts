@@ -184,7 +184,7 @@ async function jobOverview(
     },
     threads: threads.map((t) => ({
       id: t.id,
-      kind: t.kind,
+      kind: t.role,
       ordinal: t.ordinal,
       brief: t.brief,
       status: t.status,

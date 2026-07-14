@@ -266,7 +266,7 @@ export class TestBridgeController {
       where: { job_id: jobId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map((t) => ({ id: t.id, kind: t.kind, status: t.status, ordinal: t.ordinal }));
+    return rows.map((t) => ({ id: t.id, kind: t.role, status: t.status, ordinal: t.ordinal }));
   }
 
   /** `GET /test/stimuli?jobId=...` — the job's `stimuli` delivery ledger (lane/priority/body + the
@@ -291,7 +291,7 @@ export class TestBridgeController {
   /** Resolve a job's sole/first `builder` thread (the build lane a bare `/test/seed-lane` targets). */
   private async resolveBuilderThreadId(jobId: string): Promise<string | null> {
     const builders = await this.threads.find({
-      where: { job_id: jobId, kind: 'builder' },
+      where: { job_id: jobId, role: 'builder' },
       order: { ordinal: 'ASC' },
     });
     return builders[0]?.id ?? null;

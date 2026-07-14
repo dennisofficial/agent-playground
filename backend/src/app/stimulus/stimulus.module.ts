@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -36,6 +37,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
  */
 @Module({
   imports: [
+    JobBootstrapModule,
     TypeOrmModule.forFeature(
       [RepoEntity, JobEntity, MessageEntity, StimulusEntity],
       DB_CONNECTION,

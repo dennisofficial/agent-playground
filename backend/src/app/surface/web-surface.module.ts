@@ -6,6 +6,7 @@ import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
+import { JobBootstrapModule } from '../job-bootstrap';
 import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
@@ -52,6 +53,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
     // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not
     // `@Global`, so it must be imported for the injected service to resolve.
     GitModule,
+    JobBootstrapModule,
   ],
   providers: [
     WebSurface,
