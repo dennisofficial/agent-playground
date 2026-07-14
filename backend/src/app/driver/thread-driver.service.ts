@@ -3208,6 +3208,9 @@ export class ThreadDriver implements JobDispatcher {
     const task = renderCommitTurnTask();
     await harness.emitPrompt(task, `commit:${anchor.id}:${attempt}`);
     const repoConventions = await this.repoConventionsFor(job);
+    // The repo's saved preview recipe — threaded the same way as the batch turn (see kickBatchTurn) so a
+    // `validate` subagent spawned during a commit-nudge turn (Agent.WORKER, execute mode) also gets it.
+    const previewInstructions = await this.previewRecipeFor(job);
     const evidenceDir = await this.evidenceDirForThread(job, thread);
     let result: Awaited<ReturnType<TurnRunnerService['runTurn']>>;
     try {
@@ -3223,6 +3226,7 @@ export class ThreadDriver implements JobDispatcher {
             jobKind: job.kind,
             settings: { repoConventions },
             turnPhase: 'commit',
+            ...(previewInstructions ? { previewInstructions } : {}),
           }),
           evidenceDir,
           ...(spec.reasoningEffort ? { modelReasoningEffort: spec.reasoningEffort } : {}),
@@ -3231,6 +3235,7 @@ export class ThreadDriver implements JobDispatcher {
           userMcpServers: await this.mcp.resolveForTurn(job.orgId, job.repoId, 'build'),
           skills: await this.skills.resolveForTurn(job.orgId, job.repoId, 'build'),
           ...(repoConventions ? { repoConventions } : {}),
+          ...(previewInstructions ? { previewInstructions } : {}),
           gitAuth: await this.resolveTurnGitAuth(
             job.orgId,
             repo.projectRepo.gitUrl,
