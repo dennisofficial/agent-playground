@@ -88,8 +88,29 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
 
         const halted = (await this.driverStore.haltOutcome(threadId).catch(() => null)) != null;
         if (halted) {
+          // Persist the operator's own bubble first — mirrors the live/pending branch below, so the
+          // message shows up in the thread's transcript even though this branch drives it via
+          // `redriveThread`'s orientation fold rather than the delivery pump.
+          await this.stimulusStore.recordChatStimulus({
+            orgId,
+            repoId,
+            jobId,
+            author: author ?? { id: 'U-SYSTEM', displayName: 'System' },
+            replyRoute: { surfaceId: 'web', jobRef: jobId },
+            body: message,
+            lane: laneFor('builder', threadId),
+          });
           const threadDriver = await this.resolveThreadDriver();
-          await threadDriver.redriveThread(jobId, threadId, message);
+          const result = await threadDriver.redriveThread(
+            jobId,
+            threadId,
+            message,
+          );
+          if (!result.ok) {
+            throw new Error(
+              `postToThread: redrive of halted thread ${threadId} failed: ${result.reason ?? 'unknown reason'}`,
+            );
+          }
           return;
         }
 
