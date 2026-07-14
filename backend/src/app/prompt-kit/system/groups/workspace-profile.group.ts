@@ -217,7 +217,9 @@ export class WorkspaceProfileGroup {
       'stack from scratch. Author it via write_preview_instructions({ instructions }) once you have gotten a',
       'preview actually working — do not guess it up front. write_preview_instructions REPLACES the whole',
       'recipe, so to AMEND an existing one call read_preview_instructions FIRST to get the current body, edit',
-      'it, then write the full new recipe back. Keep it to the exact repeatable stand-up steps, not narration.',
+      'it, then write the full new recipe back. Keep it to the exact repeatable stand-up steps, not narration —',
+      'and JOB-AGNOSTIC: it is repo-scoped memory ANY future job reuses, so strip anything specific to the',
+      'change you happened to preview (its deep-link target, feature-only fixtures, "verified for X" stamps).',
     ].join('\n');
   }
 
