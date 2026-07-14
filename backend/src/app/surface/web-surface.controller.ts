@@ -891,15 +891,35 @@ export class WebSurfaceController {
     // Wire each requested blocker edge, tracking whether any of them is still LIVE (born-blocks the job).
     // seed=bodyText so a woken job replays the exact first-turn body (review/attachment XML included).
     let anyBlocked = false;
-    for (const dependsOnJobId of dependsOn) {
-      const { blocked } = await this.jobDeps.addDependency({
-        orgId: org.id,
-        repoId: repo.id,
-        jobId: thread.id,
-        dependsOnJobId,
-        seed: bodyText,
-      });
-      anyBlocked ||= blocked;
+    try {
+      for (const dependsOnJobId of dependsOn) {
+        const { blocked } = await this.jobDeps.addDependency({
+          orgId: org.id,
+          repoId: repo.id,
+          jobId: thread.id,
+          dependsOnJobId,
+          seed: bodyText,
+        });
+        anyBlocked ||= blocked;
+      }
+    } catch (err) {
+      // The thread row already exists at this point (unlike the pre-creation assertDependenciesValid
+      // check above) — mirrors the create_job host-tool, which returns `{ ok: false, jobId, reason }`
+      // on the same failure rather than swallowing the id. Surface jobId here too so the caller/operator
+      // isn't left with an invisible zombie thread with no first message ever injected.
+      this.logger.warn(
+        `web createJob: dependency wiring failed for ${thread.id}: ${err}`,
+      );
+      throw new HttpException(
+        {
+          message:
+            err instanceof Error
+              ? err.message
+              : 'failed to wire one or more dependsOn blockers',
+          jobId: thread.id,
+        },
+        HttpStatus.CONFLICT,
+      );
     }
     if (!anyBlocked) {
       // No dependencies, or every requested blocker was already terminal — start immediately (unchanged
