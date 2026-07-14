@@ -3,16 +3,15 @@
 import { useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { threadTitle } from "@/lib/thread-title";
 import { useLiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
-import { legNodeId, parseLegNode } from "./node-registry";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
   PipelineJob,
+  PipelineStage,
   PipelineThread,
   PipelineReviewChild,
-  PipelineLeg,
+  StageKind,
   TaskItem,
   JobStatus,
   ThreadStatus,
@@ -21,12 +20,12 @@ import type {
 
 /**
  * The Thread Navigator's THREADS region — design handoff "thread navigation": an ACCORDION. Selecting a
- * thread reveals, in place, the things the thread owns — its LLM-authored TASKS (server-folded from the
- * session's TaskCreate/TaskUpdate calls) and its read-only REVIEW AGENTS (navigable child threads on
- * `rev:<threadId>:<agentId>` nodes) capped by the navigable "Post-review fixes" row (`fix:<threadId>`) —
- * and whichever thread was open collapses (open = the selected lane, or the thread whose review agent is
- * open in the detail pane). The whole-diff master review is now just another thread in the list (rendered
- * "Master review" with no review-agents fold), not a pinned region.
+ * stage reveals, in place, the things the stage owns — its LLM-authored TASKS (server-folded from the
+ * SDK TaskCreate/TaskUpdate calls), its ordered builder LEGS, and its read-only REVIEW AGENTS (navigable
+ * child threads addressed by their own id) capped by the navigable "Post-review fixes" row — and whichever
+ * stage was open collapses (open = the selected lane, or the stage whose review agent is open). The
+ * whole-diff master review is now just another stage in the list (rendered "Master Review" with no
+ * review-agents fold), not a pinned region.
  */
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
@@ -267,20 +266,38 @@ function ThreadStatusGlyph({
 export interface TreeProps {
   job: PipelineJob;
   status: JobStatus;
-  /** The job id — each fold subscribes to its thread's live lane to overlay mid-turn task calls. */
+  /** The job id — each fold subscribes to its stage's live lane to overlay mid-turn task calls. */
   jobId: string;
-  /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the thread's fold;
-   *  a `rev:<threadId>:…`/`fix:<threadId>` lane (review agents + post-review fixes are threads too) opens
-   *  its PARENT thread's fold and highlights that child row. */
+  /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the owning stage's
+   *  fold; a review-child id (review agents + the post-review fix are child threads too) opens its PARENT
+   *  stage's fold and highlights that child row. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }
 
+/** The stage-kind → sidebar label, used when a stage carries no explicit `title`. */
+const STAGE_LABELS: Record<StageKind, string> = {
+  planning: "Planning",
+  plan_review: "Plan Review",
+  build: "Build",
+  direct_build: "Direct Build",
+  master_review: "Master Review",
+  post_build: "Post Build",
+  ci: "CI",
+};
+
+/** A stage's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when set,
+ *  else derived from its kind. */
+function stageLabel(stage: PipelineStage): string {
+  return stage.title?.trim() || STAGE_LABELS[stage.kind];
+}
+
 /**
- * The THREADS build lanes — one accordion fold per thread. Each thread is one orchestrator session; its
- * fold reveals the session's live TASKS (server-folded `thread.tasks`) and its REVIEW AGENTS (read-only
- * child threads → `rev:` detail nodes) with the derived Post-review fixes row. Draft threads (pre-approval
- * or not yet reached) fold to the drafting empty state.
+ * The THREADS build lanes — one accordion fold per STAGE. Each stage owns its live TASKS (server-folded from
+ * the SDK task tools) and, for a build stage, its ordered builder LEGS + read-only REVIEW AGENTS (the
+ * builders' review-child threads) capped by the derived Post-review fixes row. Draft stages (pre-approval or
+ * not yet reached) fold to the drafting empty state. The Main (planning) row and the plan-review row are
+ * pinned above the tree by the navigator, so they are skipped here.
  */
 export function PipelineTree({
   job,
@@ -289,28 +306,34 @@ export function PipelineTree({
   laneNode,
   onSelectNode,
 }: TreeProps) {
-  const threads = job.threads;
+  const stages = job.stages.filter(
+    (s) => s.kind !== "planning" && s.kind !== "plan_review",
+  );
   // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
   const drafted =
     status === "planning" ||
     status === "plan_review" ||
     status === "awaiting_approval";
-  // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point —
-  // the in-flight thread (furthest non-`done`/non-`pending`) is where the run stopped; later ones never ran.
-  const haltIdx = job.halt != null ? haltThreadIdx(threads) : -1;
+  // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point over
+  // the whole flattened thread list — the in-flight thread (furthest non-`done`/non-`pending`) is where the
+  // run stopped; later ones never ran. Identify it by id so it maps across the stage grouping.
+  const allThreads = job.stages.flatMap((s) => s.threads);
+  const haltIdx = job.halt != null ? haltThreadIdx(allThreads) : -1;
+  const haltThreadId = haltIdx >= 0 ? (allThreads[haltIdx]?.id ?? null) : null;
+  const notReached = new Set(
+    haltIdx >= 0 ? allThreads.slice(haltIdx + 1).map((t) => t.id) : [],
+  );
 
   return (
     <>
-      {threads.map((s, i) => (
-        <ThreadFold
-          key={s.id}
-          thread={s}
-          index={i}
+      {stages.map((stage) => (
+        <StageFold
+          key={stage.id}
+          stage={stage}
           jobId={jobId}
           drafted={drafted}
-          isHalt={i === haltIdx}
-          notReached={haltIdx !== -1 && i > haltIdx}
-          selected={laneNode === s.id}
+          haltThreadId={haltThreadId}
+          notReached={notReached}
           laneNode={laneNode}
           onSelectNode={onSelectNode}
         />
@@ -320,47 +343,55 @@ export function PipelineTree({
 }
 
 /**
- * One accordion fold — the clickable thread header (status glyph · label · count chip) over the open
- * body (TASKS → REVIEW children → Post-review fixes, or the draft empty state). A thread is OPEN when it is
- * the selected lane OR one of its review CHILD threads (a review lens / the post-review fix) is the open
- * lane — they ride the same LEFT pane as bare child-thread nodes. Clicking the selected header again is a
- * no-op (stays put) — navigate back to Main by clicking the Main row itself.
+ * One accordion fold — the clickable stage header (status glyph · label · count chip) over the open body
+ * (TASKS → LEGS → REVIEW children → Post-review fixes, or the draft empty state). A stage is OPEN when one
+ * of its threads (a builder leg / master review / the singleton thread) OR one of its review CHILD threads
+ * is the open lane — they all ride the same LEFT pane as bare thread nodes. Clicking the header opens the
+ * stage's latest thread; navigate back to Main by clicking the Main row itself.
  */
-function ThreadFold({
-  thread: s,
-  index,
+function StageFold({
+  stage,
   jobId,
   drafted,
-  isHalt,
+  haltThreadId,
   notReached,
-  selected,
   laneNode,
   onSelectNode,
 }: {
-  thread: PipelineThread;
-  index: number;
+  stage: PipelineStage;
   jobId: string;
   drafted: boolean;
-  isHalt: boolean;
-  notReached: boolean;
-  selected: boolean;
+  /** The id of the thread that owns the job halt, or null when the job is healthy. */
+  haltThreadId: string | null;
+  /** Thread ids the run never reached (after the halt point) — rendered muted. */
+  notReached: Set<string>;
   /** The open LEFT-pane lane node (`?lane=`) — a bare thread/child id, or null for Main. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const state = laneState(s.status, s.condition, drafted);
-  const children = s.children ?? [];
-  const reviewLenses = children.filter((c) => c.kind === "review_lens");
-  const postReview = children.find((c) => c.kind === "post_review") ?? null;
-  // The fold stays open while any of its review children — OR one of its Legs — is the selected LEFT-pane lane.
-  const childOpen =
+  const roots = stage.threads;
+  // The latest thread drives the header glyph + live task overlay (a build stage's newest builder leg; a
+  // singleton stage's one thread). A stage should never be empty, but guard so a malformed one renders nothing.
+  const primary = roots[roots.length - 1];
+  if (!primary) return null;
+
+  const state = laneState(primary.status, primary.condition, drafted);
+  const isHalt = roots.some((t) => t.id === haltThreadId);
+  const stageNotReached = roots.every((t) => notReached.has(t.id));
+
+  const reviewChildren = roots.flatMap((t) => t.children ?? []);
+  const reviewLenses = reviewChildren.filter((c) => c.role === "review_agent");
+  const postReview = reviewChildren.find((c) => c.role === "review_fix") ?? null;
+
+  const open =
     laneNode != null &&
-    (children.some((c) => c.id === laneNode) || parseLegNode(laneNode)?.threadId === s.id);
-  const open = selected || childOpen;
-  // REALTIME: fold the thread's live lane over the durable list, so mid-turn task calls tick instantly
+    (roots.some((t) => t.id === laneNode) ||
+      reviewChildren.some((c) => c.id === laneNode));
+
+  // REALTIME: fold the latest thread's live lane over the durable list, so mid-turn task calls tick instantly
   // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
-  const liveTurn = useLiveTurn(jobId, threadLane(s.id));
-  const tasks = overlayLiveTasks(s.tasks ?? [], liveTurn);
+  const liveTurn = useLiveTurn(jobId, threadLane(primary.id));
+  const tasks = overlayLiveTasks(stage.tasks, liveTurn);
   const done = tasks.filter((t) => t.status === "completed").length;
   const isDraft = state === "draft";
   const count = isDraft
@@ -373,10 +404,10 @@ function ThreadFold({
     <div className="border-l-[3px]" style={railStyle(state, open)}>
       <button
         type="button"
-        onClick={() => onSelectNode(s.id)}
+        onClick={() => onSelectNode(primary.id)}
         className={cn(
           "flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2",
-          notReached && "opacity-60",
+          stageNotReached && "opacity-60",
         )}
       >
         <ThreadStatusGlyph state={state} isHalt={isHalt} />
@@ -385,14 +416,12 @@ function ThreadFold({
             "flex-1 truncate text-[12px]",
             open
               ? "font-semibold text-text"
-              : notReached
+              : stageNotReached
                 ? "font-medium text-faint"
                 : "font-medium text-dim",
           )}
         >
-          {s.isMasterReview
-            ? "Master review"
-            : `§${index + 1} ${threadTitle(s.brief)}`}
+          {stageLabel(stage)}
         </span>
         {count ? (
           <span className="shrink-0 text-right font-mono text-[8px] text-faint">
@@ -407,10 +436,10 @@ function ThreadFold({
         ) : (
           <>
             <TasksBody tasks={tasks} done={done} total={tasks.length} />
-            {(s.legs?.length ?? 0) > 1 ? (
+            {roots.length > 1 ? (
               <LegsBody
-                threadId={s.id}
-                legs={s.legs!}
+                threads={roots}
+                drafted={drafted}
                 laneNode={laneNode}
                 onSelectNode={onSelectNode}
               />
@@ -471,8 +500,8 @@ const DONE_TAIL = 2;
  *  two behind a disclosure isn't worth the click — the list just renders in full, pure id order). */
 const DONE_FOLD_MIN = 2;
 
-/** The open thread's TASKS section — the session's live, LLM-authored checklist. Exported for the
- *  navigator's Main row, whose fold shows the brain session's own list (`job.mainTasks`) the same way. */
+/** The open stage's TASKS section — the stage's live, LLM-authored checklist. Exported for the navigator's
+ *  Main row, whose fold shows the brain session's own list (`pipelineMainTasks`) the same way. */
 export function TasksBody({
   tasks,
   done,
@@ -697,58 +726,69 @@ function ReviewAgentsBody({
 }
 
 /**
- * The LEGS body (context-rot rotation) — one NAVIGABLE row per engine session ("Leg") the thread's build
- * spanned. Each rotated session is treated as its own thread: clicking a Leg opens the thread's transcript
- * sliced to that Leg (its turns, plus the handoff it authored at its tail and the continuation seed at the
- * next Leg's head). Rendered only once a thread has rotated ≥1× (2+ Legs); a never-rotated thread shows nothing.
+ * The LEGS body (context-rot rotation) — one NAVIGABLE row per sequential builder thread ("Leg") in a build
+ * stage. Each rotated builder is a first-class thread: clicking a Leg opens that thread's own transcript.
+ * Rendered only once a build stage has rotated ≥1× (2+ builder legs); a single-leg stage shows nothing here
+ * (its one thread is addressed by the stage header itself).
  */
 function LegsBody({
-  threadId,
-  legs,
+  threads,
+  drafted,
   laneNode,
   onSelectNode,
 }: {
-  threadId: string;
-  legs: PipelineLeg[];
+  threads: PipelineThread[];
+  drafted: boolean;
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const ordered = [...legs].sort((a, b) => a.ordinal - b.ordinal);
   return (
     <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
-      <BodyHeader label="LEGS" right={String(ordered.length)} />
-      {ordered.map((leg) => {
-        const node = legNodeId(threadId, leg.ordinal);
-        return (
-          <LegRow
-            key={leg.ordinal}
-            leg={leg}
-            selected={laneNode === node}
-            onOpen={() => onSelectNode(node)}
-          />
-        );
-      })}
+      <BodyHeader label="LEGS" right={String(threads.length)} />
+      {threads.map((leg, i) => (
+        <LegRow
+          key={leg.id}
+          index={i}
+          state={laneState(leg.status, leg.condition, drafted)}
+          selected={laneNode === leg.id}
+          onOpen={() => onSelectNode(leg.id)}
+        />
+      ))}
     </div>
   );
 }
 
-/** One Leg — a navigable single-line row (session dot · "Leg N" · peak-occupancy · status word). Opens the
- *  thread's transcript filtered to this Leg (mirrors the review-child rows). */
+/** One Leg — a navigable single-line row (session dot · "Leg N" · status word). Opens that builder thread's
+ *  own transcript (mirrors the review-child rows). */
 function LegRow({
-  leg,
+  index,
+  state,
   selected,
   onOpen,
 }: {
-  leg: PipelineLeg;
+  index: number;
+  state: LaneState;
   selected: boolean;
   onOpen: () => void;
 }) {
-  const word = leg.status === "active" ? "live" : leg.status;
-  const wordColor = leg.status === "active" ? "var(--blue)" : "var(--faint)";
-  const peakK =
-    leg.contextTokensPeak != null
-      ? `${Math.round(leg.contextTokensPeak / 1000)}k`
-      : null;
+  const word =
+    state === "in_progress"
+      ? "live"
+      : state === "done"
+        ? "done"
+        : state === "failed"
+          ? "failed"
+          : state === "blocked"
+            ? "blocked"
+            : "draft";
+  const wordColor =
+    state === "in_progress"
+      ? "var(--blue)"
+      : state === "done"
+        ? "var(--green)"
+        : state === "failed"
+          ? "var(--red)"
+          : "var(--faint)";
   return (
     <button
       type="button"
@@ -768,11 +808,8 @@ function LegRow({
           selected ? "font-semibold text-text" : "font-medium text-dim",
         )}
       >
-        Leg {leg.ordinal}
+        Leg {index + 1}
       </span>
-      {peakK ? (
-        <span className="shrink-0 font-mono text-[8px] text-border-2">{peakK}</span>
-      ) : null}
       <span className="shrink-0 text-[10px] font-medium" style={{ color: wordColor }}>
         {word}
       </span>

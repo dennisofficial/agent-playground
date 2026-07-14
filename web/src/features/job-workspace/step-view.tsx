@@ -37,7 +37,7 @@ import {
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
 import { threadLane } from "./phases";
-import { contextConvoNodeForHref, parseLegNode } from "./node-registry";
+import { contextConvoNodeForHref } from "./node-registry";
 import { codexReviewLane } from "./codex-review";
 import { resolveNode } from "./node-resolution";
 import { TranscriptView } from "./conversation";
@@ -125,27 +125,13 @@ export function PhaseView({
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
   const liveTurn = useLiveTurn(jobRef.jobId);
   const job = pipelineJob(pipeline);
-  const thread = job?.threads.find((s) => s.id === selectedNode) ?? null;
-  // A review CHILD thread (a `review_lens` / `post_review` row) — matched by its own bare id (no `rev:`/
-  // `fix:` prefix). Carries the transcript lane the backend computed for it.
+  const threads = job?.stages.flatMap((s) => s.threads) ?? [];
+  const thread = threads.find((t) => t.id === selectedNode) ?? null;
+  // A review CHILD thread (a `review_agent` / `review_fix` row) — matched by its own bare id. Carries the
+  // transcript lane the backend computed for it.
   const reviewChild =
-    job?.threads
-      .flatMap((s) => s.children ?? [])
-      .find((c) => c.id === selectedNode) ?? null;
-  // A per-Leg node (`<threadId>~leg<ordinal>`) — a rotated build session rendered as its own thread. Resolve
-  // its owning thread; the transcript is the thread's lane sliced to this Leg's `meta.legOrdinal`.
-  const legRef = parseLegNode(selectedNode);
-  const legThread = legRef
-    ? (job?.threads.find((s) => s.id === legRef.threadId) ?? null)
-    : null;
-  // A step leaf (execute folder) — find which thread owns it + its 1-based index, for the label.
-  const owningSection =
-    job?.threads.find((s) => s.steps.some((p) => p.id === selectedNode)) ??
+    threads.flatMap((t) => t.children ?? []).find((c) => c.id === selectedNode) ??
     null;
-  const phaseIndex = owningSection
-    ? owningSection.steps.findIndex((p) => p.id === selectedNode)
-    : -1;
-  const step = owningSection?.steps[phaseIndex] ?? null;
 
   // A `?node=` URL can outlive the node it names (deleted spec, a thread/step id from before a re-plan).
   // Resolve EVERY job-derived token against the live job so a stale link shows NodeNotFound rather than a
@@ -202,14 +188,20 @@ export function PhaseView({
     subtitle = selectedNode;
     body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
   } else if (selectedNode === "plan") {
-    const n = (approvalCard?.threads ?? job?.threads.map((s) => s.brief) ?? [])
-      .length;
+    // The plan's slices — each build/direct_build stage's builder-thread brief(s). Falls back to the
+    // approval card's own thread list when present.
+    const planThreads = (job?.stages ?? [])
+      .filter((s) => s.kind === "build" || s.kind === "direct_build")
+      .flatMap((s) =>
+        s.threads.filter((t) => t.role === "builder").map((t) => t.brief),
+      );
+    const n = (approvalCard?.threads ?? planThreads).length;
     title = job?.title ?? approvalCard?.title ?? "Plan";
     subtitle = `${n} thread${n === 1 ? "" : "s"} · plan.md`;
     body = (
       <PlanDoc
         card={approvalCard}
-        threads={job?.threads.map((s) => s.brief)}
+        threads={planThreads}
         jobRef={jobRef}
         onSelectNode={onSelectNode}
       />
@@ -291,7 +283,7 @@ export function PhaseView({
     // `autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix` lane (carried on the child's pipeline data).
     // SAME transcript renderer as Main/Codex review. An empty transcript is legitimate (a lens/fix that
     // hasn't run / found nothing) — handled by TranscriptView's emptyText, not a not-found.
-    const isFix = reviewChild.kind === "post_review";
+    const isFix = reviewChild.role === "review_fix";
     title = isFix ? "Post-review fixes" : reviewChild.brief;
     subtitle = isFix
       ? reviewChild.status === "executing" ||
@@ -303,6 +295,7 @@ export function PhaseView({
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
+        threadId={reviewChild.id}
         lane={reviewChild.lane}
         composer
         readOnly
@@ -328,33 +321,10 @@ export function PhaseView({
     );
   } else if (selectedNode.startsWith("secplan:")) {
     const id = selectedNode.slice("secplan:".length);
-    const sec = job?.threads.find((s) => s.id === id) ?? null;
+    const sec = threads.find((t) => t.id === id) ?? null;
     title = sec ? threadTitle(sec.brief) : "Thread plan";
     subtitle = "thread plan";
     body = <SectionPlanDoc />;
-  } else if (step) {
-    title = `step ${phaseIndex + 1}${step.title ? ` · ${step.title}` : ""}`;
-    subtitle = "Claude · execute";
-    // A batch runs as ONE turn on its thread's STABLE lane, tagged with the ANCHOR step id. Subscribe to the
-    // thread lane (live) and filter the durable log to this step's anchor. SAME renderer as Main; the build
-    // instruction shows as the opening input bubble.
-    body = (
-      <TranscriptView
-        jobRef={jobRef}
-        messages={messages}
-        lane={
-          owningSection
-            ? threadLane(owningSection.id)
-            : threadLane(step.anchorStepId)
-        }
-        phaseIds={new Set([step.anchorStepId])}
-        composer
-        readOnly
-        defaultFooter={owningSection?.defaultFooter}
-        onSelectNode={onSelectNode}
-        emptyText="No build activity yet — this step hasn’t run."
-      />
-    );
   } else if (thread) {
     title = thread.isMasterReview
       ? "Master review"
@@ -362,60 +332,31 @@ export function PhaseView({
     subtitle = thread.isMasterReview
       ? "Codex · whole-diff review & fix"
       : "Claude · execute";
-    // A build thread is a Claude Code session like Main — subscribe to its STABLE `thread:<id>` lane (no
-    // guessing the active phase from pipeline status) and aggregate its steps' durable transcripts.
-    const phaseIds = new Set(thread.steps.map((s) => s.anchorStepId));
+    // A build thread is a Claude Code session like Main — subscribe to its STABLE `thread:<id>` live lane and
+    // scope its durable transcript by the message's own `threadId`. Operator input is gated per-role.
     body = (
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
+        threadId={thread.id}
         lane={threadLane(thread.id)}
-        phaseIds={phaseIds}
         composer
-        readOnly
+        readOnly={!thread.operatorInput}
         defaultFooter={thread.defaultFooter}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
       />
     );
-  } else if (legThread && legRef) {
-    title = `§ ${threadTitle(legThread.brief)} · Leg ${legRef.ordinal}`;
-    subtitle = "Claude · execute";
-    // One rotated session: the thread's stable lane, sliced to this Leg. Its handoff (Leg N) and continuation
-    // seed (Leg N+1) ride the same `meta.legOrdinal` tag, so they land at the tail/head of the right Leg.
-    const phaseIds = new Set(legThread.steps.map((s) => s.anchorStepId));
-    // The in-flight turn is shared across the thread's Legs (one lane), so only the LIVE Leg's pane may render
-    // it — otherwise a rotated Leg re-paints the active Leg's streaming tail + spinner at its own bottom.
-    const legIsLive =
-      (legThread.legs ?? []).find((l) => l.ordinal === legRef.ordinal)
-        ?.status === "active";
-    body = (
-      <TranscriptView
-        jobRef={jobRef}
-        messages={messages}
-        lane={threadLane(legThread.id)}
-        phaseIds={phaseIds}
-        legOrdinal={legRef.ordinal}
-        legIsLive={legIsLive}
-        composer
-        readOnly
-        defaultFooter={legThread.defaultFooter}
-        onSelectNode={onSelectNode}
-        emptyText="No activity on this Leg yet."
-      />
-    );
   } else {
     title = "Build";
     subtitle = "Claude · execute";
-    const phaseIds = new Set(
-      (job?.threads ?? []).flatMap((t) => t.steps.map((s) => s.anchorStepId)),
-    );
+    // No specific node resolved — a generic empty build view (`resolveNode` sends real stale links to
+    // NodeNotFound, so this is only reached transiently).
     body = (
       <TranscriptView
         jobRef={jobRef}
-        messages={messages}
+        messages={[]}
         lane="__none__"
-        phaseIds={phaseIds}
         composer
         readOnly
         onSelectNode={onSelectNode}
