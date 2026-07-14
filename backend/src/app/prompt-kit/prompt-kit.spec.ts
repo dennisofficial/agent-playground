@@ -391,7 +391,7 @@ describe('public preview exposure prompt (auto-expose sequence)', () => {
       expect(out, jobKind).toContain('$ATLAS_PREVIEW_DOMAIN');
       // the load-bearing ordering + the 0.0.0.0 binding gotcha must survive assembly
       expect(out, jobKind).toContain('BIND TO 0.0.0.0');
-      expect(out, jobKind).toContain('--no-expose');
+      expect(out, jobKind).toContain('--expose');
     }
   });
 
