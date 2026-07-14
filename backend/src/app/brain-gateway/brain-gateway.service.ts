@@ -17,6 +17,9 @@ export interface BrainGatewayHandler {
     branch: string;
     defaultBranch: string;
     title: string;
+    /** The dedicated `post_build` stage-thread this open-PR turn runs on — its OWN fresh session, isolated
+     *  from the planning brain's session (d14/d15). */
+    threadId: string;
   }): Promise<void>;
   wakeUnblockedJob(
     jobId: string,

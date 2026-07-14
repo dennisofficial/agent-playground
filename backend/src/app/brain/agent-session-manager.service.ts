@@ -873,6 +873,7 @@ export class AgentSessionManager
     branch: string;
     defaultBranch: string;
     title: string;
+    threadId: string;
   }): Promise<void> {
     const stimulus = harnessDeliveryStimulus({
       jobId: input.jobId,
@@ -887,6 +888,7 @@ export class AgentSessionManager
         label: 'Opening the pull request.',
         chunkKey: `seed:ship:${input.jobId}`,
       },
+      resumeThreadId: input.threadId,
     });
     await this.handleChatTurn(stimulus);
   }
@@ -1946,6 +1948,9 @@ export class AgentSessionManager
           reason: 'final' | 'notable';
           gen: number;
         };
+        // SESSION RE-HOME: this turn persists its session onto `threads.session_id` for this thread, not the
+        // job sandbox (see {@link ChatStimulus.resumeThreadId}) — carried so a reattach persists the same target.
+        resumeThreadId?: string;
         // Dispatch-time credential the turn ran on — re-stamped onto rate_limit events so the reattach path
         // feeds the credential-scoped usage snapshot exactly like a fresh dispatch (else it tags `undefined`).
         credentialId?: string;
@@ -1986,6 +1991,9 @@ export class AgentSessionManager
         // Same reasoning for the completion wake (decision d1) — else a reattached done-wake turn never
         // stamps `done_waked_at` and the sweeps re-wake it forever.
         ...(ctx.seedDoneWake ? { seedDoneWake: ctx.seedDoneWake } : {}),
+        // Preserve the session re-home target so a reattached open-PR turn persists onto the thread, not the
+        // job sandbox (else the fresh session would leak back onto `job_sandboxes.session_id`).
+        ...(ctx.resumeThreadId ? { resumeThreadId: ctx.resumeThreadId } : {}),
       };
       // Rebuild the dispatch map with the SAME shape the original kick used: an onboarding thread's
       // container declares the curated onboarding toolset, so a re-attach that registers the normal map
@@ -2036,7 +2044,11 @@ export class AgentSessionManager
             ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
           },
         );
-        if (result.sessionId && sandboxRow) {
+        if (result.sessionId && stimulus.resumeThreadId) {
+          await this.driverStore
+            .setThreadSessionId(stimulus.resumeThreadId, result.sessionId)
+            .catch(() => undefined);
+        } else if (result.sessionId && sandboxRow) {
           sandboxRow.session_id = result.sessionId;
           await this.sandboxRows.save(sandboxRow).catch(() => undefined);
         }
@@ -2320,11 +2332,15 @@ export class AgentSessionManager
     }
     const sandbox = ensured.sandbox;
 
-    // Resolve the current session_id for this thread (resume across turns).
+    // Resolve the current session_id to resume across turns. A SESSION RE-HOME turn (open-PR / post_build)
+    // resumes THIS thread's own session; every other turn resumes the job sandbox's. `sandboxRow` is still
+    // fetched either way — later code (setup_error reporting, compaction) reads its job-level fields.
     const sandboxRow = await this.sandboxRows.findOne({
       where: { job_id: stimulus.jobId, org_id: stimulus.orgId },
     });
-    const sessionId = sandboxRow?.session_id ?? undefined;
+    const sessionId = stimulus.resumeThreadId
+      ? ((await this.driverStore.threadSessionId(stimulus.resumeThreadId)) ?? undefined)
+      : (sandboxRow?.session_id ?? undefined);
 
     // COMPACTION turn: summarize the fat session into a lean handoff, null the session id (abandon the heavy
     // transcript), and stash the summary as the next turn's seed. Runs a summarization engine turn and
@@ -2729,6 +2745,10 @@ export class AgentSessionManager
           ...(stimulus.seedDoneWake
             ? { seedDoneWake: stimulus.seedDoneWake }
             : {}),
+          // Session re-home target: a reattach must persist onto the same thread, not the job sandbox.
+          ...(stimulus.resumeThreadId
+            ? { resumeThreadId: stimulus.resumeThreadId }
+            : {}),
         },
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
@@ -2751,7 +2771,25 @@ export class AgentSessionManager
         // a turn interrupted on its FIRST exchange — which never reaches the post-run persist below — still
         // leaves a resolvable session id on the row (helps resume AND crash recovery locate the transcript).
         // Fully defensive: a persistence hiccup here must NEVER break the live event stream.
-        if (
+        // SESSION RE-HOME turn (open-PR / post_build): persist the fresh session onto THIS thread's row, never
+        // the job sandbox — and skip the compaction-seed bookkeeping entirely (a re-home turn never compacts).
+        if (e.kind === 'session' && e.sessionId && stimulus.resumeThreadId) {
+          const sid = e.sessionId;
+          const threadId = stimulus.resumeThreadId;
+          try {
+            void this.driverStore
+              .setThreadSessionId(threadId, sid)
+              .catch((err) =>
+                this.logger.warn(
+                  `eager thread session_id persist failed for thread=${threadId}: ${err}`,
+                ),
+              );
+          } catch (err) {
+            this.logger.warn(
+              `eager thread session_id persist threw for thread=${threadId}: ${err}`,
+            );
+          }
+        } else if (
           e.kind === 'session' &&
           e.sessionId &&
           sandboxRow &&
@@ -2999,8 +3037,12 @@ export class AgentSessionManager
         ),
       );
 
-    // Persist the session_id for resume.
-    if (result.sessionId && sandboxRow) {
+    // Persist the session_id for resume. A SESSION RE-HOME turn persists onto its thread; every other turn
+    // onto the job sandbox.
+    if (result.sessionId && stimulus.resumeThreadId) {
+      this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
+      await this.driverStore.setThreadSessionId(stimulus.resumeThreadId, result.sessionId);
+    } else if (result.sessionId && sandboxRow) {
       this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
       sandboxRow.session_id = result.sessionId;
       await this.sandboxRows.save(sandboxRow);
@@ -7899,6 +7941,8 @@ function harnessDeliveryStimulus(input: {
   seedFileId?: string;
   /** How this seed renders as a visible transcript row (see {@link SeedRow}). */
   seedRow?: SeedRow;
+  /** SESSION RE-HOME: run this turn on the thread's own session (see {@link ChatStimulus.resumeThreadId}). */
+  resumeThreadId?: string;
 }): ChatStimulus {
   return {
     id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
@@ -7914,6 +7958,7 @@ function harnessDeliveryStimulus(input: {
     seed: true,
     ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
+    ...(input.resumeThreadId ? { resumeThreadId: input.resumeThreadId } : {}),
   };
 }
 

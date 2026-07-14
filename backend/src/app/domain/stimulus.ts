@@ -136,6 +136,13 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedRow?: SeedRow;
   /**
+   * SESSION RE-HOME (opt-in): when set, this turn resumes/persists `threads.session_id` for THIS thread id
+   * instead of `job_sandboxes.session_id`. Absent (the default, used by every existing call site including
+   * planning) means unchanged job-level session behavior. In-memory only, mirrored onto
+   * `active_turns.ctx.resumeThreadId` for reattach (see `reattachOne`).
+   */
+  resumeThreadId?: string;
+  /**
    * COMPACTION turn: a synthetic, Atlas-authored turn (enqueued e.g. by `dispatch_build`) whose ONLY job is
    * to compact the brain session — summarize the current (fat) session into a lean handoff, then null the
    * session id + stash the summary as the next turn's seed. It runs a summarization engine turn, NOT a

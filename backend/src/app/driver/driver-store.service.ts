@@ -1645,6 +1645,65 @@ export class DriverStoreService {
     );
   }
 
+  /**
+   * Find (or lazily create) the job's `post_build` stage-thread — the isolated, fresh session the ship step
+   * runs its open-PR turn on, off the planning brain's session (d14/d15). Idempotent/reusable: `ship()` may
+   * run several times when the PR doesn't latch on the first pass, so a matching stage is re-looked-up rather
+   * than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM` so the nullable FK matches by value
+   * (plain SQL equality drops NULL rows).
+   */
+  async ensurePostBuildThread(input: {
+    jobId: string;
+    orgId: string;
+    decisionRecordId: string | null;
+  }): Promise<{ stageId: string; threadId: string }> {
+    const stage = await this.stages
+      .createQueryBuilder('s')
+      .where('s.job_id = :jobId', { jobId: input.jobId })
+      .andWhere('s.kind = :kind', { kind: 'post_build' })
+      .andWhere('s.decision_record_id IS NOT DISTINCT FROM :decisionRecordId', {
+        decisionRecordId: input.decisionRecordId,
+      })
+      .orderBy('s.ordinal', 'ASC')
+      .getOne();
+    if (stage) {
+      const [thread] = await this.threadsForStage(stage.id);
+      if (thread) return { stageId: stage.id, threadId: thread.id };
+    }
+    const created =
+      stage ??
+      (await this.createStage({
+        jobId: input.jobId,
+        orgId: input.orgId,
+        kind: 'post_build',
+        decisionRecordId: input.decisionRecordId,
+        title: null,
+        type: null,
+      }));
+    const thread = await this.createThreadInStage({
+      stageId: created.id,
+      jobId: input.jobId,
+      orgId: input.orgId,
+      role: 'post_build',
+      brief: 'Ship — open the PR',
+    });
+    return { stageId: created.id, threadId: thread.id };
+  }
+
+  /** Read a thread's live engine session id (d5 — `session_id` moved onto the thread row). */
+  async threadSessionId(threadId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, session_id: true },
+    });
+    return row?.session_id ?? null;
+  }
+
+  /** Persist a thread's live engine session id (d5). */
+  async setThreadSessionId(threadId: string, sessionId: string): Promise<void> {
+    await this.threads.update({ id: threadId }, { session_id: sessionId });
+  }
+
   /** Insert a TASK into a stage's checklist. Gap-numbers the ordinal within the stage when omitted. */
   async createTask(input: {
     stageId: string;

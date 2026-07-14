@@ -58,16 +58,23 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     } as unknown as LocalGitService;
   }
 
+  function baseStore(over: Partial<Record<string, unknown>> = {}): DriverStoreService {
+    return {
+      setPrReady: vi.fn(async () => undefined),
+      setJobStatus: vi.fn(async () => undefined),
+      setCurrentBranch: vi.fn(async () => undefined),
+      // The ship path ensures a fresh `post_build` stage-thread and runs the open-PR turn on its session.
+      ensurePostBuildThread: vi.fn(async () => ({ stageId: 'stage1', threadId: 'pb1' })),
+      ...over,
+    } as unknown as DriverStoreService;
+  }
+
   it('seeds the brain open-PR turn and does NOT open the PR host-side; unconfirmed → left running', async () => {
     const git = baseGit();
     const openPullRequest = vi.fn();
     const findOpenPullByHead = vi.fn(async () => null); // branch not indexed yet
     const pr = { openPullRequest, findOpenPullByHead } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setJobStatus: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -106,11 +113,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       number: 7,
     }));
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setJobStatus: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -135,11 +138,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   it('falls back to the ship branch when the stored job title is blank', async () => {
     const git = baseGit();
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn(async () => null) } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setJobStatus: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -162,11 +161,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       number: 9,
     }));
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setJobStatus: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -185,10 +180,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   it('no GitHub token → no PR, job left running (opened:false, reason no-token)', async () => {
     const git = baseGit();
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
     const noTokenRepo = { ...repo, token: undefined } as unknown as ResolvedRepo;
 
@@ -205,10 +197,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const scanBranchForForbidden = vi.fn(async () => ['.env.keys']);
     const git = baseGit({ scanBranchForForbidden });
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -227,10 +216,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     });
     const git = baseGit({ scanBranchForForbidden });
     const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
-    const store = {
-      setPrReady: vi.fn(async () => undefined),
-      setCurrentBranch: vi.fn(async () => undefined),
-    } as unknown as DriverStoreService;
+    const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -245,7 +231,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const scanBranchForForbidden = vi.fn(async () => []);
     const git = baseGit({ scanBranchForForbidden });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
-    const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
+    const store = baseStore();
     const { brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
@@ -258,7 +244,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   it('preShip HARD-BLOCKS when the leak-scan finds a forbidden path (committed or uncommitted)', async () => {
     const git = baseGit({ scanBranchForForbidden: vi.fn(async () => ['.env.local']) });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
-    const store = { setCurrentBranch: vi.fn(async () => undefined) } as unknown as DriverStoreService;
+    const store = baseStore();
     const { brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);

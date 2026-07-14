@@ -103,6 +103,11 @@ export class BuildShipService {
     // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
     // AWAITS the brain turn to completion. No host "opening the PR" system
     // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
+    const postBuild = await this.store.ensurePostBuildThread({
+      jobId: job.id,
+      orgId: job.orgId,
+      decisionRecordId: job.decisionRecordId ?? null,
+    });
     await this.brainGateway.openPrAtShip({
       jobId: job.id,
       orgId: job.orgId,
@@ -110,6 +115,7 @@ export class BuildShipService {
       branch: shipBranch,
       defaultBranch: repo.defaultBranch,
       title: prTitle,
+      threadId: postBuild.threadId,
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
