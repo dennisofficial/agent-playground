@@ -77,6 +77,20 @@ describe('LegRotationWatch', () => {
     expect(watch.softReached).toBe(false);
   });
 
+  it('NEVER latches on a SUBAGENT frame (its own separate window — not rotatable), only the main agent', () => {
+    const { watch, signals } = watchCapturing();
+    // A subagent whose own window is well past soft must NOT fire — it carries a parentToolUseId.
+    watch.observe({ contextTokens: 220_000, contextLimit: 1_000_000, parentToolUseId: 'task-1' });
+    expect(signals).toHaveLength(0);
+    expect(watch.softReached).toBe(false);
+    // The interleaved main-agent frame (untagged) at a LOWER occupancy still fires SOFT, unaffected by
+    // the subagent frame above (which must not have consumed the soft latch).
+    watch.observe({ contextTokens: 160_000, contextLimit: 1_000_000 });
+    expect(signals).toEqual([
+      { phase: 'soft', reminderIndex: 0, contextTokens: 160_000, contextLimit: 1_000_000 },
+    ]);
+  });
+
   it('carries a null contextLimit through when the usage event omits it', () => {
     const { watch, signals } = watchCapturing();
     watch.observe({ contextTokens: 300_000 });
