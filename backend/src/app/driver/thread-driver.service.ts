@@ -74,6 +74,7 @@ import type { ReattachOutcome } from '../sandbox/turn-reattach.registry';
 import type {
   ActiveTurnEntity,
   SessionAnchor,
+  StageEntity,
   TaskItem,
   ThreadTerminalRecord,
 } from '../persistence/entities';
@@ -106,7 +107,14 @@ import {
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { ExposureService } from '../exposure/exposure.service';
 import { readServiceMarkers, serviceStatus } from '../exposure/service-markers';
-import { isDriverExecutableKind, threadKindSpec, type ThreadRole } from '../thread-kind';
+import {
+  isDriverExecutableKind,
+  threadKindSpec,
+  coerceThreadType,
+  type ThreadRole,
+  type ThreadType,
+} from '../thread-kind';
+import { stageKindSpec } from '../stage-kind';
 import { BuildShipService } from './build-ship.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import {
@@ -170,15 +178,20 @@ import { AutoMergeService } from './auto-merge.service';
  * surfaced. `incomplete` = the turn ended without asserting completion (no `complete_thread`) — the key fix
  * for "clean exit misread as done." `blocked` is written by Phase-3 `block_thread`.
  */
-type ThreadOutcome = 'done' | 'blocked' | 'failed' | 'incomplete';
+type ThreadOutcome = 'done' | 'blocked' | 'failed' | 'incomplete' | 'rotated';
 
-/** A batch turn's result: the engine report plus the terminal outcome the driver resolved for it. */
+/** A batch turn's result: the engine report plus the terminal outcome the driver resolved for it. A
+ *  `rotated` outcome means the builder self-authored a leg handoff (`record_leg_handoff`): the store
+ *  ABANDONED this session and inserted the NEXT builder thread row, so this leg is done and the drive loop
+ *  picks up the freshly-inserted builder as its own `runThread` call (no in-process re-kick). */
 interface BatchResult {
   outcome: ThreadOutcome;
   report: string;
 }
 
-/** A thread's result: its outcome plus the handoff note for the next thread (null unless `done`). */
+/** A thread's result: its outcome plus the handoff note for the next thread (null unless `done`;
+ *  `rotated` also carries null — the rotation handoff was persisted onto the new builder row's
+ *  `handoff_in` by `completeLegRotation`, not threaded through here). */
 interface ThreadResult {
   outcome: ThreadOutcome;
   handoff: string | null;
@@ -190,6 +203,17 @@ interface ThreadResult {
    *  missing (crash between `block_thread`'s record write and `haltJob`) so `haltJob` runs once to create it. */
   suppressHaltNotify?: boolean;
 }
+
+/**
+ * The outcome of driving ONE stage (a build/direct_build stage's whole builder chain + review, or a
+ * master_review stage): `advanced` carries the handoff forward to the next stage; `yield` means leadership
+ * was lost mid-drive (runJob returns, leaving the job `running`); `halt` surfaces an unfinished thread for
+ * `haltJob` (ADR 0004 — no PR on an unfinished build).
+ */
+type StageDriveResult =
+  | { kind: 'advanced'; handoff: string | null }
+  | { kind: 'yield' }
+  | { kind: 'halt'; thread: DriverThread; outcome: ThreadOutcome; suppressHaltNotify?: boolean };
 
 /**
  * Whether a thrown drive-loop error is a TRANSIENT infra blip (sandbox/network/engine hiccup) that a bounded
@@ -1228,40 +1252,56 @@ export class ThreadDriver implements JobDispatcher {
       `job=${jobId} on branch ${sandbox.branch} @ ${sandbox.worktreePath}`,
     );
 
-    const allSections = await this.store.threadsForJob(jobId);
-    // EXECUTABLE-KIND SELECTOR (Codex BLOCK): the driver's top loop drives ONLY driver-executable kinds
-    // (`builder` + `master_review`). `main`/`plan_review` are render-only rows (their runtime lives in the
-    // brain / codex_reviews — the driver never executes them), and `review_lens`/`post_review` are driven as
-    // CHILDREN of their builder, never entered here. `threadsForJob` returns every row, so this gate is what
-    // keeps the non-executable rows out of the section loop once they exist.
-    const executable = allSections.filter((s) => isDriverExecutableKind(s.kind));
-    // DIRECT-BUILD / NON-DRIVER GUARD: a job with NO driver-executable threads (`builder`/`master_review`) is
-    // not a driver build — it's a brain-owned DIRECT build (only a render-only `main` thread), which implements
-    // and opens its OWN PR via the `finalize_build` tool. The driver must not touch it: a reconciler re-drive
-    // (boot `resume()`, `retry`, etc.) of a still-`running` direct build would otherwise fall through the empty
-    // thread loop to the SHIP GATE and wrongly PARK it at `awaiting_ship_review` (a spurious "Ship it" card) —
-    // or, past the gate, re-ship it. Every legitimately-dispatched driver build always carries >=1 builder + a
-    // master_review, so this only ever short-circuits brain-owned jobs the driver has nothing to build/ship for.
-    if (executable.length === 0) {
+    // STAGE-DRIVEN DISPATCH (d7): the pipeline is the ordinal-ordered sequence of STAGES, not a flat
+    // job-wide thread list. Drive each executable stage in ordinal order, routing its behavior off the
+    // stage-kind registry rather than branching on kind inline.
+    const stages = await this.store.stagesForJob(jobId);
+    // CURRENT-REVISION ONLY: a stage on an OLDER decision record is superseded history and must never
+    // re-drive (plan-revision scoping moved off the thread onto `stage.decision_record_id`, d7 — mirrors
+    // `threadsForJob`'s revision gate). A stage with a null record is revision-agnostic → always current.
+    const activeRecordId = job.decisionRecordId ?? null;
+    const currentStages = stages.filter(
+      (s) => s.decision_record_id == null || s.decision_record_id === activeRecordId,
+    );
+    // EXECUTABLE STAGES: a stage is driven here only if its kind contains a driver-executable role
+    // (build/direct_build → `builder`; master_review → `master_review`). planning/plan_review are
+    // render-only (their runtime lives in the brain), and post_build/ci don't exist yet. Route off the
+    // registry, never a hardcoded kind list.
+    const executableStages = currentStages.filter((s) =>
+      stageKindSpec(s.kind).roles.some((r) => isDriverExecutableKind(r.role)),
+    );
+    // DIRECT-BUILD / NON-DRIVER GUARD (unchanged intent): a job with NO executable stages is brain-owned —
+    // a pure planning/chat job or the old brain-inline direct build (only render-only stages). The driver
+    // must not fall through to the ship gate and spuriously PARK it at `awaiting_ship_review` (or re-ship
+    // it past the gate). Every dispatched driver build carries >=1 build stage + a master_review stage.
+    if (executableStages.length === 0) {
       this.logger.log(
-        `job=${jobId} has no driver-executable threads (brain-owned/direct build) — driver yielding, nothing to build or ship`,
+        `job=${jobId} has no driver-executable stages (brain-owned/direct build) — driver yielding, nothing to build or ship`,
       );
       return;
     }
     // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
     await this.store.setActivity(jobId, 'build').catch(() => undefined);
-    // Cap the BUILDER lanes at MAX_SECTIONS, but NEVER drop the master-review thread (it rides on top of the
-    // builders and must always run last) — partition by kind, cap the builders, re-append the review last.
-    const featureSections = executable.filter((s) => s.kind === 'builder');
-    const reviewSections = executable.filter((s) => s.kind === 'master_review');
-    const cappedFeatures = featureSections.slice(0, this.maxThreads);
-    const threads = [...cappedFeatures, ...reviewSections];
-    if (featureSections.length > cappedFeatures.length) {
+    // CAP (MAX_SECTIONS): bound the number of BUILD stages driven per run, but NEVER drop a master_review
+    // stage (it rides last). I cap BUILD STAGES rather than builder threads — a build stage's rotated legs
+    // are its own budget (MAX_LEGS_PER_STAGE), so the pipeline ceiling is naturally the count of build
+    // slices. Partition, cap the build stages, keep every master_review, then re-sort into pipeline order.
+    const buildStages = executableStages.filter((s) =>
+      stageKindSpec(s.kind).roles.some((r) => r.role === 'builder'),
+    );
+    const reviewStages = executableStages.filter((s) => s.kind === 'master_review');
+    const cappedBuildStages = buildStages.slice(0, this.maxThreads);
+    if (buildStages.length > cappedBuildStages.length) {
       this.logger.warn(
-        `job=${jobId} has ${featureSections.length} threads > MAX_SECTIONS (${this.maxThreads}) — capping`,
+        `job=${jobId} has ${buildStages.length} build stages > MAX_SECTIONS (${this.maxThreads}) — capping`,
       );
     }
-    const pending = threads.filter((s) => s.status !== 'done').length;
+    const stagesToRun = [...cappedBuildStages, ...reviewStages].sort((a, b) => a.ordinal - b.ordinal);
+
+    // The :rocket: liveness post — count the active-revision executable threads still pending (accurate
+    // across a resume, so a fully-done build on re-drive doesn't re-announce "Starting the build").
+    const activeThreads = await this.store.threadsForJob(jobId);
+    const pending = activeThreads.filter((t) => isDriverExecutableKind(t.kind) && t.status !== 'done').length;
     if (pending > 0) {
       await this.post(
         route,
@@ -1270,51 +1310,40 @@ export class ThreadDriver implements JobDispatcher {
     }
 
     let handoff: string | null = null;
-    for (const thread of threads) {
-      if (thread.status === 'done') {
-        // Already built (a resume) — carry its persisted handoff to the next thread, don't re-run.
-        handoff = thread.handoffOut ?? handoff;
-        continue;
-      }
+    for (const stage of stagesToRun) {
       // LEADERSHIP FENCE: drives are fire-and-forget and NOT gated on leadership mid-flight (see
       // LeaderElectionService), so a leader demoted mid-build (connection blip → a standby promotes and
       // re-drives this same `running` job) would keep driving it — two processes on one worktree/branch.
-      // Re-check the ONE shared master lease at each thread boundary and yield if we're no longer leader:
-      // a bare `return` leaves the job `running` (NO status write, mirrors the halt-path return below), and
-      // the current leader re-drives it (promote-time `resume()` + the reap-tick backstop). Yielding is a
-      // cooperative stop, NOT an error — never throw here (a throw on a follower would mark the job failed).
+      // Re-check the ONE shared master lease at each STAGE boundary (and, for a build stage, each builder
+      // boundary inside `driveBuildStage`) and yield if we're no longer leader: a bare `return` leaves the
+      // job `running` (NO status write), and the current leader re-drives it (promote-time `resume()` + the
+      // reap-tick backstop). Yielding is a cooperative stop, NOT an error — never throw here.
       if (!this.election.isLeader()) {
         this.logger.warn(
           `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
         );
         return;
       }
-      if (thread.kind === 'master_review') {
-        await this.store
-          .setActivity(job.id, 'master_review')
-          .catch(() => undefined);
-      }
-      const res = await this.runThread(
-        job,
-        record,
-        route,
-        repo,
-        sandbox,
-        thread,
-        handoff,
-      );
-      if (res.outcome !== 'done') {
+      // Activity maps to the stage kind (`master_review` vs `build`) — keyed off the registry shape.
+      const spec = stageKindSpec(stage.kind);
+      const isMasterReviewStage = spec.roles.some((r) => r.role === 'master_review');
+      await this.store
+        .setActivity(job.id, isMasterReviewStage ? 'master_review' : 'build')
+        .catch(() => undefined);
+      const res: StageDriveResult = isMasterReviewStage
+        ? await this.driveMasterReviewStage(job, record, route, repo, sandbox, stage, handoff)
+        : await this.driveBuildStage(job, record, route, repo, sandbox, stage, handoff);
+      if (res.kind === 'yield') return;
+      if (res.kind === 'halt') {
         // HALT the build (ADR 0004): an unfinished thread must not ship. Relay a durable card, flip the job
         // to a needs-you state, record the owed brain wake + trail, and SKIP finalizeBuild — no PR on an
         // unfinished build. The brain wake fires from `drive()` once the job leaves the active window.
         //
         // EXCEPT a re-halt of an already-notified brain-owned block (`suppressHaltNotify`): the card was
-        // already posted and the owed-wake row persists in the DB (delivered→acked stays acked; never
-        // delivered stays owed and the 30s sweep still delivers it once). Skipping `haltJob` here kills the
-        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake. A fresh block
-        // or a `judge_unavailable` re-halt still notifies.
+        // already posted and the owed-wake row persists in the DB. Skipping `haltJob` here kills the
+        // every-30-min "Thread blocked → Holding." spam without dropping a genuine first wake.
         if (!res.suppressHaltNotify) {
-          await this.haltJob(job, route, thread, res.outcome);
+          await this.haltJob(job, route, res.thread, res.outcome);
         }
         return;
       }
@@ -1348,6 +1377,119 @@ export class ThreadDriver implements JobDispatcher {
     await this.finalizeBuild(job, record, route, repo, sandbox);
     // Build shipped — the system is done working this job; hand it back to idle.
     await this.store.setActivity(job.id, 'idle').catch(() => undefined);
+  }
+
+  /**
+   * Drive ONE `build`/`direct_build` stage: run its `builder`-role threads SEQUENTIALLY in ordinal order,
+   * RE-QUERYING the stage between iterations because a leg rotation (`record_leg_handoff`) appends a fresh
+   * builder row mid-drive (`runThread` returns `rotated` for the leg it rotated away from, and the next
+   * loop picks up the newly-inserted `pending` builder). Loops until no non-done builder remains, then runs
+   * the stage's review ONCE over its cumulative diff if the stage kind reviews (registry `hasReview` —
+   * `direct_build` skips it). The cross-stage handoff carries into the FIRST leg; a rotated leg instead uses
+   * its OWN persisted `handoff_in` (written by `completeLegRotation`).
+   */
+  private async driveBuildStage(
+    job: Job,
+    record: DecisionRecord | null,
+    route: JobRoute,
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+    stage: StageEntity,
+    incomingHandoff: string | null,
+  ): Promise<StageDriveResult> {
+    let handoff = incomingHandoff;
+    for (;;) {
+      // LEADERSHIP FENCE at each builder boundary (see runJob) — a rotation can append rows mid-drive, so
+      // the fence lives inside this loop, not only at the stage boundary.
+      if (!this.election.isLeader()) {
+        this.logger.warn(
+          `job=${job.id} lost leadership mid-drive — yielding (a leader will re-drive; job left running)`,
+        );
+        return { kind: 'yield' };
+      }
+      const builders = (await this.store.driverThreadsForStage(stage.id)).filter(
+        (t) => t.kind === 'builder',
+      );
+      // Carry the newest already-done builder's handoff forward — covers both a resume (legs done before
+      // this drive) and the post-run state (the leg we just finished). A rotated leg overrides this with
+      // its own `handoff_in` below.
+      const lastDone = [...builders].reverse().find((t) => t.status === 'done');
+      if (lastDone?.handoffOut) handoff = lastDone.handoffOut;
+      const next = builders.find((t) => t.status !== 'done');
+      if (!next) break; // builder chain genuinely finished
+      const res = await this.runThread(
+        job, record, route, repo, sandbox, next, next.handoffIn ?? handoff,
+      );
+      // A rotated leg finished its work cleanly and inserted the next builder row — keep going within the
+      // stage: re-query and drive the freshly-inserted `pending` builder next. Do NOT run review or treat
+      // the stage as finished.
+      if (res.outcome === 'rotated') continue;
+      if (res.outcome !== 'done') {
+        return {
+          kind: 'halt',
+          thread: next,
+          outcome: res.outcome,
+          ...(res.suppressHaltNotify ? { suppressHaltNotify: res.suppressHaltNotify } : {}),
+        };
+      }
+      handoff = res.handoff;
+    }
+
+    // REVIEW ONCE PER STAGE (d13): after the LAST builder leg is genuinely done, run the review over the
+    // stage's CUMULATIVE diff (the FIRST leg's `start_sha`..HEAD — HEAD already carries every leg's commits
+    // on the shared feature branch). Tree-parent the review children off the LAST builder (materialize
+    // stamps the stage_id regardless), and route agent selection off the STAGE's `type` (d7). `direct_build`
+    // skips review entirely via the registry's `hasReview:false`.
+    if (stageKindSpec(stage.kind).hasReview) {
+      const builders = (await this.store.driverThreadsForStage(stage.id)).filter(
+        (t) => t.kind === 'builder',
+      );
+      const firstBuilder = builders[0];
+      const lastBuilder = builders[builders.length - 1];
+      if (firstBuilder && lastBuilder) {
+        const stageStartSha = await this.resolveThreadStartSha(firstBuilder, sandbox);
+        await this.runReviewChildren(
+          job, route, sandbox, lastBuilder, record, stageStartSha, repo, coerceThreadType(stage.type),
+        );
+        // `runReviewChildren` flips the parent builder to `auto_fixing` (the review-window affordance) but,
+        // now that review runs AFTER the builder is already done, nothing restores it — so flip the last
+        // builder back to `done` here (in the old per-thread flow `runThread` did this right after review).
+        await this.store.setThreadStatus(lastBuilder.id, 'done').catch(() => undefined);
+      }
+    }
+    return { kind: 'advanced', handoff };
+  }
+
+  /**
+   * Drive ONE `master_review` stage — its single `master_review` thread (a whole-diff Codex review-&-fix).
+   * Unchanged runThread behavior; just reached via stage iteration now. Never rotates (Codex has no
+   * `record_leg_handoff`).
+   */
+  private async driveMasterReviewStage(
+    job: Job,
+    record: DecisionRecord | null,
+    route: JobRoute,
+    repo: ResolvedRepo,
+    sandbox: FeatureSandbox,
+    stage: StageEntity,
+    incomingHandoff: string | null,
+  ): Promise<StageDriveResult> {
+    const threads = await this.store.driverThreadsForStage(stage.id);
+    const mr = threads.find((t) => t.kind === 'master_review');
+    if (!mr) return { kind: 'advanced', handoff: incomingHandoff };
+    if (mr.status === 'done') {
+      return { kind: 'advanced', handoff: mr.handoffOut ?? incomingHandoff };
+    }
+    const res = await this.runThread(job, record, route, repo, sandbox, mr, incomingHandoff);
+    if (res.outcome !== 'done') {
+      return {
+        kind: 'halt',
+        thread: mr,
+        outcome: res.outcome,
+        ...(res.suppressHaltNotify ? { suppressHaltNotify: res.suppressHaltNotify } : {}),
+      };
+    }
+    return { kind: 'advanced', handoff: res.handoff };
   }
 
   private async resolveAutoApprover(job: Job): Promise<string> {
@@ -1809,6 +1951,20 @@ export class ThreadDriver implements JobDispatcher {
       job, route, sandbox, thread, record, repo, sectionStartSha,
     );
 
+    // ROTATED (d1): the builder self-authored a leg handoff (`record_leg_handoff`), so the store abandoned
+    // this session and inserted the NEXT builder thread row (carrying the handoff on its own `handoff_in`).
+    // This leg finished its Leg's work CLEANLY — it is NOT a halt: mark it `done` with no condition overlay,
+    // but do NOT run review, drop tasks, or write a `handoff_out` (the handoff already lives on the new
+    // row). runJob's per-stage loop re-queries the stage and drives the freshly-inserted builder next.
+    if (outcome === 'rotated') {
+      await this.store.setThreadStatus(thread.id, 'done').catch(() => undefined);
+      await this.store.setThreadCondition(thread.id, 'none').catch(() => undefined);
+      this.logger.log(
+        `thread ${thread.ordinal} "${thread.brief}" — rotated to a fresh builder leg; this leg marked done`,
+      );
+      return { outcome: 'rotated', handoff: null };
+    }
+
     // The thread did NOT assert `done` (no `complete_thread`, an explicit block, or a failure) — HALT here:
     // skip auto-fix + handoff, set the thread status, and let runJob relay + skip finalize. NEVER fall through
     // to the done path (ADR 0004: a clean turn is not evidence of completion).
@@ -1823,14 +1979,8 @@ export class ThreadDriver implements JobDispatcher {
       return { outcome, handoff: null };
     }
 
-    // f. REVIEW CHILDREN — materialize this builder's review lenses + post-review as real CHILD threads and
-    // drive them (lenses concurrently, then the fix). Each lens is its own row with its own status +
-    // findings — no shared jsonb, so the "stuck at reviewing" lost-update race is gone. SKIPPED for the
-    // master-review thread (it IS the review — a whole-diff Codex review-and-fix — so a per-thread pass over
-    // it is redundant): its spec declares no children, so `runReviewChildren` is a no-op there anyway.
-    if (threadKindSpec(thread.kind).children) {
-      await this.runReviewChildren(job, route, sandbox, thread, record, sectionStartSha, repo);
-    }
+    // Post-build REVIEW no longer runs here — it runs ONCE per build stage (over the stage's cumulative
+    // diff) from `driveBuildStage` after the stage's last builder leg is done (d13).
 
     // e. HANDOFF — summarize what this thread produced for the next.
     const handoffOut = this.summarizeHandoff(thread, steps, reports);
@@ -1973,6 +2123,9 @@ export class ThreadDriver implements JobDispatcher {
     record: DecisionRecord | null,
     sectionStartSha: string | undefined,
     repo: ResolvedRepo,
+    // The owning STAGE's review-selection type (d7 — routing moved off `threads.type` onto `stage.type`).
+    // Drives lens selection + framework-skill resolution for the whole stage's cumulative diff.
+    stageType: ThreadType,
   ): Promise<void> {
     const spec = threadKindSpec(thread.kind);
     if (!spec.children) return;
@@ -2042,10 +2195,10 @@ export class ThreadDriver implements JobDispatcher {
     }
 
     // Framework-conformance lens (d4): resolve the `review`-surface skills whose applicability matches this
-    // thread (by type OR a changed-file glob), force-inject their SKILL.md bodies. Best-effort — a resolver
+    // stage (by type OR a changed-file glob), force-inject their SKILL.md bodies. Best-effort — a resolver
     // failure must never sink the review pass, so fall back to no framework skills.
     const frameworkSkills = await this.skills
-      .resolveReviewSkillsForThread(job.orgId, job.repoId, thread.type, ctx.changedFiles ?? [])
+      .resolveReviewSkillsForThread(job.orgId, job.repoId, stageType, ctx.changedFiles ?? [])
       .catch((err) => {
         this.logger.warn(`framework-skill resolution failed (no framework lens): ${err}`);
         return [] as { name: string; body: string }[];
@@ -2053,8 +2206,8 @@ export class ThreadDriver implements JobDispatcher {
     const frameworkSkillNames = frameworkSkills.map((s) => s.name);
 
     // THE selection — reviewAgentsForThread is the single source of truth for WHICH lenses run, routed on
-    // the thread's (closed-vocabulary) type. Composed with the registry's post_review child spec.
-    const lenses = reviewAgentsForThread(thread.type, frameworkSkillNames);
+    // the STAGE's (closed-vocabulary) type (d7). Composed with the registry's post_review child spec.
+    const lenses = reviewAgentsForThread(stageType, frameworkSkillNames);
     const childSpecs = [
       ...lenses.map((l) => ({
         kind: 'review_agent' as ThreadRole,
@@ -2979,71 +3132,40 @@ export class ThreadDriver implements JobDispatcher {
       if (reattachRow?.container_id) {
         result = await this.reattachBatchTurn(job, thread, lane, metaTag, reattachRow, anchor.id, toolBridge);
       }
-      // LEG-ROTATION LOOP: kick the Leg's turn; if its context filled and it rotated (self-authored handoff, or
-      // the post-turn safety-net), the fat session is abandoned + a handoff is seeded on the anchor — re-fold
-      // that seed and kick a FRESH Leg. Loops until a turn completes WITHOUT rotating (the normal case: one
-      // Leg, no rotation). Bounded so a pathological rotate-every-turn thread can't spin forever.
-      let legTask = task;
-      // The host seeds folded into THIS Leg's task — stamped delivered on the Leg turn's durable registration
-      // (crash re-drives, never double-runs). Re-collected at each rotation so newly-arrived seeds join.
-      let legSeedIds = initialSeedIds;
-      for (let leg = 0; ; leg++) {
-        if (!result) {
-          // Fresh per-Leg run state (the prior Leg's handoff/latch/peak must not leak into this one).
-          rotationState.handoff = null;
-          rotationState.softReached = false;
-          rotationState.peakTokens = null;
-          result = await this.kickBatchTurn(
-            job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
-            rotationArmed ? { state: rotationState, thresholds: rotationThresholds } : null,
-            legSeedIds,
-          );
-        }
-        // After the turn ends, rotate ONLY if the builder self-authored a handoff via `record_leg_handoff`.
-        // There is NO forced rotation: a fat turn that never handed off just ends (its context is reminded, not
-        // seized). Not armed / model asserted done / no handoff ⇒ false.
-        const rotated = rotationArmed && (await this.maybeRotateLeg(job, route, thread, anchor, rotationState));
-        if (!rotated) break;
-        // The session rotated: the anchor is now on the next Leg — bump the tag so the fresh Leg's turns are
-        // sliced under their own thread node.
-        currentLeg += 1;
-        metaTag.legOrdinal = currentLeg;
-        if (leg + 1 >= MAX_LEGS_PER_BATCH) {
-          this.logger.warn(
-            `leg-rotation: thread ${thread.ordinal} hit MAX_LEGS_PER_BATCH (${MAX_LEGS_PER_BATCH}) — ` +
-              `continuing the fresh Leg to completion without further rotation this batch`,
-          );
-          result = null;
-          const seed = await this.store.getPendingLegSeed(anchor.id);
-          ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
-            job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
-          ));
-          // Kick the final Leg but do NOT loop again (fall through after this kick).
-          rotationState.handoff = null;
-          rotationState.softReached = false;
-          rotationState.peakTokens = null;
-          result = await this.kickBatchTurn(
-            job, sandbox, thread, steps, legTask, lane, channel, metaTag, label, repo, deadline, toolBridge,
-            null, // disarm rotation for the capped final Leg
-            legSeedIds,
-          );
-          break;
-        }
-        // Re-fold the freshly-stashed seed for the next Leg (session_id was NULLed by completeLegRotation).
-        result = null;
-        const seed = await this.store.getPendingLegSeed(anchor.id);
-        ({ task: legTask, seedIds: legSeedIds } = await this.foldLegTaskWithSeeds(
-          job, thread, anchor.id, seed, baseTask, await this.renderLiveServicesBlock(job.id),
-        ));
+      // LEG-ROTATION (single-shot): kick the Leg's turn (or reattach a live one), then check for rotation
+      // ONCE. If the builder self-authored a handoff via `record_leg_handoff`, `completeLegRotation` has
+      // ALREADY abandoned this session and inserted the NEXT builder thread row (carrying the handoff on its
+      // own `handoff_in` + the continuation seed on its `config`) — so this batch is done: record the
+      // closing Leg's read-model row and return `rotated`. runJob's per-stage loop re-queries the stage and
+      // drives the freshly-inserted `pending` builder as its OWN `runThread` call — no in-process re-kick,
+      // because the seed now lives on the NEW row, not this one. The rotate-forever guard is the per-stage
+      // leg cap enforced in `maybeRotateLeg` (MAX_LEGS_PER_STAGE), not an in-loop counter.
+      if (!result) {
+        result = await this.kickBatchTurn(
+          job, sandbox, thread, steps, task, lane, channel, metaTag, label, repo, deadline, toolBridge,
+          rotationArmed ? { state: rotationState, thresholds: rotationThresholds } : null,
+          initialSeedIds,
+        );
       }
-      report = result!.report;
+      // Rotate ONLY if the builder self-authored a handoff (no forced rotation: a fat turn that never handed
+      // off just ends). Not armed / asserted done / no handoff / over the per-stage cap ⇒ false.
+      const rotated =
+        rotationArmed && (await this.maybeRotateLeg(job, route, thread, anchor, rotationState));
+      if (rotated) {
+        // Record the CLOSING Leg's read-model row (its session id + peak occupancy) before yielding — the
+        // abandoned session stays on this (now-done) row as its transcript anchor. Display-only.
+        await this.store
+          .recordActiveLeg(anchor.id, result.session?.id ?? null, rotationState.peakTokens)
+          .catch((err) => this.logger.debug(`recordActiveLeg failed (display-only): ${shortReason(err)}`));
+        return { outcome: 'rotated', report: result.report };
+      }
+      report = result.report;
 
-      // Record/refresh the current Leg's read-model row (Stage 7 UI): its live session id + peak occupancy.
-      // For a thread that never rotated this creates the implicit Leg-1 row; after a rotation
-      // `completeLegRotation` already opened Leg N+1 and this refreshes its session/peak. Display-only.
+      // Record/refresh the (non-rotated) Leg's read-model row (Stage 7 UI): its live session id + peak
+      // occupancy — the implicit Leg-1 row for a thread that never rotated. Display-only.
       if (rotationArmed) {
         await this.store
-          .recordActiveLeg(anchor.id, result!.session?.id ?? null, rotationState.peakTokens)
+          .recordActiveLeg(anchor.id, result.session?.id ?? null, rotationState.peakTokens)
           .catch((err) => this.logger.debug(`recordActiveLeg failed (display-only): ${shortReason(err)}`));
       }
 
@@ -3599,6 +3721,19 @@ export class ThreadDriver implements JobDispatcher {
     const handoff = state.handoff;
     if (!handoff) return false;
 
+    // PER-STAGE LEG CAP (d1): refuse to append yet another builder row once the stage already holds
+    // MAX_LEGS_PER_STAGE of them — a runaway rotate-every-turn thread must not grow the stage forever.
+    // Refusing to rotate leaves this builder without a `done` assertion, so `runBatch` resolves it
+    // `incomplete` and the drive HALTS it (surfaced to the operator) rather than spinning.
+    const legCount = await this.store.builderLegCountForStage(thread.id).catch(() => 0);
+    if (legCount >= MAX_LEGS_PER_STAGE) {
+      this.logger.warn(
+        `leg-rotation: thread ${thread.ordinal} hit MAX_LEGS_PER_STAGE (${MAX_LEGS_PER_STAGE}) builder legs — ` +
+          `refusing further rotation; the thread will halt as incomplete for the operator to triage`,
+      );
+      return false;
+    }
+
     // The seed carries the preamble + handoff + the OPEN task list (the SDK's in-memory todo dies with the
     // session; the durable `threads.tasks` is folded back in so the fresh Leg continues its checklist — B5).
     const seed = await this.buildLegSeed(thread.id, handoff);
@@ -3982,9 +4117,11 @@ const NOTHING_COMMITTED = '(nothing)';
  *  commits now — this is the forgot-to-commit safety net before the thread is blocked). */
 const COMMIT_NUDGE_MAX = 2;
 
-/** Backstop on Leg rotations within a single batch: a runaway thread that re-crosses the HARD threshold every
- *  Leg can't spin forever. On the cap we kick one final Leg with rotation DISARMED and run it to completion. */
-const MAX_LEGS_PER_BATCH = 8;
+/** Backstop on Leg rotations within a single build STAGE: a runaway thread that re-crosses the HARD
+ *  threshold every Leg can't append builder rows forever. Once the stage already holds this many `builder`
+ *  threads, `maybeRotateLeg` refuses to rotate again — the current builder then ends without asserting
+ *  `done`, so it halts as `incomplete` (surfaced to the operator) rather than spinning. */
+const MAX_LEGS_PER_STAGE = 8;
 
 /** A locked step row → the `PlannedStep` view visibility/render read (title null → brief). */
 function asPlannedStep(step: Step): PlannedStep {

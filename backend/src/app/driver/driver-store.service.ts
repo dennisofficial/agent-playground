@@ -1554,6 +1554,29 @@ export class DriverStoreService {
     return this.threads.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
   }
 
+  /** Every thread of a stage as the driver's {@link DriverThread} domain shape, in execution order — the
+   *  stage-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
+   *  builder row mid-drive, so a start-of-stage snapshot goes stale). */
+  async driverThreadsForStage(stageId: string): Promise<DriverThread[]> {
+    const rows = await this.threads.find({
+      where: { stage_id: stageId },
+      order: { ordinal: 'ASC' },
+    });
+    return rows.map(toThread);
+  }
+
+  /** How many `builder` threads a stage holds (its leg count) — the per-stage rotation cap reads this to
+   *  refuse rotating past {@link MAX_LEGS_PER_STAGE}. Keyed off any thread in the stage (the current
+   *  builder's id), so the caller need not carry the stage id. */
+  async builderLegCountForStage(anchorThreadId: string): Promise<number> {
+    const thread = await this.threads.findOne({
+      where: { id: anchorThreadId },
+      select: { id: true, stage_id: true },
+    });
+    if (!thread) return 0;
+    return this.threads.count({ where: { stage_id: thread.stage_id, role: 'builder' } });
+  }
+
   /** Every task of a stage's checklist, in display/credit order (ORDER BY ordinal). */
   async tasksForStage(stageId: string): Promise<TaskEntity[]> {
     return this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
