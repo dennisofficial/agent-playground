@@ -170,14 +170,7 @@ import {
   WorkspaceProfileService,
   detectRepoManifests,
 } from '../workspace-profile';
-import {
-  CONTAINER_CONTEXT,
-  isExternalMountPath,
-  isReservedContainerPath,
-  isReservedMountPath,
-  MAX_MOUNT_PATH_LEN,
-  type MountMode,
-} from '../sandbox/container-paths';
+import { CONTAINER_CONTEXT, normalizeMounts } from '../sandbox/container-paths';
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { JobDependencyService } from '../job-deps';
@@ -5169,7 +5162,7 @@ export class AgentSessionManager
             'secrets do not go in workspace config — use request_secret instead',
         };
       }
-      const { mounts: newMounts, warnings } = this.normalizeMounts(
+      const { mounts: newMounts, warnings } = normalizeMounts(
         args['mounts'],
       );
 
@@ -6565,50 +6558,6 @@ export class AgentSessionManager
         return { ok: false, reason: errText(err) };
       }
     };
-  }
-
-  /** Coerce `write_workspace_config` mounts arg into validated {path, mode} specs (drops malformed entries). */
-  private normalizeMounts(raw: unknown): {
-    mounts: { path: string; mode: MountMode }[];
-    warnings: string[];
-  } {
-    if (!Array.isArray(raw)) return { mounts: [], warnings: [] };
-    const out: { path: string; mode: MountMode }[] = [];
-    const warnings: string[] = [];
-    for (const e of raw) {
-      const o = e as Record<string, unknown>;
-      const path = String(o?.['path'] ?? '').trim();
-      if (
-        !path ||
-        path.split('/').includes('..') ||
-        path.length > MAX_MOUNT_PATH_LEN
-      )
-        continue;
-      if (isExternalMountPath(path)) {
-        // ABSOLUTE path = an EXTERNAL durable mount at that exact container location (e.g. a tool's default
-        // `~/.config/gcloud` → `/root/.config/gcloud`), bound OUTSIDE /workspace so nothing lands in the
-        // repo. Guarded so it can't shadow a system bind or OS root.
-        if (isReservedContainerPath(path)) {
-          warnings.push(
-            `mount "${path}" targets a reserved/system container path (do not mount it) — dropped`,
-          );
-          continue;
-        }
-      } else if (isReservedMountPath(path)) {
-        // Worktree-relative reserved paths (e.g. `.pnpm-store`) are system-managed caches with no
-        // legitimate reason to be mounted into a repo's own worktree — drop + warn.
-        warnings.push(
-          `mount "${path}" is auto-managed by the system (do not add it) — dropped`,
-        );
-        continue;
-      }
-      const mode: MountMode =
-        o?.['mode'] === 'shared-ro' || o?.['mode'] === 'shared-rw'
-          ? o['mode']
-          : 'per-thread';
-      out.push({ path, mode });
-    }
-    return { mounts: out, warnings };
   }
 
   /**
