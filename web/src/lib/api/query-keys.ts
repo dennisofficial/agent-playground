@@ -11,9 +11,9 @@ export const qk = {
   /** One org's GitHub App connect status (`GET /web/orgs/:orgId/github-app/status`). */
   orgGithubAppStatus: (orgId: string) =>
     ["org-github-app-status", orgId] as const,
-  /** One org's workspace secret names + grants (`GET /web/orgs/:orgId/workspace-secrets`). */
-  orgWorkspaceSecrets: (orgId: string) =>
-    ["org-workspace-secrets", orgId] as const,
+  /** One repo's workspace profile (GET /web/orgs/:orgId/repos/:repoId/workspace-profile). */
+  orgWorkspaceProfile: (orgId: string, repoId: string) =>
+    ["org-workspace-profile", orgId, repoId] as const,
   /** One org's user-defined MCP servers + the read-only system tier (`GET /web/orgs/:orgId/mcp-servers`). */
   orgMcpServers: (orgId: string) => ["org-mcp-servers", orgId] as const,
   /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-job picker. */

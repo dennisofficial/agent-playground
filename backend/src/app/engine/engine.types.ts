@@ -618,6 +618,12 @@ export interface RunEngineArgs {
    */
   repoConventions?: { name: string; body: string } | null;
   /**
+   * The repo's saved preview recipe, forwarded verbatim so the in-sandbox engine can fold it into the
+   * `validate` subagent prompt (the host assembles the WORKER main prompt itself). Absent ⇒ nothing
+   * injected, byte-identical to today.
+   */
+  previewInstructions?: string | null;
+  /**
    * This turn's skills, RESOLVED host-side (`SkillResolver.resolveForTurn`) as `{name, description, dirPath,
    * managed?}` — dirs, not bodies. Merges the code-defined SYSTEM tier (`managed: true`) with the
    * `workspace_skills` rows whose `surfaces` include this turn's surface, base-layer-then-overrides (see
@@ -753,7 +759,7 @@ export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | Tran
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
   'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'repoConventions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'userMcpServers', 'repoConventions', 'previewInstructions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple

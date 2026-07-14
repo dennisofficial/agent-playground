@@ -107,7 +107,11 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
       .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
     const getSecretCard = vi
       .fn()
-      .mockResolvedValue({ provided_at: new Date('2026-07-02T12:00:00Z'), delivered_at: null });
+      .mockResolvedValue({
+        provided_at: new Date('2026-07-02T12:00:00Z'),
+        delivered_at: null,
+        ephemeral: true,
+      });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getSecretCard,
@@ -200,6 +204,7 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const getSecretCard = vi.fn().mockResolvedValue({
       provided_at: new Date('2026-07-02T12:00:00Z'),
       delivered_at: new Date('2026-07-02T12:00:01Z'),
+      ephemeral: true,
     });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
@@ -220,7 +225,11 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
       .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
     const getSecretCard = vi
       .fn()
-      .mockResolvedValue({ provided_at: new Date('2026-07-02T12:00:00Z'), delivered_at: null });
+      .mockResolvedValue({
+        provided_at: new Date('2026-07-02T12:00:00Z'),
+        delivered_at: null,
+        ephemeral: true,
+      });
     const clearAwaitingSecret = vi.fn().mockRejectedValue(new Error('gate clear failed'));
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,

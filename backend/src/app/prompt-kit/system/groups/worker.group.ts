@@ -19,6 +19,7 @@ import {
   MINIMAL_CODE_NOTE,
   MONOREPO_VERIFY_HINT,
   PLAYGROUND_NOTE,
+  renderBuildLanePreviewRecipe,
   RUNNABLE_WORKSPACE_NOTE,
   SPIKE_FIRST_NOTE,
   SUBAGENT_NUDGE_NOTE,
@@ -184,6 +185,13 @@ export class WorkerGroup {
   @Fragment({ usedBy: [Agent.WORKER], order: 423 })
   docVersionVerify(): string {
     return DOC_VERSION_VERIFY_NOTE;
+  }
+
+  /** The repo's saved preview recipe, injected READ-ONLY so the orchestrator can follow/adapt it instead of
+   *  re-discovering the preview setup. Only when a recipe exists. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 425, condition: (c) => !!c.previewInstructions?.trim() })
+  previewRecipe(ctx: PromptCtx): string {
+    return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }
 
   /** The evidence-artifact mandate: every build thread leaves durable PROOF under `$ATLAS_EVIDENCE_DIR`.

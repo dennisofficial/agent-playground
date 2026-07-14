@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, HelpCircle, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, HelpCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { Markdown } from "./markdown";
@@ -9,14 +9,21 @@ import { useAnswerQuestion } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebQuestionCard } from "@/lib/api/types";
 import { isSubmitCombo } from "@/lib/keyboard";
+import {
+  composerStore,
+  useComposerStagedAnswers,
+  type StagedAnswer,
+} from "@/lib/api/composer-store";
 
 const ANSWERED_BY = "U-OPERATOR";
 
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional
- * free-text "Other"); the pick POSTs to `…/threads/:jobId/answer-question`, which stamps the durable
- * answered state and fires the brain's next turn. Once `card.answer` is set, renders the compact
- * answered state (so a reload still shows what was asked + chosen).
+ * free-text "Other"). A `build`-origin question (the driver's onboarding/build-flow asks) still POSTs
+ * immediately to `…/threads/:jobId/answer-question`; every other question STAGES the pick into the
+ * composer's tray instead — nothing hits the backend until the operator's batched Send. Once
+ * `card.answer` is set, renders the compact answered state (so a reload still shows what was asked +
+ * chosen); that fires either immediately (build-origin) or after the batch send settles.
  */
 export function QuestionCardView({
   card,
@@ -29,15 +36,54 @@ export function QuestionCardView({
   const [other, setOther] = useState("");
   const [showOther, setShowOther] = useState(false);
   const pending = answer.isPending;
+  const staged = useComposerStagedAnswers(jobRef).find(
+    (a): a is Extract<StagedAnswer, { kind: "question" }> =>
+      a.kind === "question" && a.cardId === card.questionId,
+  );
 
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
-    answer.mutate({
-      questionId: card.questionId,
+    if (card.origin === "build") {
+      answer.mutate({
+        questionId: card.questionId,
+        answer: trimmed,
+        answeredBy: ANSWERED_BY,
+      });
+      return;
+    }
+    composerStore.stageAnswer(jobRef, {
+      kind: "question",
+      cardId: card.questionId,
+      label: card.question,
       answer: trimmed,
-      answeredBy: ANSWERED_BY,
     });
+  }
+
+  if (staged) {
+    return (
+      <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-dashed border-accent-line bg-surface">
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Clock size={15} className="text-accent" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12.5px] text-dim">{card.question}</p>
+            <p className="text-[13px] font-medium text-text">
+              {staged.answer}
+            </p>
+            <p className="text-[11px] text-faint">Staged — not yet sent</p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              composerStore.removeStagedAnswer(jobRef, card.questionId)
+            }
+            className="rounded-md px-2 py-1 text-[11.5px] font-medium text-dim hover:text-text"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (card.withdrawnAt != null && card.answer == null) {

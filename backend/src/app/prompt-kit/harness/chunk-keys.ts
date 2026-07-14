@@ -35,6 +35,11 @@ function qa(jobId: string, questionId: string): string {
   return `seed:qa:${jobId}:${questionId}`;
 }
 
+/** A combined `answer-batch` delivery — one stable pill for the whole batch, keyed by its member card ids. */
+function batch(jobId: string, ids: string[]): string {
+  return `seed:batch:${jobId}:${ids.join(',')}`;
+}
+
 /** A synthetic retry-continuation seed, keyed by wall-clock so repeated retries don't collide. */
 function retry(jobId: string, ts: number): string {
   return `seed:retry:${jobId}:${ts}`;
@@ -106,6 +111,7 @@ export const chunkKey = {
   mcpSecret,
   file,
   qa,
+  batch,
   retry,
   preview,
   planApproved,

@@ -22,7 +22,7 @@ describe('readServiceMarkers', () => {
     );
   };
 
-  it('defaults a marker WITHOUT port/expose to port:null, expose:true (back-compat)', () => {
+  it('defaults a marker WITHOUT port/expose to port:null, expose:false (secure-by-default)', () => {
     write('web', {
       name: 'web',
       cmd: 'pnpm dev',
@@ -32,7 +32,7 @@ describe('readServiceMarkers', () => {
     });
     const [m] = readServiceMarkers(dir);
     expect(m.port).toBeNull();
-    expect(m.expose).toBe(true);
+    expect(m.expose).toBe(false);
   });
 
   it('parses explicit port + expose:false', () => {
@@ -47,6 +47,13 @@ describe('readServiceMarkers', () => {
     const [m] = readServiceMarkers(dir);
     expect(m.port).toBe(3000);
     expect(m.expose).toBe(false);
+  });
+
+  it('parses explicit port + expose:true for a DNS-safe name', () => {
+    write('api', { name: 'api', port: 3000, expose: true });
+    const [m] = readServiceMarkers(dir);
+    expect(m.port).toBe(3000);
+    expect(m.expose).toBe(true);
   });
 
   it('skips corrupt / mid-write JSON', () => {
@@ -95,7 +102,7 @@ describe('derivePortState', () => {
   });
 
   it('exposed running service with a public URL ⇒ exposed', () => {
-    const m = runningMarker();
+    const m = runningMarker({ expose: true });
     expect(derivePortState([m], upProbe(10), () => true)).toBe('exposed');
   });
 
