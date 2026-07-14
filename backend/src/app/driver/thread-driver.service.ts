@@ -3582,7 +3582,11 @@ export class ThreadDriver implements JobDispatcher {
               }
             : {}),
           onEvent: (e) => {
-            if (e.kind === 'usage') {
+            // Rotation + peak track ONLY the main orchestrator's window. Subagent round-trips emit their
+            // own `usage` frame (parentToolUseId set) carrying the SUBAGENT's occupancy — a separate
+            // context that can't be rotated — so they must never trip the pressure nudge or inflate the
+            // leg's peak. Mirrors the engine-local nudge's `if (!parent)` guard in engine-core.
+            if (e.kind === 'usage' && e.parentToolUseId == null) {
               rotationWatch.observe(e);
               // Track the peak main-agent occupancy for the closing Leg's `build_legs` row (armed turns only).
               if (rotation && e.contextTokens != null) {
