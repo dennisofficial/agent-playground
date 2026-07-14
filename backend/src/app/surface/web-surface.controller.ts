@@ -351,6 +351,9 @@ interface CreateThreadDto {
   autoApproveMode?: string;
   /** Operator-chosen auto-merge toggle to arm at creation; absent/false leaves the DB default. */
   autoMerge?: boolean;
+  /** Job ids to block on (born-blocked), mirroring `create_job`'s `dependsOn`. Accepts a single id or
+   *  an array — the multipart create path delivers repeated `dependsOn` form fields either way. */
+  dependsOn?: string | string[];
 }
 
 /**
@@ -405,6 +408,11 @@ function coerceBoolean(raw: unknown): boolean | undefined {
   if (raw === true || raw === 'true') return true;
   if (raw === false || raw === 'false') return false;
   return undefined;
+}
+/** Normalize a `dependsOn` DTO field (single id, array, or absent) to a deduped, trimmed `string[]`. */
+function toStringArray(v: unknown): string[] {
+  const arr = Array.isArray(v) ? v : v == null || v === '' ? [] : [v];
+  return [...new Set(arr.map((x) => String(x).trim()).filter(Boolean))];
 }
 interface ApproveDto {
   actionId: string;
@@ -903,6 +911,16 @@ export class WebSurfaceController {
     // Resolve the repo WITHIN the caller's org — the thread's org_id/repo_id derive from this resolved
     // row, never from raw input (so the denormalized tenant keys can't be pointed at another org's repo).
     const repo = await this.requireRepo(repoId, org.id);
+    // Validate every dependsOn blocker BEFORE creating the row, so a bad/cross-repo id rejects cleanly
+    // with no orphan row left behind — mirrors the create_job host-tool ordering guarantee.
+    const dependsOn = toStringArray(body.dependsOn);
+    if (dependsOn.length > 0) {
+      await this.jobDeps.assertDependenciesValid({
+        orgId: org.id,
+        repoId: repo.id,
+        dependsOnJobIds: dependsOn,
+      });
+    }
     // The frontend-derived first line seeds the row as an INSTANT placeholder; the mini-model upgrades it
     // below (compare-and-set keyed off this exact placeholder, so a fast rename is never clobbered).
     const placeholder = body.title ?? null;
@@ -949,21 +967,61 @@ export class WebSurfaceController {
         ? renderReviewSeedXml(prNumber, repo.slug)
         : null;
     const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
-    // Inject the first message — the chat bridge resolves the thread by its real id and triages it.
-    this.surface.receiveFromClient(repo.id, bodyText, {
-      orgId: org.id,
-      threadTs: thread.id,
-      ...operatorAuthor(user),
-      ...(attach
-        ? {
-            card: {
-              type: 'attachments_card',
-              items: attach.items,
-              ...(operatorText ? { message: operatorText } : {}),
-            },
-          }
-        : {}),
-    });
+    // Wire each requested blocker edge, tracking whether any of them is still LIVE (born-blocks the job).
+    // seed=bodyText so a woken job replays the exact first-turn body (review/attachment XML included).
+    let anyBlocked = false;
+    try {
+      for (const dependsOnJobId of dependsOn) {
+        const { blocked } = await this.jobDeps.addDependency({
+          orgId: org.id,
+          repoId: repo.id,
+          jobId: thread.id,
+          dependsOnJobId,
+          seed: bodyText,
+        });
+        anyBlocked ||= blocked;
+      }
+    } catch (err) {
+      // The thread row already exists at this point (unlike the pre-creation assertDependenciesValid
+      // check above) — mirrors the create_job host-tool, which returns `{ ok: false, jobId, reason }`
+      // on the same failure rather than swallowing the id. Surface jobId here too so the caller/operator
+      // isn't left with an invisible zombie thread with no first message ever injected.
+      this.logger.warn(
+        `web createJob: dependency wiring failed for ${thread.id}: ${err}`,
+      );
+      throw new HttpException(
+        {
+          message:
+            err instanceof Error
+              ? err.message
+              : 'failed to wire one or more dependsOn blockers',
+          jobId: thread.id,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    if (!anyBlocked) {
+      // No dependencies, or every requested blocker was already terminal — start immediately (unchanged
+      // behavior). The chat bridge resolves the thread by its real id and triages it.
+      this.surface.receiveFromClient(repo.id, bodyText, {
+        orgId: org.id,
+        threadTs: thread.id,
+        ...operatorAuthor(user),
+        ...(attach
+          ? {
+              card: {
+                type: 'attachments_card',
+                items: attach.items,
+                ...(operatorText ? { message: operatorText } : {}),
+              },
+            }
+          : {}),
+      });
+    }
+    // anyBlocked: the row is parked 'blocked' with bodyText stored as blocked_seed_message — the wake
+    // funnel (onBlockerResolved → wakeUnblockedJob → startFollowUpJob) replays it once every blocker
+    // resolves, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
+
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
       .generateAndApply(
