@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AutoMergeMethod } from "@workspace/shared";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -812,10 +812,12 @@ export function useCreateOrg() {
   });
 }
 
-/** Body for `PATCH /web/orgs/:orgId` — rename and/or re-slug (owner only). */
+/** Body for `PATCH /web/orgs/:orgId` — rename, re-slug, and/or set automation defaults (owner only). */
 export interface UpdateOrgBody {
   name?: string;
   slug?: string;
+  defaultAutoApproveMode?: AutoApproveMode;
+  defaultAutoMerge?: boolean;
 }
 
 /** Owner-only rename / re-slug. */

@@ -77,6 +77,15 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     setOrgId(orgs[0].id);
   }, [orgs, orgId]);
 
+  // Seed the Automation toggles from the selected org's defaults whenever the org changes (not on every
+  // render, so the operator's in-progress edits within one org survive re-renders).
+  const selectedOrg = orgs.find((o) => o.id === orgId);
+  useEffect(() => {
+    if (!selectedOrg) return;
+    setAutoApproveMode(selectedOrg.defaultAutoApproveMode ?? "off");
+    setAutoMerge(selectedOrg.defaultAutoMerge ?? false);
+  }, [selectedOrg?.id]);
+
   const { data: repos = [], isLoading: reposLoading } = useOrgRepos(orgId);
   const create = useCreateThread(orgId, repoId);
 
@@ -140,8 +149,8 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         baseBranch: branch.trim() || undefined,
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
-        ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
-        ...(autoMerge ? { autoMerge: true } : {}),
+        autoApproveMode,
+        autoMerge,
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),

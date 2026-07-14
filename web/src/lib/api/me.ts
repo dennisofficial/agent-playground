@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { AutoApproveMode } from "@workspace/shared";
 import { env } from "@/lib/env";
 import { fetchWithRefresh } from "./refresh";
 import { qk } from "./query-keys";
@@ -15,6 +16,9 @@ export interface OrgSummary {
   status: string;
   /** The caller's role IN this org: `owner` | `member` (admin reserved). */
   role: string;
+  /** Org-level defaults a new job inherits at creation unless the create request sets it explicitly. */
+  defaultAutoApproveMode: AutoApproveMode;
+  defaultAutoMerge: boolean;
 }
 
 /** The authenticated operator + every org they belong to, from `GET /auth/session`. */
