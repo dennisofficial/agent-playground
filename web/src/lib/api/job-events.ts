@@ -107,6 +107,7 @@ export function useJobEvents(ref: JobRef): void {
         void qc.invalidateQueries({ queryKey: qk.threadContext(r) });
         void qc.invalidateQueries({ queryKey: contextFilesKey(r) });
         void qc.invalidateQueries({ queryKey: qk.jobDiff(r) });
+        void qc.invalidateQueries({ queryKey: qk.jobDiffSummary(r) });
       }, 250);
     };
 
@@ -128,6 +129,7 @@ export function useJobEvents(ref: JobRef): void {
         qc.invalidateQueries({ queryKey: qk.threadContext(r) }),
         qc.invalidateQueries({ queryKey: contextFilesKey(r) }),
         qc.invalidateQueries({ queryKey: qk.jobDiff(r) }),
+        qc.invalidateQueries({ queryKey: qk.jobDiffSummary(r) }),
       ]);
 
     const onFrame = (data: string) => {
@@ -184,10 +186,15 @@ export function useJobEvents(ref: JobRef): void {
             FILE_WRITE_TOOLS.has(ev.name) &&
             writePath != null
           ) {
-            // ANY repo-file write changes the accumulated diff — invalidate it (cheap: the query is
-            // disabled while the Changes pane is closed, so nothing refetches until it's opened).
+            // ANY repo-file write changes the accumulated diff — invalidate both views. The full-diff query
+            // is disabled while the Changes pane is closed, so this just marks it stale (refetches only when
+            // the pane opens); the summary stays hot (the sidebar is always mounted) so its +/- totals live-
+            // update during a running job without ever pulling the heavy hunk payload.
             void qc.invalidateQueries({
               queryKey: qk.jobDiff({ orgId, repoId, jobId: fThread }),
+            });
+            void qc.invalidateQueries({
+              queryKey: qk.jobDiffSummary({ orgId, repoId, jobId: fThread }),
             });
             if (CONTEXT_WRITE_RE.test(writePath)) refetchContext();
           }

@@ -24,6 +24,7 @@ import {
   fetchContextFile,
   fetchCreatedJobs,
   fetchJobDiff,
+  fetchJobDiffSummary,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -150,6 +151,16 @@ export function useJobDiff(ref: JobRef, enabled: boolean) {
   return useQuery({
     queryKey: qk.jobDiff(ref),
     queryFn: () => fetchJobDiff(ref),
+    enabled: enabled && hasRef(ref),
+  });
+}
+
+/** The job's cheap numstat-only diff summary (no hunks) — for the always-mounted sidebar's +/- totals.
+ *  SSE invalidates it alongside the full diff, so the counts stay live without holding the heavy query open. */
+export function useJobDiffSummary(ref: JobRef, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.jobDiffSummary(ref),
+    queryFn: () => fetchJobDiffSummary(ref),
     enabled: enabled && hasRef(ref),
   });
 }
