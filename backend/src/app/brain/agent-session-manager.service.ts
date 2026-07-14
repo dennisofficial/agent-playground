@@ -2941,7 +2941,6 @@ export class AgentSessionManager
       ...(gitTarget
         ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` }
         : {}),
-      cwd: sandbox.worktreePath,
       ...(branch ? { branch } : {}),
       ...(baseBranch ? { baseBranch } : {}),
       ...(this.env && isAtlasRepo(repoSlug ?? '', this.env)
