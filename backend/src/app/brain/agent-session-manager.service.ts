@@ -1473,16 +1473,17 @@ export class AgentSessionManager
             );
         }
         // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer; durable/mcp cards are
-        // per-card (no pointer to clear — like the file lane).
-        if (card.ephemeral === true) {
-          await this.store
-            .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
-            .catch((err) =>
-              this.logger.warn(
-                `clearAwaitingSecret (legacy seed) failed: ${err}`,
-              ),
-            );
-        }
+        // per-card (no pointer to clear — like the file lane). Called unconditionally anyway (not gated on
+        // `card.ephemeral === true`): `clearAwaitingSecret` is compare-and-clear, so it's a no-op unless the
+        // pointer still equals this requestId — which also heals a pre-deploy legacy durable/mcp request that
+        // left the pointer set before per-card secrets existed.
+        await this.store
+          .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
+          .catch((err) =>
+            this.logger.warn(
+              `clearAwaitingSecret (legacy seed) failed: ${err}`,
+            ),
+          );
       }
     }
     if (stimulus.seedFileId) {
@@ -1532,12 +1533,13 @@ export class AgentSessionManager
         if (card.delivered_at == null) {
           await this.store.markSecretDelivered(jobId, seedSecretId);
         }
-        // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer, so only it clears here
-        // (durable/mcp is per-card, like the file lane). Clear even if the card was already marked delivered
-        // by a prior partial tail: the row must not be delivered until both stamps have succeeded.
-        if (card.ephemeral === true) {
-          await this.store.clearAwaitingSecret(jobId, seedSecretId);
-        }
+        // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer (durable/mcp is per-card,
+        // like the file lane) — but this is called unconditionally regardless of `card.ephemeral`:
+        // `clearAwaitingSecret` is compare-and-clear, so it's a no-op unless the pointer still equals this
+        // requestId, which also heals a pre-deploy legacy durable/mcp request that left the pointer set before
+        // per-card secrets existed. Clear even if the card was already marked delivered by a prior partial
+        // tail: the row must not be delivered until both stamps have succeeded.
+        await this.store.clearAwaitingSecret(jobId, seedSecretId);
       }
     }
 

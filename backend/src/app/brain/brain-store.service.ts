@@ -857,6 +857,7 @@ export class BrainStoreService {
         .andWhere("card ->> 'type' = 'secret_input_card'")
         .andWhere("card ->> 'provided_at' IS NULL")
         .andWhere("card ->> 'withdrawnAt' IS NULL")
+        .andWhere("card ->> 'ephemeral' IS DISTINCT FROM 'true'")
         .setParameter('patch', patch)
         .execute();
       if ((res.affected ?? 0) === 1) {
@@ -922,6 +923,7 @@ export class BrainStoreService {
         .andWhere("card ->> 'type' = 'secret_input_card'")
         .andWhere("card ->> 'provided_at' IS NULL")
         .andWhere("card ->> 'withdrawnAt' IS NULL")
+        .andWhere("card ->> 'ephemeral' IS DISTINCT FROM 'true'")
         .setParameter('patch', patch)
         .execute();
       const withdrawn = (res.affected ?? 0) === 1;
