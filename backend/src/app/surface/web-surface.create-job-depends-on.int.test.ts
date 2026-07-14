@@ -64,13 +64,13 @@ const FOREIGN_JOB = '99999999-9999-4999-8999-999999999905';
 const OWNER_EMAIL = 'create-job-depends-on-it-owner@example.test';
 const PASSWORD = 'depends-on-it-pw-12345';
 
-interface WakeCall {
+type WakeCall = {
   jobId: string;
   orgId: string;
   repoId: string;
   seed: string | null;
   note: string | null;
-}
+};
 
 let app: NestExpressApplication;
 let ds: DataSource;
@@ -260,6 +260,19 @@ beforeEach(() => {
 });
 
 describe('POST .../jobs — dependsOn (born-blocked create)', () => {
+  it('rejects a malformed dependsOn id with 400 and creates no row', async () => {
+    const before = await countJobs();
+    const res = await request(server)
+      .post(jobsUrl())
+      .set('Cookie', ownerCookie)
+      .send({
+        firstMessage: 'depends on a malformed id',
+        dependsOn: 'not-a-uuid',
+      });
+    expect(res.status).toBe(400);
+    expect(await countJobs()).toBe(before);
+  });
+
   it('rejects an unknown (but well-formed) dependsOn id with 404 and creates no row', async () => {
     const before = await countJobs();
     const res = await request(server)
