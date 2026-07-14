@@ -12,7 +12,8 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { AUTO_APPROVE_MODES, type AutoApproveMode } from '@workspace/shared';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { UserEntity } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
@@ -42,6 +43,14 @@ class UpdateOrgDto {
   @IsOptional()
   @IsString()
   slug?: string;
+
+  @IsOptional()
+  @IsIn(AUTO_APPROVE_MODES)
+  defaultAutoApproveMode?: AutoApproveMode;
+
+  @IsOptional()
+  @IsBoolean()
+  defaultAutoMerge?: boolean;
 }
 
 class InviteDto {
@@ -92,6 +101,8 @@ export class OrgController {
       name: row.name,
       status: row.status,
       role: org.role,
+      defaultAutoApproveMode: row.default_auto_approve_mode,
+      defaultAutoMerge: row.default_auto_merge,
       onboarding: {
         lifecycle: onboarding.lifecycle,
         steps: onboarding.steps,

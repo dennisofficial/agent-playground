@@ -373,7 +373,9 @@ export class JobEntity extends TimestampedEntity {
   build_path!: 'direct' | 'plan' | null;
 
   /** Per-job AUTO-APPROVE MODE: which of the plan-approval / ship-review gates on this job auto-advance
-   *  with no human click (still posting the card for audit). Strictly per-job (no repo/org default). */
+   *  with no human click (still posting the card for audit). Seeded from the org's
+   *  `default_auto_approve_mode` at creation when the create-job request omits an explicit value (see
+   *  `createJob`); independently overridable per job afterward — no live link back to the org. */
   @Column({ type: 'text', default: 'off' })
   auto_approve_mode!: AutoApproveMode;
 
@@ -389,7 +391,9 @@ export class JobEntity extends TimestampedEntity {
 
   /** Per-job AUTO-MERGE master toggle: when on, a merge-ready open PR auto-merges (host auto-clicks the
    *  Merge gate). Orthogonal to auto_approve_mode — a human may still gate plan/ship while Atlas babysits
-   *  the PR to green and merges it. Strictly per-job (no repo/org default). */
+   *  the PR to green and merges it. Seeded from the org's `default_auto_merge` at creation when the
+   *  create-job request omits an explicit value (see `createJob`); independently overridable per job
+   *  afterward — no live link back to the org. */
   @Column({ type: 'boolean', default: false })
   auto_merge!: boolean;
 

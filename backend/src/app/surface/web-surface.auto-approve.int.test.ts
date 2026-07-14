@@ -511,7 +511,7 @@ describe('auto-approve — POST .../jobs armed at creation (live Postgres, real 
     console.log('OBSERVED CREATE 1 DB row (created with mode=plan):', JSON.stringify(row));
   });
 
-  it("CREATE 2 — no autoApproveMode: the new job falls back to the DB default 'off' with no auto_approve_by", async () => {
+  it("CREATE 2 — no autoApproveMode: the new job falls back to the org default (unset here, so 'off') with no auto_approve_by", async () => {
     const jobId = await createJob({ firstMessage: 'Plain job, no auto-approve.' });
     const row = await loadJobRow(jobId);
     expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
@@ -525,9 +525,11 @@ describe('auto-approve — POST .../jobs armed at creation (live Postgres, real 
     expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
   });
 
-  it("CREATE 4 — an invalid autoApproveMode is ignored (guarded by isAutoApproveMode), leaving the default 'off'", async () => {
-    const jobId = await createJob({ firstMessage: 'Bogus mode.', autoApproveMode: 'bogus' });
-    const row = await loadJobRow(jobId);
-    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+  it('CREATE 4 — a present-but-invalid autoApproveMode is REJECTED (400), never silently falling back to the org default', async () => {
+    const res = await request(server)
+      .post(createUrl)
+      .set('Cookie', ownerCookie)
+      .send({ firstMessage: 'Bogus mode.', autoApproveMode: 'bogus' });
+    expect(res.status).toBe(400);
   });
 });

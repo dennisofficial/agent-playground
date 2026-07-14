@@ -51,6 +51,8 @@ function makeSvc(
   const members = {
     findOne: async ({ where }: { where: { org_id: string; user_id: string } }) =>
       memberRows.find((m) => m.org_id === where.org_id && m.user_id === where.user_id) ?? null,
+    find: async ({ where }: { where: { user_id: string } }) =>
+      memberRows.filter((m) => m.user_id === where.user_id),
     create: (x: Partial<OrganizationMemberEntity>) => x as OrganizationMemberEntity,
     save: async (x: OrganizationMemberEntity) => {
       memberRows.push(x);
@@ -67,6 +69,10 @@ function makeSvc(
       if (where.id !== undefined) return orgRows.find((o) => o.id === where.id) ?? null;
       if (where.slug !== undefined) return orgRows.find((o) => o.slug === where.slug) ?? null;
       return null;
+    },
+    find: async ({ where }: { where: { id: { value: string[] } } }) => {
+      const ids = new Set(where.id.value);
+      return orgRows.filter((o) => ids.has(o.id));
     },
     create: (x: Partial<OrganizationEntity>) => x as OrganizationEntity,
     save: async (x: OrganizationEntity) => {
@@ -119,6 +125,45 @@ function makeSvc(
   return { svc, inviteRows, memberRows, orgRows, deepDeleted, deletes, orgDeletes };
 }
 
+describe('OrganizationService create', () => {
+  it('returns off/false automation defaults for a fresh org', async () => {
+    const { svc } = makeSvc({ orgRows: [] });
+    const out = await svc.create('U1', 'HannibalAI');
+    expect(out.defaultAutoApproveMode).toBe('off');
+    expect(out.defaultAutoMerge).toBe(false);
+  });
+});
+
+describe('OrganizationService listForUser', () => {
+  it('carries each org row\'s automation defaults alongside the caller role', async () => {
+    const { svc } = makeSvc({
+      orgRows: [
+        {
+          id: 'O1',
+          name: 'HannibalAI',
+          slug: 'hannibalai',
+          status: 'onboarding',
+          default_auto_approve_mode: 'plan',
+          default_auto_merge: true,
+        } as OrganizationEntity,
+      ],
+      alreadyMember: true,
+    });
+    const out = await svc.listForUser('B');
+    expect(out).toEqual([
+      {
+        id: 'O1',
+        slug: 'hannibalai',
+        name: 'HannibalAI',
+        status: 'onboarding',
+        role: 'member',
+        defaultAutoApproveMode: 'plan',
+        defaultAutoMerge: true,
+      },
+    ]);
+  });
+});
+
 describe('OrganizationService invites', () => {
   it('createInvite returns a copy-paste link with FRONTEND_HOST + the token', async () => {
     const { svc } = makeSvc();
@@ -151,10 +196,73 @@ describe('OrganizationService invites', () => {
 
 describe('OrganizationService rename', () => {
   it('updates the name (slug untouched) and folds in the caller role', async () => {
-    const { svc, orgRows } = makeSvc();
+    const { svc, orgRows } = makeSvc({
+      orgRows: [
+        {
+          id: 'O1',
+          name: 'HannibalAI',
+          slug: 'hannibalai',
+          status: 'onboarding',
+          default_auto_approve_mode: 'off',
+          default_auto_merge: false,
+        } as OrganizationEntity,
+      ],
+    });
     const out = await svc.rename('O1', { name: 'NewName' }, 'owner');
-    expect(out).toEqual({ id: 'O1', slug: 'hannibalai', name: 'NewName', status: 'onboarding', role: 'owner' });
+    expect(out).toEqual({
+      id: 'O1',
+      slug: 'hannibalai',
+      name: 'NewName',
+      status: 'onboarding',
+      role: 'owner',
+      defaultAutoApproveMode: 'off',
+      defaultAutoMerge: false,
+    });
     expect(orgRows[0].name).toBe('NewName');
+  });
+
+  it('sets default_auto_approve_mode / default_auto_merge when the patch includes them', async () => {
+    const { svc, orgRows } = makeSvc({
+      orgRows: [
+        {
+          id: 'O1',
+          name: 'HannibalAI',
+          slug: 'hannibalai',
+          status: 'onboarding',
+          default_auto_approve_mode: 'off',
+          default_auto_merge: false,
+        } as OrganizationEntity,
+      ],
+    });
+    const out = await svc.rename(
+      'O1',
+      { defaultAutoApproveMode: 'ship', defaultAutoMerge: true },
+      'owner',
+    );
+    expect(out.defaultAutoApproveMode).toBe('ship');
+    expect(out.defaultAutoMerge).toBe(true);
+    expect(orgRows[0].default_auto_approve_mode).toBe('ship');
+    expect(orgRows[0].default_auto_merge).toBe(true);
+  });
+
+  it('leaves default_auto_approve_mode / default_auto_merge untouched when the patch omits them', async () => {
+    const { svc, orgRows } = makeSvc({
+      orgRows: [
+        {
+          id: 'O1',
+          name: 'HannibalAI',
+          slug: 'hannibalai',
+          status: 'onboarding',
+          default_auto_approve_mode: 'plan',
+          default_auto_merge: true,
+        } as OrganizationEntity,
+      ],
+    });
+    const out = await svc.rename('O1', { name: 'NewName' }, 'owner');
+    expect(out.defaultAutoApproveMode).toBe('plan');
+    expect(out.defaultAutoMerge).toBe(true);
+    expect(orgRows[0].default_auto_approve_mode).toBe('plan');
+    expect(orgRows[0].default_auto_merge).toBe(true);
   });
 
   it('slugifies a new slug and keeps it unique against OTHER orgs', async () => {
