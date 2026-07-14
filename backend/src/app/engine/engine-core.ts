@@ -16,6 +16,7 @@ const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
+import type { PromptCtx } from '../prompt-kit/system/prompt-ctx';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import {
@@ -469,21 +470,43 @@ const CONVENTION_FACING_SUBAGENTS: Record<string, Agent> = {
   review: Agent.REVIEW_AGENT,
 };
 
+// The build-facing subagent whose persona must carry the repo's saved PREVIEW RECIPE, read-only — `validate`
+// is the only in-sandbox subagent that ever needs to stand a live preview up. Distinct map (not merged into
+// `CONVENTION_FACING_SUBAGENTS`) since it gates on a different per-run signal (`previewInstructions`, not
+// `repoConventions`).
+const PREVIEW_FACING_SUBAGENTS: Record<string, Agent> = {
+  validate: Agent.VALIDATE,
+};
+
 /**
- * Fold the repo's house-style envelope into the build-facing subagent prompts. When the turn carries no
- * attached profile (`repoConventions` absent/null) this returns the map UNCHANGED — byte-identical to today.
- * Otherwise it re-renders each convention-facing subagent's `prompt` WITH the conventions ctx (a subagent
- * not present in this turn's map — e.g. the writers on a non-execute turn — is simply skipped).
+ * Fold per-run host context (the repo's house-style envelope, its saved preview recipe) into the build-facing
+ * subagent prompts. When the turn carries neither (`repoConventions` absent/null AND `previewInstructions`
+ * absent/blank) this returns the map UNCHANGED — byte-identical to today. Otherwise it re-renders the UNION of
+ * convention-facing + preview-facing subagents present in this turn's map, each with only the ctx it actually
+ * gates on (a subagent not present in this turn's map — e.g. the writers on a non-execute turn — is simply
+ * skipped).
  */
-export function applyConventionsToAgents(
+export function applyPerRunCtxToAgents(
   agents: NonNullable<Options['agents']>,
-  repoConventions: RunEngineArgs['repoConventions'],
+  args: { repoConventions: RunEngineArgs['repoConventions']; previewInstructions?: string | null },
 ): NonNullable<Options['agents']> {
-  if (!repoConventions) return agents;
-  const ctx = { settings: { repoConventions } };
+  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
+  if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
-  for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) {
-    if (out[name]) out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
+  const targets = new Map<string, Agent>();
+  if (args.repoConventions) {
+    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  if (preview) {
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  for (const [name, agent] of targets) {
+    if (!out[name]) continue;
+    const ctx: PromptCtx = {
+      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
+      ...(preview ? { previewInstructions: preview } : {}),
+    };
+    out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
   }
   return out;
 }
@@ -868,11 +891,11 @@ export class EngineCore {
       // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
       // file-mutating or evidence-writing subagent. See
       // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
-      agents: applyConventionsToAgents(
+      agents: applyPerRunCtxToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
-        args.repoConventions,
+        { repoConventions: args.repoConventions, previewInstructions: args.previewInstructions },
       ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
