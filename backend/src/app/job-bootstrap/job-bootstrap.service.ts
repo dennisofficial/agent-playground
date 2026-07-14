@@ -67,6 +67,21 @@ export class JobBootstrapService {
     return thread.id;
   }
 
+  /**
+   * The job's `ci` stage-thread id, or `null` before it exists (pre-ship — `DriverStoreService.ensureCiThread`
+   * is the sole creator, at the post-ship seam). READ-ONLY lookup — never creates one; used by event/CI
+   * intake (thread 4 §CI-routing) to decide whether an inbound GitHub/CI stimulus targets the `ci` thread
+   * or still falls back to planning. Newest first — an append-only re-plan round (d7) can in principle spawn
+   * a later `ci` stage, and inbound events should always reach the CURRENT one.
+   */
+  async ciThreadId(jobId: string): Promise<string | null> {
+    const thread = await this.threads.findOne({
+      where: { job_id: jobId, role: 'ci' },
+      order: { ordinal: 'DESC' },
+    });
+    return thread?.id ?? null;
+  }
+
   /** The planning stage's single `planning`-role thread — ordinal 0, so builders (gap-numbered after the
    *  highest top-level ordinal) never collide with it on the job-wide UNIQUE(job_id, parent, ordinal). */
   private async createPlanningThread(stageId: string, jobId: string, orgId: string): Promise<void> {

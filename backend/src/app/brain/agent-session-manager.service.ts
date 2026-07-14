@@ -7339,6 +7339,7 @@ export class AgentSessionManager
       repoId: stimulus.repoId,
       body,
       seedRow: 'skip', // the untrusted event body already has a durable `system_event` row from intake
+      resumeThreadId: stimulus.resumeThreadId, // §CI-routing: routed to the `ci` thread when it exists
     });
     await this.runChatTurn(delivery, {
       // Restart-survivable hand-off: stamp delivered the instant the turn is registered + kicked (a later
@@ -7958,6 +7959,9 @@ function eventDeliveryStimulus(input: {
   repoId: string;
   body: AgentMessage;
   seedRow?: SeedRow;
+  /** SESSION RE-HOME (§CI-routing): resume the `ci` stage-thread's own session instead of planning — see
+   *  {@link ChatStimulus.resumeThreadId} / {@link EventStimulus.resumeThreadId}. */
+  resumeThreadId?: string;
 }): ChatStimulus {
   return {
     id: input.id ?? randomUUID(),
@@ -7972,6 +7976,7 @@ function eventDeliveryStimulus(input: {
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
     seed: true,
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
+    ...(input.resumeThreadId ? { resumeThreadId: input.resumeThreadId } : {}),
   };
 }
 

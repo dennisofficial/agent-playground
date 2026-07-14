@@ -196,4 +196,13 @@ export interface EventStimulus extends BaseStimulus {
    * `feature_branch`/`current_branch` and `prNumber` against its `pr_number`. Absent → seed as before.
    */
   correlation?: { branch?: string | null; prNumber?: number | null };
+  /**
+   * SESSION RE-HOME (mirrors {@link ChatStimulus.resumeThreadId}): when the owning job already has a live
+   * `ci` stage-thread, this event resumes/persists THAT thread's session instead of the job's planning
+   * thread — so a GitHub/CI webhook wakes the `ci` thread post-ship rather than dragging planning back in.
+   * Derived at read time from the persisted `stimuli.lane` (`thread:<ciThreadId>`), same durable coordinate
+   * `recordChatStimulus` already uses for chat — so a sweep re-drive resolves it identically to the first
+   * delivery attempt. Absent (pre-ship, no `ci` thread yet) delivers to planning exactly as before.
+   */
+  resumeThreadId?: string;
 }

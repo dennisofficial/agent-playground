@@ -1697,10 +1697,11 @@ export class DriverStoreService {
   /**
    * Find (or lazily create) the job's `ci` stage-thread — the post-ship seam (d14). Created once the PR is
    * recorded (`setPrReady`); starts with `session_id = null` (a fresh session, isolated from planning) and
-   * sits idle (`ci` is a render-only, non-driver-executed role — see `thread-kind/registry.ts`) until inbound
-   * GitHub/CI events are routed onto its lane (`lane=thread:<ciThreadId>`) by the stimulus-intake seam. That
-   * routing is OUT OF SCOPE here (thread 4 territory — see `/context/specs/sections/04-messaging-chat.md`
-   * §CI-routing); this method only ensures the stage-thread EXISTS for that routing to target. Idempotent:
+   * sits idle (`ci` is a render-only, session-backed role — see `thread-kind/registry.ts`) until inbound
+   * GitHub/CI events are routed to it. Once this thread exists, `StimulusStoreService.attachEventToJob`
+   * (via `JobBootstrapService.ciThreadId`, a read-only lookup) stamps `lane=thread:<ciThreadId>` on the
+   * event stimulus so `AgentSessionManager.deliverEventViaFreshTurn` resumes THIS thread's own session
+   * instead of planning's (`/context/specs/sections/04-messaging-chat.md` §CI-routing). Idempotent:
    * `setPrReady` may be reached more than once for a job (the driver path, the reconciler, and the GitHub
    * webhook fast path all call it), so a matching stage is re-looked-up rather than duplicated.
    */

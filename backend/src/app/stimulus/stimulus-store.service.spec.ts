@@ -20,6 +20,8 @@ function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-planning'),
     ensurePlanningStage: vi.fn(async () => undefined),
+    // No `ci` stage-thread by default — attachEventToJob falls back to planning (§CI-routing).
+    ciThreadId: vi.fn(async () => null),
   } as unknown as JobBootstrapService;
 }
 
@@ -164,6 +166,36 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     });
     expect(stimuli.rows[0]).toMatchObject({ kind: 'event', trust: 'untrusted', job_id: 'job-7', dedupe_key: 'ci:abc' });
     expect(event).toMatchObject({ kind: 'event', trust: 'untrusted', jobId: 'job-7', source: 'github', severity: 'critical' });
+  });
+
+  it('attachEventToJob routes to the ci stage-thread once one exists (§CI-routing)', async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const messages = fakeRepo<MessageEntity>('msg');
+    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const ds = fakeDataSource((Entity) =>
+      Entity === MessageEntity ? messages.rows : stimuli.rows,
+    );
+    const bootstrap = {
+      planningThreadId: vi.fn(async () => 'thread-planning'),
+      ensurePlanningStage: vi.fn(async () => undefined),
+      ciThreadId: vi.fn(async () => 'thread-ci-1'),
+    } as unknown as JobBootstrapService;
+    const store = new StimulusStoreService(threads.repo, messages.repo, stimuli.repo, ds, bootstrap);
+
+    const event = await store.attachEventToJob({
+      jobId: 'job-7',
+      orgId: 'T1',
+      repoId: 'web',
+      source: 'github',
+      dedupeKey: 'ci:abc',
+      severity: 'critical',
+      body: 'CI failed again',
+    });
+
+    // The event card + the delivery-driving stimulus both target the ci thread, not planning.
+    expect(messages.rows[0]).toMatchObject({ job_id: 'job-7', thread_id: 'thread-ci-1' });
+    expect(stimuli.rows[0]).toMatchObject({ lane: 'thread:thread-ci-1' });
+    expect(event.resumeThreadId).toBe('thread-ci-1');
   });
 
   it('attachEventToJob is ATOMIC — a failed stimulus write leaves NO orphan event card', async () => {

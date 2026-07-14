@@ -188,6 +188,12 @@ export class StimulusStoreService {
    * stimulus row) but reuses the given `jobId`, so the same at-least-once boot sweep + `delivered_at`
    * machinery drives delivery. Dedup rides the SAME (org, repo, source, dedupe_key) unique index — a
    * repeated conflict/CI/review event collapses to one delivered message.
+   *
+   * ROUTING (thread 4 §CI-routing): once the job's `ci` stage-thread exists (post-ship —
+   * `DriverStoreService.ensureCiThread`), the event's `messages` row AND its `stimuli.lane` both target
+   * that thread (`thread:<ciThreadId>`) instead of planning, so `EventStimulus.resumeThreadId` (derived
+   * back from `lane` on read — see `rowToEventStimulus`) resumes the `ci` thread's own session. Pre-ship
+   * (no `ci` thread yet) falls back to planning exactly as before.
    */
   async attachEventToJob(input: {
     jobId: string;
@@ -204,7 +210,9 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    const threadId = await this.planningThreadId(input.jobId);
+    const ciThreadId = (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
+    const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
+    const lane = ciThreadId ? `thread:${ciThreadId}` : undefined;
     let row: StimulusEntity;
     try {
       row = await this.dataSource.transaction(async (m) => {
@@ -233,6 +241,7 @@ export class StimulusStoreService {
             source: input.source,
             dedupe_key: input.dedupeKey,
             severity: input.severity,
+            ...(lane ? { lane } : {}),
           }),
         );
       });
@@ -257,6 +266,7 @@ export class StimulusStoreService {
       dedupeKey: input.dedupeKey,
       severity: input.severity,
       receivedAt: row.created_at,
+      ...(ciThreadId ? { resumeThreadId: ciThreadId } : {}),
     };
   }
 
@@ -677,8 +687,13 @@ export class StimulusStoreService {
   }
 
   /** Reconstruct the in-memory `EventStimulus` from a persisted event row (for re-drive). Body is the CLEAN
-   *  text — the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). */
+   *  text — the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). `resumeThreadId`
+   *  round-trips through the persisted `lane` (`thread:<id>`) so a sweep re-drive routes identically to the
+   *  first delivery attempt (see `attachEventToJob`'s §CI-routing). */
   private rowToEventStimulus(row: StimulusEntity): EventStimulus {
+    const resumeThreadId = row.lane?.startsWith('thread:')
+      ? row.lane.slice('thread:'.length)
+      : undefined;
     return {
       id: row.id,
       orgId: row.org_id,
@@ -691,6 +706,7 @@ export class StimulusStoreService {
       dedupeKey: row.dedupe_key ?? '',
       severity: (row.severity as EventStimulus['severity'] | null) ?? 'info',
       receivedAt: row.created_at,
+      ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
 

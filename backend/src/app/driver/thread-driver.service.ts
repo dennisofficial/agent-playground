@@ -3682,7 +3682,7 @@ export class ThreadDriver implements JobDispatcher {
     }
 
     // The seed carries the preamble + handoff + the OPEN task list (the SDK's in-memory todo dies with the
-    // session; the durable `threads.tasks` is folded back in so the fresh Leg continues its checklist — B5).
+    // session; the stage-owned `tasks` table (d6) is folded back in so the fresh Leg continues its checklist).
     const seed = await this.buildLegSeed(thread.id, handoff);
     const res = await this.store
       .completeLegRotation({
@@ -3743,10 +3743,11 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * Compose the FRESH Leg's seed: the `ROTATION_PREAMBLE` wrapper + the structured handoff + the thread's OPEN
-   * task list (B5 — cross-Leg task carry). The SDK's in-memory to-do dies with the abandoned session, but the
-   * list is durable on `threads.tasks` (folded from the builder's own TaskCreate/TaskUpdate calls), so we read
-   * it back and render the still-open items into the seed — the fresh Leg continues the checklist instead of
-   * restarting it. The web checklist stays authoritative across Legs regardless (it reads the same column).
+   * task list (cross-Leg task carry). The SDK's in-memory to-do dies with the abandoned session, but the list
+   * is durable in the stage-owned `tasks` table (d6 — folded from the builder's own TaskCreate/TaskUpdate
+   * calls), so we read it back and render the still-open items into the seed — the fresh Leg continues the
+   * checklist instead of restarting it. The web checklist stays authoritative across Legs regardless (it
+   * reads the same stage-scoped rows).
    */
   private async buildLegSeed(threadId: string, handoff: string): Promise<AgentMessage> {
     const tasks = await this.store.getThreadTasks(threadId).catch(() => [] as TaskItem[]);
