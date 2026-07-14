@@ -49,8 +49,8 @@ carried in the onboarding prompt (`backend/src/app/prompt-kit`). The brain:
   browser; backing workers/DBs/queues are validated only as far as a surface needs them).
 - **Exposes** each surface via the preview proxy in a deterministic order: the public URL is known BEFORE
   start (`https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN`), so write the env FIRST (compute + persist
-  the preview origins), bind the server to `0.0.0.0`, then `atlas-svc run --name <svc> --port <n>` and let
-  Caddy reconcile the route.
+  the preview origins), bind the server to `0.0.0.0`, then `atlas-svc run --name <svc> --port <n> --expose`
+  and let Caddy reconcile the route.
 - **Probes end-to-end as a browser** with `atlas-probe` against the PUBLIC preview URL (see part 2).
 - **Remediates env-first** on a blocker (see below), then re-probes until green.
 - **Persists** the resolved config to the workspace profile (setup script + secret files) so it re-hydrates
