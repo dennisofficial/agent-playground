@@ -39,6 +39,7 @@ export interface IEnvConfig {
   APP_ENV: EAppEnv;
   NODE_ENV: ENodeEnv;
   ENABLE_COLOR?: string; // logger colour toggle; read via process.env, declared for documentation
+  GIT_SHA?: string; // backend build commit (CI sha-<short>); unset locally → resolved to "dev"
 
   // URLs
   BACKEND_HOST: string;
@@ -193,6 +194,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .optional()
     .default(ENodeEnv.DEV),
   ENABLE_COLOR: Joi.string().optional(),
+  GIT_SHA: Joi.string().optional(),
 
   // URLs
   BACKEND_HOST: Joi.string().uri().optional().default('http://localhost:4000'),
