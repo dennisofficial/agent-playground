@@ -9,6 +9,7 @@ import type {
   InboxPr,
   JobBlocker,
   JobDiff,
+  JobDiffSummary,
   JobProvenance,
   PipelineJob,
   PipelineState,
@@ -491,6 +492,13 @@ export function fetchContextFile(
 /** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
 export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
   return webJson<JobDiff>(threadPath(ref, "/diff"));
+}
+
+/** The job's cheap numstat-only diff summary (`GET …/jobs/:jobId/diff/summary`) — no hunks, just per-file
+ *  path/additions/deletions/status/binary. Used by the always-mounted sidebar for its +/- totals so it
+ *  never has to hold the heavy full-diff query open. */
+export function fetchJobDiffSummary(ref: JobRef): Promise<JobDiffSummary> {
+  return webJson<JobDiffSummary>(threadPath(ref, "/diff/summary"));
 }
 
 // ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────

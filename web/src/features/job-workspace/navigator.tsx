@@ -42,7 +42,7 @@ import { isOutputGroupHidden } from "./output-group";
 import {
   useAcceptThread,
   useJobCreatedJobs,
-  useJobDiff,
+  useJobDiffSummary,
   useRetryJob,
   useRetryVerification,
   useServices,
@@ -325,9 +325,10 @@ export function Navigator({
     useServices(jobRef);
   const services = servicesData?.services ?? [];
 
-  // Real +/− line totals for the "Changes" row — summed from the diff endpoint (shared query with the diff
-  // pane; fetched only when the job could actually have changes). Mirrors the per-file badges in the diff.
-  const { data: diffData } = useJobDiff(jobRef, !noChanges);
+  // Real +/− line totals for the "Changes" row — summed from the cheap numstat-only summary endpoint (NOT
+  // the heavy full-diff query the Changes pane uses; fetched only when the job could actually have changes).
+  // Mirrors the per-file badges in the diff pane.
+  const { data: diffData } = useJobDiffSummary(jobRef, !noChanges);
   const diffAdditions =
     diffData?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
   const diffDeletions =

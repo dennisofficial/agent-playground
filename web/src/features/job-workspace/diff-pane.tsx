@@ -1,13 +1,11 @@
 "use client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { Check, ChevronDown, MessageSquarePlus, Plus, X } from "lucide-react";
+  defaultRangeExtractor,
+  useVirtualizer,
+  type Range as VirtualRange,
+} from "@tanstack/react-virtual";
+import { Check, MessageSquarePlus, Plus, X } from "lucide-react";
 import { useJobDiff, useJobMessages } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { JobDiffFile } from "@/lib/api/types";
@@ -16,68 +14,54 @@ import { anchorEnd, anchorLabel, deriveLineAnchor } from "./diff-anchor";
 import {
   langFromPath,
   renderTokenLine,
-  useHighlightTokens,
+  tokenizeLineSync,
+  useEnsureHighlightLangs,
   type ThemedToken,
 } from "./tool-calls/highlight";
 import { useReviewComments } from "./review-comments";
 
 /**
  * The Changes pane — a full-bleed, GitHub-style unified diff of the job's accumulated worktree change.
- * Each file is a collapsible section with a sticky header over a dark `--term` code surface. Hovering a
- * row exposes a gutter `+`; clicking or drag-selecting a contiguous range opens an inline composer that
- * queues a line-anchored review comment (via `addLineComment`), which rides the normal review-comment
- * pipeline to the composer tray and out to Atlas.
+ * Every file is fully expanded under a sticky header over a dark `--term` code surface. Hovering a row
+ * exposes a gutter `+`; clicking or drag-selecting a contiguous range opens an inline composer that queues
+ * a line-anchored review comment (via `addLineComment`), which rides the normal review-comment pipeline to
+ * the composer tray and out to Atlas.
+ *
+ * The whole multi-file diff is flattened into ONE list of items (file headers, hunk headers, rows, docked
+ * comments, the active composer) and row-level virtualized with `@tanstack/react-virtual`, so a diff of
+ * thousands of rows only ever mounts the ~viewport's worth of rows — and only tokenizes those on-screen
+ * rows — instead of mounting and syntax-highlighting every file at once.
  */
 
-const NBSP = "\u00A0";
+const NBSP = " ";
 const GUTTER = 28;
 const SIGN = 16;
+/** `fileIdx * HUNK_KEY_STRIDE + hunkIdx` — a per-file-namespaced hunk id that doubles as the same-hunk
+ *  contiguity guard: because it encodes `fileIdx`, comparing it also prevents a selection crossing files. */
+const HUNK_KEY_STRIDE = 100_000;
+/** Min content width (in `ch`) so a diff with no rows still fills the pane. */
+const MIN_CODE_LEN = 40;
 
-type FileRow = DiffRow & { flatIdx: number; hunkIdx: number };
+/** First-pass estimates; `measureElement` corrects each once it renders, so these need only be close. */
+const ESTIMATE: Record<DiffItem["kind"], number> = {
+  row: 19,
+  hunk: 22,
+  file: 40,
+  note: 24,
+  comment: 84,
+  composer: 160,
+};
 
-export function DiffPane({ jobRef }: { jobRef: JobRef }) {
-  const { data, isLoading, error } = useJobDiff(jobRef, true);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+type FileRow = DiffRow & { gIdx: number; fileIdx: number; hunkKey: number };
 
-  const toggleCollapse = useCallback((path: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
-  if (isLoading) {
-    return <div className="px-8 py-7 text-[13px] text-faint">Loading diff…</div>;
-  }
-  if (error || !data || data.files.length === 0) {
-    return (
-      <div className="px-8 py-7 text-[13px] text-faint">
-        No changes yet — this job hasn&rsquo;t modified any tracked files.
-      </div>
-    );
-  }
-
-  return (
-    <div className="h-full overflow-y-auto">
-      {data.truncated ? (
-        <div className="border-b border-border bg-surface-2 px-5 py-2 font-mono text-[11px] text-dim">
-          Diff truncated — open the PR to see everything.
-        </div>
-      ) : null}
-      {data.files.map((file) => (
-        <DiffFileSection
-          key={file.oldPath ? `${file.oldPath}→${file.path}` : file.path}
-          jobRef={jobRef}
-          file={file}
-          collapsed={collapsed.has(file.path)}
-          onToggleCollapse={() => toggleCollapse(file.path)}
-        />
-      ))}
-    </div>
-  );
-}
+/** One entry in the flattened, windowed diff list spanning every file. */
+type DiffItem =
+  | { kind: "file"; key: string; file: JobDiffFile; fileIdx: number }
+  | { kind: "note"; key: string; text: string }
+  | { kind: "hunk"; key: string; label: string }
+  | { kind: "row"; key: string; row: FileRow; fileIdx: number; hunkKey: number }
+  | { kind: "comment"; key: string; thread: InlineThread }
+  | { kind: "composer"; key: string };
 
 /** A comment rendered inline on the diff, in one of its two persisted states (the third — `composing` —
  *  is the live `InlineComposer`). `queued` lives in the composer store until sent; `sent` is read back
@@ -91,20 +75,22 @@ type InlineThread = {
   onRemove?: () => void;
 };
 
-function DiffFileSection({
-  jobRef,
-  file,
-  collapsed,
-  onToggleCollapse,
-}: {
-  jobRef: JobRef;
-  file: JobDiffFile;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-}) {
+const NO_FILES: JobDiffFile[] = [];
+
+const fileKey = (file: JobDiffFile): string =>
+  file.oldPath ? `${file.oldPath}→${file.path}` : file.path;
+
+export function DiffPane({ jobRef }: { jobRef: JobRef }) {
+  const { data, isLoading, error } = useJobDiff(jobRef, true);
   const { addLineComment, comments, removeComment } = useReviewComments();
   const { data: messages } = useJobMessages(jobRef);
-  const sectionRef = useRef<HTMLDivElement>(null);
+  const files = data?.files ?? NO_FILES;
+
+  // Load every grammar present in the diff once (distinct-only), globally — not per-row, not per-file-mount.
+  // Its internal state bump re-renders the pane so rows painted plain (before their lang loaded) recolorize.
+  const fileLangByIdx = useMemo(() => files.map((f) => langFromPath(f.path)), [files]);
+  useEnsureHighlightLangs(fileLangByIdx);
+
   const draggingRef = useRef(false);
   // `draggingRef` drives the synchronous mousemove extension (read in a stable callback); this reactive
   // twin gates the inline composer so it appears only AFTER the drag is released, not while selecting.
@@ -118,77 +104,109 @@ function DiffFileSection({
   // stay distinguishable (at rest each commented line shows only a quiet gutter marker, not a full wash).
   const [hoveredThreadKey, setHoveredThreadKey] = useState<string | null>(null);
 
-  // Rows per hunk, each tagged with a running flat index so a contiguous selection is a plain index range
-  // and syntax tokens (one highlight pass over the whole file) can be looked up by that same index.
-  const hunks = useMemo(() => {
-    let flat = 0;
-    return file.hunks.map((hunk, hi) => {
-      const rows: FileRow[] = rowsFromHunk(hunk, hi * 100_000).map((r) => ({
-        ...r,
-        flatIdx: flat++,
-        hunkIdx: hi,
-      }));
-      return { hunk, hi, rows };
-    });
-  }, [file]);
-  const flatRows = useMemo(() => hunks.flatMap((h) => h.rows), [hunks]);
-  const lang = useMemo(() => langFromPath(file.path), [file.path]);
-  const lineTokens = useHighlightTokens(
-    flatRows.map((r) => r.code).join("\n"),
-    lang,
-    false,
-  );
+  // The whole diff's skeleton: structural items (file/note/hunk/row) for every file, plus O(1) lookups
+  // keyed by the GLOBAL, monotonic row index `gIdx`. `rowsByGIdx` is built in the SAME order `gIdx` is
+  // assigned, so a contiguous selection is a plain `slice(lo, hi + 1)` over it. Line→gIdx maps and the
+  // file's last row are namespaced per file (line numbers reset per file) for comment anchoring.
+  const built = useMemo(() => {
+    const structural: DiffItem[] = [];
+    const rowsByGIdx: FileRow[] = [];
+    const rowsByFile: FileRow[][] = [];
+    const lineMapByFile: Map<string, number>[] = [];
+    const lastIdxByFile: number[] = [];
+    let maxCodeLen = 0;
+    let gIdx = 0;
 
-  const range = selection
-    ? {
-        lo: Math.min(selection.anchorIdx, selection.headIdx),
-        hi: Math.max(selection.anchorIdx, selection.headIdx),
+    files.forEach((file, fileIdx) => {
+      structural.push({ kind: "file", key: fileKey(file), file, fileIdx });
+      const fileRows: FileRow[] = [];
+      const lineMap = new Map<string, number>();
+      if (file.binary) {
+        structural.push({ kind: "note", key: `note:${fileIdx}`, text: "Binary file" });
+      } else if (file.hunks.length === 0) {
+        structural.push({
+          kind: "note",
+          key: `note:${fileIdx}`,
+          text: "Diff hidden — file too large",
+        });
+      } else {
+        file.hunks.forEach((hunk, hi) => {
+          const hunkKey = fileIdx * HUNK_KEY_STRIDE + hi;
+          structural.push({
+            kind: "hunk",
+            key: `hunk:${fileIdx}:${hi}`,
+            label: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
+          });
+          for (const r of rowsFromHunk(hunk, hi * HUNK_KEY_STRIDE)) {
+            const row: FileRow = { ...r, gIdx, fileIdx, hunkKey };
+            if (row.oldNo != null) lineMap.set(`old:${row.oldNo}`, gIdx);
+            if (row.newNo != null) lineMap.set(`new:${row.newNo}`, gIdx);
+            if (row.code.length > maxCodeLen) maxCodeLen = row.code.length;
+            rowsByGIdx[gIdx] = row;
+            fileRows.push(row);
+            structural.push({ kind: "row", key: `row:${gIdx}`, row, fileIdx, hunkKey });
+            gIdx++;
+          }
+        });
       }
-    : null;
+      rowsByFile[fileIdx] = fileRows;
+      lineMapByFile[fileIdx] = lineMap;
+      lastIdxByFile[fileIdx] = fileRows.length
+        ? fileRows[fileRows.length - 1].gIdx
+        : -1;
+    });
 
-  // Map a stored line anchor (side + end line) back to the flat row it docks under, so a queued/sent
-  // comment re-attaches to the diff exactly where it was made. Falls back across sides, then to the last
-  // row, so a comment never disappears even if its exact line isn't in view.
-  const rowIdxByLine = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of flatRows) {
-      if (r.oldNo != null) m.set(`old:${r.oldNo}`, r.flatIdx);
-      if (r.newNo != null) m.set(`new:${r.newNo}`, r.flatIdx);
-    }
-    return m;
-  }, [flatRows]);
-  const lastIdx = flatRows.length ? flatRows[flatRows.length - 1].flatIdx : -1;
-  const anchorIdxFor = useCallback(
-    (a: { oldEnd?: number; newEnd?: number }) => {
-      const end = anchorEnd(a);
-      if (!end) return lastIdx;
-      return (
-        rowIdxByLine.get(`${end.side}:${end.line}`) ??
-        rowIdxByLine.get(`new:${end.line}`) ??
-        rowIdxByLine.get(`old:${end.line}`) ??
-        lastIdx
-      );
-    },
-    [rowIdxByLine, lastIdx],
-  );
+    return {
+      structural,
+      rowsByGIdx,
+      rowsByFile,
+      lineMapByFile,
+      lastIdxByFile,
+      maxCodeLen,
+    };
+  }, [files]);
+
+  // Stable monospace content width computed from data (nothing is mounted to measure): as wide as the
+  // WIDEST code line so add/del tints + the selection/anchor wash span the full width even scrolled right;
+  // `minWidth:100%` (applied on the spacer/rows) keeps it never narrower than the container.
+  const contentWidth = `calc(${GUTTER * 2 + SIGN}px + ${Math.max(built.maxCodeLen, MIN_CODE_LEN)}ch)`;
 
   // Queued (still in the composer, removable) + sent (read back from review_comments_card messages, so they
-  // persist on the diff after the batch is sent) threads for THIS file. One pass builds: `threadsByIdx`
-  // (grouped by docking row, for rendering); `anchoredIdx` (every commented row — gets a quiet gutter marker
-  // at rest); and `rowsByKey` (each thread's exact rows — the full wash lights up only for the hovered one,
-  // so overlapping comments stay legible).
-  const { threadsByIdx, anchoredIdx, rowsByKey } = useMemo(() => {
+  // persist on the diff after the batch is sent) threads across ALL files. One pass builds: `threadsByGIdx`
+  // (grouped by docking gIdx, for rendering); `anchoredIdx` (every commented row — gets a quiet gutter
+  // marker at rest); and `rowsByKey` (each thread's exact rows — the full wash lights up only for the
+  // hovered one, so overlapping comments stay legible).
+  const { threadsByGIdx, anchoredIdx, rowsByKey } = useMemo(() => {
     const byIdx = new Map<number, InlineThread[]>();
     const anchored = new Set<number>();
     const rowsByKey = new Map<string, number[]>();
-    const rowsForAnchor = (a: {
-      oldStart?: number;
-      oldEnd?: number;
-      newStart?: number;
-      newEnd?: number;
-    }): number[] => {
+    const fileIdxByPath = new Map<string, number>();
+    files.forEach((f, i) => fileIdxByPath.set(f.path, i));
+
+    // Map a stored line anchor (side + end line) back to the file-local row it docks under, so a queued/sent
+    // comment re-attaches exactly where it was made. Falls back across sides, then to the file's last row,
+    // so a comment never disappears even if its exact line isn't present.
+    const anchorIdxFor = (
+      fileIdx: number,
+      a: { oldEnd?: number; newEnd?: number },
+    ): number => {
+      const lastIdx = built.lastIdxByFile[fileIdx] ?? -1;
+      const end = anchorEnd(a);
+      if (!end) return lastIdx;
+      const lineMap = built.lineMapByFile[fileIdx];
+      return (
+        lineMap.get(`${end.side}:${end.line}`) ??
+        lineMap.get(`new:${end.line}`) ??
+        lineMap.get(`old:${end.line}`) ??
+        lastIdx
+      );
+    };
+    const rowsForAnchor = (
+      fileIdx: number,
+      a: { oldStart?: number; oldEnd?: number; newStart?: number; newEnd?: number },
+    ): number[] => {
       const out: number[] = [];
-      for (const r of flatRows) {
+      for (const r of built.rowsByFile[fileIdx] ?? []) {
         const inOld =
           a.oldStart != null &&
           r.oldNo != null &&
@@ -199,32 +217,32 @@ function DiffFileSection({
           r.newNo != null &&
           r.newNo >= a.newStart &&
           r.newNo <= a.newEnd!;
-        if (inOld || inNew) out.push(r.flatIdx);
+        if (inOld || inNew) out.push(r.gIdx);
       }
       return out;
     };
     const add = (
+      fileIdx: number,
       thread: InlineThread,
-      lines: {
-        oldStart?: number;
-        oldEnd?: number;
-        newStart?: number;
-        newEnd?: number;
-      },
+      lines: { oldStart?: number; oldEnd?: number; newStart?: number; newEnd?: number },
     ) => {
-      const rows = rowsForAnchor(lines);
+      const rows = rowsForAnchor(fileIdx, lines);
       rowsByKey.set(thread.key, rows);
       for (const idx of rows) anchored.add(idx);
-      const dockIdx = anchorIdxFor(lines);
+      const dockIdx = anchorIdxFor(fileIdx, lines);
       const list = byIdx.get(dockIdx);
       if (list) list.push(thread);
       else byIdx.set(dockIdx, [thread]);
     };
+
     for (const m of messages ?? []) {
       if (m.card?.type !== "review_comments_card") continue;
       m.card.items.forEach((it, i) => {
-        if (it.lines?.path !== file.path) return;
+        if (!it.lines) return;
+        const fileIdx = fileIdxByPath.get(it.lines.path);
+        if (fileIdx == null) return;
         add(
+          fileIdx,
           {
             key: `sent:${m.ts}:${i}`,
             state: "sent",
@@ -236,8 +254,11 @@ function DiffFileSection({
       });
     }
     for (const c of comments) {
-      if (c.lines?.path !== file.path) continue;
+      if (!c.lines) continue;
+      const fileIdx = fileIdxByPath.get(c.lines.path);
+      if (fileIdx == null) continue;
       add(
+        fileIdx,
         {
           key: `queued:${c.id}`,
           state: "queued",
@@ -248,8 +269,8 @@ function DiffFileSection({
         c.lines,
       );
     }
-    return { threadsByIdx: byIdx, anchoredIdx: anchored, rowsByKey };
-  }, [messages, comments, file.path, flatRows, anchorIdxFor, removeComment]);
+    return { threadsByGIdx: byIdx, anchoredIdx: anchored, rowsByKey };
+  }, [built, files, messages, comments, removeComment]);
 
   // The hovered thread's exact rows — these get the full accent wash; every other commented row shows only
   // the quiet gutter marker. Empty when nothing is hovered.
@@ -258,11 +279,89 @@ function DiffFileSection({
     [hoveredThreadKey, rowsByKey],
   );
 
-  // Clicking outside the section (or Escape) drops the in-progress selection + its composer.
+  // Structural items with each docked comment spliced in immediately after its row. Rebuilds only when the
+  // skeleton or comment set changes — NOT while dragging (the composer, which does depend on selection, is
+  // spliced separately below).
+  const baseItems = useMemo(() => {
+    if (threadsByGIdx.size === 0) return built.structural;
+    const out: DiffItem[] = [];
+    for (const item of built.structural) {
+      out.push(item);
+      if (item.kind === "row") {
+        const threads = threadsByGIdx.get(item.row.gIdx);
+        if (threads)
+          for (const t of threads)
+            out.push({ kind: "comment", key: `comment:${t.key}`, thread: t });
+      }
+    }
+    return out;
+  }, [built, threadsByGIdx]);
+
+  const range = selection
+    ? {
+        lo: Math.min(selection.anchorIdx, selection.headIdx),
+        hi: Math.max(selection.anchorIdx, selection.headIdx),
+      }
+    : null;
+  const selectedRows = range ? built.rowsByGIdx.slice(range.lo, range.hi + 1) : [];
+  const anchor = deriveLineAnchor(selectedRows);
+
+  // The single composer docks right after the tail row of the active selection — only once the drag is
+  // released (`!dragging`) and the selection yields a valid anchor. Keyed by the primitive `gIdx` so the
+  // splice memo stays stable across renders that don't move the composer.
+  const composerHi =
+    !dragging && selection && anchor && range ? range.hi : null;
+  const items = useMemo(() => {
+    if (composerHi == null) return baseItems;
+    const out: DiffItem[] = [];
+    for (const item of baseItems) {
+      out.push(item);
+      if (item.kind === "row" && item.row.gIdx === composerHi)
+        out.push({ kind: "composer", key: "composer" });
+    }
+    return out;
+  }, [baseItems, composerHi]);
+
+  const fileItemIndices = useMemo(() => {
+    const out: number[] = [];
+    items.forEach((it, i) => {
+      if (it.kind === "file") out.push(i);
+    });
+    return out;
+  }, [items]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // The `file`-item index whose section holds the first visible item — the header pinned to the top. Set
+  // inside `rangeExtractor` (which runs on every scroll) and read back at render to mark that one sticky.
+  const stickyFileIdxRef = useRef(0);
+
+  const rangeExtractor = useCallback(
+    (vr: VirtualRange) => {
+      const active =
+        [...fileItemIndices].reverse().find((i) => i <= vr.startIndex) ??
+        fileItemIndices[0] ??
+        0;
+      stickyFileIdxRef.current = active;
+      const next = new Set([active, ...defaultRangeExtractor(vr)]);
+      return [...next].sort((a, b) => a - b);
+    },
+    [fileItemIndices],
+  );
+
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => ESTIMATE[items[i].kind],
+    overscan: 12,
+    getItemKey: (i) => items[i].key,
+    rangeExtractor,
+  });
+
+  // Clicking outside the scroller (or Escape) drops the in-progress selection + its composer.
   useEffect(() => {
     if (!selection) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (sectionRef.current && !sectionRef.current.contains(e.target as Node))
+      if (scrollRef.current && !scrollRef.current.contains(e.target as Node))
         setSelection(null);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -277,12 +376,14 @@ function DiffFileSection({
   }, [selection]);
 
   const beginSelect = useCallback(
-    (idx: number, shift: boolean) => {
+    (gi: number, shift: boolean) => {
       setSelection((prev) => {
-        if (!shift || !prev) return { anchorIdx: idx, headIdx: idx };
-        if (flatRows[idx]?.hunkIdx !== flatRows[prev.anchorIdx]?.hunkIdx)
+        if (!shift || !prev) return { anchorIdx: gi, headIdx: gi };
+        if (
+          built.rowsByGIdx[gi]?.hunkKey !== built.rowsByGIdx[prev.anchorIdx]?.hunkKey
+        )
           return prev;
-        return { anchorIdx: prev.anchorIdx, headIdx: idx };
+        return { anchorIdx: prev.anchorIdx, headIdx: gi };
       });
       if (shift) return;
       // A plain press starts a drag: extend `head` as the pointer moves over rows, until mouseup. The
@@ -296,168 +397,232 @@ function DiffFileSection({
       };
       document.addEventListener("mouseup", onUp);
     },
-    [flatRows],
+    [built],
   );
 
   const onRowEnter = useCallback(
-    (idx: number) => {
-      setHoveredIdx(idx);
+    (gi: number) => {
+      setHoveredIdx(gi);
       if (draggingRef.current)
         setSelection((prev) => {
           if (!prev) return prev;
-          // Keep the drag-selection contiguous: only extend into rows that share the
-          // anchor row's hunk, so a drag that crosses a hunk-header divider doesn't
-          // fabricate a range over the elided region between two hunks.
-          if (flatRows[idx]?.hunkIdx !== flatRows[prev.anchorIdx]?.hunkIdx)
+          // Keep the drag-selection contiguous within a single hunk: `hunkKey` encodes `fileIdx`, so this
+          // also blocks a drag from crossing a hunk-header divider OR into another file.
+          if (
+            built.rowsByGIdx[gi]?.hunkKey !==
+            built.rowsByGIdx[prev.anchorIdx]?.hunkKey
+          )
             return prev;
-          return { ...prev, headIdx: idx };
+          return { ...prev, headIdx: gi };
         });
     },
-    [flatRows],
+    [built],
   );
-
-  const selectedRows = range ? flatRows.slice(range.lo, range.hi + 1) : [];
-  const anchor = deriveLineAnchor(selectedRows);
 
   const submitComment = useCallback(
     (note: string) => {
-      if (!anchor) return;
-      addLineComment({ path: file.path, ...anchor, note });
+      if (!anchor || !range) return;
+      const fileIdx = built.rowsByGIdx[range.lo]?.fileIdx;
+      if (fileIdx == null) return;
+      addLineComment({ path: files[fileIdx].path, ...anchor, note });
       setSelection(null);
     },
-    [anchor, addLineComment, file.path],
+    [anchor, range, addLineComment, built, files],
   );
 
+  const renderItem = useCallback(
+    (item: DiffItem) => {
+      switch (item.kind) {
+        case "file":
+          return <FileHeader file={item.file} first={item.fileIdx === 0} />;
+        case "note":
+          return (
+            <div
+              className="px-5 py-1"
+              style={{ background: "var(--term)", color: "var(--term-dim)" }}
+            >
+              {item.text}
+            </div>
+          );
+        case "hunk":
+          return (
+            <div
+              className="flex items-center px-3 py-1 text-[10px]"
+              style={{ background: "var(--term)", color: "var(--term-purple)" }}
+            >
+              {item.label}
+            </div>
+          );
+        case "row": {
+          const gi = item.row.gIdx;
+          const inActiveSel = range != null && gi >= range.lo && gi <= range.hi;
+          // Full wash only for the ACTIVE drag selection or the HOVERED comment's lines; every other
+          // commented row just gets a quiet gutter marker (so overlaps don't merge).
+          const selected = inActiveSel || hoveredRows.has(gi);
+          const marked = !selected && anchoredIdx.has(gi);
+          return (
+            <DiffRowLine
+              row={item.row}
+              tokens={tokenizeLineSync(item.row.code, fileLangByIdx[item.fileIdx])}
+              selected={selected}
+              marked={marked}
+              hovered={hoveredIdx === gi && !selected}
+              onMouseDownRow={(shift) => beginSelect(gi, shift)}
+              onMouseEnterRow={() => onRowEnter(gi)}
+              onMouseLeaveRow={() =>
+                setHoveredIdx((h) => (h === gi ? null : h))
+              }
+              onAdd={() => beginSelect(gi, false)}
+            />
+          );
+        }
+        case "comment":
+          return (
+            <InlineCommentThread
+              state={item.thread.state}
+              label={item.thread.label}
+              note={item.thread.note}
+              onRemove={item.thread.onRemove}
+              onHoverChange={(h) =>
+                setHoveredThreadKey(h ? item.thread.key : null)
+              }
+            />
+          );
+        case "composer":
+          return anchor ? (
+            <InlineComposer
+              label={anchorLabel(anchor)}
+              onAdd={submitComment}
+              onCancel={() => setSelection(null)}
+            />
+          ) : null;
+      }
+    },
+    [
+      range,
+      anchor,
+      hoveredRows,
+      anchoredIdx,
+      hoveredIdx,
+      fileLangByIdx,
+      beginSelect,
+      onRowEnter,
+      submitComment,
+    ],
+  );
+
+  if (isLoading) {
+    return <div className="px-8 py-7 text-[13px] text-faint">Loading diff…</div>;
+  }
+  if (error || !data || data.files.length === 0) {
+    return (
+      <div className="px-8 py-7 text-[13px] text-faint">
+        No changes yet — this job hasn&rsquo;t modified any tracked files.
+      </div>
+    );
+  }
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const stickyIndex = stickyFileIdxRef.current;
+
+  return (
+    <div
+      ref={scrollRef}
+      className="h-full overflow-y-auto overflow-x-auto"
+      style={{ background: "var(--term)" }}
+    >
+      {data.truncated ? (
+        <div className="border-b border-border bg-surface-2 px-5 py-2 font-mono text-[11px] text-dim">
+          Diff truncated — open the PR to see everything.
+        </div>
+      ) : null}
+      <div
+        className="relative font-mono text-[11px]"
+        style={{
+          height: virtualizer.getTotalSize(),
+          width: contentWidth,
+          minWidth: "100%",
+          lineHeight: 1.75,
+        }}
+      >
+        {virtualItems.map((vi) => {
+          const sticky = vi.index === stickyIndex;
+          return (
+            <div
+              key={vi.key}
+              data-index={vi.index}
+              ref={virtualizer.measureElement}
+              className="left-0 top-0"
+              style={
+                sticky
+                  ? {
+                      position: "sticky",
+                      top: 0,
+                      zIndex: 11,
+                      width: contentWidth,
+                      minWidth: "100%",
+                    }
+                  : {
+                      position: "absolute",
+                      transform: `translateY(${vi.start}px)`,
+                      width: contentWidth,
+                      minWidth: "100%",
+                    }
+              }
+            >
+              {renderItem(items[vi.index])}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The sticky per-file bar: path + add/del/status badges. Always shown (files are never collapsed). Pinned
+ *  to the scroller's left edge so it stays in view during horizontal scroll, exactly like the inline
+ *  comment/composer cards. */
+function FileHeader({ file, first }: { file: JobDiffFile; first: boolean }) {
   const headerPath =
     file.status === "renamed" && file.oldPath
       ? `${file.oldPath} → ${file.path}`
       : file.path;
-
   return (
     <div
-      ref={sectionRef}
-      className="border-t border-term-border first:border-t-0"
+      className="flex w-full items-center gap-2 px-5 py-2.5"
+      style={{
+        position: "sticky",
+        left: 0,
+        background: "var(--surface-2)",
+        borderBottom: "1px solid var(--border)",
+        borderTop: first ? undefined : "1px solid var(--term-border)",
+      }}
     >
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        className="sticky top-0 z-10 flex w-full items-center gap-2 px-5 py-2.5 text-left"
-        style={{
-          background: "var(--surface-2)",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <ChevronDown
-          size={13}
-          strokeWidth={2.4}
-          className="flex-none text-dim transition-transform"
-          style={collapsed ? { transform: "rotate(-90deg)" } : undefined}
-        />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text">
-          {headerPath}
-        </span>
-        {file.additions > 0 ? (
-          <span
-            className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
-            style={{ color: "var(--add)", background: "var(--add-bg)" }}
-          >
-            +{file.additions}
-          </span>
-        ) : null}
-        {file.deletions > 0 ? (
-          <span
-            className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
-            style={{ color: "var(--del)", background: "var(--del-bg)" }}
-          >
-            −{file.deletions}
-          </span>
-        ) : null}
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text">
+        {headerPath}
+      </span>
+      {file.additions > 0 ? (
         <span
-          className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[9px] font-semibold tracking-[0.04em] uppercase"
-          style={{ color: "var(--dim)", background: "var(--surface-3)" }}
+          className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
+          style={{ color: "var(--add)", background: "var(--add-bg)" }}
         >
-          {file.status}
+          +{file.additions}
         </span>
-      </button>
-
-      {collapsed ? null : (
-        <div
-          className="font-mono text-[11px]"
-          style={{ background: "var(--term)", lineHeight: 1.75, overflowX: "auto" }}
+      ) : null}
+      {file.deletions > 0 ? (
+        <span
+          className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[10px] font-semibold"
+          style={{ color: "var(--del)", background: "var(--del-bg)" }}
         >
-          {/* max-content + min-width:100% makes every row as wide as the WIDEST line, so the add/del tints
-              and the selection/anchor highlight span the full content width even when scrolled right. */}
-          <div style={{ width: "max-content", minWidth: "100%", padding: "8px 0" }}>
-          {file.binary ? (
-            <div className="px-5 py-1 text-term-dim" style={{ color: "var(--term-dim)" }}>
-              Binary file
-            </div>
-          ) : file.hunks.length === 0 ? (
-            <div className="px-5 py-1" style={{ color: "var(--term-dim)" }}>
-              Diff hidden — file too large
-            </div>
-          ) : (
-            hunks.map(({ hunk, hi, rows }) => (
-              <div key={hi}>
-                <div
-                  className="flex items-center px-3 py-1 text-[10px]"
-                  style={{ color: "var(--term-purple)" }}
-                >
-                  @@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},
-                  {hunk.newLines} @@
-                </div>
-                {rows.map((r) => {
-                  const inActiveSel =
-                    range != null &&
-                    r.flatIdx >= range.lo &&
-                    r.flatIdx <= range.hi;
-                  // Full wash only for the ACTIVE drag selection or the HOVERED comment's lines; every
-                  // other commented row just gets a quiet gutter marker (so overlaps don't merge).
-                  const selected = inActiveSel || hoveredRows.has(r.flatIdx);
-                  const marked = !selected && anchoredIdx.has(r.flatIdx);
-                  return (
-                    <Fragment key={r.key}>
-                      <DiffRowLine
-                        row={r}
-                        tokens={lineTokens?.[r.flatIdx]}
-                        selected={selected}
-                        marked={marked}
-                        hovered={hoveredIdx === r.flatIdx && !selected}
-                        onMouseDownRow={(shift) => beginSelect(r.flatIdx, shift)}
-                        onMouseEnterRow={() => onRowEnter(r.flatIdx)}
-                        onMouseLeaveRow={() =>
-                          setHoveredIdx((h) => (h === r.flatIdx ? null : h))
-                        }
-                        onAdd={() => beginSelect(r.flatIdx, false)}
-                      />
-                      {threadsByIdx.get(r.flatIdx)?.map((t) => (
-                        <InlineCommentThread
-                          key={t.key}
-                          state={t.state}
-                          label={t.label}
-                          note={t.note}
-                          onRemove={t.onRemove}
-                          onHoverChange={(h) =>
-                            setHoveredThreadKey(h ? t.key : null)
-                          }
-                        />
-                      ))}
-                      {!dragging && range != null && r.flatIdx === range.hi && anchor ? (
-                        <InlineComposer
-                          label={anchorLabel(anchor)}
-                          onAdd={submitComment}
-                          onCancel={() => setSelection(null)}
-                        />
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </div>
-            ))
-          )}
-          </div>
-        </div>
-      )}
+          −{file.deletions}
+        </span>
+      ) : null}
+      <span
+        className="flex-none rounded-[4px] px-1.5 py-[1.5px] font-mono text-[9px] font-semibold tracking-[0.04em] uppercase"
+        style={{ color: "var(--dim)", background: "var(--surface-3)" }}
+      >
+        {file.status}
+      </span>
     </div>
   );
 }
@@ -512,6 +677,7 @@ function DiffRowLine({
       : { background: hovered ? "rgba(255,255,255,0.035)" : baseBg };
   return (
     <div
+      data-diff-row
       className="relative flex cursor-pointer select-none"
       style={rowStyle}
       onMouseDown={(e) => {
@@ -618,7 +784,7 @@ function InlineCommentThread({
       className="group my-2 rounded-[9px]"
       style={{
         // Pinned to the scroller's left edge + width-capped so the thread stays readable and doesn't
-        // stretch to the widest code line inside the horizontal max-content scroller.
+        // stretch to the widest code line inside the horizontal scroller.
         position: "sticky",
         left: 0,
         margin: "8px 14px",
