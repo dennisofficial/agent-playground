@@ -22,7 +22,6 @@ import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
   legRotationRule,
-  svcNudgeRule,
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
@@ -42,6 +41,10 @@ import {
   type StructuredPatchHunk,
   resolveContextLimit,
 } from './engine.types';
+import type { AdapterRunArgs, EngineLocalHooks } from '@workspace/agent-engine';
+import { CodexAppServerAdapter } from '@workspace/agent-engine';
+import { ClaudeAdapter } from './claude-adapter';
+import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
 
 /**
  * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
@@ -577,24 +580,87 @@ export class EngineCore {
   }
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
+    const appserver = args.engine === 'codex' && this.codexAppServerEnabled();
     return this.stampUsageProvenance(
-      await (args.engine === 'codex' ? this.runCodex(args) : this.runClaude(args)),
+      await (args.engine === 'codex'
+        ? appserver
+          ? this.runCodexAppServer(args)
+          : this.runCodex(args)
+        : new ClaudeAdapter(this.runClaude.bind(this), args).run(this.toAdapterArgs(args))),
       args,
+      appserver,
+    );
+  }
+
+  /**
+   * Map the host-only {@link RunEngineArgs} down to the slim, vendor-agnostic {@link AdapterRunArgs} the
+   * {@link EngineAdapter} port consumes. Only the cross-engine fields cross this seam — the Claude-specific
+   * extras (`steerInput`/`rotationNudge`/`skills`/`grantedSkills`/`repoConventions`/…) are retained by
+   * `ClaudeAdapter` from the full args, so nothing `runClaude` needs is lost.
+   *
+   * `authOverride`, when passed, wins over `args.auth` — used by {@link runCodexAppServer}, which (unlike
+   * the Claude branch) MUST hand the port a resolved secret: `CodexAppServerAdapter.run` throws on a
+   * missing `auth`, whereas `args.auth` alone may be undefined (resolved lazily inside legacy `runCodex`).
+   */
+  private toAdapterArgs(args: RunEngineArgs, authOverride?: EngineAuth): AdapterRunArgs {
+    return {
+      engine: args.engine,
+      task: args.task,
+      cwd: args.cwd,
+      systemPrompt: args.systemPrompt,
+      mode: args.mode,
+      sandboxKey: args.sandboxKey,
+      ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      ...(authOverride ? { auth: authOverride } : args.auth ? { auth: args.auth } : {}),
+      ...(args.model ? { model: args.model } : {}),
+      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
+      ...(args.writableRoots ? { writableRoots: args.writableRoots } : {}),
+      ...(args.richStream !== undefined ? { richStream: args.richStream } : {}),
+      ...(args.persistAuthRefresh !== undefined ? { persistAuthRefresh: args.persistAuthRefresh } : {}),
+      ...(args.signal ? { signal: args.signal } : {}),
+      ...(args.onEvent ? { onEvent: args.onEvent } : {}),
+    };
+  }
+
+  /**
+   * Whether a Codex turn should route through the `codex app-server` JSON-RPC {@link CodexAppServerAdapter}
+   * (thread 1's `@workspace/codex-sdk`) instead of the legacy `@openai/codex-sdk` exec-JSONL `runCodex`.
+   * Read straight off `process.env` (like other run-time knobs in this file, e.g.
+   * `ENGINE_STREAM_CLOSED_THRESHOLD` in `runClaude`) rather than {@link EngineCoreConfig} — this is a
+   * default-OFF cutover flag, not host-resolved per-env config. Default OFF: `runCodex` stays the default
+   * Codex path until the two review roles cut over (see the locked decision record).
+   */
+  private codexAppServerEnabled(): boolean {
+    return process.env.CODEX_APPSERVER_ENABLED === 'true' || process.env.CODEX_APPSERVER_ENABLED === '1';
+  }
+
+  /**
+   * Route a Codex turn through the port: resolve auth up front (the adapter throws on a missing secret,
+   * so resolve here rather than let it throw a less specific error), then hand off to
+   * {@link CodexAppServerAdapter}. A fresh {@link BackendCodexHomeProvisioner} per call mirrors how
+   * `ClaudeAdapter` is constructed fresh per turn — no cross-turn state.
+   */
+  private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
+    const auth = this.resolveAuth('codex', args.auth);
+    return new CodexAppServerAdapter(new BackendCodexHomeProvisioner(this.homeRoot())).run(
+      this.toAdapterArgs(args, auth),
     );
   }
 
   /**
    * Stamp display-only provenance the engine paths don't carry themselves onto the returned usage: the
-   * `engine` that ran (so a Codex turn with no `model` still labels as "Codex") and the `reasoningEffort`
-   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result). Applied
-   * at BOTH dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
+   * `engine` that ran (so a Codex turn with no `model` still labels as "Codex"), the `reasoningEffort`
+   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result), and
+   * — Codex only — whether this turn ran through the app-server port (`appserver`). Applied at BOTH
+   * dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
    * is covered without touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site.
    * `??=` so a path that ever populates these itself wins. No-op when the run produced no usage.
    */
-  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs): EngineRunResult {
+  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs, appserver?: boolean): EngineRunResult {
     if (res.usage) {
       res.usage.engine ??= args.engine;
       if (args.modelReasoningEffort) res.usage.reasoningEffort ??= args.modelReasoningEffort;
+      if (args.engine === 'codex') res.usage.appserver ??= !!appserver;
     }
     return res;
   }
@@ -609,6 +675,11 @@ export class EngineCore {
    * `bridgeToolNames` are the qualified `mcp__<server>__<tool>` names to auto-approve (Claude only).
    * `codexBridgeTools` are the BARE host tool names for a Codex execute turn — routed into `runCodex`,
    * which renders them as an `[mcp_servers.atlasbridge]` config.toml block (the Codex tool bridge).
+   *
+   * `CodexAppServerAdapter` carries no bridge/tool-bridge wiring in thread 2 (`writeGuard`/`richStream`
+   * capabilities only), so a call with non-empty `codexBridgeTools`/`codexExtraMcpServers` ALWAYS falls
+   * back to legacy `runCodex` regardless of `CODEX_APPSERVER_ENABLED` — a caller that explicitly needs
+   * the bridge gets the path that actually supports it, rather than silently dropping its tools.
    */
   async runWithExtras(
     args: RunEngineArgs,
@@ -617,11 +688,19 @@ export class EngineCore {
     codexBridgeTools?: string[],
     codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
+    const hasCodexBridgeExtras =
+      (codexBridgeTools?.length ?? 0) > 0 || Object.keys(codexExtraMcpServers ?? {}).length > 0;
+    const appserver = args.engine === 'codex' && this.codexAppServerEnabled() && !hasCodexBridgeExtras;
     return this.stampUsageProvenance(
       await (args.engine === 'codex'
-        ? this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
-        : this.runClaude(args, extraClaudeOptions, bridgeToolNames)),
+        ? appserver
+          ? this.runCodexAppServer(args)
+          : this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
+        : new ClaudeAdapter(this.runClaude.bind(this), args, extraClaudeOptions, bridgeToolNames).run(
+            this.toAdapterArgs(args),
+          )),
       args,
+      appserver,
     );
   }
 
@@ -631,6 +710,7 @@ export class EngineCore {
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
+    hooks?: EngineLocalHooks,
   ): Promise<EngineRunResult> {
     const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge } =
       args;
@@ -695,7 +775,7 @@ export class EngineCore {
       capping = true;                           // the model's NEXT natural result ends the turn (no forced kill)
       onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)` });
       cancelEnd();
-      if (bgTaskCapRule.enabled) input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      if (bgTaskCapRule.enabled) hooks?.steer?.push(bgTaskCapRule.render({}));
       // NO capKillTimer / NO input.end() — the cap is purely advisory; stdin is never severed.
     };
     const armHoldTimer = (): void => {
@@ -721,11 +801,6 @@ export class EngineCore {
     // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
     let firedNudgeLevel = -1;
     let injectRotationNudge = (_text: AgentMessage): void => {}; // real impl set below when streaming
-    // ENGINE-LOCAL atlas-svc nudge throttle (see the PostToolUse hook below): the context-token occupancy at
-    // which we last nudged Atlas to wrap a long-running command in `atlas-svc`. null = never nudged (first
-    // matching command always fires); then at most once per `svcNudgeDeltaTokens` of context growth. Per-turn
-    // scope like `firedNudgeLevel` — a relapse in a fresh turn re-arms the first-hit fire.
-    let lastSvcNudgeTokens: number | null = null;
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
@@ -751,12 +826,16 @@ export class EngineCore {
           injectSteer(s.id, fromExternal(s.text));
         }
       };
-      // The rotation nudge rides the SAME injection as an operator steer (priority:'now', cancels any pending
-      // close) — but carries no stimulus id, so it emits no `input_ack` (nothing durable to converge on).
-      injectRotationNudge = (text: AgentMessage): void => {
+      // One shared live-injection closure: push a message into the open stream as a priority:'now' steer,
+      // cancelling any pending close — the SAME mechanism an operator steer uses, but with no stimulus id (so
+      // it emits no `input_ack`; nothing durable to converge on). Both the engine-local rotation nudge and the
+      // capability-gated `hooks.steer` channel (bg-task-cap notice, thread-3 JIT steers) route through it.
+      const liveSteerPush = (text: string): void => {
         cancelEnd();
-        input.push(steerUserMessage(text, 'now'));
+        input.push(steerUserMessage(fromExternal(text), 'now'));
       };
+      injectRotationNudge = (text: AgentMessage): void => liveSteerPush(text);
+      if (hooks?.steer) hooks.steer.push = liveSteerPush;
       void (async () => {
         try {
           while (!turnEnded && steerIter) {
@@ -839,12 +918,6 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
-    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled + throttle window sourced from the
-    // `svc-nudge` JIT rule. Reads the live `contextTokens` (declared after `options`; the hook only fires
-    // during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
-    const svcNudgeEnabled = svcNudgeRule.enabled;
-    const svcNudgeDeltaTokens = svcNudgeRule.throttle!.deltaTokens;
-
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
     const options: Options = {
@@ -890,6 +963,7 @@ export class EngineCore {
           skills: args.skills,
           granted: new Set(args.grantedSkills ?? []),
         },
+        hooks?.writeGuard,
       ),
       permissionMode: planMode ? 'plan' : 'default',
       // Suppress the SDK's default "Co-Authored-By: Claude" attribution.
@@ -907,13 +981,13 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
-      // atlas-svc nudge: when Atlas runs a Bash command that smells long-running (dev server / `docker
-      // compose up` / watcher / bare-backgrounded), append a reminder to that command's result pointing it at
-      // the `atlas-svc` supervisor. Uses PostToolUse `additionalContext` (a free-form string yielded to the
-      // model after the tool result — verified against the shipped CLI; `updatedToolOutput` is shape-validated
-      // against Bash's output and would error). Throttled by context-token growth so back-to-back commands
-      // don't spam. Fires post-execution and only ATTACHES context — never alters the command or its output.
-      ...(svcNudgeEnabled
+      // Post-tool-use JIT context (capability-gated): after a Bash tool result, ask the hook whether to
+      // attach free-form context to it (today: the atlas-svc nudge — when Atlas runs a long-running command,
+      // point it at the `atlas-svc` supervisor). Delivered as PostToolUse `additionalContext` (a string yielded
+      // to the model after the tool result — verified against the shipped CLI; `updatedToolOutput` is
+      // shape-validated against Bash's output and would error). The hook owns the match/throttle/render; here
+      // we only wrap a non-null result. Present only when the caller wires `hooks.postToolUseContext`.
+      ...(hooks?.postToolUseContext
         ? {
             hooks: {
               PostToolUse: [
@@ -921,18 +995,17 @@ export class EngineCore {
                   matcher: 'Bash',
                   hooks: [
                     async (input) => {
-                      const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
-                      if (inp.tool_name !== 'Bash') return {};
-                      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
-                      if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd)) return {};
-                      const now = contextTokens ?? 0;
-                      // First matching command always fires; then at most once per delta of context growth.
-                      if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
-                      lastSvcNudgeTokens = now;
+                      const inp = input as { tool_name?: string; tool_input?: unknown };
+                      const additionalContext = hooks.postToolUseContext!(
+                        inp.tool_name ?? '',
+                        inp.tool_input,
+                        contextTokens ?? 0,
+                      );
+                      if (additionalContext == null) return {};
                       return {
                         hookSpecificOutput: {
                           hookEventName: 'PostToolUse' as const,
-                          additionalContext: svcNudgeRule.render({ command: cmd }),
+                          additionalContext,
                         },
                       };
                     },
@@ -1617,6 +1690,7 @@ export function makeCanUseTool(
   roots: string | string[],
   onPlan: (plan: string) => void,
   skillGuard?: SkillGuardCtx,
+  writeGuard?: (toolName: string, input: unknown) => { allow: boolean; reason?: string },
 ): CanUseTool {
   const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
@@ -1648,6 +1722,10 @@ export function makeCanUseTool(
           message: `Write outside the allowed roots (${allowedRoots.join(', ')}) is not allowed: ${path}`,
         };
       }
+    }
+    if (writeGuard) {
+      const verdict = writeGuard(toolName, input);
+      if (!verdict.allow) return { behavior: 'deny', message: verdict.reason ?? 'Denied by write guard.' };
     }
     return { behavior: 'allow', updatedInput: input };
   };

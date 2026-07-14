@@ -1,0 +1,54 @@
+{
+  "name": "@workspace/agent-engine",
+  "version": "0.1.0",
+  "description": "Engine-agnostic agent abstraction for Atlas: the EngineAdapter port + EngineCapability model + vendor-agnostic leaf types, layered on @workspace/codex-sdk.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./src/index.ts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./src/index.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "pnpm tsup",
+    "dev": "nodemon",
+    "prepare": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "agent",
+    "engine",
+    "adapter",
+    "codex",
+    "claude"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@workspace/codex-sdk": "workspace:*",
+    "diff": "^9.0.0"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.15.32",
+    "@types/node": "^25.6.0",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.8.3",
+    "prettier-plugin-organize-imports": "^4.3.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^3.0.0"
+  }
+}
