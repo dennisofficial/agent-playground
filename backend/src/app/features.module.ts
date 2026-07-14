@@ -28,6 +28,7 @@ import { TitlingModule } from './titling';
 import { TestBridgeModule } from './test-bridge';
 import { PromptKitModule } from './prompt-kit';
 import { ThreadKindModule } from './thread-kind';
+import { StageKindModule } from './stage-kind';
 
 /**
  * Atlas v2 APP layer — the composition seam for the edge and the local execution substrate:
@@ -59,6 +60,7 @@ import { ThreadKindModule } from './thread-kind';
     ClusterModule,
     PromptKitModule,
     ThreadKindModule,
+    StageKindModule,
     AnalyticsModule,
     AuthModule,
     OnboardingModule,

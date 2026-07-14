@@ -115,7 +115,7 @@ export class AutoFixStage {
   }
 
   private reasoningEffortFor(
-    kind: 'review_lens' | 'post_review',
+    kind: 'review_agent' | 'review_fix',
     engine: AutoFixOptions['engine'],
   ): Pick<RunEngineArgs, 'modelReasoningEffort'> {
     const spec = threadKindSpec(kind);
@@ -317,7 +317,7 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
-        ...this.reasoningEffortFor('review_lens', engine),
+        ...this.reasoningEffortFor('review_agent', engine),
       });
       await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
       if (ctx.jobId) {
@@ -442,7 +442,7 @@ export class AutoFixStage {
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
-        ...this.reasoningEffortFor('post_review', engine),
+        ...this.reasoningEffortFor('review_fix', engine),
       });
     } catch (err) {
       await harness?.abort().catch(() => undefined);

@@ -2025,11 +2025,11 @@ export class ThreadDriver implements JobDispatcher {
       for (const c of already) {
         if (c.status === 'done') continue;
         const sub =
-          c.kind === 'review_lens'
+          c.kind === 'review_agent'
             ? { lensId: String((c.config as { lensId?: string }).lensId ?? c.id) }
             : { fix: true as const };
         await this.autofix.emitReviewNotice(ctx, sub, notice).catch(() => undefined);
-        if (c.kind === 'review_lens') {
+        if (c.kind === 'review_agent') {
           await this.store.setThreadReviewFindings(c.id, []).catch(() => undefined);
         }
         // The review lifecycle genuinely completed (there was nothing to review), so the STEP is `done` —
@@ -2057,7 +2057,7 @@ export class ThreadDriver implements JobDispatcher {
     const lenses = reviewAgentsForThread(thread.type, frameworkSkillNames);
     const childSpecs = [
       ...lenses.map((l) => ({
-        kind: 'review_lens' as ThreadRole,
+        kind: 'review_agent' as ThreadRole,
         brief: l.label,
         config: l.id === 'framework' ? { lensId: l.id, skills: frameworkSkillNames } : { lensId: l.id },
       })),
@@ -2074,8 +2074,8 @@ export class ThreadDriver implements JobDispatcher {
       });
     if (children.length === 0) return;
 
-    const lensChildren = children.filter((c) => c.kind === 'review_lens');
-    const postReview = children.find((c) => c.kind === 'post_review');
+    const lensChildren = children.filter((c) => c.kind === 'review_agent');
+    const postReview = children.find((c) => c.kind === 'review_fix');
 
     // ANCHOR — same web contract as before: the `autofix_anchor` row + change-signal post (the review card
     // latches `meta.autofixAnchor`; each lens/fix turn streams on `autofix:*` lanes).
@@ -2172,7 +2172,7 @@ export class ThreadDriver implements JobDispatcher {
     try {
       const siblings = await this.store.reviewChildren(thread.id);
       const all = siblings
-        .filter((c) => c.kind === 'review_lens')
+        .filter((c) => c.kind === 'review_agent')
         .flatMap((c) => c.reviewFindings ?? []);
       const minSeverity =
         (child.config as { minSeverity?: FindingSeverity }).minSeverity ?? 'medium';
