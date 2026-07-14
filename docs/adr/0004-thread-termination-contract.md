@@ -3,6 +3,11 @@
 - **Status:** Accepted — Phase 1 implemented (typed `complete_thread` + transient retry + `incomplete`); Phases 2 (live-verification judge) & 3 (`block_thread` + brain routing) pending.
 - **Date:** 2026-07-03
 - **Relates to:** ADR 0001 §18, §51–52 (the driver already self-marked builds `failed` on restart; fixed with a drain-aware catch — this ADR generalises that lesson: *the driver must never infer a thread's outcome from the shape of an exception*).
+- **Updated by ADR 0008** (first-class stages): the `steps` table this ADR references throughout is retired.
+  The terminal record now lives directly on the `threads` row (`threads.terminal_record`), and phase/anchor
+  identity (`message.meta.phaseId`, `turn_stats.step_id`) repoints to `thread_id`. The contract described below
+  (typed `complete_thread`/`block_thread`, transient-vs-real classification, the live-verification gate) is
+  otherwise unchanged — only its storage anchor moved off `steps`.
 
 ## Context
 
