@@ -10,6 +10,7 @@ import {
   JIT_RULES,
   bgTaskCapRule,
   findLifecycleRule,
+  installAwarenessRule,
   legRotationRule,
   memoryPrependRule,
   operatorMessageRules,
@@ -18,6 +19,7 @@ import {
 } from './rules';
 import { validateJitRules } from './rule';
 import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
+import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 
 describe('svcNudgeRule', () => {
@@ -50,6 +52,34 @@ describe('svcNudgeRule', () => {
     expect(svcNudgeShouldFire(null, 0, 40_000)).toBe(true);
     expect(svcNudgeShouldFire(0, 39_999, 40_000)).toBe(false);
     expect(svcNudgeShouldFire(0, 40_000, 40_000)).toBe(true);
+  });
+});
+
+describe('installAwarenessRule', () => {
+  it.each(['pnpm add eslint', 'apt-get install doctl', 'pnpm remove eslint'])(
+    'trigger.match fires on %j (parity with detectInstallCommand)',
+    (cmd) => {
+      if (installAwarenessRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+      expect(installAwarenessRule.trigger.match(cmd)).toBe(detectInstallCommand(cmd)?.label ?? null);
+      expect(installAwarenessRule.trigger.match(cmd)).not.toBeNull();
+    },
+  );
+
+  it.each(['pnpm install', 'npm ci', 'pnpm outdated', 'git status'])(
+    'trigger.match does NOT fire on %j',
+    (cmd) => {
+      if (installAwarenessRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+      expect(installAwarenessRule.trigger.match(cmd)).toBeNull();
+    },
+  );
+
+  it('renders the host-supplied text verbatim, and empty when absent', () => {
+    expect(installAwarenessRule.render({ installAwarenessText: 'checklist text' })).toBe('checklist text');
+    expect(installAwarenessRule.render({})).toBe('');
+  });
+
+  it('declares no throttle (the ledger transition is the dedup)', () => {
+    expect(installAwarenessRule.throttle).toBeUndefined();
   });
 });
 

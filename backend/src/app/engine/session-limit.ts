@@ -5,15 +5,11 @@
  * `claude-auth.ts`): imports no SDK types, so it stays usable on both sides of the wire and in unit tests.
  */
 
-/** A detected subscription limit hit — the resume metadata the host parks the lane on. */
-export type SessionLimitHit = {
-  /** ISO-8601 instant the limit window resets, when known (best-effort). */
-  resetAt?: string;
-  /** The SDK's window bucket (e.g. `five_hour`, `seven_day_opus`), when the structured frame carried one. */
-  rateLimitType?: string;
-  /** 0-100 window utilization at the time of the hit, when reported. */
-  utilization?: number;
-};
+import type { SessionLimitHit } from '@workspace/agent-engine';
+
+/** A detected subscription limit hit — moved to `@workspace/agent-engine`; re-exported here for existing
+ *  import sites. */
+export type { SessionLimitHit } from '@workspace/agent-engine';
 
 /**
  * Normalize the SDK's `rate_limit_event.resetsAt` epoch to an ISO string. The SDK reports it in epoch

@@ -728,20 +728,31 @@ export class BrainStoreService {
   // masked-confirmation delivery turn runs (so a crash mid-delivery re-delivers on boot, at-least-once).
 
   /**
-   * Open the secure-secret gate ATOMICALLY: persist the value-free secret card row AND point the thread's
-   * `awaiting_secret_id` at it in ONE transaction. Refuses (`alreadyOpen`) if an un-provided secret request
-   * is already open, so the brain can't stack requests.
+   * Open the secure-secret gate. Two lanes:
+   *
+   * - EPHEMERAL (`deliver_to`): single-slot, ATOMIC — persist the value-free card AND point the thread's
+   *   `awaiting_secret_id` at it in ONE transaction. Refuses (`alreadyOpen`) if an un-provided ephemeral
+   *   request is already open (one blocking one-time value at a time).
+   * - DURABLE / MCP: PER-CARD (like {@link openFileRequest}) — a plain card insert, NO `awaiting_secret_id`
+   *   pointer and NO one-at-a-time refusal, so several may be open at once. The card insert AND the
+   *   `open_secret_count` bump land in ONE transaction (mirrors {@link openQuestion}). Never returns
+   *   `alreadyOpen` for these lanes.
    */
   async openSecretRequest(
     jobId: string,
     input: { requestId: string; card: WebSecretInputCard },
   ): Promise<{ ok: boolean; alreadyOpen?: boolean }> {
+    const text = input.card.ephemeral
+      ? `Requested a one-time value \`${input.card.name}\` (delivered to the running session, not stored)`
+      : input.card.mcp
+        ? `Requested secret \`${input.card.mcp.key}\` for MCP server \`${input.card.mcp.server}\``
+        : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``;
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
       const messages = m.getRepository(MessageEntity);
       const thread = await threads.findOne({ where: { id: jobId } });
       if (!thread) return { ok: false };
-      if (thread.awaiting_secret_id) {
+      if (input.card.ephemeral && thread.awaiting_secret_id) {
         const open = await messages.findOne({
           where: {
             job_id: jobId,
@@ -759,20 +770,25 @@ export class BrainStoreService {
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
-          text: input.card.ephemeral
-            ? `Requested a one-time value \`${input.card.name}\` (delivered to the running session, not stored)`
-            : input.card.mcp
-              ? `Requested secret \`${input.card.mcp.key}\` for MCP server \`${input.card.mcp.server}\``
-              : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``,
+          text,
           kind: 'card',
           ts: input.requestId,
           card: input.card as unknown as Record<string, unknown>,
         }),
       );
-      await threads.update(
-        { id: jobId },
-        { awaiting_secret_id: input.requestId },
-      );
+      if (input.card.ephemeral) {
+        await threads.update(
+          { id: jobId },
+          { awaiting_secret_id: input.requestId },
+        );
+      } else {
+        await threads
+          .createQueryBuilder()
+          .update()
+          .set({ open_secret_count: () => 'open_secret_count + 1' })
+          .where('id = :jobId', { jobId })
+          .execute();
+      }
       return { ok: true };
     });
   }
@@ -818,6 +834,114 @@ export class BrainStoreService {
   }
 
   /**
+   * Stamp a DURABLE/MCP secret card PROVIDED and decrement `open_secret_count`, in ONE transaction. The
+   * per-card analog of {@link markSecretProvided} (which only stamps the card, for the ephemeral lane).
+   * Unlike files, durable/mcp secrets carry the `open_secret_count` needs-you counter, so the provide
+   * success must decrement it alongside the `provided_at` stamp. No value is stored on the card.
+   */
+  async markSecretProvidedPerCard(
+    jobId: string,
+    requestId: string,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (m) => {
+      const patch = JSON.stringify({ provided_at: new Date().toISOString() });
+      // Only the transition from open → provided decrements the counter (a racing double-submit finds the
+      // card already provided → affected 0 → no double-decrement). Mirrors {@link markQuestionAnswered}.
+      const res = await m
+        .createQueryBuilder()
+        .update(MessageEntity)
+        .set({ card: () => 'card || :patch::jsonb' })
+        .where('job_id = :jobId', { jobId })
+        .andWhere('ts = :requestId', { requestId })
+        .andWhere("kind = 'card'")
+        .andWhere("card ->> 'type' = 'secret_input_card'")
+        .andWhere("card ->> 'provided_at' IS NULL")
+        .andWhere("card ->> 'withdrawnAt' IS NULL")
+        .andWhere("card ->> 'ephemeral' IS DISTINCT FROM 'true'")
+        .setParameter('patch', patch)
+        .execute();
+      if ((res.affected ?? 0) === 1) {
+        await m
+          .createQueryBuilder()
+          .update(JobEntity)
+          .set({
+            open_secret_count: () => 'GREATEST(0, open_secret_count - 1)',
+          })
+          .where('id = :jobId', { jobId })
+          .execute();
+      }
+    });
+  }
+
+  /**
+   * The thread's currently-OPEN durable/mcp secret-request cards — posted, but not yet provided OR
+   * withdrawn — so a fresh turn doesn't re-post a duplicate `request_secret`. EPHEMERAL cards are excluded
+   * (they're single-slot/immediate, not a standing per-card request). The secret-card analog of
+   * {@link openFileCards}; surfaced via {@link AgentSessionManager.buildOpenSecretRequestsPrefix}.
+   */
+  async openSecretCards(jobId: string): Promise<WebSecretInputCard[]> {
+    const rows = await this.messages.find({
+      where: { job_id: jobId, kind: 'card' },
+      order: { created_at: 'DESC' },
+    });
+    return rows
+      .map((m) => m.card as unknown as WebSecretInputCard)
+      .filter(
+        (c) =>
+          c?.type === 'secret_input_card' &&
+          c.provided_at == null &&
+          c.withdrawnAt == null &&
+          c.ephemeral !== true,
+      );
+  }
+
+  /**
+   * Withdraw a still-open DURABLE/MCP secret request ATOMICALLY and IDEMPOTENTLY — the secret-card mirror
+   * of {@link withdrawFileRequest}: a conditional update that only fires `WHERE the request is still open`
+   * (not provided, not already withdrawn), so it can't race the operator's submit. The winner stamps
+   * `withdrawnAt` (+ optional `withdrawnReason`) AND decrements `open_secret_count`, in ONE transaction.
+   * Returns `{ withdrawn:true }` for the winner, `{ withdrawn:false }` when the card is missing, already
+   * provided, or already withdrawn.
+   */
+  async withdrawSecretRequest(
+    jobId: string,
+    requestId: string,
+    reason?: string,
+  ): Promise<{ withdrawn: boolean }> {
+    return this.dataSource.transaction(async (m) => {
+      const patch = JSON.stringify({
+        withdrawnAt: new Date().toISOString(),
+        ...(reason ? { withdrawnReason: reason } : {}),
+      });
+      const res = await m
+        .createQueryBuilder()
+        .update(MessageEntity)
+        .set({ card: () => 'card || :patch::jsonb' })
+        .where('job_id = :jobId', { jobId })
+        .andWhere('ts = :requestId', { requestId })
+        .andWhere("kind = 'card'")
+        .andWhere("card ->> 'type' = 'secret_input_card'")
+        .andWhere("card ->> 'provided_at' IS NULL")
+        .andWhere("card ->> 'withdrawnAt' IS NULL")
+        .andWhere("card ->> 'ephemeral' IS DISTINCT FROM 'true'")
+        .setParameter('patch', patch)
+        .execute();
+      const withdrawn = (res.affected ?? 0) === 1;
+      if (withdrawn) {
+        await m
+          .createQueryBuilder()
+          .update(JobEntity)
+          .set({
+            open_secret_count: () => 'GREATEST(0, open_secret_count - 1)',
+          })
+          .where('id = :jobId', { jobId })
+          .execute();
+      }
+      return { withdrawn };
+    });
+  }
+
+  /**
    * Boot reconciliation: threads whose gate points at a PROVIDED-but-UNDELIVERED secret card — the crash
    * window where the operator submitted the value (durably stored + granted) but the host died before a
    * turn handed the masked confirmation to the brain. The startup sweep re-delivers each (at-least-once).
@@ -835,10 +959,7 @@ export class BrainStoreService {
       mcp?: { server: string; slot: 'header' | 'env'; key: string };
     }[]
   > {
-    const rows = await this.jobs.find({
-      where: { awaiting_secret_id: Not(IsNull()) },
-    });
-    const out: {
+    type Row = {
       jobId: string;
       orgId: string;
       repoId: string;
@@ -847,10 +968,19 @@ export class BrainStoreService {
       path?: string;
       ephemeral?: boolean;
       mcp?: { server: string; slot: 'header' | 'env'; key: string };
-    }[] = [];
-    for (const t of rows) {
+    };
+    const out: Row[] = [];
+    // (a) EPHEMERAL cards still reachable via the single-slot `awaiting_secret_id` pointer.
+    const pointed = await this.jobs.find({
+      where: { awaiting_secret_id: Not(IsNull()) },
+    });
+    for (const t of pointed) {
       const card = await this.getSecretCard(t.id, t.awaiting_secret_id!);
-      if (card?.provided_at != null && card.delivered_at == null) {
+      if (
+        card?.ephemeral === true &&
+        card.provided_at != null &&
+        card.delivered_at == null
+      ) {
         out.push({
           jobId: t.id,
           orgId: t.org_id,
@@ -858,12 +988,64 @@ export class BrainStoreService {
           requestId: t.awaiting_secret_id!,
           name: card.name,
           ...(card.path ? { path: card.path } : {}),
-          ...(card.ephemeral ? { ephemeral: true } : {}),
+          ephemeral: true,
           ...(card.mcp ? { mcp: card.mcp } : {}),
         });
       }
     }
+    // (b) DURABLE / MCP per-card requests found by scanning `messages` jsonb (no pointer).
+    const messagesTable = this.messages.metadata.tablePath;
+    const threadsTable = this.jobs.metadata.tablePath;
+    const rows: {
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      requestId: string;
+      card: WebSecretInputCard;
+    }[] = await this.dataSource.query(
+      `SELECT m.job_id AS "jobId", t.org_id AS "orgId", t.repo_id AS "repoId",
+              m.ts AS "requestId", m.card AS "card"
+         FROM ${messagesTable} m
+         JOIN ${threadsTable} t ON t.id = m.job_id
+        WHERE m.kind = 'card'
+          AND m.card ->> 'type' = 'secret_input_card'
+          AND m.card ->> 'provided_at' IS NOT NULL
+          AND m.card ->> 'delivered_at' IS NULL
+          AND m.card ->> 'withdrawnAt' IS NULL
+          AND m.card ->> 'ephemeral' IS DISTINCT FROM 'true'`,
+    );
+    for (const r of rows) {
+      out.push({
+        jobId: r.jobId,
+        orgId: r.orgId,
+        repoId: r.repoId,
+        requestId: r.requestId,
+        name: r.card.name,
+        ...(r.card.path ? { path: r.card.path } : {}),
+        ...(r.card.mcp ? { mcp: r.card.mcp } : {}),
+      });
+    }
     return out;
+  }
+
+  /**
+   * Boot heal: recompute every thread's `open_secret_count` from its actual open DURABLE/MCP secret cards
+   * (provided_at null, withdrawnAt null). EPHEMERAL cards use the single-slot `awaiting_secret_id` pointer,
+   * not this counter, so they are excluded (`ephemeral` jsonb boolean stringifies to `'true'` under `->>`).
+   */
+  async reconcileOpenSecretCounts(): Promise<void> {
+    const messagesTable = this.messages.metadata.tablePath;
+    const threadsTable = this.jobs.metadata.tablePath;
+    await this.dataSource.query(
+      `UPDATE ${threadsTable} t SET open_secret_count = (
+         SELECT COUNT(*)::int FROM ${messagesTable} m
+         WHERE m.job_id = t.id AND m.kind = 'card'
+           AND m.card ->> 'type' = 'secret_input_card'
+           AND m.card ->> 'provided_at' IS NULL
+           AND m.card ->> 'withdrawnAt' IS NULL
+           AND m.card ->> 'ephemeral' IS DISTINCT FROM 'true'
+       )`,
+    );
   }
 
   // ── file-request gate (request_file lifecycle: requested → provided → delivered) ─────────────────────

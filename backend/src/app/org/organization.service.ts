@@ -207,6 +207,15 @@ export class OrganizationService {
     return this.members.findOne({ where: { org_id: orgId, user_id: userId } });
   }
 
+  /** True when `userId` is the `owner` of at least one of `orgIds`. Empty list → false. */
+  async ownsAnyOf(userId: string, orgIds: string[]): Promise<boolean> {
+    if (orgIds.length === 0) return false;
+    const owned = await this.members.findOne({
+      where: { user_id: userId, role: 'owner', org_id: In(orgIds) },
+    });
+    return owned != null;
+  }
+
   /** The org row by id (or null). */
   async get(orgId: string): Promise<OrganizationEntity | null> {
     return this.orgs.findOne({ where: { id: orgId } });

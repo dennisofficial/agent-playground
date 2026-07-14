@@ -163,16 +163,32 @@ export class JobEntity extends TimestampedEntity {
   open_question_count!: number;
 
   /**
-   * The durable SECURE-SECRET gate — the `requestId` of a `request_secret` card this thread is awaiting an
-   * operator value for, or null. Kept SEPARATE so the two human-input lanes don't collide and so secret
-   * delivery keeps its own crash-safe lifecycle (still single-slot — at most one secret request at a time). Set
-   * atomically with the secret card by `request_secret` (`BrainStoreService.openSecretRequest`). The value
-   * itself NEVER lands here or in the transcript — it goes straight to the encrypted `WorkspaceSecretFileStore`
-   * via the `provide-secret` endpoint, which stamps the card `provided_at`; this gate is cleared only once
-   * the masked-confirmation delivery turn succeeds (so a crash mid-delivery re-delivers on boot).
+   * The EPHEMERAL-ONLY secure-secret gate — the `requestId` of a `request_secret({ ephemeral: true })` card
+   * (an OAuth verification code, a 2FA code) this thread is awaiting an operator value for, or null. That
+   * lane stays single-slot/immediate because it pipes a one-time value straight into a live waiting process
+   * (there is nothing to gain from stacking several). Durable/MCP-target secret requests do NOT use this
+   * column anymore — they are PER-CARD like `request_file`, gated on the card's own
+   * `provided_at`/`delivered_at`/`withdrawnAt` (see `open_secret_count` below). Set atomically with the
+   * ephemeral card by `request_secret` (`BrainStoreService.openSecretRequest`). The value itself NEVER lands
+   * here or in the transcript — it is piped straight into the running process via `provide-secret`, which
+   * stamps the card `provided_at`; this gate is cleared only once the masked-confirmation delivery turn
+   * succeeds (so a crash mid-delivery re-delivers on boot).
    */
   @Column({ type: 'text', nullable: true })
   awaiting_secret_id!: string | null;
+
+  /**
+   * The durable/MCP SECURE-SECRET gate — how many durable-path/MCP-target `request_secret` cards on this
+   * thread are still open (posted, not yet provided or withdrawn). Each such card carries its OWN lifecycle
+   * (`provided_at`/`delivered_at`/`withdrawnAt` in `messages.card` jsonb) — there is NO single-slot pointer
+   * for this lane, so the brain may have several secret requests open at once, fillable in any order (mirrors
+   * `open_question_count`). This denormalized counter is the cheap "needs you" + auto-merge-hold signal:
+   * bumped by the durable/mcp branch of `openSecretRequest`, decremented by `provideSecret`/
+   * `withdrawSecretRequest`, and recomputed from the cards on boot (`reconcileOpenSecretCounts`) so it can
+   * never wedge. The EPHEMERAL lane does not touch this counter — it keeps signaling via `awaiting_secret_id`.
+   */
+  @Column({ type: 'int', default: 0 })
+  open_secret_count!: number;
 
   /** The locked decision record (FK → decision_records.id); null until the upfront grill produces one. */
   @Column({ type: 'uuid', nullable: true })

@@ -5532,7 +5532,10 @@ describe('ThreadDriver — master-review bridged task list', () => {
 
   // Drift guard: every tool a turn bridge actually registers MUST have a TOOL_SHAPES entry, or the
   // Claude SDK bridge would silently strip every argument that tool's handler reads (a strict zod
-  // object drops unknown keys before the handler ever sees them).
+  // object drops unknown keys before the handler ever sees them). `__`-prefixed tools (e.g.
+  // `__profile_awareness`) are reserved-internal: invoked only via the raw `bridgeCall` round-trip and
+  // filtered out of `toolBridgeTools` before the container builds an SDK proxy tool, so they never pass
+  // through TOOL_SHAPES and are exempt from this guard.
   it('every buildTurnBridge()-registered tool (master-review + builder) has a TOOL_SHAPES entry', () => {
     const h = assemble(baseState());
     const masterReviewTools = bridgeFor(
@@ -5542,6 +5545,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
     for (const tools of [masterReviewTools, builderTools]) {
       for (const name of Object.keys(tools)) {
+        if (name.startsWith('__')) continue;
         expect(
           TOOL_SHAPES,
           `driver tool "${name}" must have a TOOL_SHAPES entry`,

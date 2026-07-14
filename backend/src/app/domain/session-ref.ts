@@ -6,8 +6,11 @@
  * types can reference it.
  */
 
-/** The engine backing the session. */
-export type SessionEngine = 'claude' | 'codex';
+import type { SessionEngine } from '@workspace/agent-engine';
+
+/** The engine backing the session. Moved to `@workspace/agent-engine`; re-exported here for existing
+ *  import sites. */
+export type { SessionEngine } from '@workspace/agent-engine';
 
 /**
  * How a turn runs — read-only vs. writes. 'plan'/'review'/'investigate' are read-only (no commits);

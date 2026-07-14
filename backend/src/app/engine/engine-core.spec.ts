@@ -433,6 +433,40 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     }
   });
 
+  it('sets an explicit per-subagent effort on the SDK agents map (fetchers lowered, writers kept high)', async () => {
+    const { sdk, captured } = fakeClaudeSdk();
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    await core.run({
+      engine: 'claude',
+      task: agentMessage('t'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      // Execute mode so the writer/validate/prototype subagents are present too.
+      mode: 'execute',
+      auth: { secret: 'tok' },
+    });
+    const agents = captured.options!.agents as Record<string, { effort?: string }>;
+
+    // Every subagent pins its OWN effort — none inherits the session effort (`high`) implicitly.
+    // Mechanical fetchers run cheaper; judgment writers/reviewers stay high.
+    const expected: Record<string, 'low' | 'medium' | 'high'> = {
+      docs: 'low',
+      test: 'low',
+      explore: 'medium',
+      validate: 'medium',
+      prototype: 'medium',
+      review: 'high',
+      debug: 'high',
+      implement: 'high',
+      'implement-deep': 'high',
+    };
+    for (const [name, effort] of Object.entries(expected)) {
+      expect(agents[name], `subagent ${name} must be present`).toBeDefined();
+      expect(agents[name].effort, `subagent ${name} effort`).toBe(effort);
+    }
+  });
+
   it('execute mode: canUseTool allows Write inside cwd OR a writableRoot, denies elsewhere', async () => {
     const { sdk, captured } = fakeClaudeSdk();
     const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
@@ -1683,5 +1717,71 @@ describe('toClaudeEffort / toCodexEffort — engine-agnostic effort mapped to ea
     expect(toCodexEffort('max')).toBe('xhigh');
     expect(toCodexEffort('high')).toBe('high');
     expect(toCodexEffort(undefined)).toBeUndefined();
+  });
+});
+
+describe('EngineCore — session-limit surfacing that is NOT a structured rate_limit_event', () => {
+  const LIMIT_LINE = "You've hit your session limit · resets 5am (UTC)";
+
+  it("parks (no throw) when the wall is an is_error result whose subtype is still 'success'", async () => {
+    // The CLI reports the wall as a result frame flagged is_error but with subtype:'success' — its
+    // `result` string IS the printed limit line. This must be latched as a clean park, not surfaced as the
+    // turn's answer.
+    const sdk = {
+      query: () =>
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: true,
+            session_id: 'sess-1',
+            result: LIMIT_LINE,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const res = await core.run({
+      engine: 'claude',
+      task: agentMessage('do it'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+    });
+
+    expect(res.sessionLimit).toBeDefined();
+    expect(res.sessionLimit?.resetAt).toBeTruthy();
+    // The limit line must NOT leak into the turn result.
+    expect(res.result).not.toContain('session limit');
+  });
+
+  it('parks (no throw) when the SDK throws "Claude Code returned an error result: …" with the limit line', async () => {
+    // No frame latches the hit — the wall surfaces only as the thrown SDK exit-error. The catch-block
+    // backstop must recognize it and return a clean park instead of failing the turn.
+    const sdk = {
+      query: () =>
+        (async function* () {
+          yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
+          throw new Error(`Claude Code returned an error result: ${LIMIT_LINE}`);
+        })(),
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const res = await core.run({
+      engine: 'claude',
+      task: agentMessage('do it'),
+      cwd: '/tmp/wt',
+      systemPrompt: agentMessage('p'),
+      sandboxKey: TEST_KEY,
+      mode: 'execute',
+      auth: { secret: 'tok' },
+    });
+
+    expect(res.sessionLimit).toBeDefined();
+    expect(res.sessionLimit?.resetAt).toBeTruthy();
   });
 });

@@ -16,6 +16,8 @@ type Mocks = {
   getMcpProposalCard: ReturnType<typeof vi.fn>;
   markMcpProposalApproved: ReturnType<typeof vi.fn>;
   clearAwaitingSecret: ReturnType<typeof vi.fn>;
+  withdrawSecretRequest: ReturnType<typeof vi.fn>;
+  markSecretProvidedPerCard: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   rawRow: ReturnType<typeof vi.fn>;
   recordValidation: ReturnType<typeof vi.fn>;
@@ -33,6 +35,8 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     getMcpProposalCard: vi.fn(async () => opts?.card ?? null),
     markMcpProposalApproved: vi.fn(async () => undefined),
     clearAwaitingSecret: vi.fn(async () => undefined),
+    withdrawSecretRequest: vi.fn(async () => ({ withdrawn: true })),
+    markSecretProvidedPerCard: vi.fn(async () => undefined),
     write: vi.fn(async () => undefined),
     rawRow: vi.fn(async () => ({ transport: 'http', config: { url: 'https://x' } })),
     recordValidation: vi.fn(async () => undefined),
@@ -73,6 +77,8 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
       getMcpProposalCard: m.getMcpProposalCard,
       markMcpProposalApproved: m.markMcpProposalApproved,
       clearAwaitingSecret: m.clearAwaitingSecret,
+      withdrawSecretRequest: m.withdrawSecretRequest,
+      markSecretProvidedPerCard: m.markSecretProvidedPerCard,
     } as never, // store (BrainStoreService)
     {} as never, // brain
     {
@@ -242,13 +248,15 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     expect(m.rehydrateThread).not.toHaveBeenCalled();
     // Best-effort re-probe after the key lands.
     expect(m.validate).toHaveBeenCalledTimes(1);
+    // Per-card lane: stamps provided_at + decrements open_secret_count in one transaction (no pointer to clear).
+    expect(m.markSecretProvidedPerCard).toHaveBeenCalledWith('job-1', 's-1');
     // The masked confirmation names the server/slot, never the value.
     const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
     expect(notice).toContain('github');
     expect(notice).not.toContain('ghp_x');
   });
 
-  it('refuses a secret write to an OAuth server (no setSecret, no probe) and clears the gate', async () => {
+  it('refuses a secret write to an OAuth server (no setSecret, no probe) and withdraws the card', async () => {
     const secretCard = {
       type: 'secret_input_card',
       name: 'Authorization',
@@ -262,13 +270,14 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     expect(res.ok).toBe(false);
     expect(m.setSecret).not.toHaveBeenCalled();
     expect(m.validate).not.toHaveBeenCalled();
-    expect(m.clearAwaitingSecret).toHaveBeenCalledWith('job-1', 's-1');
+    // Per-card lane: no single-slot pointer to clear — stamp the card terminal (withdrawn) instead.
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
     const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
     expect(notice).toContain('OAuth');
     expect(notice).not.toContain('Bearer x');
   });
 
-  it('clears the gate + fails cleanly when the target MCP server is gone', async () => {
+  it('withdraws the card + fails cleanly when the target MCP server is gone', async () => {
     const secretCard = {
       type: 'secret_input_card',
       name: 'Authorization',
@@ -278,6 +287,6 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     m.setSecret.mockResolvedValueOnce(false);
     const res = await controller.provideSecret(OWNER, 'job-1', { requestId: 's-1', value: 'v' });
     expect(res.ok).toBe(false);
-    expect(m.clearAwaitingSecret).toHaveBeenCalledWith('job-1', 's-1');
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
   });
 });
