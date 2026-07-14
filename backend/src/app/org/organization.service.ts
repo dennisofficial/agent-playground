@@ -3,6 +3,7 @@ import { ConflictException, Inject, Injectable, Logger, NotFoundException } from
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
+import type { AutoApproveMode } from '@workspace/shared';
 // Leaf port path (NOT the '../driver' barrel) — a zero-import token file, so injecting it forms no
 // org ↔ driver ES module cycle. The @Global DriverModule binds it to JobLifecycleService.
 import { JOB_TEARDOWN, type JobTeardownPort } from '../driver/job-teardown.port';
@@ -22,6 +23,8 @@ export interface OrgSummary {
   name: string;
   status: string;
   role: string;
+  defaultAutoApproveMode: AutoApproveMode;
+  defaultAutoMerge: boolean;
 }
 
 /** A member of an org (with the user's identity). */
@@ -99,7 +102,15 @@ export class OrganizationService {
     await this.members.save(
       this.members.create({ org_id: org.id, user_id: userId, role: 'owner' }),
     );
-    return { id: org.id, slug: org.slug, name: org.name, status: org.status, role: 'owner' };
+    return {
+      id: org.id,
+      slug: org.slug,
+      name: org.name,
+      status: org.status,
+      role: 'owner',
+      defaultAutoApproveMode: org.default_auto_approve_mode ?? 'off',
+      defaultAutoMerge: org.default_auto_merge ?? false,
+    };
   }
 
   /**
@@ -109,7 +120,12 @@ export class OrganizationService {
    */
   async rename(
     orgId: string,
-    patch: { name?: string; slug?: string },
+    patch: {
+      name?: string;
+      slug?: string;
+      defaultAutoApproveMode?: AutoApproveMode;
+      defaultAutoMerge?: boolean;
+    },
     role: string,
   ): Promise<OrgSummary> {
     const org = await this.orgs.findOne({ where: { id: orgId } });
@@ -120,8 +136,20 @@ export class OrganizationService {
       const desired = slugifyName(patch.slug);
       if (desired !== org.slug) org.slug = await this.uniqueSlug(desired, orgId);
     }
+    if (patch.defaultAutoApproveMode !== undefined) {
+      org.default_auto_approve_mode = patch.defaultAutoApproveMode;
+    }
+    if (patch.defaultAutoMerge !== undefined) org.default_auto_merge = patch.defaultAutoMerge;
     const saved = await this.orgs.save(org);
-    return { id: saved.id, slug: saved.slug, name: saved.name, status: saved.status, role };
+    return {
+      id: saved.id,
+      slug: saved.slug,
+      name: saved.name,
+      status: saved.status,
+      role,
+      defaultAutoApproveMode: saved.default_auto_approve_mode,
+      defaultAutoMerge: saved.default_auto_merge,
+    };
   }
 
   /**
@@ -169,6 +197,8 @@ export class OrganizationService {
       name: o.name,
       status: o.status,
       role: roleById.get(o.id) ?? 'member',
+      defaultAutoApproveMode: o.default_auto_approve_mode,
+      defaultAutoMerge: o.default_auto_merge,
     }));
   }
 

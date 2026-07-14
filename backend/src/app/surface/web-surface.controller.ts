@@ -347,9 +347,13 @@ interface CreateThreadDto {
   kind?: string;
   /** For `kind: 'review'` — the PR number to review; seeds a `<review>` framing block on turn 1. */
   prNumber?: string | number;
-  /** Operator-chosen auto-approve mode to arm at creation; unknown/absent leaves the DB default 'off'. */
+  /** Operator-chosen auto-approve mode to arm at creation; absent falls back to the org's
+   *  `default_auto_approve_mode` (see `WebSurfaceController.createJob`); a present-but-invalid value is
+   *  rejected rather than silently falling back. */
   autoApproveMode?: string;
-  /** Operator-chosen auto-merge toggle to arm at creation; absent/false leaves the DB default. */
+  /** Operator-chosen auto-merge toggle to arm at creation; absent falls back to the org's
+   *  `default_auto_merge` (see `WebSurfaceController.createJob`); a present-but-invalid value is rejected
+   *  rather than silently falling back. */
   autoMerge?: boolean;
   /** Job ids to block on (born-blocked), mirroring `create_job`'s `dependsOn`. Accepts a single id or
    *  an array — the multipart create path delivers repeated `dependsOn` form fields either way. */
@@ -927,10 +931,31 @@ export class WebSurfaceController {
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
     const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
+    const orgRow = await this.orgService.get(org.id);
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
-    // non-'off' mode also records who armed it; an unknown/absent value leaves the DB default 'off'.
-    const autoApproveMode = isAutoApproveMode(body.autoApproveMode) ? body.autoApproveMode : null;
-    const autoMerge = coerceBoolean(body.autoMerge) === true;
+    // non-'off' mode also records who armed it. Absent falls back to the org's default_auto_approve_mode
+    // (or 'off' when the org row is somehow missing); present-but-invalid is REJECTED rather than silently
+    // falling through to a possibly-armed org default.
+    let autoApproveMode: AutoApproveMode;
+    if (body.autoApproveMode === undefined) {
+      autoApproveMode = orgRow?.default_auto_approve_mode ?? 'off';
+    } else if (isAutoApproveMode(body.autoApproveMode)) {
+      autoApproveMode = body.autoApproveMode;
+    } else {
+      throw new BadRequestException('invalid autoApproveMode');
+    }
+    // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling also
+    // records who armed it. Absent falls back to the org's default_auto_merge; present-but-invalid is
+    // REJECTED (same rationale as autoApproveMode above).
+    let autoMerge: boolean;
+    const mergeCoerced = coerceBoolean(body.autoMerge);
+    if (body.autoMerge === undefined) {
+      autoMerge = orgRow?.default_auto_merge ?? false;
+    } else if (mergeCoerced !== undefined) {
+      autoMerge = mergeCoerced;
+    } else {
+      throw new BadRequestException('invalid autoMerge');
+    }
     const thread = await this.jobs.save(
       this.jobs.create({
         org_id: org.id,
@@ -940,11 +965,10 @@ export class WebSurfaceController {
         title: placeholder,
         base_branch: body.baseBranch ?? null,
         ...(kind ? { kind } : {}),
-        ...(autoApproveMode && autoApproveMode !== 'off'
+        ...(autoApproveMode !== 'off'
           ? { auto_approve_mode: autoApproveMode, auto_approve_by: user.id }
           : {}),
-        // Operator-chosen auto-merge, armed at creation. Same write shape as PATCH /auto-merge: enabling
-        // also records who armed it. The merge method + delete-branch are repo-level defaults now.
+        // The merge method + delete-branch are repo-level defaults now.
         ...(autoMerge
           ? {
               auto_merge: true,

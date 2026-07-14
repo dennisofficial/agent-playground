@@ -703,9 +703,8 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
-  if (body.autoApproveMode)
-    form.append("autoApproveMode", body.autoApproveMode);
-  if (body.autoMerge) form.append("autoMerge", "true");
+  form.append("autoApproveMode", body.autoApproveMode ?? "off");
+  form.append("autoMerge", String(body.autoMerge ?? false));
   for (const id of dependsOnList(body.dependsOn)) form.append("dependsOn", id);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
