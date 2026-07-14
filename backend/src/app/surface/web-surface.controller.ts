@@ -225,8 +225,8 @@ export interface ServiceInfo {
   /** The dev-server port the process advertised via `atlas-svc --port`; null when unmarked. */
   port: number | null;
   /**
-   * The public https preview URL when the service is exposed (`expose !== false`), currently `running`,
-   * and the preview feature is on; otherwise null.
+   * The public https preview URL when the service opts into exposure (`expose === true`), currently
+   * `running`, and the preview feature is on; otherwise null.
    */
   url: string | null;
   /** Size of the paired `<id>.log`, 0 if none yet. */
@@ -2298,7 +2298,7 @@ export class WebSurfaceController {
     const dir = this.threadLifecycle.supervisorDirHost(jobId);
     if (!dir) return { services: [] };
     const markers = readServiceMarkers(dir);
-    // Preserve `expose` alongside each marker so URL rendering can honor an opt-out, then project to the
+    // Preserve `expose` alongside each marker so URL rendering can honor the opt-in, then project to the
     // wire shape (status/url filled below).
     const byId = new Map(markers.map((m) => [m.id, m] as const));
     const services: ServiceInfo[] = markers
@@ -2327,7 +2327,7 @@ export class WebSurfaceController {
     const exposure = this.exposure;
     for (const s of services) {
       s.status = serviceStatus(s, probe);
-      const expose = byId.get(s.id)?.expose ?? true;
+      const expose = byId.get(s.id)?.expose ?? false;
       const live = s.port != null && expose && s.status === 'running';
       // urlFor already returns null when exposure is disabled, so this is null unless a base domain is set.
       s.url = live ? (exposure?.urlFor(jobId, s.name) ?? null) : null;

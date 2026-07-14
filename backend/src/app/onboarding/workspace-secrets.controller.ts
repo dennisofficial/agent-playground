@@ -1,18 +1,27 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Put,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { IsOptional, IsString, MinLength } from 'class-validator';
+import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
-import { WorkspaceSecretFileStore, type WorkspaceSecretFileRef } from './workspace-secret.store';
+import { DB_CONNECTION } from '../persistence/database.module';
+import { RepoEntity } from '../persistence/entities';
+import {
+  WorkspaceSecretFileStore,
+  type WorkspaceSecretFileRef,
+} from './workspace-secret.store';
 
 class SetFileDto {
   @IsString() @MinLength(1) repoId!: string;
@@ -37,7 +46,34 @@ class DeleteFileDto {
 @UseGuards(OrgMembershipGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class WorkspaceSecretsController {
-  constructor(private readonly store: WorkspaceSecretFileStore) {}
+  constructor(
+    private readonly store: WorkspaceSecretFileStore,
+    @InjectRepository(RepoEntity, DB_CONNECTION)
+    private readonly repos: Repository<RepoEntity>,
+  ) {}
+
+  private async assertRepo(orgId: string, repoId: string): Promise<void> {
+    const row = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
+    if (!row) throw new NotFoundException('repo not found');
+  }
+
+  private normalizeSecretPath(path: string): string {
+    const trimmed = path.trim();
+    const segments = trimmed.split(/[\\/]+/);
+    if (
+      !trimmed ||
+      trimmed.startsWith('/') ||
+      trimmed.startsWith('\\') ||
+      segments.some((s) => !s || s === '.' || s === '..')
+    ) {
+      throw new BadRequestException(
+        'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
+      );
+    }
+    return trimmed;
+  }
 
   @Get()
   async list(
@@ -52,7 +88,15 @@ export class WorkspaceSecretsController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: SetFileDto,
   ): Promise<{ ok: boolean }> {
-    await this.store.write(org.id, body.repoId, body.path, body.value, body.label ?? null);
+    await this.assertRepo(org.id, body.repoId);
+    const path = this.normalizeSecretPath(body.path);
+    await this.store.write(
+      org.id,
+      body.repoId,
+      path,
+      body.value,
+      body.label ?? null,
+    );
     return { ok: true };
   }
 
@@ -62,6 +106,7 @@ export class WorkspaceSecretsController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Body() body: DeleteFileDto,
   ): Promise<{ ok: boolean }> {
+    await this.assertRepo(org.id, body.repoId);
     await this.store.delete(org.id, body.repoId, body.path);
     return { ok: true };
   }

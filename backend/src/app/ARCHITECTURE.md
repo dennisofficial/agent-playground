@@ -178,7 +178,7 @@ The tables stay separate; the unification is at four seams:
   adding) so the *next* job inherits it. Same area, same tools, different framing.
 
 The onboarding bulk pass also makes each **user-facing surface** live-accessible in a browser through the
-preview proxy — it exposes the surface (`atlas-svc run` + Caddy reconcile a deterministic
+preview proxy — it exposes the surface (`atlas-svc run --port <n> --expose`, opt-in, + Caddy reconcile a deterministic
 `https://$ATLAS_PREVIEW_ID-<svc>.$ATLAS_PREVIEW_DOMAIN` route), probes it end-to-end AS A BROWSER with the
 baked `atlas-probe` helper (headless Playwright/chromium; classifies dns / bind_ip / port / dev_origin / cors
 / api_base_url / cookie / blank blockers), and remediates env-first (persisting the resolved preview origins +
