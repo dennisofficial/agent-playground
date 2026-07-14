@@ -413,9 +413,21 @@ export function useSubmitStagedAnswers(ref: JobRef) {
   return useMutation({
     mutationFn: (body: { items: AnswerBatchItem[]; message?: string }) =>
       submitAnswerBatch(ref, body),
-    onSuccess: () => {
-      composerStore.setStagedAnswers(ref, () => []);
-      composerStore.clearDraft(ref.jobId);
+    onSuccess: (data) => {
+      // Only drop the items the backend actually applied — a per-item `stale`/`withdrawn`/`noop`/`notfound`
+      // result means that answer never landed, so keep it staged rather than silently discarding it. The
+      // `threadMessages` invalidate below re-fetches, which drives `pruneStagedAnswers` to drop it once its
+      // card is confirmed resolved (or leaves it for the operator to see/retry if it's genuinely still open).
+      const appliedIds = new Set(
+        data.results.filter((r) => r.status === "applied").map((r) => r.id),
+      );
+      composerStore.setStagedAnswers(ref, (prev) =>
+        prev.filter((a) => !appliedIds.has(a.cardId)),
+      );
+      // Clear only the note text this request actually sent — NOT `clearDraft`, which also wipes queued
+      // review comments / attachments that never went out (the staged-answers Send branch returns early
+      // without sending them; see `Composer.send()`).
+      composerStore.setText(ref, "");
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
