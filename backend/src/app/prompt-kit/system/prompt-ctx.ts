@@ -29,8 +29,6 @@ export interface PromptCtx {
   job?: {
     /** "owner/repo", parsed from the git url (via the resolved repo). */
     repoName?: string;
-    /** The sandbox worktree path — the working directory this turn runs in (normally `/workspace`). */
-    cwd?: string;
     /** The feature branch this job stacks on (or the observed live HEAD); omitted until a branch is cut. */
     branch?: string;
     /** The base branch the build cuts from (`job.baseBranch` ?? the repo default). */
