@@ -421,6 +421,12 @@ export class FirstClassThreads1784083987667 implements MigrationInterface {
             END
             FROM ranked r
             WHERE t."id" = r."id"
+              AND t."ordinal" IS DISTINCT FROM (
+                  CASE
+                      WHEN t."role" = 'planning' AND t."parent_thread_id" IS NULL THEN 0
+                      ELSE r.rn * 10
+                  END
+              )
         `);
 
     await queryRunner.query(
