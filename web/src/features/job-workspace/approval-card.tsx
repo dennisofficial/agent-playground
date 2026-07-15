@@ -10,6 +10,7 @@ import {
   Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CiHeaderGlyph } from "@/components/ui/badges";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
 import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
@@ -242,6 +243,8 @@ function ShipCardView({
         </div>
       ) : null}
 
+      {card.kind === "ship" ? <ShipCardCiRow jobRef={jobRef} /> : null}
+
       {card.kind === "ship" && card.verifications?.length ? (
         <ShipVerificationsList verifications={card.verifications} />
       ) : null}
@@ -258,6 +261,25 @@ function ShipCardView({
           <ShipCardPreviewButton jobRef={jobRef} card={card} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** The PR's CI state, alongside the self-reported verification list — the ship gate is otherwise all
+ *  self-reported, so this is the one externally-checked signal. Reuses the same {@link CiHeaderGlyph}
+ *  the job header shows after the PR # line, so the two never drift visually. Hidden entirely when
+ *  there's no CI to report (no PR yet, or the PR has no checks). */
+function ShipCardCiRow({ jobRef }: { jobRef: JobRef }) {
+  const pipeline = usePipeline(jobRef);
+  const job =
+    pipeline.data && pipeline.data.status !== "no_job" ? pipeline.data : null;
+  if (!job?.ciStatus) return null;
+  return (
+    <div className="flex items-center gap-1.5 border-t border-border px-4 py-2.5">
+      <span className="font-mono text-[9.5px] font-semibold tracking-[0.04em] text-faint">
+        CI
+      </span>
+      <CiHeaderGlyph ci={job.ciStatus} counts={job.ciCounts} />
     </div>
   );
 }

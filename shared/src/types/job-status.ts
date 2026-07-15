@@ -44,12 +44,11 @@ export type JobStatus =
  * `GET /web/jobs` and the realtime row, consumed by the web console.
  *
  * `kind` distinguishes consumer behavior: `blocked_credentials` drives request-secret / needs-you;
- * `failed`/`incomplete` are build failures; `budget_exhausted` is a rest-until-re-armed halt.
+ * `failed`/`incomplete` are build failures.
  */
 export type JobHaltKind =
   | 'failed'
   | 'blocked_credentials'
-  | 'budget_exhausted'
   | 'incomplete'
   | 'session_limit' // parked on a Claude session/usage limit; auto-resumes at resumeAt
   | 'codex_review_unavailable'; // parked on a master_review Codex outage (network/auth-to-Codex); auto-resumes on the resume clock, or the operator can 'ship without review'.
@@ -78,15 +77,3 @@ export type JobHalt = {
  */
 export const JOB_ACTIVITIES = ['idle', 'turn', 'plan_review', 'build', 'master_review', 'base_check', 'retrying'] as const;
 export type JobActivity = (typeof JOB_ACTIVITIES)[number];
-
-/**
- * Why a thread parked on its `blocked` terminal record — the WIRE CONTRACT for the `blockReason` field the
- * pipeline read-model emits (single-sourced here so the backend and web console can't drift). `judge_unavailable`
- * is the transient verification-judge outage the operator "Retry now"/"Skip & accept" controls recover.
- */
-export type ThreadBlockReason =
-  | 'question'
-  | 'needs_env'
-  | 'decision'
-  | 'unverified'
-  | 'judge_unavailable';

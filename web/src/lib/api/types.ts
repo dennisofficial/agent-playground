@@ -13,7 +13,6 @@ import type {
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
-  ThreadBlockReason,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -510,18 +509,6 @@ export interface PipelineThread {
   status: ThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
   condition: ThreadCondition;
-  /**
-   * Why this lane is held on its `blocked` terminal record (`condition==='paused'`); `null` otherwise.
-   * Mirrors backend `terminal_record.blocked.reason`. `'judge_unavailable'` drives the operator
-   * escape-hatch banner ("Retry now" / "Skip & accept").
-   */
-  blockReason?: ThreadBlockReason | null;
-  /**
-   * True only when the LIVE judge was the outage AND the static build+tests already passed — gates the
-   * "Skip & accept" button (mirrors the backend accept guard, so the UI never offers an unsafe accept).
-   * "Retry now" shows for ANY `judge_unavailable` hold; accept only when this is true.
-   */
-  acceptableOnJudgeOutage?: boolean;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The resumable engine session id, or null before the thread's first turn. */
