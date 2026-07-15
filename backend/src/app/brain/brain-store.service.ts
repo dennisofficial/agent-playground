@@ -1874,11 +1874,24 @@ export class BrainStoreService {
      * is posted immediately). `finalize_plan` is what later flips a reviewed plan to `awaiting_approval`.
      */
     status?: JobStatus;
+    /**
+     * OPTIONAL — whether to (re)title the job from `input.title`. Defaults to `true` so every existing
+     * caller (direct-build / bugfix dispatch / re-propose) keeps renaming exactly as before. `propose_plan`
+     * passes the brain's explicit choice: `false` means "the plan didn't change direction — keep the
+     * current sidebar label". A job that has NO title yet is always titled regardless (a fresh job needs a
+     * label).
+     */
+    rename?: boolean;
   }): Promise<PersistedPlan> {
-    // Route the incoming title (the plan `goal` / build summary) through the shared titler so the
-    // thread's sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before
-    // the transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast.
-    const title = await this.titler.titleFor(input.title, input.orgId);
+    // Route the incoming title (the plan `goal` / build summary) through the shared titler so the thread's
+    // sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before the
+    // transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast. Skip the
+    // rename when the caller opted out AND the job already has a title — then we keep the existing label.
+    const existingTitle = (await this.jobTitle(input.jobId))?.trim() || null;
+    const title =
+      (input.rename ?? true) || !existingTitle
+        ? await this.titler.titleFor(input.title, input.orgId)
+        : existingTitle;
 
     // The job's ONE planning stage + thread exists from bootstrap (create-if-absent) — cards posted during
     // planning anchor to it, and it is NOT (re)created here. Idempotent; its own find-or-create, so it runs

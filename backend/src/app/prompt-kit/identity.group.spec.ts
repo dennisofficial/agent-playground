@@ -22,6 +22,27 @@ describe('identity.group — CURRENT JOB orientation block', () => {
     expect(out).toContain('- Branch: feat/x  ·  Base: main');
   });
 
+  it('renders the current Title (so the brain can judge a propose_plan rename)', () => {
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'feature',
+      job: {
+        repoName: 'acme/widgets',
+        title: 'Rework the billing webhook',
+        baseBranch: 'main',
+      },
+    });
+    expect(out).toContain('- Title: Rework the billing webhook');
+  });
+
+  it('omits the Title line when the job has no title yet', () => {
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'feature',
+      job: { repoName: 'acme/widgets', baseBranch: 'main' },
+    });
+    expect(out).toContain(HEADER);
+    expect(out).not.toContain('- Title:');
+  });
+
   it('never renders a Working directory line (owned by the FILESYSTEM MAP fragment)', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
       jobKind: 'feature',
