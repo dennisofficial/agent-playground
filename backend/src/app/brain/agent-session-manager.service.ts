@@ -211,6 +211,7 @@ import { summarizeTurnFailure } from '../engine/turn-failure-summary';
 import type { TurnFailureCategory } from '../engine/turn-failure-summary';
 import type { EngineHomeKey } from '../engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
+import type { ThreadRole } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -2161,7 +2162,13 @@ export class AgentSessionManager
       const reattachKind =
         (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
       const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
-      const tools = this.buildTools(stimulus, reattachKind, repoSlug);
+      const stageRole = await this.resolveStageKind(stimulus);
+      const tools = this.buildTools(
+        stimulus,
+        reattachKind,
+        repoSlug,
+        stageRole,
+      );
       // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
       // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
       // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
@@ -2366,9 +2373,11 @@ export class AgentSessionManager
    *  jobKind conditions. A missing/unreadable thread row falls back to 'planning' rather than failing the
    *  turn. Single source for both the prompt persona (`resolvePromptAgent`) and any other per-stage lookup
    *  (e.g. `threadKindSpec(...).reasoningEffort`) so they never drift apart. */
-  private async resolveStageKind(stimulus: ChatStimulus): Promise<string> {
+  private async resolveStageKind(stimulus: ChatStimulus): Promise<ThreadRole> {
     const stageRole = stimulus.resumeThreadId
-      ? await this.driverStore.threadRole(stimulus.resumeThreadId).catch(() => null)
+      ? await this.driverStore
+          .threadRole(stimulus.resumeThreadId)
+          .catch(() => null)
       : null;
     return stageRole ?? 'planning';
   }
@@ -2733,7 +2742,13 @@ export class AgentSessionManager
     // get build-free subsets — see buildTools). The repo SLUG (not the UUID) gates the atlas-prod toolset,
     // resolved once here and reused for the jobContext.isAtlasRepo prompt flag below.
     const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
-    const tools = this.buildTools(stimulus, brainJob?.kind ?? null, repoSlug);
+    const stageKind = await this.resolveStageKind(stimulus);
+    const tools = this.buildTools(
+      stimulus,
+      brainJob?.kind ?? null,
+      repoSlug,
+      stageKind,
+    );
 
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.engineRunner;
@@ -2860,7 +2875,6 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
-    const stageKind = await this.resolveStageKind(stimulus);
     const promptAgent = threadKindSpec(stageKind).agent;
 
     const runArgs: RunEngineArgs = {
@@ -3516,9 +3530,12 @@ export class AgentSessionManager
     stimulus: ChatStimulus,
     kind: string | null = null,
     repoSlug: string | null = null,
+    role: ThreadRole | null = null,
   ): Record<string, ToolImpl> {
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
+    const postBuild = role === 'post_build';
+    const ci = role === 'ci';
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -4810,6 +4827,28 @@ export class AgentSessionManager
         ...intake,
         ...atlasProd,
       };
+    }
+    // POST_BUILD/CI re-homed turns get a curated, engineering-focused subset (mirrors the prose in
+    // host-tools.group.ts's postBuildTools/ciTools fragments — keep both in lockstep). Full engineering
+    // (edit/git/gh/subagents) is native Bash/Edit/Task, not a host tool, so both stages keep it; they only
+    // lose the planning apparatus (grill/decisions/plan/dispatch — post_build/ci never author or approve a
+    // plan). `report_verification` lets either confirm a fix before it stands; only post_build additionally
+    // gets `withdraw_ship` — it owns the amend loop, ci does not.
+    if (postBuild || ci) {
+      const base = {
+        [INTERNAL_PROFILE_AWARENESS_TOOL]:
+          tools[INTERNAL_PROFILE_AWARENESS_TOOL],
+        get_pipeline_state: tools.get_pipeline_state,
+        recall: tools.recall,
+        remember: tools.remember,
+        report_verification: tools.report_verification,
+        create_job: tools.create_job,
+        list_jobs: tools.list_jobs,
+        link_job_dependency: tools.link_job_dependency,
+        ...intake,
+        ...atlasProd,
+      };
+      return postBuild ? { ...base, withdraw_ship: tools.withdraw_ship } : base;
     }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays

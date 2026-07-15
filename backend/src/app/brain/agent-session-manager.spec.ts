@@ -1640,15 +1640,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   // (e.g. `__profile_awareness`) are reserved-internal: they're invoked only via the raw `bridgeCall`
   // round-trip and are filtered out of `toolBridgeTools` before the container ever builds an SDK proxy
   // tool for them, so they never pass through TOOL_SHAPES and are exempt from this guard.
-  it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
+  it('every buildTools()-registered tool (all kinds/roles) has a TOOL_SHAPES entry', () => {
     for (const kind of [null, 'review', 'onboarding']) {
-      const tools = manager.buildTools(fakeStimulus, kind);
-      for (const name of Object.keys(tools)) {
-        if (name.startsWith('__')) continue;
-        expect(
-          TOOL_SHAPES,
-          `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`,
-        ).toHaveProperty(name);
+      for (const role of [null, 'post_build', 'ci'] as const) {
+        const tools = manager.buildTools(fakeStimulus, kind, null, role);
+        for (const name of Object.keys(tools)) {
+          if (name.startsWith('__')) continue;
+          expect(
+            TOOL_SHAPES,
+            `brain tool "${name}" (kind=${kind}, role=${role}) must have a TOOL_SHAPES entry`,
+          ).toHaveProperty(name);
+        }
       }
     }
   });
@@ -1662,9 +1664,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
-      for (const name of Object.keys(manager.buildTools(fakeStimulus, kind))) {
-        // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
-        if (!profile.has(name) && !name.startsWith('__')) registered.add(name);
+      for (const role of [undefined, 'post_build', 'ci'] as const) {
+        for (const name of Object.keys(
+          manager.buildTools(fakeStimulus, kind, null, role),
+        )) {
+          // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
+          if (!profile.has(name) && !name.startsWith('__'))
+            registered.add(name);
+        }
       }
     }
     const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);
@@ -1681,6 +1688,53 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         registered.has(name),
         `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`,
       ).toBe(true);
+    }
+  });
+
+  it('post_build/ci get the curated ship-stage subset (full engineering tools, no planning apparatus)', () => {
+    const postBuild = manager.buildTools(
+      fakeStimulus,
+      'feature',
+      null,
+      'post_build',
+    );
+    const ci = manager.buildTools(fakeStimulus, 'feature', null, 'ci');
+    for (const name of [
+      'get_pipeline_state',
+      'recall',
+      'remember',
+      'report_verification',
+      'create_job',
+      'list_jobs',
+      'link_job_dependency',
+    ]) {
+      expect(typeof postBuild[name], name).toBe('function');
+      expect(typeof ci[name], name).toBe('function');
+    }
+    expect(typeof postBuild['withdraw_ship']).toBe('function');
+    expect(ci['withdraw_ship']).toBeUndefined();
+    for (const name of [
+      'ask_question',
+      'withdraw_question',
+      'create_decision',
+      'update_decision',
+      'delete_decision',
+      'get_decision_record',
+      'set_job_kind',
+      'review_plan',
+      'propose_plan',
+      'withdraw_plan',
+      'dispatch_build',
+      'hold_build',
+      'start_direct_build',
+      'finalize_build',
+      'propose_convention_profile_change',
+    ]) {
+      expect(
+        postBuild[name],
+        `post_build should not have ${name}`,
+      ).toBeUndefined();
+      expect(ci[name], `ci should not have ${name}`).toBeUndefined();
     }
   });
 
