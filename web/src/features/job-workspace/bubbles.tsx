@@ -891,6 +891,14 @@ export function SystemOperatorNotice({
   }, [retry.error]);
   const coolingSecs = useRetryCountdown(coolingUntil);
   const isCoolingDown = coolingSecs != null;
+  // Once the cooldown window elapses, the throttled attempt's stale error must not resurface as a
+  // generic "Couldn't resume" — clear it (and the cooldown marker) so the button goes back to idle.
+  useEffect(() => {
+    if (!isCoolingDown && coolingUntil !== undefined) {
+      setCoolingUntil(undefined);
+      retry.reset();
+    }
+  }, [isCoolingDown, coolingUntil, retry]);
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
