@@ -1366,6 +1366,7 @@ function assemble(
     undefined,
     undefined,
     opts.claudeCreds as ClaudeCredentialStore | undefined,
+    undefined, // configStore
     undefined, // stimulusStore
     undefined, // jit
     {
