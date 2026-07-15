@@ -33,6 +33,7 @@ import {
   liveSubagentPrompt,
   subagentLabel,
   subagentModel,
+  subagentEffort,
   type SubBlock,
 } from "./subagents";
 import { useLiveTurn, type LiveTurn } from "@/lib/api/job-stream";
@@ -439,6 +440,7 @@ function SubagentView({
   const ctxModel = su?.contextModel ?? summary?.contextModel;
   const footer: ComposerFooter = {
     model: ctxModel ?? subagentModel(summary?.type ?? ""),
+    effort: subagentEffort(summary?.type ?? ""),
     context:
       typeof ctxTokens === "number" &&
       typeof ctxLimit === "number" &&
