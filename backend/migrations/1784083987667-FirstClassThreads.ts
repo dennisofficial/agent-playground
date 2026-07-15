@@ -17,8 +17,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `meta.phaseId` from step-id to thread-id) is not reversible; a re-run of `up()` after a
  * `down()` still works schema-wise, which is all `down()` guarantees.
  */
-export class FirstClassThreads1784040000000 implements MigrationInterface {
-  name = 'FirstClassThreads1784040000000';
+export class FirstClassThreads1784083987667 implements MigrationInterface {
+  name = 'FirstClassThreads1784083987667';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // ── Step 1: create stages, tasks, subagents (+ indexes, FKs) ──────────────────────────
@@ -397,6 +397,32 @@ export class FirstClassThreads1784040000000 implements MigrationInterface {
       `ALTER TABLE "threads" DROP COLUMN "decision_record_id"`,
     );
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "tasks"`);
+
+    // Guarantee (job_id, parent_thread_id, ordinal) uniqueness before the NULLS NOT DISTINCT index.
+    // decision_record_id has just left the key, so top-level threads that were distinct only by it
+    // (multi-plan-revision jobs) — and the synthesized plan_review thread that defaults to ordinal 20 —
+    // would now collide with a builder at the same ordinal. Renumber gap-style (×10) within each
+    // (job_id, parent_thread_id) group (NULL parents form one group, matching NULLS NOT DISTINCT),
+    // preserving existing relative order; pin the job's planning thread to 0 (load-bearing invariant,
+    // job-bootstrap.service.ts). Children (parent NOT NULL) are renumbered per parent and never collide.
+    await queryRunner.query(`
+            WITH ranked AS (
+                SELECT "id", "role",
+                       ROW_NUMBER() OVER (
+                           PARTITION BY "job_id", "parent_thread_id"
+                           ORDER BY "ordinal", "created_at", "id"
+                       ) AS rn
+                FROM "threads"
+            )
+            UPDATE "threads" t
+            SET "ordinal" = CASE
+                WHEN t."role" = 'planning' AND t."parent_thread_id" IS NULL THEN 0
+                ELSE r.rn * 10
+            END
+            FROM ranked r
+            WHERE t."id" = r."id"
+        `);
+
     await queryRunner.query(
       `CREATE UNIQUE INDEX "uq_threads_job_parent_ordinal" ON "threads" ("job_id", "parent_thread_id", "ordinal") NULLS NOT DISTINCT`,
     );
