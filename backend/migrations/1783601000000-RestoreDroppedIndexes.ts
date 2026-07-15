@@ -20,9 +20,17 @@ export class RestoreDroppedIndexes1783601000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS "public"."idx_memory_embedding_hnsw"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "public"."idx_tickets_embedding_hnsw"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "public"."uq_threads_job_parent_ordinal"`);
-    await queryRunner.query(`DROP INDEX IF EXISTS "public"."uq_threads_ticket_id"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "public"."idx_memory_embedding_hnsw"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "public"."idx_tickets_embedding_hnsw"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "public"."uq_threads_job_parent_ordinal"`,
+    );
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "public"."uq_threads_ticket_id"`,
+    );
   }
 }

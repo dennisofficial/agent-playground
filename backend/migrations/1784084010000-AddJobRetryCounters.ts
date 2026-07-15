@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class AddJobRetryCounters1784082503793 implements MigrationInterface {
-    name = 'AddJobRetryCounters1784082503793'
+export class AddJobRetryCounters1784084010000 implements MigrationInterface {
+    name = 'AddJobRetryCounters1784084010000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`ALTER TABLE "jobs" ADD "benign_abort_redrives" integer NOT NULL DEFAULT '0'`);

@@ -14,9 +14,13 @@ import { githubFetchGuardRule } from '../prompt-kit/jit';
  * REAL wired rule object, so we exercise the exact trigger.match + render + hookSpecificOutput shape the SDK
  * receives — the runtime contract, not just the helpers.
  */
-function simulateFetchPostToolUse(input: { tool_name: string; tool_input: { url?: unknown } }) {
+function simulateFetchPostToolUse(input: {
+  tool_name: string;
+  tool_input: { url?: unknown };
+}) {
   const trigger = githubFetchGuardRule.trigger;
-  if (trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
+  if (trigger.kind !== 'url-match')
+    throw new Error('expected url-match trigger');
   const url = input.tool_input?.url;
   const fetched = typeof url === 'string' ? url : '';
   if (!trigger.match(fetched)) return {};
@@ -49,7 +53,9 @@ describe('detectGithubHtmlUrl (engine re-export)', () => {
 
 describe('renderGithubFetchNudge (engine re-export)', () => {
   it('steers to gh api / git and echoes the fetched URL', () => {
-    const text = renderGithubFetchNudge('https://github.com/owner/repo/tree/main');
+    const text = renderGithubFetchNudge(
+      'https://github.com/owner/repo/tree/main',
+    );
     expect(text).toContain('gh api');
     expect(text).toContain('https://github.com/owner/repo/tree/main');
   });
@@ -59,13 +65,18 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
   it('attaches the gh-api steer as additionalContext for a github WebFetch', () => {
     const out = simulateFetchPostToolUse({
       tool_name: 'WebFetch',
-      tool_input: { url: 'https://github.com/Piebald-AI/claude-code-system-prompts/tree/main/system-prompts' },
+      tool_input: {
+        url: 'https://github.com/Piebald-AI/claude-code-system-prompts/tree/main/system-prompts',
+      },
     });
     expect(out.hookSpecificOutput?.hookEventName).toBe('PostToolUse');
     expect(out.hookSpecificOutput?.additionalContext).toContain('gh api');
     // Visible runtime proof: print the exact string the SDK would yield to the model after the fetch.
     // eslint-disable-next-line no-console
-    console.log('[runtime] WebFetch github →', out.hookSpecificOutput?.additionalContext);
+    console.log(
+      '[runtime] WebFetch github →',
+      out.hookSpecificOutput?.additionalContext,
+    );
   });
 
   it('fires for an MCP fetch tool too (matcher covers mcp__fetch__*)', () => {
@@ -79,10 +90,15 @@ describe('fetch PostToolUse callback (runtime contract)', () => {
   it('does NOT attach anything for raw.githubusercontent.com', () => {
     const out = simulateFetchPostToolUse({
       tool_name: 'WebFetch',
-      tool_input: { url: 'https://raw.githubusercontent.com/owner/repo/main/README.md' },
+      tool_input: {
+        url: 'https://raw.githubusercontent.com/owner/repo/main/README.md',
+      },
     });
     expect(out).toEqual({});
     // eslint-disable-next-line no-console
-    console.log('[runtime] WebFetch raw.githubusercontent →', JSON.stringify(out));
+    console.log(
+      '[runtime] WebFetch raw.githubusercontent →',
+      JSON.stringify(out),
+    );
   });
 });

@@ -127,7 +127,11 @@ export class E2eHarness {
         .overrideProvider(ENGINE_RUNNER)
         .useValue(new FakeEngineRunner())
         .overrideProvider(SANDBOX_PROVIDER)
-        .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })
+        .useValue({
+          attach: async ({ sandbox }: { sandbox: unknown }) => sandbox,
+          teardown: async () => {},
+          teardownByIdentity: async () => {},
+        })
         .overrideProvider(LocalGitService)
         .useValue(new FakeLocalGitService())
         .overrideProvider(GithubPrService)
@@ -135,7 +139,9 @@ export class E2eHarness {
         .overrideProvider(JobTitler)
         .useValue(new FakeThreadTitler())
         .compile();
-      this.app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+      this.app = moduleRef.createNestApplication<NestExpressApplication>({
+        rawBody: true,
+      });
     }
 
     this.app.enableShutdownHooks();
@@ -147,7 +153,9 @@ export class E2eHarness {
     this.agent = this.app.get(AgentChatSurface);
     this.approvals = this.app.get(DecisionApprovalService);
     this.sessionManager = this.app.get(AgentSessionManager);
-    this.dataSource = this.app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+    this.dataSource = this.app.get<DataSource>(
+      getDataSourceToken(DB_CONNECTION),
+    );
 
     this.logger.log(
       `Booted Atlas (${this.config.live ? 'LIVE' : 'OFFLINE'}) on :${this.serverPort}, surface=agent`,
@@ -190,7 +198,12 @@ export class E2eHarness {
     const threads = this.repo(JobEntity);
 
     await orgs.save(
-      orgs.create({ id: TEAM_ID, name: 'Atlas E2E', slug: TEAM_ID, status: 'active' }),
+      orgs.create({
+        id: TEAM_ID,
+        name: 'Atlas E2E',
+        slug: TEAM_ID,
+        status: 'active',
+      }),
     );
     await projects.save(
       projects.create({
@@ -219,7 +232,9 @@ export class E2eHarness {
       }),
     );
 
-    this.logger.log(`Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`);
+    this.logger.log(
+      `Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`,
+    );
   }
 
   /**
@@ -228,19 +243,32 @@ export class E2eHarness {
    * the e2e team id — never touches real data.
    */
   private async purgePriorRun(): Promise<void> {
-    const q = (sql: string, params: unknown[]) => this.dataSource.query(sql, params);
+    const q = (sql: string, params: unknown[]) =>
+      this.dataSource.query(sql, params);
     // Threads/messages/stimuli/jobs/threads/steps/decision-records hang off team/project.
-    await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM steps WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM threads WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM decision_records WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
     await q(
       `DELETE FROM messages WHERE job_id IN (
          SELECT id FROM jobs WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
-    await q(`DELETE FROM stimuli WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
-    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(() => undefined);
+    await q(`DELETE FROM stimuli WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
   }
 
   // ── scenario 1: feature (chat-initiated) ───────────────────────────────────────────────────────
@@ -266,7 +294,8 @@ export class E2eHarness {
 
       if (this.config.live) {
         // LIVE: drive via real chat → grill → plan → card.
-        const featureText = 'Please add a short note to the README about the project.';
+        const featureText =
+          'Please add a short note to the README about the project.';
         let threadTs: string | undefined;
         let waitReply = this.agent.waitForReply(() => true, 60_000);
         threadTs = this.agent.sendFromHuman(CHANNEL_REF, featureText);
@@ -276,32 +305,59 @@ export class E2eHarness {
           card = this.agent.latestApprovalCard();
           if (card) break;
           waitReply = this.agent.waitForReply(() => true, 60_000);
-          this.agent.sendFromHuman(CHANNEL_REF, 'Use your best judgment — keep it minimal.', { threadTs });
+          this.agent.sendFromHuman(
+            CHANNEL_REF,
+            'Use your best judgment — keep it minimal.',
+            { threadTs },
+          );
         }
-        if (!card) card = await this.agent.waitForApprovalCard(60_000).catch(() => undefined);
+        if (!card)
+          card = await this.agent
+            .waitForApprovalCard(60_000)
+            .catch(() => undefined);
       } else {
         // OFFLINE: bypass the in-sandbox session — call `submit_plan` tool impl directly. This
         // exercises persistPlan → plan-review skip (no sandbox) → requestApprovalAndAct → card post.
         card = await this.submitPlanDirect();
       }
 
-      record('submit_plan→approval-card', !!card, card ? `card for job ${card.jobId}` : 'no approval card posted');
+      record(
+        'submit_plan→approval-card',
+        !!card,
+        card ? `card for job ${card.jobId}` : 'no approval card posted',
+      );
       if (!card) return { name: 'feature', ok: false, steps };
 
       // Approve the decision record (the human gate) — the seam the Slack button would hit.
       const resolved = this.approvals.resolve(card.jobId, 'approve', 'e2e');
-      record('approve', resolved, resolved ? `resolved job ${card.jobId}` : 'no pending approval to resolve');
+      record(
+        'approve',
+        resolved,
+        resolved
+          ? `resolved job ${card.jobId}`
+          : 'no pending approval to resolve',
+      );
       if (!resolved) return { name: 'feature', ok: false, steps };
 
       // The driver runs async after approval. Poll the job until it reaches PR-ready — the driver's
       // terminal state is `done` WITH a recorded `pr_url` (see `DriverStoreService.setPrReady`).
       const job = await this.waitForPrReady(card.jobId, 120_000);
       const ok = !!job?.pr_url && job.status === 'done';
-      record('pr-ready', ok, job ? `status=${job.status} pr=${job.pr_url ?? '-'}` : 'job never reached pr_ready (done + pr_url)');
+      record(
+        'pr-ready',
+        ok,
+        job
+          ? `status=${job.status} pr=${job.pr_url ?? '-'}`
+          : 'job never reached pr_ready (done + pr_url)',
+      );
 
       // The "PR ready" message threads into the conversation too (visibility).
       const announced = this.agent.outbox.some((m) => /pr ready/i.test(m.text));
-      record('pr-announced-in-thread', announced, announced ? 'posted "PR ready" in-thread' : 'no PR announcement');
+      record(
+        'pr-announced-in-thread',
+        announced,
+        announced ? 'posted "PR ready" in-thread' : 'no PR announcement',
+      );
 
       return { name: 'feature', ok: steps.every((s) => s.ok), steps };
     } catch (err) {
@@ -336,17 +392,20 @@ export class E2eHarness {
 
     const planArgs = {
       goal: 'Add an "About" thread to the README',
-      overview: 'Add a short note to the README describing what this project does and how to run it.',
+      overview:
+        'Add a short note to the README describing what this project does and how to run it.',
       decisions: [
         {
           decisionClass: 'cross_cutting',
           title: 'README format',
-          ruling: 'Append a "## About" thread to the existing README.md; keep it to ≤5 lines.',
+          ruling:
+            'Append a "## About" thread to the existing README.md; keep it to ≤5 lines.',
         },
       ],
       threads: [
         {
-          title: 'Update README.md with a short "About" thread and a one-line run instruction.',
+          title:
+            'Update README.md with a short "About" thread and a one-line run instruction.',
           steps: [
             {
               title: 'Append the About thread',
@@ -394,7 +453,8 @@ export class E2eHarness {
 
       // POST a correctly-signed GitHub webhook to the REAL HTTP edge.
       const first = await this.postGithub(payload, runId);
-      const admitted = first.status === 202 && first.json?.status === 'accepted';
+      const admitted =
+        first.status === 202 && first.json?.status === 'accepted';
       record(
         'github-webhook-accepted',
         admitted,
@@ -405,7 +465,11 @@ export class E2eHarness {
       // A DUPLICATE delivery of the SAME run must collapse (the mechanical dedup filter — no 2nd thread).
       const dup = await this.postGithub(payload, runId);
       const deduped = dup.json?.status === 'deduped';
-      record('duplicate-collapsed', deduped, `HTTP ${dup.status} ${JSON.stringify(dup.json)}`);
+      record(
+        'duplicate-collapsed',
+        deduped,
+        `HTTP ${dup.status} ${JSON.stringify(dup.json)}`,
+      );
 
       // The event seeded the thread's operator-visible artifact: a `system_event` provenance message
       // (the EVENT bubble). This is what the operator + Atlas both see — the harness-message model.
@@ -414,14 +478,26 @@ export class E2eHarness {
         ? await this.repo(MessageEntity).findOne({ where: { job_id: jobId } })
         : null;
       const hasEventMsg =
-        !!eventMsg && (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event';
-      record('system-event-message', hasEventMsg, eventMsg ? `meta=${JSON.stringify(eventMsg.meta)}` : 'no seeded message');
+        !!eventMsg &&
+        (eventMsg.meta as { source?: unknown } | null)?.source ===
+          'system_event';
+      record(
+        'system-event-message',
+        hasEventMsg,
+        eventMsg
+          ? `meta=${JSON.stringify(eventMsg.meta)}`
+          : 'no seeded message',
+      );
 
       // Assert exactly ONE event thread exists for the repo (dedup held — the duplicate seeded none).
       const eventThreads = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, origin: 'event' },
       });
-      record('single-thread', eventThreads === 1, `${eventThreads} event thread(s) on the repo`);
+      record(
+        'single-thread',
+        eventThreads === 1,
+        `${eventThreads} event thread(s) on the repo`,
+      );
 
       // No AUTONOMOUS build — every event-spawned plan waits for approval. Give any (erroneous) dispatch a
       // beat, then assert no event thread reached a build/PR on its own.
@@ -429,7 +505,11 @@ export class E2eHarness {
       const autoBuilt = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, origin: 'event', status: 'running' },
       });
-      record('no-autonomous-build', autoBuilt === 0, `${autoBuilt} event thread(s) auto-building (expected 0)`);
+      record(
+        'no-autonomous-build',
+        autoBuilt === 0,
+        `${autoBuilt} event thread(s) auto-building (expected 0)`,
+      );
 
       return { name: 'event', ok: steps.every((s) => s.ok), steps };
     } catch (err) {
@@ -463,7 +543,11 @@ export class E2eHarness {
 
       const res = await this.postGithub(payload, runId);
       const admitted = res.status === 202 && res.json?.status === 'accepted';
-      record('injection-admitted-as-data', admitted, `HTTP ${res.status} ${JSON.stringify(res.json)}`);
+      record(
+        'injection-admitted-as-data',
+        admitted,
+        `HTTP ${res.status} ${JSON.stringify(res.json)}`,
+      );
       if (!admitted) return { name: 'security', ok: false, steps };
 
       const jobId = res.json?.jobId as string | undefined;
@@ -476,9 +560,16 @@ export class E2eHarness {
         : null;
       const storedAsData =
         !!eventMsg &&
-        (eventMsg.meta as { source?: unknown } | null)?.source === 'system_event' &&
+        (eventMsg.meta as { source?: unknown } | null)?.source ===
+          'system_event' &&
         eventMsg.text.includes('delete the production database');
-      record('injection-stored-as-data', storedAsData, eventMsg ? `meta=${JSON.stringify(eventMsg.meta)}` : 'no seeded message');
+      record(
+        'injection-stored-as-data',
+        storedAsData,
+        eventMsg
+          ? `meta=${JSON.stringify(eventMsg.meta)}`
+          : 'no seeded message',
+      );
 
       // The security control is now the approval card, not a second brain: NO event thread may auto-reach
       // a build. Give any (erroneous) dispatch a beat, then assert nothing built without approval.
@@ -486,7 +577,11 @@ export class E2eHarness {
       const builtThreads = await this.repo(JobEntity).count({
         where: { org_id: TEAM_ID, status: 'running' },
       });
-      record('no-destructive-build', builtThreads === 0, `${builtThreads} thread(s) reached a build (expected 0)`);
+      record(
+        'no-destructive-build',
+        builtThreads === 0,
+        `${builtThreads} thread(s) reached a build (expected 0)`,
+      );
 
       return { name: 'security', ok: steps.every((s) => s.ok), steps };
     } catch (err) {
@@ -506,17 +601,22 @@ export class E2eHarness {
     const signature = `sha256=${createHmac('sha256', secret).update(raw).digest('hex')}`;
     // NOTE: route-only (d6) — this WORK-EVENTS door now ROUTES to an owning job and never seeds; the
     // unowned-CI scenarios in this manual harness need reworking to that model (not CI-run).
-    const res = await fetch(`http://127.0.0.1:${this.serverPort}/webhooks/github/events`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Hub-Signature-256': signature,
-        'X-GitHub-Event': 'workflow_run',
-        'X-GitHub-Delivery': `e2e-${runId}-${randomUUID().slice(0, 8)}`,
+    const res = await fetch(
+      `http://127.0.0.1:${this.serverPort}/webhooks/github/events`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Hub-Signature-256': signature,
+          'X-GitHub-Event': 'workflow_run',
+          'X-GitHub-Delivery': `e2e-${runId}-${randomUUID().slice(0, 8)}`,
+        },
+        body: raw,
       },
-      body: raw,
-    });
-    const json = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    );
+    const json = (await res.json().catch(() => undefined)) as
+      | Record<string, unknown>
+      | undefined;
     return { status: res.status, json };
   }
 
@@ -533,18 +633,27 @@ export class E2eHarness {
 
   /** A terminal state the poll can stop on (so a halted/`cancelled` job surfaces fast, not on timeout). */
   private isTerminal(row: JobEntity | null): boolean {
-    return !!row && (this.isPrReady(row) || row.halt != null || row.status === 'cancelled');
+    return (
+      !!row &&
+      (this.isPrReady(row) || row.halt != null || row.status === 'cancelled')
+    );
   }
 
   /** Poll a specific job until it reaches a terminal state (PR-ready / failed / cancelled) or times out. */
-  private async waitForPrReady(jobId: string, timeoutMs: number): Promise<JobEntity | undefined> {
+  private async waitForPrReady(
+    jobId: string,
+    timeoutMs: number,
+  ): Promise<JobEntity | undefined> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
+    return (
+      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
+      undefined
+    );
   }
 
   /** Poll for the job on a thread (the autonomous path opens it itself) reaching a terminal state. */
@@ -559,21 +668,28 @@ export class E2eHarness {
       if (this.isTerminal(row)) return row ?? undefined;
       await delay(250);
     }
-    return (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ?? undefined;
+    return (
+      (await this.repo(JobEntity).findOne({ where: { id: jobId } })) ??
+      undefined
+    );
   }
 
   // ── repo identity ──────────────────────────────────────────────────────────────────────────────
 
   private repoUrl(): string {
     if (this.config.live && !this.config.gitUrl) {
-      throw new Error('--live requires --repo https://github.com/<owner>/<repo>');
+      throw new Error(
+        '--live requires --repo https://github.com/<owner>/<repo>',
+      );
     }
     return this.config.live ? (this.config.gitUrl as string) : OFFLINE_REPO_URL;
   }
 
   /** `owner/repo` derived from the configured git url — the GitHub webhook routing key. */
   private repoFullName(): string {
-    const parsed = parseGithubRepoUrl(this.config.live ? this.repoUrl() : OFFLINE_REPO_URL);
+    const parsed = parseGithubRepoUrl(
+      this.config.live ? this.repoUrl() : OFFLINE_REPO_URL,
+    );
     if (!parsed) throw new Error(`Not an HTTPS GitHub URL: ${this.repoUrl()}`);
     return `${parsed.owner}/${parsed.repo}`;
   }

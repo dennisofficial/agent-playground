@@ -69,7 +69,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       ],
       providers: [
         DriverStoreService,
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
 
@@ -98,7 +101,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE');
+    await ds.query(
+      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+    );
   });
 
   it('returns hasPlan + review children per thread and the PR + branch on the job', async () => {
@@ -418,9 +423,21 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       role: 'builder',
       brief: 'Backend — drop open tasks',
     });
-    const t1 = await store.createTask({ stageId: stage.id, orgId: ORG_ID, title: 'Done work' });
-    const t2 = await store.createTask({ stageId: stage.id, orgId: ORG_ID, title: 'Forgotten tick' });
-    const t3 = await store.createTask({ stageId: stage.id, orgId: ORG_ID, title: 'Never started' });
+    const t1 = await store.createTask({
+      stageId: stage.id,
+      orgId: ORG_ID,
+      title: 'Done work',
+    });
+    const t2 = await store.createTask({
+      stageId: stage.id,
+      orgId: ORG_ID,
+      title: 'Forgotten tick',
+    });
+    const t3 = await store.createTask({
+      stageId: stage.id,
+      orgId: ORG_ID,
+      title: 'Never started',
+    });
     await store.updateTaskStatus(t1.id, 'completed');
     await store.updateTaskStatus(t2.id, 'in_progress');
     // t3 stays pending
@@ -541,20 +558,36 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.materializeReviewChildren(
       { id: leg2.id, jobId: job.id, orgId: ORG_ID },
       [
-        { kind: 'review_agent', brief: 'BP', config: { lensId: 'best_practices' } },
+        {
+          kind: 'review_agent',
+          brief: 'BP',
+          config: { lensId: 'best_practices' },
+        },
         { kind: 'review_agent', brief: 'C', config: { lensId: 'correctness' } },
         { kind: 'review_fix', brief: 'fixes', config: {} },
       ],
     );
-    await store.createTask({ stageId: stage.id, orgId: ORG_ID, title: 'Write the migration' });
-    await store.createTask({ stageId: stage.id, orgId: ORG_ID, title: 'Wire the handler' });
+    await store.createTask({
+      stageId: stage.id,
+      orgId: ORG_ID,
+      title: 'Write the migration',
+    });
+    await store.createTask({
+      stageId: stage.id,
+      orgId: ORG_ID,
+      title: 'Wire the handler',
+    });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       stages: Array<{
         kind: string;
         title: string | null;
         ordinal: number;
-        threads: Array<{ id: string; role: string; children: Array<{ role: string }> }>;
+        threads: Array<{
+          id: string;
+          role: string;
+          children: Array<{ role: string }>;
+        }>;
         tasks: Array<{ subject: string }>;
       }>;
     };
@@ -738,7 +771,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(row?.done_waked_at).toBeInstanceOf(Date);
   });
 
-  it('supersedeDoneWakeMessages deletes only THIS thread\'s below-gen rows — spares other threads and untagged rows', async () => {
+  it("supersedeDoneWakeMessages deletes only THIS thread's below-gen rows — spares other threads and untagged rows", async () => {
     const { jobId, stageId, threadId } = await seedJobThread();
     const otherThread = await store.createThreadInStage({
       stageId,
@@ -780,14 +813,16 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     // Deliver gen 2 for `threadId` → supersede its gen<2 rows only.
     await store.supersedeDoneWakeMessages(jobId, threadId, 2);
 
-    const survivors = (await messages.find({ where: { job_id: jobId } })).map((m) => m.id);
+    const survivors = (await messages.find({ where: { job_id: jobId } })).map(
+      (m) => m.id,
+    );
     expect(survivors).not.toContain(stalePartial); // the truncated gen-1 partial is gone
     expect(survivors).toEqual(
       expect.arrayContaining([currentSummary, otherThreadSummary, untagged]),
     );
   });
 
-  it('masterReviewThreadId returns the job\'s master_review thread id, or null when it has none', async () => {
+  it("masterReviewThreadId returns the job's master_review thread id, or null when it has none", async () => {
     const { jobId } = await seedJobThread();
     expect(await store.masterReviewThreadId(jobId)).toBeNull();
 
@@ -820,7 +855,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     threadId: string;
   }> {
     const seeded = await seedJobThread();
-    if (sessionId) await threads.update({ id: seeded.threadId }, { session_id: sessionId });
+    if (sessionId)
+      await threads.update({ id: seeded.threadId }, { session_id: sessionId });
     return seeded;
   }
 
@@ -875,12 +911,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.recordActiveLeg(threadId, 'sess-1', 90_000); // lower sample must NOT lower the peak
     const row = await threads.findOne({ where: { id: threadId } });
     expect(row?.session_id).toBe('sess-1');
-    expect((row?.config as { contextTokensPeak?: number }).contextTokensPeak).toBe(120_000);
+    expect(
+      (row?.config as { contextTokensPeak?: number }).contextTokensPeak,
+    ).toBe(120_000);
   });
 
   // ── Transcript anchor (the halt-wake's session pointer) ────────────────────────────────────────────
 
-  it('resolveSessionAnchor returns the thread\'s session id + its builder-leg ordinal (no terminal record needed)', async () => {
+  it("resolveSessionAnchor returns the thread's session id + its builder-leg ordinal (no terminal record needed)", async () => {
     const { stageId, threadId } = await seedRotationThread('sess-1');
 
     // A lone builder leg resolves to legOrdinal 1, straight off its own session — no terminal record needed.
@@ -891,7 +929,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
 
     // Rotate to leg 2, give it its own session → the anchor resolves to that leg's ordinal + session.
-    await store.completeLegRotation({ anchorStepId: threadId, handoff: 'h', seed: 's' });
+    await store.completeLegRotation({
+      anchorStepId: threadId,
+      handoff: 'h',
+      seed: 's',
+    });
     const leg2 = (await store.threadsForStage(stageId))[1];
     await threads.update({ id: leg2.id }, { session_id: 'sess-2' });
     expect(await store.resolveSessionAnchor(leg2.id)).toEqual({
@@ -924,13 +966,18 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const state = (await store.getPipelineState(job.id, ORG_ID)) as { halt: unknown };
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
+      halt: unknown;
+    };
     expect(state.halt).toBeNull();
   });
 
   // ── retractShip (the ship-review gate's retract CAS + card neutralization) ───────────────────────
 
-  async function seedShipParkedJob(): Promise<{ jobId: string; threadId: string }> {
+  async function seedShipParkedJob(): Promise<{
+    jobId: string;
+    threadId: string;
+  }> {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -944,7 +991,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }),
     );
     // A card row's `thread_id` is NOT NULL (d3) — seed a thread to anchor the durable ship card on.
-    const stage = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'planning' });
+    const stage = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'planning',
+    });
     const thread = await store.createThreadInStage({
       stageId: stage.id,
       jobId: job.id,
@@ -955,7 +1006,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     return { jobId: job.id, threadId: thread.id };
   }
 
-  async function seedShipCardRow(jobId: string, threadId: string): Promise<void> {
+  async function seedShipCardRow(
+    jobId: string,
+    threadId: string,
+  ): Promise<void> {
     const card = webShipReviewCard({
       jobId,
       title: 'Ready to ship',
@@ -992,7 +1046,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
     });
     expect(cardRow?.card).toMatchObject({ type: 'verdict_card' });
-    expect((cardRow?.card as Record<string, unknown> | undefined)?.actions).toBeUndefined();
+    expect(
+      (cardRow?.card as Record<string, unknown> | undefined)?.actions,
+    ).toBeUndefined();
   });
 
   it('a second retractShip call is a no-op (idempotent, returns false)', async () => {
@@ -1021,7 +1077,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     // parkForShipReview anchors its ship card on the job's planning thread (messages.thread_id is NOT
     // NULL) — every job gets exactly one at job start (d7); seed it directly here.
-    const planningStage = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'planning' });
+    const planningStage = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'planning',
+    });
     await store.createThreadInStage({
       stageId: planningStage.id,
       jobId: job.id,
@@ -1084,7 +1144,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(row.card).toMatchObject({ type: 'verdict_card' });
-      expect((row.card as Record<string, unknown> | null)?.actions).toBeUndefined();
+      expect(
+        (row.card as Record<string, unknown> | null)?.actions,
+      ).toBeUndefined();
     }
   });
 
@@ -1114,14 +1176,18 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const cardRow = await messages.findOne({
       where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
     });
-    const firstStamp = (cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt;
+    const firstStamp = (cardRow?.card as Record<string, unknown> | undefined)
+      ?.previewRequestedAt;
 
     expect(await store.markPreviewRequested(jobId)).toBe(false);
     const cardRow2 = await messages.findOne({
       where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
     });
     // The stamp is unchanged — the losing call did not re-stamp.
-    expect((cardRow2?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBe(firstStamp);
+    expect(
+      (cardRow2?.card as Record<string, unknown> | undefined)
+        ?.previewRequestedAt,
+    ).toBe(firstStamp);
   });
 
   it('markPreviewRequested does NOT stamp a retracted (neutralized) ship card', async () => {
@@ -1134,7 +1200,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const cardRow = await messages.findOne({
       where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
     });
-    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
+    expect(
+      (cardRow?.card as Record<string, unknown> | undefined)
+        ?.previewRequestedAt,
+    ).toBeUndefined();
   });
 
   it('markPreviewRequested does NOT stamp when the job has left the ship gate', async () => {
@@ -1146,7 +1215,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const cardRow = await messages.findOne({
       where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
     });
-    expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
+    expect(
+      (cardRow?.card as Record<string, unknown> | undefined)
+        ?.previewRequestedAt,
+    ).toBeUndefined();
   });
 
   // ── Retry-budget counters durability — auth_retry_attempts / driver_transient_retries (job-scoped, ─────

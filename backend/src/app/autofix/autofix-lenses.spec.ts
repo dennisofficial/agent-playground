@@ -11,7 +11,12 @@ import type { AutoFixContext, ReviewFinding } from './autofix.types';
 
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
-  sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
+  sandboxKey: {
+    orgId: 'acme',
+    repoId: 'atlas',
+    jobId: 'feat',
+    type: 'autofix',
+  },
   gitRange: 'abc123..HEAD',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',
@@ -59,11 +64,17 @@ describe('parseFindings', () => {
       '{ "severity": "weird", "title": "c" },' +
       '{ "title": "d" } ] }\n```';
     const found = parseFindings('x', report);
-    expect(found.map((f) => f.severity)).toEqual(['high', 'low', 'medium', 'medium']);
+    expect(found.map((f) => f.severity)).toEqual([
+      'high',
+      'low',
+      'medium',
+      'medium',
+    ]);
   });
 
   it('drops entries without a title', () => {
-    const report = '```json\n{ "findings": [ { "severity": "high", "detail": "no title" } ] }\n```';
+    const report =
+      '```json\n{ "findings": [ { "severity": "high", "detail": "no title" } ] }\n```';
     expect(parseFindings('x', report)).toEqual([]);
   });
 });
@@ -71,7 +82,13 @@ describe('parseFindings', () => {
 describe('dedupeFindings', () => {
   it('collapses same-file near-identical titles, keeping highest severity + union of lenses', () => {
     const findings: ReviewFinding[] = [
-      { lens: 'a', severity: 'low', file: 'src/x.ts', title: 'Missing null check.', detail: 'short' },
+      {
+        lens: 'a',
+        severity: 'low',
+        file: 'src/x.ts',
+        title: 'Missing null check.',
+        detail: 'short',
+      },
       {
         lens: 'b',
         severity: 'high',
@@ -89,8 +106,20 @@ describe('dedupeFindings', () => {
 
   it('keeps findings in different files distinct', () => {
     const findings: ReviewFinding[] = [
-      { lens: 'a', severity: 'medium', file: 'src/x.ts', title: 'same', detail: '' },
-      { lens: 'a', severity: 'medium', file: 'src/y.ts', title: 'same', detail: '' },
+      {
+        lens: 'a',
+        severity: 'medium',
+        file: 'src/x.ts',
+        title: 'same',
+        detail: '',
+      },
+      {
+        lens: 'a',
+        severity: 'medium',
+        file: 'src/y.ts',
+        title: 'same',
+        detail: '',
+      },
     ];
     expect(dedupeFindings(findings)).toHaveLength(2);
   });
@@ -101,7 +130,11 @@ describe('dedupeFindings', () => {
       { lens: 'a', severity: 'high', file: null, title: 'hi', detail: '' },
       { lens: 'a', severity: 'medium', file: null, title: 'mid', detail: '' },
     ];
-    expect(dedupeFindings(findings).map((f) => f.severity)).toEqual(['high', 'medium', 'low']);
+    expect(dedupeFindings(findings).map((f) => f.severity)).toEqual([
+      'high',
+      'medium',
+      'low',
+    ]);
   });
 });
 
@@ -130,7 +163,10 @@ describe('DEFAULT_LENSES', () => {
 
 describe('reviewAgentsForThread', () => {
   it('backend gets the always-on lenses, in stable order', () => {
-    expect(reviewAgentsForThread('backend').map((l) => l.id)).toEqual(['correctness', 'holistic']);
+    expect(reviewAgentsForThread('backend').map((l) => l.id)).toEqual([
+      'correctness',
+      'holistic',
+    ]);
   });
 
   it('docs drops correctness (pure noise on prose), leaving holistic', () => {
@@ -148,7 +184,10 @@ describe('reviewAgentsForThread', () => {
   });
 
   it('general (and any other type) gets the always-on lenses', () => {
-    expect(reviewAgentsForThread('general').map((l) => l.id)).toEqual(['correctness', 'holistic']);
+    expect(reviewAgentsForThread('general').map((l) => l.id)).toEqual([
+      'correctness',
+      'holistic',
+    ]);
   });
 
   it('is deterministic — same type, same order, every call', () => {
@@ -183,7 +222,9 @@ describe('prompt builders', () => {
     const diffLens = DEFAULT_LENSES.find((l) => l.id === 'correctness')!;
     const p = buildReviewPrompt(diffLens, ctx);
     // strict diff-only scoping (not the holistic exemption)
-    expect(p).toContain('ONLY report issues introduced by (or directly within) the change set');
+    expect(p).toContain(
+      'ONLY report issues introduced by (or directly within) the change set',
+    );
     expect(p).not.toContain('MAY read beyond the diff');
     // shared ship-blocker bar + honest severity rubric render for every scope
     expect(p).toContain('BLOCKS approval');
@@ -195,16 +236,26 @@ describe('prompt builders', () => {
     const holistic = DEFAULT_LENSES.find((l) => l.id === 'holistic')!;
     const p = buildReviewPrompt(holistic, ctx);
     expect(p).toContain('MAY read beyond the diff');
-    expect(p).toContain('only FLAG problems THIS change introduced or left incomplete');
+    expect(p).toContain(
+      'only FLAG problems THIS change introduced or left incomplete',
+    );
     // the strict diff-only clause must NOT be the scope for the holistic lens
-    expect(p).not.toContain('ONLY report issues introduced by (or directly within) the change set');
+    expect(p).not.toContain(
+      'ONLY report issues introduced by (or directly within) the change set',
+    );
     // but the shared ship-blocker bar still applies
     expect(p).toContain('BLOCKS approval');
   });
 
   it('fix prompt enumerates findings, forbids scope creep, and REQUIRES the agent commit + push', () => {
     const findings: ReviewFinding[] = [
-      { lens: 'a', severity: 'high', file: 'src/x.ts', title: 'guard y', detail: 'add a null check' },
+      {
+        lens: 'a',
+        severity: 'high',
+        file: 'src/x.ts',
+        title: 'guard y',
+        detail: 'add a null check',
+      },
     ];
     const p = buildFixPrompt(findings, ctx);
     expect(p).toContain('guard y');

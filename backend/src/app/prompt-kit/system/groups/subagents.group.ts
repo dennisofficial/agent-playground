@@ -155,7 +155,11 @@ export class SubagentsGroup {
 
   /** The repo's saved preview recipe, injected READ-ONLY into `validate` so it can follow/adapt it instead of
    *  re-discovering the preview setup. Only when a recipe exists. */
-  @Fragment({ usedBy: [Agent.VALIDATE], order: 110, condition: (c) => !!c.previewInstructions?.trim() })
+  @Fragment({
+    usedBy: [Agent.VALIDATE],
+    order: 110,
+    condition: (c) => !!c.previewInstructions?.trim(),
+  })
   validatePreviewRecipe(ctx: PromptCtx): string {
     return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }
@@ -180,7 +184,7 @@ export class SubagentsGroup {
         'component-library source (`components/ui/*`, a Storybook), and existing screens to mirror. Lift the ' +
         'EXACT values — hex codes, spacing scale, radii, shadows, border colors, font families and weights — ' +
         'and note whether the theme is LIGHT or DARK and what the accent hue is.',
-      'REPRODUCE, DO NOT INVENT. Build against the app\'s real tokens: copy its CSS custom properties verbatim ' +
+      "REPRODUCE, DO NOT INVENT. Build against the app's real tokens: copy its CSS custom properties verbatim " +
         'into your `:root` and style with `var(--*)`, not arbitrary values (`padding: var(--space-md)`, not ' +
         '`padding: 17px`). Match the theme (light vs dark), the accent, and the type ramp, and load the same ' +
         'webfonts. Mirror the real component chrome (buttons, cards, pills, badges, inputs) rather than ' +

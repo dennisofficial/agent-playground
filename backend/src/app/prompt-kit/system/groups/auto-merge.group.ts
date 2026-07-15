@@ -12,7 +12,11 @@ import { Agent } from '../agent';
 @FragmentGroup()
 export class AutoMergeGroup {
   /** Tell the brain a green, mergeable PR merges itself with no human at the final gate. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1251, condition: hasAutoMerge })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1251,
+    condition: hasAutoMerge,
+  })
   autoMergeMode(): string {
     return [
       'AUTO-MERGE MODE — auto-merge is ON for this job. The moment your PR is mergeable and CI is green,',

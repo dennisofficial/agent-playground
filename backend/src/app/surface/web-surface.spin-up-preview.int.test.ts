@@ -70,27 +70,48 @@ let configStore: WorkspaceConfigStore;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(email: string): Promise<{ cookie: string; id: string }> {
+async function register(
+  email: string,
+): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie =
+    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]).catch(() => undefined);
-  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+      [GATE_JOB, RUNNING_JOB],
+    ])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
+    .catch(() => undefined);
 }
 
 async function seedShipCardRow(jobId: string): Promise<void> {
-  const card = webShipReviewCard({ jobId, title: 'Ready to ship', summary: 'The build is ready.' });
+  const card = webShipReviewCard({
+    jobId,
+    title: 'Ready to ship',
+    summary: 'The build is ready.',
+  });
   await ds.query(
     `INSERT INTO messages (job_id, author, author_id, author_bot_id, text, kind, ts, card)
      VALUES ($1, 'Atlas', 'atlas', 'atlas', 'Ready to ship', 'card', $2, $3::jsonb)`,
@@ -98,7 +119,9 @@ async function seedShipCardRow(jobId: string): Promise<void> {
   );
 }
 
-async function shipCard(jobId: string): Promise<Record<string, unknown> | undefined> {
+async function shipCard(
+  jobId: string,
+): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
     `SELECT card FROM messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
     [jobId, `ship-review:${jobId}`],
@@ -111,7 +134,9 @@ function previewUrl(jobId: string): string {
 }
 
 /** Collect the seed turns the surface emits during `fn` (the Subject fires synchronously on POST). */
-async function captureSeeds(fn: () => Promise<void>): Promise<InboundChatMessage[]> {
+async function captureSeeds(
+  fn: () => Promise<void>,
+): Promise<InboundChatMessage[]> {
   const seeds: InboundChatMessage[] = [];
   const sub = surface.inbound$.subscribe((m) => {
     if (m.seed) seeds.push(m);
@@ -143,7 +168,9 @@ beforeAll(async () => {
     .useValue(new FakeThreadTitler())
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.use(cookieParser());
   app.enableShutdownHooks();
   await app.init();
@@ -161,10 +188,10 @@ beforeAll(async () => {
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Spin Up Preview Org', 'spin-up-preview-org', 'active')`,
     [ORG],
   );
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [
-    ORG,
-    owner.id,
-  ]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [ORG, owner.id],
+  );
   await ds.query(
     `INSERT INTO repos (id, org_id, slug, name, git_url, default_branch, access_ok)
      VALUES ($1, $2, 'spin-up-preview-repo', 'Spin Up Preview Repo', 'https://github.com/atlas-it/spin-up-preview.git', 'main', true)`,
@@ -177,8 +204,12 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Fresh cards/jobs per test — each `it` seeds the exact status it needs.
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
-  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[GATE_JOB, RUNNING_JOB]]);
+  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    [GATE_JOB, RUNNING_JOB],
+  ]);
+  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [
+    [GATE_JOB, RUNNING_JOB],
+  ]);
   // No stored preview recipe by default — each `it` that needs one sets it explicitly.
   await configStore.setPreviewInstructions(ORG, REPO, null);
 });
@@ -203,7 +234,9 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
 
     let res!: request.Response;
     const seeds = await captureSeeds(async () => {
-      res = await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+      res = await request(server)
+        .post(previewUrl(GATE_JOB))
+        .set('Cookie', ownerCookie);
     });
 
     // The whole web-surface controller returns 201 for POSTs (no `@HttpCode`); the body is the contract.
@@ -227,12 +260,15 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
   });
 
   it('with a stored recipe: the seed splices the saved body in a ```md fence + the "update it" footer', async () => {
-    const recipe = 'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
+    const recipe =
+      'docker compose up -d\npnpm migrate\npnpm seed\nOpen https://preview.example/dashboard';
     await configStore.setPreviewInstructions(ORG, REPO, recipe);
     await seedGateJob();
 
     const seeds = await captureSeeds(async () => {
-      await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+      await request(server)
+        .post(previewUrl(GATE_JOB))
+        .set('Cookie', ownerCookie);
     });
 
     expect(seeds).toHaveLength(1);
@@ -247,7 +283,9 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await seedGateJob();
 
     const seeds = await captureSeeds(async () => {
-      await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+      await request(server)
+        .post(previewUrl(GATE_JOB))
+        .set('Cookie', ownerCookie);
     });
 
     expect(seeds).toHaveLength(1);
@@ -265,7 +303,9 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
 
     let res!: request.Response;
     const seeds = await captureSeeds(async () => {
-      res = await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
+      res = await request(server)
+        .post(previewUrl(GATE_JOB))
+        .set('Cookie', ownerCookie);
     });
 
     expect(res.status).toBe(201);
@@ -284,7 +324,9 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
 
     let res!: request.Response;
     const seeds = await captureSeeds(async () => {
-      res = await request(server).post(previewUrl(RUNNING_JOB)).set('Cookie', ownerCookie);
+      res = await request(server)
+        .post(previewUrl(RUNNING_JOB))
+        .set('Cookie', ownerCookie);
     });
 
     expect(res.status).toBe(201);

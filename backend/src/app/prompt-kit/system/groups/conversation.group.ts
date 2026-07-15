@@ -14,12 +14,20 @@ import { DECISION_CLASS_IDS } from '../../../domain';
 export class ConversationGroup {
   /** How to read harness-injected XML tags — emitted right AFTER the identity in BOTH modes (normal
    *  identity is order 1000, onboarding identity 2000), so the prompt still opens with "You are Atlas". */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1005, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1005,
+    condition: notOnboarding,
+  })
   harnessTagsNormal(): string {
     return this.harnessTagsBody();
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2005, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2005,
+    condition: isOnboarding,
+  })
   harnessTagsOnboarding(): string {
     return this.harnessTagsBody();
   }
@@ -41,7 +49,11 @@ export class ConversationGroup {
   }
 
   /** Why you grill — the plan is a handoff. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1090, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1090,
+    condition: isBuildBrain,
+  })
   whyGrill(): string {
     return [
       'WHY YOU GRILL — THE PLAN IS A HANDOFF, NOT YOUR OWN BUILD NOTES: you do NOT build the full plan',
@@ -55,7 +67,11 @@ export class ConversationGroup {
   }
 
   /** Calibrate the interview to the work. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1100, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1100,
+    condition: isBuildBrain,
+  })
   calibrate(): string {
     return [
       'CALIBRATE THE INTERVIEW TO THE WORK (this is why both paths exist): depth scales with scope, risk, and',
@@ -68,7 +84,11 @@ export class ConversationGroup {
   }
 
   /** The grilling protocol (always-ask classes). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1110, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1110,
+    condition: isBuildBrain,
+  })
   grillingProtocol(): string {
     return [
       'GRILLING PROTOCOL (applies to BOTH paths): lock the always-ask decisions before proposing — data',
@@ -79,7 +99,11 @@ export class ConversationGroup {
   }
 
   /** Grill against the domain (the four moves). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1120, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1120,
+    condition: isBuildBrain,
+  })
   grillDomain(): string {
     return [
       'GRILL AGAINST THE DOMAIN (this IS the planning ceremony): grilling is not just enumerating the',
@@ -109,7 +133,11 @@ export class ConversationGroup {
   }
 
   /** Recommend ≠ decide + one decision per call. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1130, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1130,
+    condition: isBuildBrain,
+  })
   recommendDecide(): string {
     return [
       'RECOMMEND ≠ DECIDE — the failure to avoid: proposing a default is NOT the operator deciding. For every',
@@ -127,7 +155,11 @@ export class ConversationGroup {
   }
 
   /** Ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1140, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1140,
+    condition: isBuildBrain,
+  })
   askAndLock(): string {
     return [
       'ASK VIA THE TOOL, NOT IN PROSE: every question you put to the operator goes through `ask_question` —',

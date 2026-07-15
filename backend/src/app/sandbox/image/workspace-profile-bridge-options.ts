@@ -53,11 +53,17 @@ export const WORKSPACE_PROFILE_TOOL_NAMES = [
   'propose_convention_profile_change',
 ] as const;
 
-const WORKSPACE_PROFILE_TOOL_SET: ReadonlySet<string> = new Set(WORKSPACE_PROFILE_TOOL_NAMES);
+const WORKSPACE_PROFILE_TOOL_SET: ReadonlySet<string> = new Set(
+  WORKSPACE_PROFILE_TOOL_NAMES,
+);
 
 /** How the model addresses each Workspace Profile tool: `mcp__workspace-profile__<tool>`. */
-export function qualifyWorkspaceProfileToolNames(toolNames: string[]): string[] {
-  return toolNames.map((name) => `mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__${name}`);
+export function qualifyWorkspaceProfileToolNames(
+  toolNames: string[],
+): string[] {
+  return toolNames.map(
+    (name) => `mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__${name}`,
+  );
 }
 
 /**
@@ -70,6 +76,7 @@ export function partitionWorkspaceProfileTools(all: string[]): {
 } {
   const host: string[] = [];
   const profile: string[] = [];
-  for (const name of all) (WORKSPACE_PROFILE_TOOL_SET.has(name) ? profile : host).push(name);
+  for (const name of all)
+    (WORKSPACE_PROFILE_TOOL_SET.has(name) ? profile : host).push(name);
   return { host, profile };
 }

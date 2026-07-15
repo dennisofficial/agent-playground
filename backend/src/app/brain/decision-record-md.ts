@@ -1,4 +1,7 @@
-import { DECISION_CLASS_IDS, DECISION_CLASS_META } from '../domain/decision-record';
+import {
+  DECISION_CLASS_IDS,
+  DECISION_CLASS_META,
+} from '../domain/decision-record';
 import type { Decision } from '../domain/decision-record';
 
 /**
@@ -31,7 +34,10 @@ function renderDecision(d: Decision): string {
  * omitted. An optional `overview` heads the doc. Returns a trailing-newline-terminated string ready to
  * write to `/context/generated/decision-record.md`.
  */
-export function renderDecisionRecordMd(decisions: Decision[], overview?: string): string {
+export function renderDecisionRecordMd(
+  decisions: Decision[],
+  overview?: string,
+): string {
   const parts: string[] = ['# Decision record', ''];
   parts.push(
     '_Generated from the locked decisions — do not edit by hand; it is rewritten on every decision._',
@@ -49,7 +55,10 @@ export function renderDecisionRecordMd(decisions: Decision[], overview?: string)
   for (const cls of DECISION_CLASS_IDS) {
     const inClass = decisions.filter((d) => d.decisionClass === cls);
     if (inClass.length === 0) continue;
-    parts.push(`## ${DECISION_CLASS_META.find((c) => c.id === cls)!.heading}`, '');
+    parts.push(
+      `## ${DECISION_CLASS_META.find((c) => c.id === cls)!.heading}`,
+      '',
+    );
     for (const d of inClass) {
       parts.push(renderDecision(d), '');
     }

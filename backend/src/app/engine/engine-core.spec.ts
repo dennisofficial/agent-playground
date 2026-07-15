@@ -435,7 +435,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
 
   it('sets an explicit per-subagent effort on the SDK agents map (fetchers lowered, writers kept high)', async () => {
     const { sdk, captured } = fakeClaudeSdk();
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     await core.run({
       engine: 'claude',
       task: agentMessage('t'),
@@ -446,7 +448,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       mode: 'execute',
       auth: { secret: 'tok' },
     });
-    const agents = captured.options!.agents as Record<string, { effort?: string }>;
+    const agents = captured.options!.agents as Record<
+      string,
+      { effort?: string }
+    >;
 
     // Every subagent pins its OWN effort — none inherits the session effort (`high`) implicitly.
     // Mechanical fetchers run cheaper; judgment writers/reviewers stay high.
@@ -1742,7 +1747,9 @@ describe('EngineCore — session-limit surfacing that is NOT a structured rate_l
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'claude',
       task: agentMessage('do it'),
@@ -1766,11 +1773,15 @@ describe('EngineCore — session-limit surfacing that is NOT a structured rate_l
       query: () =>
         (async function* () {
           yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
-          throw new Error(`Claude Code returned an error result: ${LIMIT_LINE}`);
+          throw new Error(
+            `Claude Code returned an error result: ${LIMIT_LINE}`,
+          );
         })(),
     } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 
-    const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
+    const core = new EngineCore(sdk, fakeCodexSdk().sdk, {
+      homeRoot: HOME_ROOT,
+    });
     const res = await core.run({
       engine: 'claude',
       task: agentMessage('do it'),

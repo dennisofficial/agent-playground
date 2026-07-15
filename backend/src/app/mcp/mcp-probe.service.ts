@@ -17,10 +17,13 @@ export class McpProbeService {
 
   constructor(private readonly store: McpServerStore) {}
 
-  async validate(row: McpServerEntity): Promise<{ discoveredTools?: string[]; error?: string }> {
+  async validate(
+    row: McpServerEntity,
+  ): Promise<{ discoveredTools?: string[]; error?: string }> {
     try {
       if (row.transport === 'stdio') {
-        if (!row.config.command) return { error: 'stdio server has no command' };
+        if (!row.config.command)
+          return { error: 'stdio server has no command' };
         // A live spawn only happens in-sandbox; here we only confirm the definition is well-formed.
         return {};
       }
@@ -48,7 +51,11 @@ export class McpProbeService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const rpc = async (method: string, params: unknown, id: number): Promise<unknown> => {
+      const rpc = async (
+        method: string,
+        params: unknown,
+        id: number,
+      ): Promise<unknown> => {
         const res = await fetch(url, {
           method: 'POST',
           headers: {
@@ -72,7 +79,9 @@ export class McpProbeService {
         1,
       );
       const tools = await rpc('tools/list', {}, 2);
-      const list = (tools as { result?: { tools?: Array<{ name?: string }> } })?.result?.tools ?? [];
+      const list =
+        (tools as { result?: { tools?: Array<{ name?: string }> } })?.result
+          ?.tools ?? [];
       return { discoveredTools: list.map((t) => t.name ?? '').filter(Boolean) };
     } finally {
       clearTimeout(timeout);

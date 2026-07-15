@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeTailFd, nextTailFrame, openTailFd, readServiceLogTail } from './service-log-tail';
+import {
+  closeTailFd,
+  nextTailFrame,
+  openTailFd,
+  readServiceLogTail,
+} from './service-log-tail';
 
 describe('readServiceLogTail', () => {
   let dir: string;
@@ -16,13 +21,21 @@ describe('readServiceLogTail', () => {
   });
 
   it('returns empty content when the log file does not exist yet', () => {
-    expect(readServiceLogTail(dir, 'missing', 200, 1024)).toEqual({ content: '', truncated: false, size: 0 });
+    expect(readServiceLogTail(dir, 'missing', 200, 1024)).toEqual({
+      content: '',
+      truncated: false,
+      size: 0,
+    });
   });
 
   it('returns the whole file when under the line/byte caps', () => {
     writeFileSync(join(dir, 'web.log'), 'line1\nline2\nline3');
     const tail = readServiceLogTail(dir, 'web', 200, 1024);
-    expect(tail).toEqual({ content: 'line1\nline2\nline3', truncated: false, size: 17 });
+    expect(tail).toEqual({
+      content: 'line1\nline2\nline3',
+      truncated: false,
+      size: 17,
+    });
   });
 
   it('caps to the last n lines', () => {
@@ -60,7 +73,11 @@ describe('nextTailFrame', () => {
     try {
       writeFileSync(path, 'world\n', { flag: 'a' });
       const result = nextTailFrame(6, 12, fd);
-      expect(result).toEqual({ kind: 'append', chunk: 'world\n', nextOffset: 12 });
+      expect(result).toEqual({
+        kind: 'append',
+        chunk: 'world\n',
+        nextOffset: 12,
+      });
     } finally {
       closeTailFd(fd);
     }

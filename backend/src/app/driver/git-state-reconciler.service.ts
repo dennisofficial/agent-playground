@@ -4,7 +4,13 @@ import { IsNull, Not, Raw, Repository } from 'typeorm';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, RepoEntity } from '../persistence/entities';
-import { GithubPrService, parseGithubRepoUrl, type CheckRun, type CiCounts, type CiSummary } from '../git';
+import {
+  GithubPrService,
+  parseGithubRepoUrl,
+  type CheckRun,
+  type CiCounts,
+  type CiSummary,
+} from '../git';
 import { StimulusIntake } from '../stimulus';
 import { AutoMergeService } from './auto-merge.service';
 
@@ -225,7 +231,10 @@ export class GitStateReconciler {
 
     // CI status column (UI badge). Routing of CI FAILURES rides the webhook (check_run) so it isn't
     // double-delivered; here we only summarise the head-SHA check-runs into the column.
-    let sum: CiSummary = { status: job.ci_status as CiSummary['status'], counts: job.ci_counts };
+    let sum: CiSummary = {
+      status: job.ci_status as CiSummary['status'],
+      counts: job.ci_counts,
+    };
     if (detail.headSha) {
       const runs = await this.pr.listCheckRuns(token, {
         owner: parsed.owner,
@@ -241,11 +250,16 @@ export class GitStateReconciler {
     }
 
     // Persist observed columns only when they changed — avoid needless WAL/realtime deltas.
-    const ciChanged = sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
+    const ciChanged =
+      sum.status !== job.ci_status || !sameCounts(sum.counts, job.ci_counts);
     if (ciChanged || detail.mergeableState !== job.pr_mergeable) {
       await this.jobs.update(
         { id: job.id },
-        { ci_status: sum.status, ci_counts: sum.counts, pr_mergeable: detail.mergeableState },
+        {
+          ci_status: sum.status,
+          ci_counts: sum.counts,
+          pr_mergeable: detail.mergeableState,
+        },
       );
     }
 
@@ -271,7 +285,9 @@ export class GitStateReconciler {
     // check would have skipped.
     void this.autoMerge
       ?.maybeAutoMerge(job.id)
-      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`),
+      );
 
     // `null` / `unknown` mergeable_state = GitHub is still computing it — poll fast (`computing`) until it
     // resolves to clean/dirty. A settled open PR polls at the relaxed `active` cadence.
@@ -300,14 +316,26 @@ export const CADENCE_MS: Record<Exclude<PollTier, 'terminal'>, number> = {
   discovering: 180_000,
 };
 
-const FAILED = new Set(['failure', 'timed_out', 'cancelled', 'action_required', 'stale']);
+const FAILED = new Set([
+  'failure',
+  'timed_out',
+  'cancelled',
+  'action_required',
+  'stale',
+]);
 
 /** Roll a PR head's check-runs into an overall status + per-category counts. Precedence: any FAILED
  *  conclusion → failure; else any run not completed → pending; else ≥1 success → success; else skipped.
  *  Skipped/neutral conclusions NEVER count as (or hide) a failure. No runs → { status:null, counts:null }. */
 export function summarizeChecks(runs: CheckRun[]): CiSummary {
   if (runs.length === 0) return { status: null, counts: null };
-  const counts: CiCounts = { failing: 0, pending: 0, passed: 0, skipped: 0, total: runs.length };
+  const counts: CiCounts = {
+    failing: 0,
+    pending: 0,
+    passed: 0,
+    skipped: 0,
+    total: runs.length,
+  };
   for (const r of runs) {
     if (r.status !== 'completed') counts.pending++;
     else if (r.conclusion != null && FAILED.has(r.conclusion)) counts.failing++;
@@ -315,16 +343,24 @@ export function summarizeChecks(runs: CheckRun[]): CiSummary {
     else counts.skipped++; // skipped | neutral | any other non-failing terminal conclusion
   }
   const status =
-    counts.failing > 0 ? 'failure'
-    : counts.pending > 0 ? 'pending'
-    : counts.passed > 0 ? 'success'
-    : 'skipped';
+    counts.failing > 0
+      ? 'failure'
+      : counts.pending > 0
+        ? 'pending'
+        : counts.passed > 0
+          ? 'success'
+          : 'skipped';
   return { status, counts };
 }
 
 /** Structural equality for two CiCounts (or nulls) — used to gate on-change writes. */
 export function sameCounts(a: CiCounts | null, b: CiCounts | null): boolean {
   if (a == null || b == null) return a === b;
-  return a.failing === b.failing && a.pending === b.pending && a.passed === b.passed
-      && a.skipped === b.skipped && a.total === b.total;
+  return (
+    a.failing === b.failing &&
+    a.pending === b.pending &&
+    a.passed === b.passed &&
+    a.skipped === b.skipped &&
+    a.total === b.total
+  );
 }

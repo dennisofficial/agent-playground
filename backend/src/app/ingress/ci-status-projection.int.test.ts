@@ -146,7 +146,10 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
         },
         {
           provide: CredentialResolver,
-          useValue: { githubToken: async () => 'tok', hostGithubToken: async () => 'tok' },
+          useValue: {
+            githubToken: async () => 'tok',
+            hostGithubToken: async () => 'tok',
+          },
         },
       ],
     }).compile();
@@ -185,91 +188,95 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
     await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
   });
 
-  it(
-    'a signed check_run webhook debounce-syncs jobs.ci_status, observed by both the header and sidebar projections',
-    async () => {
-      const saved = await jobs.save(
-        jobs.create({
-          org_id: ORG_ID,
-          repo_id: repoId,
-          origin: 'chat',
-          kind: 'feature',
-          status: 'running',
-          feature_branch: OWNED_BRANCH,
-          pr_number: 42,
-          pr_url: 'https://github.com/acme/ci-status-web/pull/42',
-          ci_status: 'pending',
-          title: 'ci projection job',
-        }),
-      );
-      const jobId = saved.id;
+  it('a signed check_run webhook debounce-syncs jobs.ci_status, observed by both the header and sidebar projections', async () => {
+    const saved = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'chat',
+        kind: 'feature',
+        status: 'running',
+        feature_branch: OWNED_BRANCH,
+        pr_number: 42,
+        pr_url: 'https://github.com/acme/ci-status-web/pull/42',
+        ci_status: 'pending',
+        title: 'ci projection job',
+      }),
+    );
+    const jobId = saved.id;
 
-      // ── HEADER PROJECTION (before) ──────────────────────────────────────────────────────────────
-      const before = await driverStore.getPipelineState(jobId, ORG_ID);
-      console.log('[ci-proj] header before:', (before as { ciStatus?: unknown }).ciStatus);
-      expect((before as { ciStatus?: unknown }).ciStatus).toBe('pending');
+    // ── HEADER PROJECTION (before) ──────────────────────────────────────────────────────────────
+    const before = await driverStore.getPipelineState(jobId, ORG_ID);
+    console.log(
+      '[ci-proj] header before:',
+      (before as { ciStatus?: unknown }).ciStatus,
+    );
+    expect((before as { ciStatus?: unknown }).ciStatus).toBe('pending');
 
-      // ── SIDEBAR PROJECTION (before) — real WebSurfaceController.allThreads, minimal DI ─────────────
-      const inst = Object.create(WebSurfaceController.prototype);
-      inst.orgService = {
-        listForUser: async () => [{ id: ORG_ID, slug: 'gh-ci-proj-org', name: 'GH CI Proj Org' }],
-      };
-      inst.jobs = jobs;
-      inst.repos = repos;
-      inst.jobDeps = { blockersOfManyBlocked: async () => new Map() };
-      const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(
-        inst,
-        { id: 'user-1' } as UserEntity,
-      )) as Array<{ jobId: string; ciStatus?: unknown }>;
-      const rowBefore = rowsBefore.find((r) => r.jobId === jobId);
-      console.log('[ci-proj] sidebar before:', rowBefore?.ciStatus);
-      expect(rowBefore?.ciStatus).toBe('pending');
+    // ── SIDEBAR PROJECTION (before) — real WebSurfaceController.allThreads, minimal DI ─────────────
+    const inst = Object.create(WebSurfaceController.prototype);
+    inst.orgService = {
+      listForUser: async () => [
+        { id: ORG_ID, slug: 'gh-ci-proj-org', name: 'GH CI Proj Org' },
+      ],
+    };
+    inst.jobs = jobs;
+    inst.repos = repos;
+    inst.jobDeps = { blockersOfManyBlocked: async () => new Map() };
+    const rowsBefore = (await WebSurfaceController.prototype.allThreads.call(
+      inst,
+      { id: 'user-1' } as UserEntity,
+    )) as Array<{ jobId: string; ciStatus?: unknown }>;
+    const rowBefore = rowsBefore.find((r) => r.jobId === jobId);
+    console.log('[ci-proj] sidebar before:', rowBefore?.ciStatus);
+    expect(rowBefore?.ciStatus).toBe('pending');
 
-      // ── BOOTED-SERVER 202: signed check_run over real HTTP ─────────────────────────────────────────
-      const payload = {
-        repository: { full_name: 'acme/ci-status-web' },
-        check_run: {
-          id: 999,
-          name: 'CI',
-          status: 'completed',
-          conclusion: 'success',
-          html_url: 'http://x',
-          check_suite: { head_branch: OWNED_BRANCH },
-          pull_requests: [{ number: 42 }],
-        },
-      };
-      const json = JSON.stringify(payload);
-      const sig = `sha256=${createHmac('sha256', SECRET).update(Buffer.from(json)).digest('hex')}`;
-      const res = await fetch(`${baseUrl}/webhooks/github/events`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-hub-signature-256': sig,
-          'x-github-event': 'check_run',
-          'x-github-delivery': 'proj-1',
-        },
-        body: json,
-      });
-      console.log('[ci-proj] webhook status:', res.status);
-      expect(res.status).toBe(202);
+    // ── BOOTED-SERVER 202: signed check_run over real HTTP ─────────────────────────────────────────
+    const payload = {
+      repository: { full_name: 'acme/ci-status-web' },
+      check_run: {
+        id: 999,
+        name: 'CI',
+        status: 'completed',
+        conclusion: 'success',
+        html_url: 'http://x',
+        check_suite: { head_branch: OWNED_BRANCH },
+        pull_requests: [{ number: 42 }],
+      },
+    };
+    const json = JSON.stringify(payload);
+    const sig = `sha256=${createHmac('sha256', SECRET).update(Buffer.from(json)).digest('hex')}`;
+    const res = await fetch(`${baseUrl}/webhooks/github/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': sig,
+        'x-github-event': 'check_run',
+        'x-github-delivery': 'proj-1',
+      },
+      body: json,
+    });
+    console.log('[ci-proj] webhook status:', res.status);
+    expect(res.status).toBe(202);
 
-      // Real 5s debounce inside GithubCiStateSync — real timers only (fake timers fight the pg socket).
-      await new Promise((r) => setTimeout(r, 6000));
+    // Real 5s debounce inside GithubCiStateSync — real timers only (fake timers fight the pg socket).
+    await new Promise((r) => setTimeout(r, 6000));
 
-      // ── HEADER PROJECTION (after) ───────────────────────────────────────────────────────────────
-      const after = await driverStore.getPipelineState(jobId, ORG_ID);
-      console.log('[ci-proj] header after:', (after as { ciStatus?: unknown }).ciStatus);
-      expect((after as { ciStatus?: unknown }).ciStatus).toBe('success');
+    // ── HEADER PROJECTION (after) ───────────────────────────────────────────────────────────────
+    const after = await driverStore.getPipelineState(jobId, ORG_ID);
+    console.log(
+      '[ci-proj] header after:',
+      (after as { ciStatus?: unknown }).ciStatus,
+    );
+    expect((after as { ciStatus?: unknown }).ciStatus).toBe('success');
 
-      // ── SIDEBAR PROJECTION (after) ──────────────────────────────────────────────────────────────
-      const rowsAfter = (await WebSurfaceController.prototype.allThreads.call(
-        inst,
-        { id: 'user-1' } as UserEntity,
-      )) as Array<{ jobId: string; ciStatus?: unknown }>;
-      const rowAfter = rowsAfter.find((r) => r.jobId === jobId);
-      console.log('[ci-proj] sidebar after:', rowAfter?.ciStatus);
-      expect(rowAfter?.ciStatus).toBe('success');
-    },
-    30_000,
-  );
+    // ── SIDEBAR PROJECTION (after) ──────────────────────────────────────────────────────────────
+    const rowsAfter = (await WebSurfaceController.prototype.allThreads.call(
+      inst,
+      { id: 'user-1' } as UserEntity,
+    )) as Array<{ jobId: string; ciStatus?: unknown }>;
+    const rowAfter = rowsAfter.find((r) => r.jobId === jobId);
+    console.log('[ci-proj] sidebar after:', rowAfter?.ciStatus);
+    expect(rowAfter?.ciStatus).toBe('success');
+  }, 30_000);
 });

@@ -4,11 +4,19 @@ import type { AppVersionService } from '../cluster/app-version.service';
 import { TurnUsageProjector } from './turn-usage-projector.service';
 
 function make() {
-  const stats = { create: vi.fn((x) => x), save: vi.fn(async (x) => ({ ...x, id: 'stat-1' })) };
+  const stats = {
+    create: vi.fn((x) => x),
+    save: vi.fn(async (x) => ({ ...x, id: 'stat-1' })),
+  };
   const modelUsage = { create: vi.fn((x) => x), save: vi.fn(async (x) => x) };
   const jobs = { findOne: vi.fn(async () => ({ org_id: 'org-resolved' })) };
   const version = { sha: 'sha-abc1234' } as unknown as AppVersionService;
-  const projector = new TurnUsageProjector(stats as never, modelUsage as never, jobs as never, version);
+  const projector = new TurnUsageProjector(
+    stats as never,
+    modelUsage as never,
+    jobs as never,
+    version,
+  );
   return { projector, stats, modelUsage, jobs, version };
 }
 
@@ -80,7 +88,9 @@ describe('TurnUsageProjector', () => {
     expect(stat.raw).toBe(usage);
 
     expect(modelUsage.save).toHaveBeenCalledOnce();
-    const rows = modelUsage.save.mock.calls[0][0] as Array<Record<string, unknown>>;
+    const rows = modelUsage.save.mock.calls[0][0] as Array<
+      Record<string, unknown>
+    >;
     expect(rows).toHaveLength(2);
     const opus = rows.find((r) => r.model === 'claude-opus-4-8');
     const sonnet = rows.find((r) => r.model === 'claude-sonnet-5');
@@ -103,16 +113,27 @@ describe('TurnUsageProjector', () => {
   it('resolves org_id from job_id when the caller has no orgId (autofix path)', async () => {
     const { projector, stats, jobs } = make();
     await projector.record(
-      { jobId: 'job-9', lane: 'autofix:af-1', kind: 'autofix', engine: 'claude' },
+      {
+        jobId: 'job-9',
+        lane: 'autofix:af-1',
+        kind: 'autofix',
+        engine: 'claude',
+      },
       usage,
     );
     expect(jobs.findOne).toHaveBeenCalledOnce();
-    expect(stats.save.mock.calls[0][0]).toMatchObject({ org_id: 'org-resolved', thread_id: null });
+    expect(stats.save.mock.calls[0][0]).toMatchObject({
+      org_id: 'org-resolved',
+      thread_id: null,
+    });
   });
 
   it('is a no-op when usage is undefined', async () => {
     const { projector, stats, modelUsage } = make();
-    await projector.record({ jobId: 'j', lane: 'main', kind: 'brain', engine: 'claude' }, undefined);
+    await projector.record(
+      { jobId: 'j', lane: 'main', kind: 'brain', engine: 'claude' },
+      undefined,
+    );
     expect(stats.save).not.toHaveBeenCalled();
     expect(modelUsage.save).not.toHaveBeenCalled();
   });
@@ -120,7 +141,13 @@ describe('TurnUsageProjector', () => {
   it('writes turn_stats with no model rows when the engine reported no modelUsage (Codex)', async () => {
     const { projector, stats, modelUsage } = make();
     await projector.record(
-      { jobId: 'j', orgId: 'o', lane: 'thread:t', kind: 'review', engine: 'codex' },
+      {
+        jobId: 'j',
+        orgId: 'o',
+        lane: 'thread:t',
+        kind: 'review',
+        engine: 'codex',
+      },
       { inputTokens: 10, outputTokens: 5 },
     );
     expect(stats.save).toHaveBeenCalledOnce();
@@ -130,7 +157,13 @@ describe('TurnUsageProjector', () => {
   it('stamps engine_git_sha on every row but leaves credential_id null when the caller has none (Codex/d3)', async () => {
     const { projector, stats } = make();
     await projector.record(
-      { jobId: 'j', orgId: 'o', lane: 'thread:t', kind: 'review', engine: 'codex' },
+      {
+        jobId: 'j',
+        orgId: 'o',
+        lane: 'thread:t',
+        kind: 'review',
+        engine: 'codex',
+      },
       { inputTokens: 10, outputTokens: 5 },
     );
     expect(stats.save.mock.calls[0][0]).toMatchObject({

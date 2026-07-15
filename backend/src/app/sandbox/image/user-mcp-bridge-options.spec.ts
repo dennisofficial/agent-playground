@@ -11,7 +11,12 @@ describe('buildUserMcpBridgeOptions', () => {
 
   it('fronts an http server with a local hub route (http + alwaysLoad), NOT the upstream url/headers', () => {
     const servers: ResolvedMcpServer[] = [
-      { name: 'linear', transport: 'http', url: 'https://mcp.linear.app', headers: { Authorization: 'Bearer x' } },
+      {
+        name: 'linear',
+        transport: 'http',
+        url: 'https://mcp.linear.app',
+        headers: { Authorization: 'Bearer x' },
+      },
     ];
     const out = buildUserMcpBridgeOptions(servers)!;
     expect(out.extraClaudeOptions.mcpServers).toEqual({
@@ -24,13 +29,21 @@ describe('buildUserMcpBridgeOptions', () => {
 
   it('fronts a stdio server via the hub for Claude but keeps the DIRECT stdio block for Codex', () => {
     const servers: ResolvedMcpServer[] = [
-      { name: 'fs', transport: 'stdio', command: 'npx', args: ['-y', '@fs/mcp'], env: { TOKEN: 't' } },
+      {
+        name: 'fs',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@fs/mcp'],
+        env: { TOKEN: 't' },
+      },
     ];
     const out = buildUserMcpBridgeOptions(servers)!;
     expect(out.extraClaudeOptions.mcpServers).toEqual({
       fs: { type: 'http', url: mcpHubUrl('fs'), alwaysLoad: true },
     });
-    expect(out.codexExtraMcpServers).toEqual({ fs: { command: 'npx', args: ['-y', '@fs/mcp'], env: { TOKEN: 't' } } });
+    expect(out.codexExtraMcpServers).toEqual({
+      fs: { command: 'npx', args: ['-y', '@fs/mcp'], env: { TOKEN: 't' } },
+    });
     expect(out.userMcpToolNames).toEqual(['mcp__fs']);
   });
 
@@ -50,6 +63,10 @@ describe('buildUserMcpBridgeOptions', () => {
     ];
     const out = buildUserMcpBridgeOptions(servers)!;
     expect(Object.keys(out.extraClaudeOptions.mcpServers)).toEqual(['good']);
-    expect(out.extraClaudeOptions.mcpServers.good).toEqual({ type: 'http', url: mcpHubUrl('good'), alwaysLoad: true });
+    expect(out.extraClaudeOptions.mcpServers.good).toEqual({
+      type: 'http',
+      url: mcpHubUrl('good'),
+      alwaysLoad: true,
+    });
   });
 });

@@ -146,5 +146,7 @@ export function derivePortState(
 ): PortState {
   const running = markers.filter((m) => serviceStatus(m, probe) === 'running');
   if (running.length === 0) return null;
-  return running.some((m) => m.port != null && m.expose && hasUrl(m)) ? 'exposed' : 'internal';
+  return running.some((m) => m.port != null && m.expose && hasUrl(m))
+    ? 'exposed'
+    : 'internal';
 }

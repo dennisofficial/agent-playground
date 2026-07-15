@@ -13,7 +13,11 @@ import type { PromptCtx } from '../prompt-ctx';
 @FragmentGroup()
 export class OperatorGroup {
   /** Standing operator/org instructions for this org (only when set). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 9000, condition: hasOrgInstructions })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 9000,
+    condition: hasOrgInstructions,
+  })
   userCustomInstructions(ctx: PromptCtx): string {
     const instructions = (ctx.settings?.userOrgInstructions ?? '').trim();
     return [

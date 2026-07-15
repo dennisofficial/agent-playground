@@ -49,7 +49,9 @@ export interface WebSkillProposalCard {
   sourceSubpath?: string;
   /** The exact rows a `SkillInstallerService.preview` dry-run resolved — real name/description + whether
    *  each overwrites an existing skill of the same name. `install` only. */
-  installPreview?: { rows: { name: string; description: string; overwrites: boolean }[] };
+  installPreview?: {
+    rows: { name: string; description: string; overwrites: boolean }[];
+  };
 
   // ── remove ──────────────────────────────────────────────────────────────────────────────────────────
   /** On `remove`, the skill's CURRENT body — so the owner sees what will be deleted. */
@@ -77,7 +79,9 @@ export function webSkillProposalCard(input: {
   sourceUrl?: string;
   sourceRef?: string;
   sourceSubpath?: string;
-  installPreview?: { rows: { name: string; description: string; overwrites: boolean }[] };
+  installPreview?: {
+    rows: { name: string; description: string; overwrites: boolean }[];
+  };
   priorBody?: string;
 }): WebSkillProposalCard {
   return {
@@ -91,12 +95,18 @@ export function webSkillProposalCard(input: {
     surfaces: input.surfaces,
     mode: input.mode,
     rationale: input.rationale,
-    ...(input.stagingPath !== undefined ? { stagingPath: input.stagingPath } : {}),
+    ...(input.stagingPath !== undefined
+      ? { stagingPath: input.stagingPath }
+      : {}),
     ...(input.preview !== undefined ? { preview: input.preview } : {}),
     ...(input.sourceUrl !== undefined ? { sourceUrl: input.sourceUrl } : {}),
     ...(input.sourceRef !== undefined ? { sourceRef: input.sourceRef } : {}),
-    ...(input.sourceSubpath !== undefined ? { sourceSubpath: input.sourceSubpath } : {}),
-    ...(input.installPreview !== undefined ? { installPreview: input.installPreview } : {}),
+    ...(input.sourceSubpath !== undefined
+      ? { sourceSubpath: input.sourceSubpath }
+      : {}),
+    ...(input.installPreview !== undefined
+      ? { installPreview: input.installPreview }
+      : {}),
     ...(input.priorBody !== undefined ? { priorBody: input.priorBody } : {}),
   };
 }

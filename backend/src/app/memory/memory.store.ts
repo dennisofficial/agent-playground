@@ -80,7 +80,9 @@ export class MemoryStore {
    * Store a fact at its scope, or merge into a near-duplicate (cosine ≥ DEDUP_THRESHOLD) in that
    * same scope/team. Strict team equality — a fact only ever merges within its own tenant.
    */
-  async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: string }> {
+  async remember(
+    input: RememberInput,
+  ): Promise<{ action: 'inserted' | 'updated'; id: string }> {
     const qv = vecSql(await this.embedder.embed(input.fact, input.orgId));
 
     const qb = this.facts
@@ -88,7 +90,9 @@ export class MemoryStore {
       .addSelect('1 - (f.embedding <=> :qv::vector)', 'sim')
       .where('f.scope = :scope', { scope: input.scope })
       .andWhere('f.org_id = :team', { team: input.orgId })
-      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', { floor: DEDUP_THRESHOLD })
+      .andWhere('1 - (f.embedding <=> :qv::vector) >= :floor', {
+        floor: DEDUP_THRESHOLD,
+      })
       .orderBy('f.embedding <=> :qv::vector', 'ASC')
       .setParameter('qv', qv)
       .limit(1);
@@ -98,7 +102,11 @@ export class MemoryStore {
       await this.facts
         .createQueryBuilder()
         .update(MemoryEntity)
-        .set({ fact: input.fact, embedding: () => ':qv::vector', embed_model: this.embedder.model })
+        .set({
+          fact: input.fact,
+          embedding: () => ':qv::vector',
+          embed_model: this.embedder.model,
+        })
         .where('id = :id', { id: dup.id })
         .setParameter('qv', qv)
         .execute();
@@ -147,7 +155,10 @@ export class MemoryStore {
       .setParameter('qv', qv)
       .getRawAndEntities();
 
-    return entities.map((e, i) => ({ ...toStored(e), sim: Number(raw[i].sim) }));
+    return entities.map((e, i) => ({
+      ...toStored(e),
+      sim: Number(raw[i].sim),
+    }));
   }
 
   /** Soft-delete a fact by id. */

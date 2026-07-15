@@ -26,7 +26,11 @@ describe('THREADS_MODEL.mapRow', () => {
   });
 
   it('passes a build-failure halt through while preserving the phase, and needsYou is true', () => {
-    const halt = { kind: 'failed', reason: 'build broke', at: '2026-07-08T00:00:00.000Z' };
+    const halt = {
+      kind: 'failed',
+      reason: 'build broke',
+      at: '2026-07-08T00:00:00.000Z',
+    };
     const row = mapRow(baseRow({ status: 'running', halt }));
     expect(row.status).toBe('running');
     expect(row.halt).toEqual(halt);
@@ -52,7 +56,9 @@ describe('THREADS_MODEL.mapRow', () => {
   it('suppresses needsYou while a plan review runs, even when status is planning and idle-phase', () => {
     // `activity='plan_review'` is the single-table signal the mapper reads so the live dot stays dark while
     // the system owns the review (the parent turn may already be finalized).
-    const row = mapRow(baseRow({ status: 'planning', activity: 'plan_review' }));
+    const row = mapRow(
+      baseRow({ status: 'planning', activity: 'plan_review' }),
+    );
     expect(row.activity).toBe('plan_review');
     expect(row.needsYou).toBe(false);
   });
@@ -63,14 +69,24 @@ describe('THREADS_MODEL.mapRow', () => {
   });
 
   it('a non-idle activity never masks a halt — needsYou stays true', () => {
-    const halt = { kind: 'failed', reason: 'review died', at: '2026-07-08T00:00:00.000Z' };
-    const row = mapRow(baseRow({ status: 'planning', activity: 'plan_review', halt }));
+    const halt = {
+      kind: 'failed',
+      reason: 'review died',
+      at: '2026-07-08T00:00:00.000Z',
+    };
+    const row = mapRow(
+      baseRow({ status: 'planning', activity: 'plan_review', halt }),
+    );
     expect(row.needsYou).toBe(true);
   });
 
   it('lights needsYou for the awaiting-secret soft gate while idle', () => {
     const row = mapRow(
-      baseRow({ status: 'running', activity: 'idle', awaiting_secret_id: 'sec-1' }),
+      baseRow({
+        status: 'running',
+        activity: 'idle',
+        awaiting_secret_id: 'sec-1',
+      }),
     );
     expect(row.needsYou).toBe(true);
   });

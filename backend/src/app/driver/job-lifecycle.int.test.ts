@@ -427,9 +427,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     // The branch lives on the THREAD now (single owner — sandbox is pure infra).
     const thread = await jobs.findOneOrFail({ where: { id: result.jobId } });
     expect(thread.base_branch).toBe(FAKE_BASE_BRANCH);
-    expect(thread.feature_branch).toBe(
-      `feature/${result.jobId.slice(0, 8)}`,
-    );
+    expect(thread.feature_branch).toBe(`feature/${result.jobId.slice(0, 8)}`);
     expect(fakeGit.branches).toContain(thread.feature_branch);
   });
 

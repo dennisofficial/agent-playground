@@ -6,10 +6,16 @@ import type {
   InboundChatMessage,
   PostOptions,
 } from '../surface/chat-surface.port';
-import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from '../surface/chat-surface.port';
+import {
+  SYSTEM_SEED_AUTHOR,
+  wrapSystemNotification,
+} from '../surface/chat-surface.port';
 import type { SeedRow } from '../domain';
 import type { AgentMessage } from '../prompt-kit/message';
-import { APPROVE_ACTION_ID, type ApprovalActionMeta } from '../surface/approval-blocks';
+import {
+  APPROVE_ACTION_ID,
+  type ApprovalActionMeta,
+} from '../surface/approval-blocks';
 
 /** A message Atlas POSTED, captured for inspection by a programmatic driver. */
 export interface OutboundChatMessage {
@@ -117,7 +123,9 @@ export class AgentChatSurface implements ChatSurface {
       ...(opts.priority ? { priority: opts.priority } : {}),
       ts: new Date(),
     };
-    this.logger.debug(`sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`);
+    this.logger.debug(
+      `sendFromHuman → ${channel}${opts.threadTs ? ` (thread ${opts.threadTs})` : ''}: ${text.slice(0, 80)}`,
+    );
     this.inboundSubject.next(message);
     return ts;
   }
@@ -154,9 +162,13 @@ export class AgentChatSurface implements ChatSurface {
       threadTs: jobId,
       ts: new Date(),
       seed: true,
-      ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
+      ...(opts.deliveredQuestionId
+        ? { seedQuestionId: opts.deliveredQuestionId }
+        : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
-      ...(opts.deliveredSecretId ? { seedSecretId: opts.deliveredSecretId } : {}),
+      ...(opts.deliveredSecretId
+        ? { seedSecretId: opts.deliveredSecretId }
+        : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
     return ts;
@@ -165,7 +177,11 @@ export class AgentChatSurface implements ChatSurface {
   // ── OUTBOUND: capture Atlas's posts (the ChatSurface contract) ──────────────────────────────────
 
   /** Record an Atlas post into the outbox, emit on `outbound$`, return the synthetic ts. */
-  async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
+  async post(
+    channel: string,
+    text: string,
+    opts: PostOptions = {},
+  ): Promise<string | undefined> {
     const ts = this.mintTs();
     const message: OutboundChatMessage = {
       ts,
@@ -192,7 +208,11 @@ export class AgentChatSurface implements ChatSurface {
     timeoutMs = 10_000,
   ): Promise<OutboundChatMessage> {
     return firstValueFrom(
-      this.outbound$.pipe(filter(predicate), first(), timeout({ each: timeoutMs })),
+      this.outbound$.pipe(
+        filter(predicate),
+        first(),
+        timeout({ each: timeoutMs }),
+      ),
     );
   }
 
@@ -212,7 +232,14 @@ export class AgentChatSurface implements ChatSurface {
     const cards: CapturedApprovalCard[] = [];
     for (const message of this.outbox) {
       const meta = parseApprovalMeta(message.blocks);
-      if (meta) cards.push({ message, jobId: meta.jobId, ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}) });
+      if (meta)
+        cards.push({
+          message,
+          jobId: meta.jobId,
+          ...(meta.decisionRecordId
+            ? { decisionRecordId: meta.decisionRecordId }
+            : {}),
+        });
     }
     return cards;
   }
@@ -231,9 +258,18 @@ export class AgentChatSurface implements ChatSurface {
   async waitForApprovalCard(timeoutMs = 10_000): Promise<CapturedApprovalCard> {
     const existing = this.latestApprovalCard();
     if (existing) return existing;
-    const message = await this.waitForReply((m) => !!parseApprovalMeta(m.blocks), timeoutMs);
+    const message = await this.waitForReply(
+      (m) => !!parseApprovalMeta(m.blocks),
+      timeoutMs,
+    );
     const meta = parseApprovalMeta(message.blocks)!;
-    return { message, jobId: meta.jobId, ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}) };
+    return {
+      message,
+      jobId: meta.jobId,
+      ...(meta.decisionRecordId
+        ? { decisionRecordId: meta.decisionRecordId }
+        : {}),
+    };
   }
 
   /** Clear the captured logs (between scripted scenarios in one boot). */
@@ -259,7 +295,9 @@ export function parseApprovalMeta(
   if (!blocks) return undefined;
   for (const block of blocks) {
     if (block.type !== 'actions') continue;
-    const elements = block.elements as Array<Record<string, unknown>> | undefined;
+    const elements = block.elements as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (!elements) continue;
     for (const el of elements) {
       if (el.action_id !== APPROVE_ACTION_ID) continue;

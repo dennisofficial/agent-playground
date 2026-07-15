@@ -11,7 +11,11 @@ class FakeRedis {
     return Promise.resolve('OK');
   }
 
-  eval(_script: string, _keyCount: number, key: string): Promise<string | null> {
+  eval(
+    _script: string,
+    _keyCount: number,
+    key: string,
+  ): Promise<string | null> {
     const value = this.data.get(key) ?? null;
     this.data.delete(key);
     return Promise.resolve(value);
@@ -27,7 +31,10 @@ describe('GithubAppStateStore', () => {
   it('stash then consume round-trips the orgId + userId', async () => {
     const { store } = makeStore();
     const nonce = await store.stash('org1', 'user1');
-    await expect(store.consume(nonce)).resolves.toEqual({ orgId: 'org1', userId: 'user1' });
+    await expect(store.consume(nonce)).resolves.toEqual({
+      orgId: 'org1',
+      userId: 'user1',
+    });
   });
 
   it('consume is single-use — a second consume of the same nonce returns null', async () => {
@@ -46,7 +53,10 @@ describe('GithubAppStateStore', () => {
     const { store, redis } = makeStore();
     // Simulate a nonce stashed by the pre-userId code path: the raw Redis value is just the orgId.
     await redis.set('github_app_state:legacy-nonce', 'org1');
-    await expect(store.consume('legacy-nonce')).resolves.toEqual({ orgId: 'org1', userId: null });
+    await expect(store.consume('legacy-nonce')).resolves.toEqual({
+      orgId: 'org1',
+      userId: null,
+    });
   });
 
   it('mints a distinct random nonce on every stash', async () => {

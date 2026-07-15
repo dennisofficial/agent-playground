@@ -40,7 +40,10 @@ import { SessionResumeSweep } from './session-resume-sweep.service';
 import { JobUnblockSweep } from './job-unblock-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
-import { BuildLaneDeliveryService, LANE_SEEDER } from './build-lane-delivery.service';
+import {
+  BuildLaneDeliveryService,
+  LANE_SEEDER,
+} from './build-lane-delivery.service';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
@@ -159,7 +162,9 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     DRIVER_REPO,
   ],
 })
-export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdown {
+export class DriverModule
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private resumeSub?: Subscription;
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
@@ -216,7 +221,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     // NOT claimed — the drive loop doesn't re-tail those at an anchor, so a re-drive could start a fresh stage
     // beside the still-live engine; they keep the once-per-boot `resume()` recovery + the watchdog safety-net.
     // Unconditional + idempotent — the watchdog itself is leader-only, so registration need not be gated.
-    this.reattachRegistry?.register('step', (row) => this.driver.reattachTurnRow(row));
+    this.reattachRegistry?.register('step', (row) =>
+      this.driver.reattachTurnRow(row),
+    );
 
     // Operator resume requests (POST /web/resume) → re-drive the paused job. Subscribed unconditionally,
     // independent of leadership (the agent test surface omits resumeRequests$; Caddy routes /resume only
@@ -247,7 +254,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         // is protected. Awaited (bounded, cheap); never blocks promotion on failure.
         await this.lifecycle
           .reapOrphanedSandboxArtifacts()
-          .catch((err) => this.logger.warn(`boot orphan-artifact sweep failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`boot orphan-artifact sweep failed: ${err}`),
+          );
       }
       // Best-effort: register the GitHub delivery webhooks for already-connected repos so the fast path is
       // live without a re-connect. Once per process, fire-and-forget — never blocks resume, and skips
@@ -256,7 +265,9 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
         this.webhooksBackfilled = true;
         void this.onboarding
           .ensureWebhooksForActiveRepos()
-          .catch((err) => this.logger.warn(`webhook backfill sweep failed: ${err}`));
+          .catch((err) =>
+            this.logger.warn(`webhook backfill sweep failed: ${err}`),
+          );
       }
       // Re-drive `running` jobs on EVERY promotion — including a mid-life re-promote. Leadership-fenced
       // drives (see ThreadDriver.runJob) YIELD on demotion, so a re-promote must re-pick-up the yielded job or
@@ -491,8 +502,7 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
     const iv = setInterval(() => {
       if (this.tokenRefreshInFlight) return;
       this.tokenRefreshInFlight = true;
-      void this.tokenRefresh!
-        .tick()
+      void this.tokenRefresh!.tick()
         .catch((err) => this.logger.warn(`token-refresh tick failed: ${err}`))
         .finally(() => {
           this.tokenRefreshInFlight = false;
@@ -541,7 +551,12 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
   }
 
   private async buildLaneSweepTick(): Promise<void> {
-    let lanes: Array<{ jobId: string; orgId: string; repoId: string; lane: string }>;
+    let lanes: Array<{
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      lane: string;
+    }>;
     try {
       lanes = await this.stimulusStore!.undeliveredChatLanes();
     } catch (err) {
@@ -553,9 +568,16 @@ export class DriverModule implements OnApplicationBootstrap, OnApplicationShutdo
       if (owner?.descriptor.kind !== 'builder') continue; // only build lanes; `main` rides the brain's own sweep
       const threadId = owner.ids[0];
       if (!threadId) continue;
-      await this.buildLaneDelivery!
-        .pump({ jobId: l.jobId, orgId: l.orgId, repoId: l.repoId, threadId })
-        .catch((err) => this.logger.debug(`build-lane sweep pump failed for thread=${threadId}: ${err}`));
+      await this.buildLaneDelivery!.pump({
+        jobId: l.jobId,
+        orgId: l.orgId,
+        repoId: l.repoId,
+        threadId,
+      }).catch((err) =>
+        this.logger.debug(
+          `build-lane sweep pump failed for thread=${threadId}: ${err}`,
+        ),
+      );
     }
   }
 

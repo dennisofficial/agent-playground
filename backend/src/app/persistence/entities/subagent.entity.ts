@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { ThreadEntity } from './thread.entity';
 import { MessageEntity } from './message.entity';

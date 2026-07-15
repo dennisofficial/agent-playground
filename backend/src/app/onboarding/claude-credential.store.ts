@@ -117,13 +117,17 @@ export class ClaudeCredentialStore {
    * subscription plan, and the human label. NO decryption. Null when nothing is selected or the pointer is
    * dangling (row deleted since selection).
    */
-  async getSelectedDisplay(
-    orgId: string,
-  ): Promise<{ accountEmail: string | null; subscriptionType: string | null; label: string } | null> {
+  async getSelectedDisplay(orgId: string): Promise<{
+    accountEmail: string | null;
+    subscriptionType: string | null;
+    label: string;
+  } | null> {
     const org = await this.orgRepo.findOne({ where: { id: orgId } });
     const selectedId = org?.selected_claude_credential_id;
     if (!selectedId) return null;
-    const row = await this.repo.findOne({ where: { id: selectedId, org_id: orgId } });
+    const row = await this.repo.findOne({
+      where: { id: selectedId, org_id: orgId },
+    });
     if (!row) return null;
     return {
       accountEmail: row.account_email,
@@ -504,7 +508,11 @@ export class ClaudeCredentialStore {
     const now = new Date();
     const [expiredActivePersonal, needsReauth] = await Promise.all([
       this.repo.count({
-        where: { kind: 'personal', status: 'active', expires_at: LessThan(now) },
+        where: {
+          kind: 'personal',
+          status: 'active',
+          expires_at: LessThan(now),
+        },
       }),
       this.repo.count({ where: { status: 'needs_reauth' } }),
     ]);

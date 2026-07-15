@@ -10,7 +10,10 @@ import { WebSurfaceController } from './web-surface.controller';
  * integration layer — this file only pins the automation-defaults resolution.
  */
 
-type OrgDefaults = { default_auto_approve_mode: string; default_auto_merge: boolean } | null;
+type OrgDefaults = {
+  default_auto_approve_mode: string;
+  default_auto_merge: boolean;
+} | null;
 
 function makeController(orgDefaults: OrgDefaults) {
   const savedRows: Array<Record<string, unknown>> = [];
@@ -23,7 +26,11 @@ function makeController(orgDefaults: OrgDefaults) {
     }),
   };
   const repos = {
-    findOne: vi.fn(async () => ({ id: 'repo-1', org_id: 'org-1', slug: 'repo' })),
+    findOne: vi.fn(async () => ({
+      id: 'repo-1',
+      org_id: 'org-1',
+      slug: 'repo',
+    })),
   };
   const orgService = {
     get: vi.fn(async () => orgDefaults),

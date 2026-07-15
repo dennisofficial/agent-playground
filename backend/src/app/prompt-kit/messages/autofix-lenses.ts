@@ -7,7 +7,11 @@
  */
 import { agentMessage, type AgentMessage } from '../message';
 import { fence } from '../../prompt-fence';
-import type { AutoFixContext, ReviewFinding, ReviewLens } from '../../autofix/autofix.types';
+import type {
+  AutoFixContext,
+  ReviewFinding,
+  ReviewLens,
+} from '../../autofix/autofix.types';
 
 /** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
 const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
@@ -35,7 +39,7 @@ Assign severity honestly — do NOT inflate:
 const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
   diff: 'ONLY report issues introduced by (or directly within) the change set — never pre-existing issues outside it.',
   holistic:
-    'Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change\'s responsibility.',
+    "Judge the change as a WHOLE against its stated intent. You MAY read beyond the diff — into the files it touches and the existing code that calls them — to judge integration and completeness. But only FLAG problems THIS change introduced or left incomplete; never report pre-existing debt outside the change's responsibility.",
   framework:
     'Report ONLY violations of the injected framework best-practices, and only within the change set — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
 };
@@ -61,7 +65,9 @@ Rules:
 function frameworkInjection(ctx: AutoFixContext): string {
   const bodies = ctx.frameworkBodies ?? [];
   if (bodies.length === 0) return '';
-  const blocks = bodies.map((b) => fence(`framework best-practices: ${b.name}`, b.body)).join('\n\n');
+  const blocks = bodies
+    .map((b) => fence(`framework best-practices: ${b.name}`, b.body))
+    .join('\n\n');
   return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
 }
 
@@ -89,7 +95,10 @@ function changeSetBlock(ctx: AutoFixContext): string {
 }
 
 /** Build one read-only review pass's prompt for a given lens + context. */
-export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentMessage {
+export function buildReviewPrompt(
+  lens: ReviewLens,
+  ctx: AutoFixContext,
+): AgentMessage {
   const scope = lens.scope ?? 'diff';
   const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return agentMessage(
@@ -106,7 +115,10 @@ export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentM
 }
 
 /** Build the single execute-mode FIX turn's prompt from the deduped, severity-filtered findings. */
-export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): AgentMessage {
+export function buildFixPrompt(
+  findings: ReviewFinding[],
+  ctx: AutoFixContext,
+): AgentMessage {
   const list = findings
     .map(
       (f, i) =>

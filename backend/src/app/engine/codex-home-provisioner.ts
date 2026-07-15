@@ -1,4 +1,8 @@
-import type { CodexHomeProvisioner, EngineAuth, EngineHomeKey } from '@workspace/agent-engine';
+import type {
+  CodexHomeProvisioner,
+  EngineAuth,
+  EngineHomeKey,
+} from '@workspace/agent-engine';
 import { ensureCodexAuthHome } from './codex-auth-home';
 import { getEngineAuthAdapter } from './engine-auth-adapter';
 

@@ -16,13 +16,18 @@ class FakeRepo {
   }
   async save(row: McpServerEntity): Promise<McpServerEntity> {
     const i = this.rows.findIndex(
-      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) =>
+        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({ where }: { where: Partial<McpServerEntity> }): Promise<McpServerEntity | null> {
+  async findOne({
+    where,
+  }: {
+    where: Partial<McpServerEntity>;
+  }): Promise<McpServerEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find({
@@ -35,14 +40,21 @@ class FakeRepo {
   }
   async delete(): Promise<void> {}
   private match(r: McpServerEntity, where: Partial<McpServerEntity>): boolean {
-    return Object.entries(where).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v);
+    return Object.entries(where).every(
+      ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
+    );
   }
 }
 
 function make(): { resolver: McpResolver; store: McpServerStore } {
   const repo = new FakeRepo();
-  const env = { get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined) } as EnvService;
-  const store = new McpServerStore(repo as unknown as Repository<McpServerEntity>, env);
+  const env = {
+    get: (k: string) => (k === 'SECRETS_ENCRYPTION_KEY' ? KEY : undefined),
+  } as EnvService;
+  const store = new McpServerStore(
+    repo as unknown as Repository<McpServerEntity>,
+    env,
+  );
   const oauth = new McpOAuthService(store, env);
   return { resolver: new McpResolver(store, oauth), store };
 }
@@ -55,19 +67,30 @@ describe('McpResolver.resolveForTurn', () => {
   });
 
   it('returns [] when the org has no servers', async () => {
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
+      [],
+    );
   });
 
   it('a repo-scoped server OVERRIDES an org-scoped server of the same name', async () => {
-    await store.write('org1', '*', 'search', { transport: 'http', url: 'https://org-endpoint' });
-    await store.write('org1', 'repo-1', 'search', { transport: 'http', url: 'https://repo-endpoint' });
+    await store.write('org1', '*', 'search', {
+      transport: 'http',
+      url: 'https://org-endpoint',
+    });
+    await store.write('org1', 'repo-1', 'search', {
+      transport: 'http',
+      url: 'https://repo-endpoint',
+    });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
     expect(out).toHaveLength(1);
     expect(out[0].url).toBe('https://repo-endpoint');
   });
 
   it('org-scoped servers apply to a repo that has no override of that name', async () => {
-    await store.write('org1', '*', 'shared', { transport: 'http', url: 'https://shared' });
+    await store.write('org1', '*', 'shared', {
+      transport: 'http',
+      url: 'https://shared',
+    });
     const out = await resolver.resolveForTurn('org1', 'repo-9', 'build');
     expect(out.map((s) => s.name)).toEqual(['shared']);
   });
@@ -78,15 +101,25 @@ describe('McpResolver.resolveForTurn', () => {
       url: 'https://x',
       surfaces: ['build'],
     });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
-    expect((await resolver.resolveForTurn('org1', 'repo-1', 'build')).map((s) => s.name)).toEqual([
-      'buildonly',
-    ]);
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
+      [],
+    );
+    expect(
+      (await resolver.resolveForTurn('org1', 'repo-1', 'build')).map(
+        (s) => s.name,
+      ),
+    ).toEqual(['buildonly']);
   });
 
   it('excludes disabled servers', async () => {
-    await store.write('org1', '*', 'off', { transport: 'http', url: 'https://x', enabled: false });
-    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual([]);
+    await store.write('org1', '*', 'off', {
+      transport: 'http',
+      url: 'https://x',
+      enabled: false,
+    });
+    expect(await resolver.resolveForTurn('org1', 'repo-1', 'brain')).toEqual(
+      [],
+    );
   });
 
   it('inlines decrypted secret header values for a remote server', async () => {
@@ -99,7 +132,10 @@ describe('McpResolver.resolveForTurn', () => {
       ],
     });
     const [s] = await resolver.resolveForTurn('org1', 'repo-1', 'brain');
-    expect(s.headers).toEqual({ Authorization: 'Bearer sk-123', 'X-Env': 'prod' });
+    expect(s.headers).toEqual({
+      Authorization: 'Bearer sk-123',
+      'X-Env': 'prod',
+    });
     expect(s.transport).toBe('http');
     expect(s.command).toBeUndefined();
   });

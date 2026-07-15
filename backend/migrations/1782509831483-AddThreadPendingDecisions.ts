@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * The grilling WORKING SET of logged decisions (`log_decision` → `threads.pending_decisions`), kept
@@ -9,16 +9,17 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * need it added here.
  */
 export class AddThreadPendingDecisions1782509831483 implements MigrationInterface {
-    name = 'AddThreadPendingDecisions1782509831483'
+  name = 'AddThreadPendingDecisions1782509831483';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(
-            `ALTER TABLE "threads" ADD COLUMN IF NOT EXISTS "pending_decisions" jsonb NOT NULL DEFAULT '[]'::jsonb`,
-        );
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" ADD COLUMN IF NOT EXISTS "pending_decisions" jsonb NOT NULL DEFAULT '[]'::jsonb`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN IF EXISTS "pending_decisions"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" DROP COLUMN IF EXISTS "pending_decisions"`,
+    );
+  }
 }

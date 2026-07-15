@@ -5,7 +5,11 @@ import {
   OrganizationEntity,
 } from '../src/app/persistence/entities';
 import { isNewerCodexAuth } from '../src/app/onboarding/codex-auth-freshness';
-import { decryptSecret, encryptSecret, loadSecretsKey } from '../src/app/onboarding/secret-cipher';
+import {
+  decryptSecret,
+  encryptSecret,
+  loadSecretsKey,
+} from '../src/app/onboarding/secret-cipher';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -29,7 +33,9 @@ export default (async (ds) => {
     }
   })();
   if (!key) {
-    console.log('  003: SECRETS_ENCRYPTION_KEY not set — skipping dev credentials');
+    console.log(
+      '  003: SECRETS_ENCRYPTION_KEY not set — skipping dev credentials',
+    );
     return;
   }
 
@@ -46,7 +52,9 @@ export default (async (ds) => {
     !claudeOauthToken &&
     !codexAuthSecret
   ) {
-    console.log('  003: no credentials in env (.env.seed.enc not layered?) — skipping');
+    console.log(
+      '  003: no credentials in env (.env.seed.enc not layered?) — skipping',
+    );
     return;
   }
 
@@ -75,7 +83,10 @@ export default (async (ds) => {
       const existing = row.codex_auth_secret_enc
         ? decryptSecret(row.codex_auth_secret_enc, key)
         : undefined;
-      if (existing === undefined || isNewerCodexAuth(codexAuthSecret, existing)) {
+      if (
+        existing === undefined ||
+        isNewerCodexAuth(codexAuthSecret, existing)
+      ) {
         row.codex_auth_secret_enc = encryptSecret(codexAuthSecret, key);
       }
     }
@@ -92,7 +103,11 @@ export default (async (ds) => {
       const claudeCreds = ds.getRepository(OrgClaudeCredentialEntity);
       const cred =
         (await claudeCreds.findOne({
-          where: { org_id: orgId, kind: 'setup_token', label: LEGACY_SETUP_TOKEN_LABEL },
+          where: {
+            org_id: orgId,
+            kind: 'setup_token',
+            label: LEGACY_SETUP_TOKEN_LABEL,
+          },
         })) ??
         claudeCreds.create({
           org_id: orgId,

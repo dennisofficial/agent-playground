@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONTEXT_LIMIT, resolveContextLimit, SPEC_VERBATIM_KEYS } from './engine.types';
+import {
+  DEFAULT_CONTEXT_LIMIT,
+  resolveContextLimit,
+  SPEC_VERBATIM_KEYS,
+} from './engine.types';
 
 describe('resolveContextLimit', () => {
   it('maps Opus and Sonnet model ids to the 1M window', () => {

@@ -168,9 +168,13 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   it('the brain UI-preview instruction routes the mockup to the `prototype` subagent, not `implement`', () => {
     const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
     // The brain is told to delegate the mockup build to the dedicated `prototype` subagent...
-    expect(brain).toContain('DELEGATE the prototype build to the dedicated `prototype` subagent');
+    expect(brain).toContain(
+      'DELEGATE the prototype build to the dedicated `prototype` subagent',
+    );
     // ...and no longer to hand the UI preview to the generic `implement` writer.
-    expect(brain).not.toContain('DELEGATE the prototype build to the `implement` writer subagent');
+    expect(brain).not.toContain(
+      'DELEGATE the prototype build to the `implement` writer subagent',
+    );
   });
 
   it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
@@ -406,7 +410,9 @@ describe('public preview exposure prompt (opt-in --expose sequence)', () => {
 
   it('sandboxRuntime documents the --port flag alongside the run form', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    expect(out).toContain('atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>');
+    expect(out).toContain(
+      'atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>',
+    );
     expect(out).toContain('PORTS panel');
   });
 });

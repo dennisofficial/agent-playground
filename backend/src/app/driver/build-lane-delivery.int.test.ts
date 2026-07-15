@@ -24,7 +24,11 @@
 
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { ModuleRef } from '@nestjs/core';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
@@ -83,7 +87,9 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
   } as unknown as DriverStoreService;
   // Delivery-mechanics tests exercise seedLane/pump only — the operator-input transport (which is the sole
   // consumer of these two) is not registered here, so bare stubs suffice.
-  const fakeThreadInput = { register: () => undefined } as unknown as ThreadInputService;
+  const fakeThreadInput = {
+    register: () => undefined,
+  } as unknown as ThreadInputService;
   // redriveThread (the halted-thread path) is not exercised by these delivery-mechanics tests — a
   // ModuleRef stub that's never actually asked to resolve ThreadDriver suffices.
   const fakeModuleRef = { get: () => ({}) } as unknown as ModuleRef;
@@ -136,16 +142,28 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
   beforeEach(async () => {
     steerCalls.length = 0;
-    await ds.query('TRUNCATE stimuli, messages, active_turns, jobs RESTART IDENTITY CASCADE');
+    await ds.query(
+      'TRUNCATE stimuli, messages, active_turns, jobs RESTART IDENTITY CASCADE',
+    );
   });
 
   async function makeJob(): Promise<JobEntity> {
     return jobs.save(
-      jobs.create({ org_id: ORG_ID, repo_id: repoId, origin: 'chat', kind: 'feature', title: 'build lane job' }),
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'chat',
+        kind: 'feature',
+        title: 'build lane job',
+      }),
     );
   }
 
-  async function rawSeed(jobId: string): Promise<{ id: string; delivered_at: string | null; attempted_at: string | null }> {
+  async function rawSeed(jobId: string): Promise<{
+    id: string;
+    delivered_at: string | null;
+    attempted_at: string | null;
+  }> {
     const rows = await ds.query(
       `SELECT id, delivered_at, attempted_at FROM stimuli WHERE job_id = $1 AND lane = $2`,
       [jobId, lane],
@@ -179,7 +197,10 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(rows[0].reply_route.priority).toBe('queue');
 
     // NO operator bubble — the whole point of a no-bubble recorder (build lanes are read-only).
-    const msgCount = await ds.query(`SELECT COUNT(*)::int AS n FROM messages WHERE job_id = $1`, [job.id]);
+    const msgCount = await ds.query(
+      `SELECT COUNT(*)::int AS n FROM messages WHERE job_id = $1`,
+      [job.id],
+    );
     expect(msgCount[0].n).toBe(0);
   });
 
@@ -196,7 +217,11 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       ctx: {},
     });
 
-    await seeder.seedLane({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID }, 'steer me now', 'now');
+    await seeder.seedLane(
+      { jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID },
+      'steer me now',
+      'now',
+    );
 
     // The pump took the LIVE path: exactly one steer into the running turn, carrying the seed body verbatim.
     expect(steerCalls).toHaveLength(1);
@@ -217,7 +242,11 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
   it('(c) a `queue` seed with NO live turn stays PENDING and remains eligible for the next-Leg drain', async () => {
     const job = await makeJob();
 
-    await seeder.seedLane({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID }, 'queued work', 'queue');
+    await seeder.seedLane(
+      { jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID },
+      'queued work',
+      'queue',
+    );
 
     // No live turn ⇒ no steer, and the row stays pending (the drain-path descriptor is a no-op).
     expect(steerCalls).toHaveLength(0);
@@ -225,12 +254,20 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(row.delivered_at).toBeNull();
 
     // Still eligible — this is exactly what the next `kickBatchTurn` folds into the Leg task.
-    const pending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
+    const pending = await store.eligiblePendingChat(
+      job.id,
+      2 * 60 * 1000,
+      lane,
+    );
     expect(pending.map((p) => p.body)).toContain('queued work');
 
     // The register hand-off stamps it delivered → it drops out of the queue.
     await store.markChatDelivered(row.id);
-    const afterPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane);
+    const afterPending = await store.eligiblePendingChat(
+      job.id,
+      2 * 60 * 1000,
+      lane,
+    );
     expect(afterPending).toHaveLength(0);
   });
 
@@ -246,10 +283,15 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     });
     await store.leaseChatStimuli([seed.id]);
 
-    expect(await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane)).toHaveLength(0);
+    expect(
+      await store.eligiblePendingChat(job.id, 2 * 60 * 1000, lane),
+    ).toHaveLength(0);
     expect(await store.undeliveredChatForLane(job.id, lane)).toHaveLength(1);
 
-    await store.rekeyLaneToMain(seed.id, 'Undelivered host seed from build thread thread-1: leased leftover');
+    await store.rekeyLaneToMain(
+      seed.id,
+      'Undelivered host seed from build thread thread-1: leased leftover',
+    );
 
     const rows = await ds.query(
       `SELECT lane, attempted_at, delivered_at, body FROM stimuli WHERE id = $1`,
@@ -260,7 +302,11 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(rows[0].delivered_at).toBeNull();
     expect(rows[0].body).toContain('leased leftover');
 
-    const mainPending = await store.eligiblePendingChat(job.id, 2 * 60 * 1000, 'main');
+    const mainPending = await store.eligiblePendingChat(
+      job.id,
+      2 * 60 * 1000,
+      'main',
+    );
     expect(mainPending.map((p) => p.id)).toContain(seed.id);
   });
 
@@ -273,14 +319,20 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
     // A kind that stays `input:'none'` (autofix-lens) is never postable — the read-only gate still holds even
     // with no handler in the way.
-    expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(false);
+    expect(input.canPost(laneFor('autofix-lens', 'af-1', 'lens-1'))).toBe(
+      false,
+    );
   });
 
   it('(e) pump() re-drives a pending `now` seed into a live steerable Leg — the build-lane sweep backstop', async () => {
     const job = await makeJob();
     // Seed with NO live turn yet — a `now` seed whose original steer was swallowed stays pending, exactly
     // the shape the sweep must recover.
-    await seeder.seedLane({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID }, 'swallowed steer', 'now');
+    await seeder.seedLane(
+      { jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID },
+      'swallowed steer',
+      'now',
+    );
     expect(steerCalls).toHaveLength(0);
 
     // A Leg goes live AFTER the seed — the sweep tick's re-drive, not the original seedLane call, must steer it.
@@ -295,7 +347,12 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
       ctx: {},
     });
 
-    await seeder.pump({ jobId: job.id, orgId: ORG_ID, repoId, threadId: THREAD_ID });
+    await seeder.pump({
+      jobId: job.id,
+      orgId: ORG_ID,
+      repoId,
+      threadId: THREAD_ID,
+    });
 
     expect(steerCalls).toHaveLength(1);
     expect(steerCalls[0].body).toBe('swallowed steer');

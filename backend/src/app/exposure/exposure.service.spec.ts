@@ -40,7 +40,9 @@ function makeService(
   options: { previewBaseDomain?: string | null } = {},
 ) {
   const previewBaseDomain =
-    options.previewBaseDomain === undefined ? 'example.com' : options.previewBaseDomain;
+    options.previewBaseDomain === undefined
+      ? 'example.com'
+      : options.previewBaseDomain;
   const caddy = {
     deleteRoutesByPrefix: vi.fn(async () => undefined),
     unbridgeCaddyFromSandbox: vi.fn(async () => undefined),
@@ -127,7 +129,10 @@ describe('ExposureService.reconcileAll — port_state teardown sweep', () => {
     expect(createQueryBuilder).toHaveBeenCalled();
     expect(calls.set).toEqual({ port_state: null });
     expect(calls.where).toEqual(['port_state IS NOT NULL', undefined]);
-    expect(calls.andWhere).toEqual(['id NOT IN (:...live)', { live: ['a', 'b'] }]);
+    expect(calls.andWhere).toEqual([
+      'id NOT IN (:...live)',
+      { live: ['a', 'b'] },
+    ]);
     expect(qb.execute).toHaveBeenCalled();
   });
 

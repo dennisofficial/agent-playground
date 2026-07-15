@@ -17,7 +17,11 @@
  * lists) — not here, to keep this file's only job the SDK-option shape.
  */
 import type { SessionMode } from '../../domain';
-import { LSP_SERVER_NAME, LSP_TOOL_NAMES, qualifyLspToolNames } from '../../engine/lsp-tools';
+import {
+  LSP_SERVER_NAME,
+  LSP_TOOL_NAMES,
+  qualifyLspToolNames,
+} from '../../engine/lsp-tools';
 
 export interface LspBridgeOptions {
   /** `{ mcpServers: { 'atlas-lsp-ts': { command, args } } }` — spread verbatim into the SDK `Options`. */

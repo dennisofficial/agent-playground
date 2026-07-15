@@ -23,7 +23,15 @@ import {
   getRepositoryToken,
 } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import {
@@ -131,7 +139,9 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
     svc = mod.get(ProdDiagnosticsService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
-    ledger = mod.get(getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION));
+    ledger = mod.get(
+      getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION),
+    );
     messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
@@ -162,7 +172,10 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     );
   });
 
-  async function seedDeadlockedThread(): Promise<{ jobId: string; threadId: string }> {
+  async function seedDeadlockedThread(): Promise<{
+    jobId: string;
+    threadId: string;
+  }> {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -232,10 +245,16 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
     // A durable approval card row was persisted for the operator, keyed to this write.
     const card = await messages.findOne({
-      where: { job_id: jobId, ts: `db-write:${jobId}:${res.writeId}`, kind: 'card' },
+      where: {
+        job_id: jobId,
+        ts: `db-write:${jobId}:${res.writeId}`,
+        kind: 'card',
+      },
     });
     expect(card).toBeTruthy();
-    expect((card?.card as Record<string, unknown> | undefined)?.kind).toBe('db_write');
+    expect((card?.card as Record<string, unknown> | undefined)?.kind).toBe(
+      'db_write',
+    );
 
     // A live SSE nudge was posted — but NO write ran: the target row is untouched.
     expect(surface.post).toHaveBeenCalledTimes(1);
@@ -268,10 +287,18 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     // The durable operator card was neutralized/replaced with a verdict, so the transcript no longer shows
     // an actionable "Execute write" button after execution.
     const card = await messages.findOne({
-      where: { job_id: jobId, ts: `db-write:${jobId}:${writeId}`, kind: 'card' },
+      where: {
+        job_id: jobId,
+        ts: `db-write:${jobId}:${writeId}`,
+        kind: 'card',
+      },
     });
-    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
-    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('approve');
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe(
+      'verdict_card',
+    );
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe(
+      'approve',
+    );
 
     // Idempotent: a duplicate approval click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();
@@ -292,10 +319,18 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     const after = await threads.findOne({ where: { id: threadId } });
     expect(after?.halt_fix_attempts).toBe(3); // untouched
     const card = await messages.findOne({
-      where: { job_id: jobId, ts: `db-write:${jobId}:${writeId}`, kind: 'card' },
+      where: {
+        job_id: jobId,
+        ts: `db-write:${jobId}:${writeId}`,
+        kind: 'card',
+      },
     });
-    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe('verdict_card');
-    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe('deny');
+    expect((card?.card as Record<string, unknown> | undefined)?.type).toBe(
+      'verdict_card',
+    );
+    expect((card?.card as Record<string, unknown> | undefined)?.verdict).toBe(
+      'deny',
+    );
 
     // Idempotent: a duplicate deny click is a no-op (row is no longer `pending`).
     surface.seedSystemNotification.mockClear();

@@ -35,7 +35,12 @@ import { EngineCore } from './engine-core';
 import { type EngineHomeKey } from './engine-home';
 import { BG_TASK_CAP_NOTICE, type EngineEvent } from './engine.types';
 
-const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
+const TEST_KEY: EngineHomeKey = {
+  orgId: 'acme',
+  repoId: 'atlas',
+  jobId: 'feat',
+  type: 'build',
+};
 
 const HOME_ROOT = join(tmpdir(), `atlas-bg-task-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
@@ -43,18 +48,36 @@ afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 /** A steerInput that never yields — it just flips the engine into streaming-input mode so `input` exists. */
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
   [Symbol.asyncIterator]() {
-    return { next: () => new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}) };
+    return {
+      next: () =>
+        new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
+    };
   },
 };
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 // ── Scripted SDK frames (only the fields the engine reads; shapes mirror @anthropic-ai/claude-agent-sdk). ──
-const initMsg = (): Record<string, unknown> => ({ type: 'system', subtype: 'init', session_id: 'sess-1' });
+const initMsg = (): Record<string, unknown> => ({
+  type: 'system',
+  subtype: 'init',
+  session_id: 'sess-1',
+});
 const assistantBash = (): Record<string, unknown> => ({
   type: 'assistant',
-  message: { model: 'opus', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'pnpm test', run_in_background: true } }] },
+  message: {
+    model: 'opus',
+    content: [
+      {
+        type: 'tool_use',
+        id: 't1',
+        name: 'Bash',
+        input: { command: 'pnpm test', run_in_background: true },
+      },
+    ],
+  },
 });
 const assistantText = (text: string): Record<string, unknown> => ({
   type: 'assistant',
@@ -63,27 +86,70 @@ const assistantText = (text: string): Record<string, unknown> => ({
 // A bare backgrounded Bash shell — no `subagent_type`, so the engine tracks it only in `liveBgTasks` and it
 // is subject to the advisory hold cap.
 const taskStarted = (taskId: string): Record<string, unknown> => ({
-  type: 'system', subtype: 'task_started', task_id: taskId, description: 'pnpm test', task_type: 'bash', session_id: 'sess-1',
+  type: 'system',
+  subtype: 'task_started',
+  task_id: taskId,
+  description: 'pnpm test',
+  task_type: 'bash',
+  session_id: 'sess-1',
 });
 // A backgrounded Task subagent — carries `subagent_type`, so the engine also tracks it in `liveSubagentTasks`
 // and holds it open with NO timer (uncapped).
 const taskStartedSubagent = (taskId: string): Record<string, unknown> => ({
-  type: 'system', subtype: 'task_started', task_id: taskId, description: 'validate', subagent_type: 'general-purpose', task_type: 'local_agent', session_id: 'sess-1',
+  type: 'system',
+  subtype: 'task_started',
+  task_id: taskId,
+  description: 'validate',
+  subagent_type: 'general-purpose',
+  task_type: 'local_agent',
+  session_id: 'sess-1',
 });
-const taskNotification = (taskId: string, status: string, summary: string): Record<string, unknown> => ({
-  type: 'system', subtype: 'task_notification', task_id: taskId, status, summary, output_file: '/tmp/out.log', session_id: 'sess-1',
+const taskNotification = (
+  taskId: string,
+  status: string,
+  summary: string,
+): Record<string, unknown> => ({
+  type: 'system',
+  subtype: 'task_notification',
+  task_id: taskId,
+  status,
+  summary,
+  output_file: '/tmp/out.log',
+  session_id: 'sess-1',
 });
-const taskUpdated = (taskId: string, status: string): Record<string, unknown> => ({
-  type: 'system', subtype: 'task_updated', task_id: taskId, patch: { status }, session_id: 'sess-1',
+const taskUpdated = (
+  taskId: string,
+  status: string,
+): Record<string, unknown> => ({
+  type: 'system',
+  subtype: 'task_updated',
+  task_id: taskId,
+  patch: { status },
+  session_id: 'sess-1',
 });
 const taskProgress = (taskId: string): Record<string, unknown> => ({
-  type: 'system', subtype: 'task_progress', task_id: taskId, description: 'running', usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 }, session_id: 'sess-1',
+  type: 'system',
+  subtype: 'task_progress',
+  task_id: taskId,
+  description: 'running',
+  usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
+  session_id: 'sess-1',
 });
 // A genuinely-completed result — for a tool-native run_in_background, the SDK's first result carries
 // terminal_reason 'completed' (verified live against sdk 0.3.201), so isTurnGenuinelyDone() is true and the
 // engine reaches the background-task hold/cap gate rather than the paused-result keep-open branch (#65).
-const resultMsg = (result: string, inputTokens: number, outputTokens: number): Record<string, unknown> => ({
-  type: 'result', subtype: 'success', session_id: 'sess-1', result, terminal_reason: 'completed', stop_reason: 'end_turn', usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+const resultMsg = (
+  result: string,
+  inputTokens: number,
+  outputTokens: number,
+): Record<string, unknown> => ({
+  type: 'result',
+  subtype: 'success',
+  session_id: 'sess-1',
+  result,
+  terminal_reason: 'completed',
+  stop_reason: 'end_turn',
+  usage: { input_tokens: inputTokens, output_tokens: outputTokens },
 });
 
 type FakeState = { inputEnded: boolean };
@@ -95,11 +161,20 @@ type FakeState = { inputEnded: boolean };
  */
 function makeSteerFake(
   script: (state: FakeState) => AsyncGenerator<Record<string, unknown>>,
-): { sdk: typeof import('@anthropic-ai/claude-agent-sdk'); pushed: string[]; state: FakeState } {
+): {
+  sdk: typeof import('@anthropic-ai/claude-agent-sdk');
+  pushed: string[];
+  state: FakeState;
+} {
   const pushed: string[] = [];
   const state: FakeState = { inputEnded: false };
   const sdk = {
-    query: ({ prompt }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) =>
+    query: ({
+      prompt,
+    }: {
+      prompt: AsyncIterable<unknown>;
+      options: Record<string, unknown>;
+    }) =>
       (async function* () {
         const it = prompt[Symbol.asyncIterator]();
         let taskSeen = false;
@@ -114,8 +189,11 @@ function makeSteerFake(
               taskSeen = true; // the initial task push
               continue;
             }
-            const content = (r.value as { message?: { content?: unknown } }).message?.content;
-            pushed.push(typeof content === 'string' ? content : JSON.stringify(content));
+            const content = (r.value as { message?: { content?: unknown } })
+              .message?.content;
+            pushed.push(
+              typeof content === 'string' ? content : JSON.stringify(content),
+            );
           }
         })();
         yield* script(state);
@@ -180,8 +258,12 @@ describe('EngineCore — run_in_background hold + cap', () => {
     expect(res.usage?.inputTokens).toBe(30);
     expect(res.usage?.outputTokens).toBe(12);
     expect(pushed).toEqual([]); // nothing steered on the happy path
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'started')).toBe(true);
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(false);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'started'),
+    ).toBe(true);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'capped'),
+    ).toBe(false);
   });
 
   it('a live background SUBAGENT is uncapped: input never closes and no cap fires while it runs', async () => {
@@ -209,7 +291,9 @@ describe('EngineCore — run_in_background hold + cap', () => {
 
     expect(stillOpenPastHold).toBe(true); // NO timer holds a live subagent — never capped
     expect(pushed).toEqual([]); // onCap bails while a subagent is live: no advisory nudge either
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(false);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'capped'),
+    ).toBe(false);
   });
 
   it('a bare backgrounded Bash shell gets the advisory cap nudge, but the cap never force-closes input', async () => {
@@ -234,7 +318,9 @@ describe('EngineCore — run_in_background hold + cap', () => {
     await runTurn(sdk, events);
 
     expect(pushed).toContain(BG_TASK_CAP_NOTICE);
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'capped'),
+    ).toBe(true);
     expect(cappedButOpen).toBe(true); // no code path calls input.end() as a direct cap reaction
   });
 
@@ -266,7 +352,9 @@ describe('EngineCore — run_in_background hold + cap', () => {
     await runTurn(sdk, events);
 
     expect(pushed).toContain(BG_TASK_CAP_NOTICE);
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'capped'),
+    ).toBe(true);
     expect(subagentStillOpenPastGrace).toBe(true);
   });
 
@@ -292,7 +380,9 @@ describe('EngineCore — run_in_background hold + cap', () => {
     await runTurn(sdk, events);
 
     expect(pushed).not.toContain(BG_TASK_CAP_NOTICE);
-    expect(events.some((e) => e.kind === 'bg_task' && e.status === 'capped')).toBe(true);
+    expect(
+      events.some((e) => e.kind === 'bg_task' && e.status === 'capped'),
+    ).toBe(true);
     expect(cappedButOpen).toBe(true);
   });
 });

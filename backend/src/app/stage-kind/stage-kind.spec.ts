@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { STAGE_KIND_SPECS, coerceStageKind, stageKindSpec, validateStageKinds } from './registry';
+import {
+  STAGE_KIND_SPECS,
+  coerceStageKind,
+  stageKindSpec,
+  validateStageKinds,
+} from './registry';
 import type { StageKindSpec } from './spec';
 
 /**
@@ -14,11 +19,19 @@ describe('stage-kind registry', () => {
   it('defines all seven stage kinds exactly once', () => {
     const kinds = STAGE_KIND_SPECS.map((s) => s.kind).sort();
     expect(kinds).toEqual(
-      ['build', 'ci', 'direct_build', 'master_review', 'planning', 'plan_review', 'post_build'].sort(),
+      [
+        'build',
+        'ci',
+        'direct_build',
+        'master_review',
+        'planning',
+        'plan_review',
+        'post_build',
+      ].sort(),
     );
   });
 
-  it("build contains sequential builder legs (d1) + 0..N review_agent + exactly one review_fix", () => {
+  it('build contains sequential builder legs (d1) + 0..N review_agent + exactly one review_fix', () => {
     const spec = stageKindSpec('build');
     expect(spec.hasReview).toBe(true);
     expect(spec.titleRequired).toBe(true);
@@ -33,7 +46,7 @@ describe('stage-kind registry', () => {
     expect(reviewFix).toEqual({ role: 'review_fix', min: 1, max: 1 });
   });
 
-  it("direct_build is the no-review fast path (d9): a single builder, no review roles, no title", () => {
+  it('direct_build is the no-review fast path (d9): a single builder, no review roles, no title', () => {
     const spec = stageKindSpec('direct_build');
     expect(spec.hasReview).toBe(false);
     expect(spec.titleRequired).toBe(false);
@@ -42,13 +55,24 @@ describe('stage-kind registry', () => {
 
   it('planning requires a title (round disambiguation); other singleton kinds do not', () => {
     expect(stageKindSpec('planning').titleRequired).toBe(true);
-    for (const kind of ['plan_review', 'master_review', 'post_build', 'ci'] as const) {
+    for (const kind of [
+      'plan_review',
+      'master_review',
+      'post_build',
+      'ci',
+    ] as const) {
       expect(stageKindSpec(kind).titleRequired).toBe(false);
     }
   });
 
   it('each singleton kind declares exactly one role, min 1 max 1', () => {
-    for (const kind of ['planning', 'plan_review', 'master_review', 'post_build', 'ci'] as const) {
+    for (const kind of [
+      'planning',
+      'plan_review',
+      'master_review',
+      'post_build',
+      'ci',
+    ] as const) {
       const spec = stageKindSpec(kind);
       expect(spec.roles).toHaveLength(1);
       expect(spec.roles[0].min).toBe(1);
@@ -98,14 +122,20 @@ describe('stage-kind registry', () => {
 
   it('validateStageKinds rejects a role naming an unknown ThreadRole', () => {
     const bad: StageKindSpec[] = [
-      { ...stageKindSpec('planning'), roles: [{ role: 'ghost' as never, min: 1, max: 1 }] },
+      {
+        ...stageKindSpec('planning'),
+        roles: [{ role: 'ghost' as never, min: 1, max: 1 }],
+      },
     ];
     expect(() => validateStageKinds(bad)).toThrow(/unknown role "ghost"/);
   });
 
   it('validateStageKinds rejects a role with max < min', () => {
     const bad: StageKindSpec[] = [
-      { ...stageKindSpec('planning'), roles: [{ role: 'planning', min: 2, max: 1 }] },
+      {
+        ...stageKindSpec('planning'),
+        roles: [{ role: 'planning', min: 2, max: 1 }],
+      },
     ];
     expect(() => validateStageKinds(bad)).toThrow(/max < min/);
   });

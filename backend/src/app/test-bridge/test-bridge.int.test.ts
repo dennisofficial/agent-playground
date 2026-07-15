@@ -58,7 +58,9 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -102,10 +104,10 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
     // fully hermetic (no Docker / git clone), force the fail-fast not-ready path: an unconnected repo →
     // the brain posts an actionable message instead of attempting a clone. What we're proving is the
     // WIRING: say → AgentSessionManager → a reply captured on the thread + persisted in the transcript.
-    await dataSource.query(`UPDATE repos SET access_ok = false WHERE org_id = $1 AND slug = $2`, [
-      TEAM_ID,
-      PROJECT_ID,
-    ]);
+    await dataSource.query(
+      `UPDATE repos SET access_ok = false WHERE org_id = $1 AND slug = $2`,
+      [TEAM_ID, PROJECT_ID],
+    );
 
     const said = await controller.say({
       channel: PROJECT_ID, // the surface addresses by repo slug (test-bridge convention)
@@ -115,14 +117,18 @@ describe('TestBridge HTTP round-trip (live Postgres, mocked LLM)', () => {
     expect(said.threadTs).toBeTruthy();
     expect(said.replies.length).toBeGreaterThan(0);
     // The brain's reply is the actionable "finish connecting this repo" message (not-ready provisioning).
-    expect(said.replies.some((r) => r.text.toLowerCase().includes('connect'))).toBe(true);
+    expect(
+      said.replies.some((r) => r.text.toLowerCase().includes('connect')),
+    ).toBe(true);
     // No approval card (no plan was proposed).
     expect(said.approvalCard).toBeUndefined();
 
     // The transcript endpoint reflects the human message + Atlas's reply, in order.
     const transcript = await controller.thread(said.threadTs);
     expect(transcript.length).toBeGreaterThanOrEqual(2);
-    expect(transcript.some((l) => !l.isAtlas && l.text.includes('README'))).toBe(true);
+    expect(
+      transcript.some((l) => !l.isAtlas && l.text.includes('README')),
+    ).toBe(true);
     expect(transcript.some((l) => l.isAtlas)).toBe(true);
   }, 30_000);
 });

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoEntity } from '../persistence/entities/repo.entity';
-import { computeFeatureBranchName, isBranchNameValid, DEFAULT_BRANCH_PREFIX } from './branch-naming';
+import {
+  computeFeatureBranchName,
+  isBranchNameValid,
+  DEFAULT_BRANCH_PREFIX,
+} from './branch-naming';
 
 const JOB = 'a1b2c3d4-1111-2222-3333-444455556666';
 
@@ -10,15 +14,21 @@ function repo(over: Partial<RepoEntity> = {}): RepoEntity {
 
 describe('computeFeatureBranchName', () => {
   it('uses the built-in default prefix + first 8 chars of the job id when no prefix is set', () => {
-    expect(computeFeatureBranchName(repo(), JOB)).toBe(`${DEFAULT_BRANCH_PREFIX}a1b2c3d4`);
+    expect(computeFeatureBranchName(repo(), JOB)).toBe(
+      `${DEFAULT_BRANCH_PREFIX}a1b2c3d4`,
+    );
   });
 
   it('honours a per-repo prefix (convention enforcement, e.g. feat/)', () => {
-    expect(computeFeatureBranchName(repo({ branch_prefix: 'feat/' }), JOB)).toBe('feat/a1b2c3d4');
+    expect(
+      computeFeatureBranchName(repo({ branch_prefix: 'feat/' }), JOB),
+    ).toBe('feat/a1b2c3d4');
   });
 
   it('trims whitespace and falls back to the default on an empty prefix', () => {
-    expect(computeFeatureBranchName(repo({ branch_prefix: '   ' }), JOB)).toBe(`${DEFAULT_BRANCH_PREFIX}a1b2c3d4`);
+    expect(computeFeatureBranchName(repo({ branch_prefix: '   ' }), JOB)).toBe(
+      `${DEFAULT_BRANCH_PREFIX}a1b2c3d4`,
+    );
   });
 });
 
@@ -34,6 +44,8 @@ describe('isBranchNameValid', () => {
   });
 
   it('never wedges on an unparseable regex config (passes)', () => {
-    expect(isBranchNameValid(repo({ branch_regex: '([' }), 'whatever')).toBe(true);
+    expect(isBranchNameValid(repo({ branch_regex: '([' }), 'whatever')).toBe(
+      true,
+    );
   });
 });

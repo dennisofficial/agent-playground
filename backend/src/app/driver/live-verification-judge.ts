@@ -2,8 +2,15 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { Logger } from '@nestjs/common';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
-import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import {
+  ChatPromptTemplate,
+  HumanMessagePromptTemplate,
+} from '@langchain/core/prompts';
+import {
+  RunnableLambda,
+  RunnableSequence,
+  type Runnable,
+} from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
@@ -72,7 +79,9 @@ export namespace JudgeLiveVerificationChain {
     missingChecks: z
       .string()
       .optional()
-      .describe('One short semicolon-joined line naming what live check is missing.'),
+      .describe(
+        'One short semicolon-joined line naming what live check is missing.',
+      ),
   });
   export type Output = z.infer<typeof Schema>;
 
@@ -97,7 +106,7 @@ export namespace JudgeLiveVerificationChain {
     '   (a command + exit code + output), not merely claimed in prose? Typecheck, build, lint, and the unit/',
     '   integration TEST SUITE running are explicitly NOT live verification on their own, no matter how',
     '   thorough — they prove the code compiles and its own tests pass, not that the running system works.',
-    '   ONE more form counts as adequate: when the change\'s effect is an internal option/value handed to an',
+    "   ONE more form counts as adequate: when the change's effect is an internal option/value handed to an",
     '   external SDK/library (or otherwise NEVER echoed in any user-facing HTTP/UI/CLI surface), a capture',
     '   from the ACTUALLY-BOOTED process exercising the real code path — a log line proving the changed value',
     '   was passed at runtime (a command + its output), NOT a unit/integration test asserting it — is enough.',
@@ -143,15 +152,26 @@ export class AnthropicLiveVerificationJudge implements LiveVerificationJudge {
   private readonly logger = new Logger('LiveVerificationJudge');
   private readonly chains = new Map<
     string,
-    Runnable<JudgeLiveVerificationChain.Input, JudgeLiveVerificationChain.Output>
+    Runnable<
+      JudgeLiveVerificationChain.Input,
+      JudgeLiveVerificationChain.Output
+    >
   >();
 
   /** @param apiKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
-  constructor(private readonly apiKey: (orgId?: string) => Promise<string | undefined>) {}
+  constructor(
+    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
+  ) {}
 
   private async chain(
     orgId?: string,
-  ): Promise<Runnable<JudgeLiveVerificationChain.Input, JudgeLiveVerificationChain.Output> | undefined> {
+  ): Promise<
+    | Runnable<
+        JudgeLiveVerificationChain.Input,
+        JudgeLiveVerificationChain.Output
+      >
+    | undefined
+  > {
     const key = await this.apiKey(orgId);
     if (!key) return undefined;
     let c = this.chains.get(key);

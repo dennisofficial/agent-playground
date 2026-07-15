@@ -436,7 +436,10 @@ export interface RunEngineArgs {
    * install-awareness PostToolUse hook uses it to reach the reserved `__profile_awareness` host tool.
    * Host-only closure — NEVER serialized into the turn spec.
    */
-  bridgeCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  bridgeCall?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>;
   /**
    * Optional registry context for a RESTART-SURVIVABLE Redis-transport turn. When set (and
    * `ENGINE_TRANSPORT=redis`), the runner records an `active_turns` row so a fresh backend can
@@ -462,26 +465,61 @@ export interface RunEngineArgs {
 /** Fields that NEVER cross to the container (host-only handles/closures/callbacks + the host-side registry
  *  context). `turnMeta` drives the host's `active_turns` re-attach row; it is not read in-container. */
 type HostOnlyArgKey =
-  | 'onEvent' | 'signal' | 'steerInput' | 'onTurnRegistered' | 'target' | 'toolBridge' | 'bridgeCall' | 'turnMeta';
+  | 'onEvent'
+  | 'signal'
+  | 'steerInput'
+  | 'onTurnRegistered'
+  | 'target'
+  | 'toolBridge'
+  | 'bridgeCall'
+  | 'turnMeta';
 /** Fields TRANSFORMED at the boundary (mapped to container-space by `buildSpec`, not copied verbatim). */
-type TransformedArgKey = 'cwd' | 'writableRoots' | 'auth' | 'persistAuthRefresh';
+type TransformedArgKey =
+  | 'cwd'
+  | 'writableRoots'
+  | 'auth'
+  | 'persistAuthRefresh';
 /** Everything else is copied VERBATIM. Derived from `keyof RunEngineArgs` — this is the load-bearing line:
  *  a NEW field lands here automatically, and the exhaustiveness check below then fails until it is either
  *  forwarded (added to {@link SPEC_VERBATIM_KEYS}) or classified (added to HostOnly/Transformed above). */
-export type SpecVerbatimKey = Exclude<keyof RunEngineArgs, HostOnlyArgKey | TransformedArgKey>;
+export type SpecVerbatimKey = Exclude<
+  keyof RunEngineArgs,
+  HostOnlyArgKey | TransformedArgKey
+>;
 
 /** The verbatim fields copied host→container. `satisfies` rejects a misclassified/typo'd key; the
  *  `_SPEC_VERBATIM_KEYS_EXHAUSTIVE` check below rejects a MISSING one. Together ⇒ exact coverage. */
 export const SPEC_VERBATIM_KEYS = [
-  'engine', 'task', 'systemPrompt', 'sandboxKey', 'sessionId', 'mode',
-  'userMcpServers', 'repoConventions', 'previewInstructions', 'skills', 'grantedSkills', 'model', 'modelReasoningEffort', 'richStream', 'steerable', 'rotationNudge',
+  'engine',
+  'task',
+  'systemPrompt',
+  'sandboxKey',
+  'sessionId',
+  'mode',
+  'userMcpServers',
+  'repoConventions',
+  'previewInstructions',
+  'skills',
+  'grantedSkills',
+  'model',
+  'modelReasoningEffort',
+  'richStream',
+  'steerable',
+  'rotationNudge',
 ] as const satisfies readonly SpecVerbatimKey[];
 
 // COMPILE-TIME CONTRACT: if a verbatim field is missing from SPEC_VERBATIM_KEYS this is a non-`never` tuple
 // naming it, and assigning `true` fails the build. Add the named key to SPEC_VERBATIM_KEYS to fix.
-const _SPEC_VERBATIM_KEYS_EXHAUSTIVE: [Exclude<SpecVerbatimKey, (typeof SPEC_VERBATIM_KEYS)[number]>] extends [never]
+const _SPEC_VERBATIM_KEYS_EXHAUSTIVE: [
+  Exclude<SpecVerbatimKey, (typeof SPEC_VERBATIM_KEYS)[number]>,
+] extends [never]
   ? true
-  : { ADD_TO_SPEC_VERBATIM_KEYS: Exclude<SpecVerbatimKey, (typeof SPEC_VERBATIM_KEYS)[number]> } = true;
+  : {
+      ADD_TO_SPEC_VERBATIM_KEYS: Exclude<
+        SpecVerbatimKey,
+        (typeof SPEC_VERBATIM_KEYS)[number]
+      >;
+    } = true;
 void _SPEC_VERBATIM_KEYS_EXHAUSTIVE;
 
 /**
@@ -509,7 +547,10 @@ export interface TurnSpec extends Pick<RunEngineArgs, SpecVerbatimKey> {
 
 /** Copy exactly `keys` from `obj` (typed). Used to forward verbatim wire fields without hand-listing spreads;
  *  `undefined` values are harmless (JSON serialization drops them, and absent ≡ undefined for the engine). */
-export function pickKeys<T, K extends readonly (keyof T)[]>(obj: T, keys: K): Pick<T, K[number]> {
+export function pickKeys<T, K extends readonly (keyof T)[]>(
+  obj: T,
+  keys: K,
+): Pick<T, K[number]> {
   const out = {} as Pick<T, K[number]>;
   for (const k of keys) out[k] = obj[k];
   return out;
@@ -523,7 +564,14 @@ export interface TurnMeta {
   channel: string;
   /** Transcript lane: 'main' (brain) | 'thread:<threadId>' (a build thread) | 'codex-review:<jobId>'. */
   lane: string;
-  kind: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction' | 'rotation';
+  kind:
+    | 'brain'
+    | 'step'
+    | 'review'
+    | 'gate'
+    | 'autofix'
+    | 'compaction'
+    | 'rotation';
   /** Per-kind params needed to rebuild the turn on re-attach (author, prompt, route, timeouts, …). */
   ctx?: Record<string, unknown>;
 }

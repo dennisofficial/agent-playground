@@ -52,7 +52,11 @@ export class SandboxGroup {
   /** Where you run — the cloud sandbox (long framing): the shared core (CLOUD_SANDBOX_NOTE) plus the
    *  brain-specific additions (the `/playground` pointer, the phone/no-checkout framing, the concrete
    *  impossible-request examples, and the request_secret/request_file/ask_question routing). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1010, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1010,
+    condition: notOnboarding,
+  })
   cloudSandbox(): string {
     return [
       CLOUD_SANDBOX_NOTE,
@@ -67,25 +71,41 @@ export class SandboxGroup {
   }
 
   /** The sandbox filesystem map (mount split: what git sees vs infra mounts). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1011, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1011,
+    condition: notOnboarding,
+  })
   filesystemMap(): string {
     return SANDBOX_FILESYSTEM_MAP_NOTE;
   }
 
   /** The sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1012, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1012,
+    condition: notOnboarding,
+  })
   builtInToolkit(): string {
     return BUILT_IN_TOOLKIT_NOTE;
   }
 
   /** You are the sole author of the checkout (no phantom outside/concurrent editor). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1015, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1015,
+    condition: notOnboarding,
+  })
   soleAuthor(): string {
     return SOLE_AUTHOR_NOTE;
   }
 
   /** You own git in the sandbox. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1020, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1020,
+    condition: notOnboarding,
+  })
   gitOwnership(): string {
     return [
       'YOU OWN GIT IN THE SANDBOX: your checkout has AUTHENTICATED git plus `gh` — the remote is wired with',
@@ -100,7 +120,11 @@ export class SandboxGroup {
   }
 
   /** The host watches your PR and relays CI/conflict/review events. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1030, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1030,
+    condition: notOnboarding,
+  })
   hostWatchesPr(): string {
     return [
       'THE HOST WATCHES YOUR PR AND TELLS YOU WHAT HAPPENS ON IT: once a PR exists, the host observes GitHub',
@@ -114,7 +138,11 @@ export class SandboxGroup {
 
   /** The /playground scratch space: the shared core (PLAYGROUND_NOTE) plus the brain-specific additions
    *  (durable across restarts, shared across the job's build lanes, and the `/.atlas` engine-dir warning). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1160, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1160,
+    condition: notOnboarding,
+  })
   playgroundScratch(): string {
     return [
       PLAYGROUND_NOTE,
@@ -125,13 +153,17 @@ export class SandboxGroup {
   }
 
   /** The atlas-svc runtime + shared-machine frugality. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1260, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1260,
+    condition: notOnboarding,
+  })
   sandboxRuntime(): string {
     return [
       'SANDBOX RUNTIME: ANY long-running process (dev servers, `docker compose` — run it foreground, not `-d`,',
       '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>`',
       '(detached, captured logs), `atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — never a bare',
-      '`&`/nohup/`-d`. Pass `--port <n>` for an HTTP dev server so it shows in the operator\'s PORTS panel; a plain',
+      "`&`/nohup/`-d`. Pass `--port <n>` for an HTTP dev server so it shows in the operator's PORTS panel; a plain",
       '`--port` stays INTERNAL (sandbox-only, reachable at `localhost:<n>` — the right choice for validation). To',
       'publish a public preview URL, ALSO pass `--expose` — see PUBLIC PREVIEW URLS below — but do that only for a',
       'deliberate preview/ship-gate demo, never for routine validation. Omit `--port` for a non-HTTP worker.',
@@ -153,7 +185,11 @@ export class SandboxGroup {
    *  provision→write-env→start ordering the operator must follow (only active when the ATLAS_PREVIEW_* env
    *  vars are injected). A build-brain concern — a review job never boots its own branch, so it gates
    *  `isBuildBrain`. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1262,
+    condition: isBuildBrain,
+  })
   publicExposure(): string {
     return PUBLIC_EXPOSURE_NOTE;
   }
@@ -162,13 +198,17 @@ export class SandboxGroup {
    *  teach the browser-probe → env-first-remediate → persist procedure that makes a connected repo's stack
    *  reachable + hydrated through the preview proxy on the FIRST live test. Onboarding-only (isOnboarding);
    *  ordered right after the bring-up Loop (2020) + dev-logins (2040) so it reads as the next step. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2045, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2045,
+    condition: isOnboarding,
+  })
   onboardingAccessibility(): string {
     return [
       PUBLIC_EXPOSURE_NOTE,
       '',
       'LIVE-SERVICE ACCESSIBILITY — make every user-facing surface BROWSER-accessible through the preview',
-      'proxy and PROVE it, so the operator\'s first live test works without a round of manual debugging. This',
+      "proxy and PROVE it, so the operator's first live test works without a round of manual debugging. This",
       'applies to any repo with a USER-FACING SURFACE: a web/frontend app a human loads in a browser (rarely a',
       'human-hit API). Backing services (workers, DBs, queues) are validated only as far as a user-facing',
       'surface needs them — do NOT expose them unless the operator asks.',
@@ -176,14 +216,14 @@ export class SandboxGroup {
       '    entries are user-facing and will be exposed + browser-probed, so the operator can prune the set',
       '    before the expensive bring-up.',
       '  - ORDER IS NOT OPTIONAL (reuse the PUBLIC PREVIEW URLS ordering above): compute the deterministic',
-      '    preview URLs FIRST, write the env-first config BEFORE starting — the frontend\'s API base URL → the',
-      '    api preview origin; the backend\'s CORS allow-origin → the web preview origin (credentials enabled);',
+      "    preview URLs FIRST, write the env-first config BEFORE starting — the frontend's API base URL → the",
+      "    api preview origin; the backend's CORS allow-origin → the web preview origin (credentials enabled);",
       '    bind `0.0.0.0` — and PERSIST each env value as you set it (secret files / setup script) so it',
       '    survives the next cold boot.',
       '  - PROBE AS A BROWSER, NOT A PORT: after `atlas-svc run --port <n> --expose`, run `atlas-probe <publicUrl> --json`',
       '    (add `--api-origin <apiPreviewUrl>` for a frontend) and read its verdict — a 200 or "it is listening"',
       '    is NOT accessibility. Re-probe after EVERY fix.',
-      '  - PROVE THE AUTH HANDSHAKE WITH A REAL LOGIN: the probe does not log in for you. Use the repo\'s real',
+      "  - PROVE THE AUTH HANDSHAKE WITH A REAL LOGIN: the probe does not log in for you. Use the repo's real",
       '    dev-login flow (see DEV LOGINS) with your own Playwright drive to authenticate, save a Playwright',
       '    `storageState` JSON, then `atlas-probe <authedUrl> --storage-state <file> --json` to confirm an',
       '    authenticated page hydrates AND its authed API calls succeed — the end-to-end proof of the cookie +',
@@ -193,13 +233,13 @@ export class SandboxGroup {
       '    for the MINIMAL repo code change needed to READ that env; report anything you cannot safely auto-fix):',
       '      • `bind_ip` → the server is on 127.0.0.1 (502); bind `0.0.0.0`.',
       '      • `port` → wrong/absent listen port; fix the `--port`/listen port.',
-      '      • `dev_origin` → the framework\'s dev cross-origin block (403 on `/_next/*`/HMR); set its',
+      "      • `dev_origin` → the framework's dev cross-origin block (403 on `/_next/*`/HMR); set its",
       '        allowed-origins from `$ATLAS_PREVIEW_DOMAIN` (Next `allowedDevOrigins`, Vite',
       '        `server.allowedHosts`/`hmr`), env-driven — minimal PR only if the repo must read that env.',
       '      • `cors` → set the CORS allow-origin env to the web preview origin (credentials enabled).',
-      '      • `api_base_url` → set the client\'s API base-URL env to the api preview origin.',
+      "      • `api_base_url` → set the client's API base-URL env to the api preview origin.",
       '      • `cookie` → ensure the auth cookie is `Secure` and its Domain is NOT pinned to localhost/a bare',
-      '        host. The app\'s existing `SameSite=Lax` already works cross-subdomain because all preview',
+      "        host. The app's existing `SameSite=Lax` already works cross-subdomain because all preview",
       '        services share one registrable domain — do NOT reach for `SameSite=None`/per-host cookie-domain',
       '        machinery; that case cannot arise behind the preview proxy. A genuine hardcode (e.g.',
       '        `secure:false`) rides the same env-first minimal-PR path; a true cross-site need is REPORTED to',
@@ -218,7 +258,11 @@ export class SandboxGroup {
   }
 
   /** Reading build/brain lane transcripts via atlas-tx (the wake-orientation "means"). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1265, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1265,
+    condition: notOnboarding,
+  })
   transcriptAccess(): string {
     return [
       'TRANSCRIPT ACCESS: every build lane and your own brain session write a JSONL transcript under `/.atlas`.',
@@ -239,7 +283,11 @@ export class SandboxGroup {
   }
 
   /** Where you run — the cloud sandbox (short framing). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2010, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2010,
+    condition: isOnboarding,
+  })
   onboardingSandbox(): string {
     return [
       "You run in a CLOUD SANDBOX — your own container, not the operator's machine. The operator talks to you",
@@ -253,7 +301,11 @@ export class SandboxGroup {
   }
 
   /** Same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2012, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2012,
+    condition: isOnboarding,
+  })
   onboardingBuiltInToolkit(): string {
     return BUILT_IN_TOOLKIT_NOTE;
   }

@@ -67,7 +67,9 @@ describe('single running brain turn per job (live Postgres partial unique index)
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -81,7 +83,12 @@ describe('single running brain turn per job (live Postgres partial unique index)
     );
     const [repo] = await dataSource.query(
       `INSERT INTO repos (org_id, slug, name, git_url) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [TEAM_ID, `guard-repo-${randomUUID().slice(0, 8)}`, 'guard-repo', 'https://example.invalid/r.git'],
+      [
+        TEAM_ID,
+        `guard-repo-${randomUUID().slice(0, 8)}`,
+        'guard-repo',
+        'https://example.invalid/r.git',
+      ],
     );
     const mkJob = async () => {
       const [job] = await dataSource.query(
@@ -96,10 +103,14 @@ describe('single running brain turn per job (live Postgres partial unique index)
 
   afterAll(async () => {
     if (dataSource) {
-      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [
+        TEAM_ID,
+      ]);
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
-      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
+        TEAM_ID,
+      ]);
     }
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
@@ -118,15 +129,21 @@ describe('single running brain turn per job (live Postgres partial unique index)
 
   it('ALLOWS a non-brain (step) turn alongside the running brain turn on the same job', async () => {
     // brain1 from the previous test is still running for jobA.
-    await expect(registry.register(reg(randomUUID(), jobA, 'step'))).resolves.toBeUndefined();
+    await expect(
+      registry.register(reg(randomUUID(), jobA, 'step')),
+    ).resolves.toBeUndefined();
   });
 
   it('ALLOWS a brain turn on a DIFFERENT job', async () => {
-    await expect(registry.register(reg(randomUUID(), jobB, 'brain'))).resolves.toBeUndefined();
+    await expect(
+      registry.register(reg(randomUUID(), jobB, 'brain')),
+    ).resolves.toBeUndefined();
   });
 
   it('ALLOWS a fresh brain turn once the prior one is finalized', async () => {
     await registry.finalize(brain1, 'done');
-    await expect(registry.register(reg(randomUUID(), jobA, 'brain'))).resolves.toBeUndefined();
+    await expect(
+      registry.register(reg(randomUUID(), jobA, 'brain')),
+    ).resolves.toBeUndefined();
   });
 });

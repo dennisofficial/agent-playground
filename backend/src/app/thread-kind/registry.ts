@@ -172,7 +172,9 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
   },
 ];
 
-const BY_KIND = new Map<string, ThreadKindSpec>(THREAD_KIND_SPECS.map((s) => [s.kind, s]));
+const BY_KIND = new Map<string, ThreadKindSpec>(
+  THREAD_KIND_SPECS.map((s) => [s.kind, s]),
+);
 
 const THREAD_ROLE_SET = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
 
@@ -189,13 +191,16 @@ export function coerceThreadRole(raw: unknown): ThreadRole {
 /** The kinds the DRIVER's top loop executes as build sections (`builder` + `master_review`). Everything
  *  else is a child (`review_agent`/`review_fix`) or render-only (`planning`/`plan_review`/`post_build`/`ci`). */
 export const driverExecutableKinds: ReadonlySet<ThreadRole> = new Set(
-  THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map((s) => s.kind),
+  THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map(
+    (s) => s.kind,
+  ),
 );
 
 /** Resolve a kind's spec, or throw (an unknown kind is a bug — every row's kind is registry-backed). */
 export function threadKindSpec(kind: string): ThreadKindSpec {
   const spec = BY_KIND.get(kind);
-  if (!spec) throw new Error(`thread-kind: unknown kind "${kind}" (no ThreadKindSpec).`);
+  if (!spec)
+    throw new Error(`thread-kind: unknown kind "${kind}" (no ThreadKindSpec).`);
   return spec;
 }
 
@@ -222,7 +227,8 @@ export interface LaneDefaultFooter {
  */
 export function laneDefaultFooter(kind: string): LaneDefaultFooter {
   const spec = threadKindSpec(kind);
-  const claudeModel = spec.laneKind === 'main' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
+  const claudeModel =
+    spec.laneKind === 'main' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
   return {
     engine: spec.engine,
     ...(spec.engine === 'claude' ? { model: claudeModel } : {}),
@@ -235,7 +241,9 @@ export function laneDefaultFooter(kind: string): LaneDefaultFooter {
  * kind, an agent not in the `Agent` enum, a lane kind not in the `THREAD_REGISTRY`, a child that names an
  * unknown kind, and a smoke render of every kind's `Agent` prompt (surfaces a throwing fragment early).
  */
-export function validateThreadKinds(specs: readonly ThreadKindSpec[] = THREAD_KIND_SPECS): void {
+export function validateThreadKinds(
+  specs: readonly ThreadKindSpec[] = THREAD_KIND_SPECS,
+): void {
   const validAgents = new Set<string>(Object.values(Agent));
   const validLaneKinds = new Set<string>(THREAD_REGISTRY.map((d) => d.kind));
   const validKinds = new Set<string>(specs.map((s) => s.kind));
@@ -246,7 +254,9 @@ export function validateThreadKinds(specs: readonly ThreadKindSpec[] = THREAD_KI
     }
     seen.add(s.kind);
     if (!validAgents.has(s.agent)) {
-      throw new Error(`thread-kind: kind "${s.kind}" binds an unknown Agent "${s.agent}".`);
+      throw new Error(
+        `thread-kind: kind "${s.kind}" binds an unknown Agent "${s.agent}".`,
+      );
     }
     if (!validLaneKinds.has(s.laneKind)) {
       throw new Error(

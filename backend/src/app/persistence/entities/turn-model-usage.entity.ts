@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { TurnStatsEntity } from './turn-stats.entity';
 import { numberColumn } from './numeric.transformer';

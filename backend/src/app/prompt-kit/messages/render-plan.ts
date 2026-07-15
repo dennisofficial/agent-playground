@@ -12,5 +12,7 @@ export interface PlannedStep {
  * `submit_plan` time) so both produce byte-identical plan prose — `thread.plan` is single-source.
  */
 export function renderPlan(steps: PlannedStep[]): string {
-  return steps.map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`).join('\n');
+  return steps
+    .map((p, i) => `${i + 1}. **${p.title}** — ${p.brief}`)
+    .join('\n');
 }

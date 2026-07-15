@@ -25,7 +25,8 @@ export default (async (ds) => {
     (await repos.findOne({ where: { id: DEV_SEED_IDS.repos.testRepo } })) ??
     (await repos.findOne({ where: { org_id, slug } }));
 
-  const row = existing ?? repos.create({ id: DEV_SEED_IDS.repos.testRepo, org_id, slug });
+  const row =
+    existing ?? repos.create({ id: DEV_SEED_IDS.repos.testRepo, org_id, slug });
   row.name = 'test-repo';
   row.git_url = 'https://github.com/dennisofficial/test-repo';
   row.default_branch = 'main';

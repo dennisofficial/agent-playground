@@ -7,7 +7,11 @@ import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
 import { bundleEngine } from './bundle-engine';
-import { CONTAINER_CONTEXT, CONTAINER_PLAYGROUND, CONTAINER_WORKTREE } from './container-paths';
+import {
+  CONTAINER_CONTEXT,
+  CONTAINER_PLAYGROUND,
+  CONTAINER_WORKTREE,
+} from './container-paths';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
 import { SandboxManager } from './sandbox-manager.service';
@@ -50,7 +54,8 @@ describe('SandboxManager (integration, needs Docker)', () => {
     if (!dockerUp) return;
     repoRoot = mkdtempSync(join(tmpdir(), 'atlas-sbxmgr-'));
     homeRoot = mkdtempSync(join(tmpdir(), 'atlas-sbxhome-'));
-    const git = (args: string[], cwd: string) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+    const git = (args: string[], cwd: string) =>
+      execFileSync('git', args, { cwd, stdio: 'pipe' });
     git(['init', '-q'], repoRoot);
     execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'a@b.c']);
     execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'a']);
@@ -60,8 +65,17 @@ describe('SandboxManager (integration, needs Docker)', () => {
     // A LINKED worktree (the real Atlas shape: .git is a file → external gitdir).
     worktree = join(repoRoot, '.worktrees', 'feat');
     git(['worktree', 'add', '-q', worktree, '-b', 'atlas/feat'], repoRoot);
-    sandbox = { repoId: 'proj', branch: 'atlas/feat', worktreePath: worktree, gitUrl: '' };
-    manager = new SandboxManager(engine, builder, env({ AGENT_HOME_ROOT: homeRoot }));
+    sandbox = {
+      repoId: 'proj',
+      branch: 'atlas/feat',
+      worktreePath: worktree,
+      gitUrl: '',
+    };
+    manager = new SandboxManager(
+      engine,
+      builder,
+      env({ AGENT_HOME_ROOT: homeRoot }),
+    );
     // Reclaim any STALE container from a prior run: the container name is deterministic
     // (`atlas-sbx-team1-proj-atlas-feat`), so a leftover one would be reused WARM with binds pointing at
     // this run's now-different (deleted) repoRoot → an empty /workspace. Real Atlas keeps a stable
@@ -70,18 +84,22 @@ describe('SandboxManager (integration, needs Docker)', () => {
   });
 
   afterAll(async () => {
-    if (containerId) await engine.remove(containerId, { force: true }).catch(() => undefined);
+    if (containerId)
+      await engine.remove(containerId, { force: true }).catch(() => undefined);
     if (artifacts) {
       await engine.removeNetwork(artifacts.net).catch(() => undefined);
       await engine.removeVolume(artifacts.vol).catch(() => undefined);
     }
-    for (const p of [repoRoot, homeRoot]) if (p) rmSync(p, { recursive: true, force: true });
+    for (const p of [repoRoot, homeRoot])
+      if (p) rmSync(p, { recursive: true, force: true });
   });
 
   it('attaches a sandbox where in-container git resolves the linked worktree and host-uid can write', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn('Docker not reachable — skipping SandboxManager integration test');
+      console.warn(
+        'Docker not reachable — skipping SandboxManager integration test',
+      );
       return;
     }
     await bundleEngine(); // the engine bundle is generated, not committed — produce it (as the API does on boot)
@@ -94,9 +112,13 @@ describe('SandboxManager (integration, needs Docker)', () => {
 
     // in-container git resolves the LINKED worktree at its NEUTRAL /workspace mount (the generated `.git`
     // pointer rebases the gitdir onto /.atlas/git-common → no host paths needed inside the box).
-    const branch = await engine.exec(attached.containerId!, ['git', '-C', CONTAINER_WORKTREE, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      user: attached.execUser,
-    });
+    const branch = await engine.exec(
+      attached.containerId!,
+      ['git', '-C', CONTAINER_WORKTREE, 'rev-parse', '--abbrev-ref', 'HEAD'],
+      {
+        user: attached.execUser,
+      },
+    );
     expect(branch.exitCode).toBe(0);
     expect(branch.stdout.trim()).toBe('atlas/feat');
 
@@ -108,14 +130,24 @@ describe('SandboxManager (integration, needs Docker)', () => {
       { user: attached.execUser },
     );
     expect(w.exitCode).toBe(0);
-    expect(readFileSync(join(worktree, 'MARKER.txt'), 'utf8').trim()).toBe(marker);
+    expect(readFileSync(join(worktree, 'MARKER.txt'), 'utf8').trim()).toBe(
+      marker,
+    );
 
     // HOT-RELOAD: the host engine bundle is bind-mounted (read-only) over the baked-in one, so engine
     // updates land on the next turn with no recreate; the container carries the config fingerprint label.
-    const raw = await new Docker().getContainer(attached.containerId!).inspect();
+    const raw = await new Docker()
+      .getContainer(attached.containerId!)
+      .inspect();
     const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
-    expect(mounts.some((m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs')).toBe(true);
-    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(/\|cfg\d+\|m([0-9a-f]+|none)\|s([0-9a-f]+|none)$/);
+    expect(
+      mounts.some(
+        (m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs',
+      ),
+    ).toBe(true);
+    expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(
+      /\|cfg\d+\|m([0-9a-f]+|none)\|s([0-9a-f]+|none)$/,
+    );
 
     // idempotent: a second attach reuses the same container (fingerprint matches → not stale).
     const again = await manager.attach({ sandbox, orgId: 'team1' });
@@ -128,7 +160,9 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const volName = `${containerName}-dind`;
     artifacts = { net: netName, vol: volName };
     const netExists = async () =>
-      (await docker.listNetworks({ filters: { name: [netName] } })).some((n) => n.Name === netName);
+      (await docker.listNetworks({ filters: { name: [netName] } })).some(
+        (n) => n.Name === netName,
+      );
     const volExists = async () => {
       try {
         await docker.getVolume(volName).inspect();
@@ -152,13 +186,19 @@ describe('SandboxManager (integration, needs Docker)', () => {
   it('mounts a durable per-thread /context that is host-readable and OUTSIDE the worktree', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn('Docker not reachable — skipping SandboxManager /context test');
+      console.warn(
+        'Docker not reachable — skipping SandboxManager /context test',
+      );
       return;
     }
     await builder.ensureImage();
 
     const jobId = 'thread-ctx-1';
-    const attached = await manager.attach({ sandbox, orgId: 'team-ctx', jobId });
+    const attached = await manager.attach({
+      sandbox,
+      orgId: 'team-ctx',
+      jobId,
+    });
     containerId = attached.containerId;
     const containerName = (await engine.inspect(attached.containerId!))!.name;
     artifacts = { net: `${containerName}-net`, vol: `${containerName}-dind` };
@@ -167,14 +207,20 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const marker = `ctx-${Date.now().toString(36)}`;
     const w = await engine.exec(
       attached.containerId!,
-      ['bash', '-c', `mkdir -p ${CONTAINER_CONTEXT}/specs && echo ${marker} > ${CONTAINER_CONTEXT}/specs/01.md`],
+      [
+        'bash',
+        '-c',
+        `mkdir -p ${CONTAINER_CONTEXT}/specs && echo ${marker} > ${CONTAINER_CONTEXT}/specs/01.md`,
+      ],
       { user: attached.execUser },
     );
     expect(w.exitCode).toBe(0);
 
     // The HOST reads it back via the resolver — same dir, outside the worktree.
     const hostContext = manager.contextDirHost('team-ctx', jobId);
-    expect(readFileSync(join(hostContext, 'specs', '01.md'), 'utf8').trim()).toBe(marker);
+    expect(
+      readFileSync(join(hostContext, 'specs', '01.md'), 'utf8').trim(),
+    ).toBe(marker);
     // It is NOT inside the git worktree (so it never pollutes the repo diff).
     expect(hostContext.startsWith(worktree)).toBe(false);
 
@@ -186,7 +232,9 @@ describe('SandboxManager (integration, needs Docker)', () => {
   it('mounts a durable per-job /playground scratch space — host-readable, outside the worktree, survives recreate', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn('Docker not reachable — skipping SandboxManager /playground test');
+      console.warn(
+        'Docker not reachable — skipping SandboxManager /playground test',
+      );
       return;
     }
     await builder.ensureImage();
@@ -208,16 +256,26 @@ describe('SandboxManager (integration, needs Docker)', () => {
 
     // The HOST reads it back via the resolver — same dir, keyed by jobId, OUTSIDE the worktree.
     const hostPlayground = manager.playgroundDirHost('team-pg', jobId);
-    expect(readFileSync(join(hostPlayground, 'spike.mjs'), 'utf8').trim()).toBe(marker);
+    expect(readFileSync(join(hostPlayground, 'spike.mjs'), 'utf8').trim()).toBe(
+      marker,
+    );
     expect(hostPlayground.startsWith(worktree)).toBe(false);
 
     // Durability: tear the container down and re-attach (same jobId → recreate). The scratch file survives.
     await manager.teardown(attached);
-    const reattached = await manager.attach({ sandbox, orgId: 'team-pg', jobId });
-    containerId = reattached.containerId;
-    const r = await engine.exec(reattached.containerId!, ['cat', `${CONTAINER_PLAYGROUND}/spike.mjs`], {
-      user: reattached.execUser,
+    const reattached = await manager.attach({
+      sandbox,
+      orgId: 'team-pg',
+      jobId,
     });
+    containerId = reattached.containerId;
+    const r = await engine.exec(
+      reattached.containerId!,
+      ['cat', `${CONTAINER_PLAYGROUND}/spike.mjs`],
+      {
+        user: reattached.execUser,
+      },
+    );
     expect(r.exitCode).toBe(0);
     expect(r.stdout.trim()).toBe(marker);
 
@@ -229,7 +287,9 @@ describe('SandboxManager (integration, needs Docker)', () => {
   it('reaps a fully orphaned network + volume left behind by a crashed teardown', async () => {
     if (!dockerUp) {
       // eslint-disable-next-line no-console
-      console.warn('Docker not reachable — skipping SandboxManager orphan-reap test');
+      console.warn(
+        'Docker not reachable — skipping SandboxManager orphan-reap test',
+      );
       return;
     }
     await builder.ensureImage();
@@ -243,7 +303,9 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const volName = `${containerName}-dind`;
     artifacts = { net: netName, vol: volName };
     const netExists = async () =>
-      (await docker.listNetworks({ filters: { name: [netName] } })).some((n) => n.Name === netName);
+      (await docker.listNetworks({ filters: { name: [netName] } })).some(
+        (n) => n.Name === netName,
+      );
     const volExists = async () => {
       try {
         await docker.getVolume(volName).inspect();

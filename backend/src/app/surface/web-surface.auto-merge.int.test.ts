@@ -48,14 +48,16 @@ const fakeCreds = {
   engineAuth: async () => ({ secret: 'test-secret' }),
 };
 
-const getPullDetail = vi.fn(async (_token: string, args: { number: number }) => ({
-  number: args.number,
-  url: `https://github.com/atlas-it/auto-merge-test/pull/${args.number}`,
-  state: 'open' as const,
-  mergeableState: 'clean',
-  headSha: 'HEAD',
-  headRef: 'atlas/feature',
-}));
+const getPullDetail = vi.fn(
+  async (_token: string, args: { number: number }) => ({
+    number: args.number,
+    url: `https://github.com/atlas-it/auto-merge-test/pull/${args.number}`,
+    state: 'open' as const,
+    mergeableState: 'clean',
+    headSha: 'HEAD',
+    headRef: 'atlas/feature',
+  }),
+);
 const mergePullRequest = vi.fn(async () => ({ ok: true, sha: 'merged-sha' }));
 const deleteBranch = vi.fn(async () => undefined);
 const fakePr = { getPullDetail, mergePullRequest, deleteBranch };
@@ -78,22 +80,35 @@ let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 let ownerId: string;
 
-async function register(email: string): Promise<{ cookie: string; id: string }> {
+async function register(
+  email: string,
+): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie =
+    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
+    .catch(() => undefined);
 }
 
 function autoMergeUrl(jobId: string): string {
@@ -108,7 +123,9 @@ function approveUrl(jobId: string): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/approve`;
 }
 
-async function loadJobRow(jobId: string): Promise<Record<string, unknown> | undefined> {
+async function loadJobRow(
+  jobId: string,
+): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
     `SELECT status, pr_state, pr_number, pr_mergeable, ci_status, auto_merge, auto_merge_by, feature_branch
        FROM jobs WHERE id = $1`,
@@ -118,16 +135,21 @@ async function loadJobRow(jobId: string): Promise<Record<string, unknown> | unde
 }
 
 async function countStimuli(jobId: string): Promise<number> {
-  const rows = (await ds.query(`SELECT count(*)::int AS n FROM stimuli WHERE job_id = $1`, [
-    jobId,
-  ])) as Array<{ n: number }>;
+  const rows = (await ds.query(
+    `SELECT count(*)::int AS n FROM stimuli WHERE job_id = $1`,
+    [jobId],
+  )) as Array<{ n: number }>;
   return rows[0]?.n ?? 0;
 }
 
 /** Seed a job with a GitHub-mergeable PR (`prMergeReady` true) and an idle brain (defaults already
  *  satisfy `brainSettled`: activity='idle', halted=false, halt=null, open_question_count=0,
  *  awaiting_secret_id=null). `prNumber` must be unique per job (distinguishes fake-PR calls). */
-async function seedGreenJob(jobId: string, prNumber: number, title: string): Promise<void> {
+async function seedGreenJob(
+  jobId: string,
+  prNumber: number,
+  title: string,
+): Promise<void> {
   await ds.query(
     `INSERT INTO jobs
        (id, org_id, repo_id, origin, title, kind, status, base_branch, feature_branch,
@@ -177,7 +199,9 @@ beforeAll(async () => {
     .useValue({})
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.use(cookieParser());
   app.enableShutdownHooks();
   await app.init();
@@ -194,10 +218,10 @@ beforeAll(async () => {
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Auto Merge Org', 'auto-merge-org', 'active')`,
     [ORG],
   );
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [
-    ORG,
-    owner.id,
-  ]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [ORG, owner.id],
+  );
   // Explicit repo-level merge defaults: `mergeNow` reads THESE (the per-job method/delete-branch columns
   // are gone), so the fixture is explicit about what CASE 1 / the manual-merge proof assert against.
   await ds.query(
@@ -211,9 +235,21 @@ beforeAll(async () => {
 
   await seedGreenJob(MERGE_JOB, 701, 'Green PR, auto-merge enabled');
   await seedGreenJob(CARD_JOB, 702, 'Green PR, auto-merge off');
-  await seedGreenJob(NOT_MERGEABLE_JOB, 703, 'Green PR, GitHub rejects the merge');
-  await seedGreenJob(APPROVE_MERGE_JOB, 704, 'Green PR, manual Merge PR approve');
-  await seedGreenJob(APPROVE_MERGE_FAIL_JOB, 705, 'Green PR, manual Merge PR approve that GitHub rejects');
+  await seedGreenJob(
+    NOT_MERGEABLE_JOB,
+    703,
+    'Green PR, GitHub rejects the merge',
+  );
+  await seedGreenJob(
+    APPROVE_MERGE_JOB,
+    704,
+    'Green PR, manual Merge PR approve',
+  );
+  await seedGreenJob(
+    APPROVE_MERGE_FAIL_JOB,
+    705,
+    'Green PR, manual Merge PR approve that GitHub rejects',
+  );
 
   if (prevSurface === undefined) delete process.env.SURFACE;
   else process.env.SURFACE = prevSurface;
@@ -225,7 +261,7 @@ afterAll(async () => {
 });
 
 describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real HTTP)', () => {
-  it("CASE 1 — enabling auto-merge on an already-green PR merges it: mergePullRequest called with the configured method + validated sha, pr_state -> merged", async () => {
+  it('CASE 1 — enabling auto-merge on an already-green PR merges it: mergePullRequest called with the configured method + validated sha, pr_state -> merged', async () => {
     const before = await loadJobRow(MERGE_JOB);
     expect(before).toMatchObject({ pr_state: 'open', auto_merge: false });
 
@@ -244,17 +280,26 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     });
 
     const after = await loadJobRow(MERGE_JOB);
-    expect(after).toMatchObject({ pr_state: 'merged', auto_merge: true, auto_merge_by: ownerId });
+    expect(after).toMatchObject({
+      pr_state: 'merged',
+      auto_merge: true,
+      auto_merge_by: ownerId,
+    });
     expect(mergePullRequest).toHaveBeenCalledWith(
       'fake-token',
       expect.objectContaining({ number: 701, method: 'squash', sha: 'HEAD' }),
     );
     // eslint-disable-next-line no-console -- evidence: OBSERVED DB row after the auto-merge.
-    console.log('OBSERVED CASE 1 DB row after auto-merge:', JSON.stringify(after));
+    console.log(
+      'OBSERVED CASE 1 DB row after auto-merge:',
+      JSON.stringify(after),
+    );
   });
 
-  it("CASE 2 — a green PR with auto-merge OFF surfaces mergeReady/mergeValue on the pipeline DTO, but is never merged", async () => {
-    const pipe = await request(server).get(pipelineUrl(CARD_JOB)).set('Cookie', ownerCookie);
+  it('CASE 2 — a green PR with auto-merge OFF surfaces mergeReady/mergeValue on the pipeline DTO, but is never merged', async () => {
+    const pipe = await request(server)
+      .get(pipelineUrl(CARD_JOB))
+      .set('Cookie', ownerCookie);
     expect(pipe.status).toBe(200);
     expect(pipe.body).toMatchObject({ mergeReady: true });
     expect(pipe.body.mergeValue).toContain(CARD_JOB);
@@ -279,7 +324,7 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     );
   });
 
-  it("CASE 3 — GitHub rejects the merge (not_mergeable): pr_state stays open and NO stimulus is seeded for the job (race-avoidance)", async () => {
+  it('CASE 3 — GitHub rejects the merge (not_mergeable): pr_state stays open and NO stimulus is seeded for the job (race-avoidance)', async () => {
     mergePullRequest.mockResolvedValueOnce({
       ok: false,
       reason: 'not_mergeable',
@@ -322,13 +367,16 @@ describe('auto-merge — POST .../jobs armed at creation (live Postgres, real HT
   const createUrl = `/web/orgs/${ORG}/repos/${REPO}/jobs`;
 
   async function createJob(body: Record<string, unknown>): Promise<string> {
-    const res = await request(server).post(createUrl).set('Cookie', ownerCookie).send(body);
+    const res = await request(server)
+      .post(createUrl)
+      .set('Cookie', ownerCookie)
+      .send(body);
     expect(res.status).toBe(201);
     expect(typeof res.body.jobId).toBe('string');
     return res.body.jobId as string;
   }
 
-  it("CREATE 1 — autoMerge at creation arms the toggle and records who armed it", async () => {
+  it('CREATE 1 — autoMerge at creation arms the toggle and records who armed it', async () => {
     const jobId = await createJob({
       firstMessage: 'Add creation-time auto-merge.',
       autoMerge: true,
@@ -340,11 +388,16 @@ describe('auto-merge — POST .../jobs armed at creation (live Postgres, real HT
       auto_merge_by: ownerId,
     });
     // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
-    console.log('OBSERVED CREATE 1 DB row (created with autoMerge armed):', JSON.stringify(row));
+    console.log(
+      'OBSERVED CREATE 1 DB row (created with autoMerge armed):',
+      JSON.stringify(row),
+    );
   });
 
-  it("CREATE 2 — absent autoMerge leaves the toggle off", async () => {
-    const jobId = await createJob({ firstMessage: 'Plain job, no auto-merge.' });
+  it('CREATE 2 — absent autoMerge leaves the toggle off', async () => {
+    const jobId = await createJob({
+      firstMessage: 'Plain job, no auto-merge.',
+    });
     const row = await loadJobRow(jobId);
     expect(row).toMatchObject({
       auto_merge: false,

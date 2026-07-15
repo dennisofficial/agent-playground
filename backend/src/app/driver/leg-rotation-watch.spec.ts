@@ -9,7 +9,10 @@ import {
 
 const THRESHOLDS = { softTokens: 150_000, reminderDeltaTokens: 25_000 };
 
-function watchCapturing(): { watch: LegRotationWatch; signals: LegRotationSignal[] } {
+function watchCapturing(): {
+  watch: LegRotationWatch;
+  signals: LegRotationSignal[];
+} {
   const signals: LegRotationSignal[] = [];
   const watch = new LegRotationWatch(THRESHOLDS, (s) => signals.push(s));
   return { watch, signals };
@@ -22,7 +25,12 @@ describe('LegRotationWatch', () => {
     expect(signals).toHaveLength(0);
     watch.observe({ contextTokens: 150_000, contextLimit: 1_000_000 });
     expect(signals).toEqual([
-      { phase: 'soft', reminderIndex: 0, contextTokens: 150_000, contextLimit: 1_000_000 },
+      {
+        phase: 'soft',
+        reminderIndex: 0,
+        contextTokens: 150_000,
+        contextLimit: 1_000_000,
+      },
     ]);
     expect(watch.softReached).toBe(true);
   });
@@ -41,7 +49,9 @@ describe('LegRotationWatch', () => {
     watch.observe({ contextTokens: 155_000, contextLimit: 1_000_000 }); // soft
     watch.observe({ contextTokens: 180_000, contextLimit: 1_000_000 }); // +delta → reminder 1
     watch.observe({ contextTokens: 210_000, contextLimit: 1_000_000 }); // +2delta → reminder 2
-    expect(signals.map((s) => ({ phase: s.phase, reminderIndex: s.reminderIndex }))).toEqual([
+    expect(
+      signals.map((s) => ({ phase: s.phase, reminderIndex: s.reminderIndex })),
+    ).toEqual([
       { phase: 'soft', reminderIndex: 0 },
       { phase: 'reminder', reminderIndex: 1 },
       { phase: 'reminder', reminderIndex: 2 },
@@ -52,7 +62,12 @@ describe('LegRotationWatch', () => {
     const { watch, signals } = watchCapturing();
     watch.observe({ contextTokens: 250_000, contextLimit: 1_000_000 }); // level 4, but first → soft
     expect(signals).toEqual([
-      { phase: 'soft', reminderIndex: 0, contextTokens: 250_000, contextLimit: 1_000_000 },
+      {
+        phase: 'soft',
+        reminderIndex: 0,
+        contextTokens: 250_000,
+        contextLimit: 1_000_000,
+      },
     ]);
     // A later, higher band fires a reminder tagged with its delta-level.
     watch.observe({ contextTokens: 280_000, contextLimit: 1_000_000 }); // level 5 → reminder 5
@@ -80,21 +95,35 @@ describe('LegRotationWatch', () => {
   it('NEVER latches on a SUBAGENT frame (its own separate window — not rotatable), only the main agent', () => {
     const { watch, signals } = watchCapturing();
     // A subagent whose own window is well past soft must NOT fire — it carries a parentToolUseId.
-    watch.observe({ contextTokens: 220_000, contextLimit: 1_000_000, parentToolUseId: 'task-1' });
+    watch.observe({
+      contextTokens: 220_000,
+      contextLimit: 1_000_000,
+      parentToolUseId: 'task-1',
+    });
     expect(signals).toHaveLength(0);
     expect(watch.softReached).toBe(false);
     // The interleaved main-agent frame (untagged) at a LOWER occupancy still fires SOFT, unaffected by
     // the subagent frame above (which must not have consumed the soft latch).
     watch.observe({ contextTokens: 160_000, contextLimit: 1_000_000 });
     expect(signals).toEqual([
-      { phase: 'soft', reminderIndex: 0, contextTokens: 160_000, contextLimit: 1_000_000 },
+      {
+        phase: 'soft',
+        reminderIndex: 0,
+        contextTokens: 160_000,
+        contextLimit: 1_000_000,
+      },
     ]);
   });
 
   it('carries a null contextLimit through when the usage event omits it', () => {
     const { watch, signals } = watchCapturing();
     watch.observe({ contextTokens: 300_000 });
-    expect(signals[0]).toEqual({ phase: 'soft', reminderIndex: 0, contextTokens: 300_000, contextLimit: null });
+    expect(signals[0]).toEqual({
+      phase: 'soft',
+      reminderIndex: 0,
+      contextTokens: 300_000,
+      contextLimit: null,
+    });
   });
 });
 

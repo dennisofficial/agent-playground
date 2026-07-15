@@ -481,7 +481,7 @@ export function Composer({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx"
+                  accept="image/*,.pdf,.txt,.md,.markdown,.json,.csv,.log,.xml,.yaml,.yml,.html,.htm,.css,.js,.ts,.tsx,.zip"
                   className="hidden"
                   onChange={onPick}
                 />

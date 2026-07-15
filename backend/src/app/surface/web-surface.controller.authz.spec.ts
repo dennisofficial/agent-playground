@@ -17,12 +17,18 @@ function makeController(threadOrgId: string) {
   const deleteJobDeep = vi.fn(async () => undefined);
   const claimDeleteJob = vi.fn(async () => true);
   const threads = {
-    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
-      where.org_id === threadOrgId ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' } : null,
+    findOne: vi.fn(
+      async ({ where }: { where: { id: string; org_id: string } }) =>
+        where.org_id === threadOrgId
+          ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' }
+          : null,
     ),
     delete: vi.fn(async () => ({ affected: 1 })),
   };
-  const messages = { find: vi.fn(async () => []), delete: vi.fn(async () => undefined) };
+  const messages = {
+    find: vi.fn(async () => []),
+    delete: vi.fn(async () => undefined),
+  };
 
   const controller = new WebSurfaceController(
     {} as never, // surface
@@ -37,9 +43,18 @@ function makeController(threadOrgId: string) {
     {} as never, // threadTitle
     {} as never, // usageBus
     { available: false } as never, // realtime
-    { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
+    {
+      isLeader: () => true,
+      getState: () => 'leader',
+      isDraining: () => false,
+    } as never, // election
     { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
-    { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorkspaceSecretFileStore)
+    {
+      write: async () => undefined,
+      list: async () => [],
+      listForRepo: async () => [],
+      read: async () => null,
+    } as never, // secrets (WorkspaceSecretFileStore)
     {} as never, // store (BrainStoreService)
     { stopTurn: async () => false } as never, // brain (AgentSessionManager)
     {} as never, // mcpStore (McpServerStore)
@@ -59,10 +74,11 @@ describe('WebSurfaceController — cross-tenant authz', () => {
   const orgB: CurrentOrgCtx = { id: 'orgB', role: 'owner' };
 
   it("deleteThread on another org's thread 404s and never tears it down", async () => {
-    const { controller, deleteJobDeep, claimDeleteJob } = makeController('orgA'); // thread belongs to org A
-    await expect(controller.deleteThread(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    const { controller, deleteJobDeep, claimDeleteJob } =
+      makeController('orgA'); // thread belongs to org A
+    await expect(
+      controller.deleteThread(orgB, 'leaked-thread-id'),
+    ).rejects.toBeInstanceOf(NotFoundException);
     // 404s at requireThread — never claims nor tears down.
     expect(claimDeleteJob).not.toHaveBeenCalled();
     expect(deleteJobDeep).not.toHaveBeenCalled();
@@ -70,14 +86,15 @@ describe('WebSurfaceController — cross-tenant authz', () => {
 
   it("messageHistory on another org's thread 404s and never reads messages", async () => {
     const { controller, messages } = makeController('orgA');
-    await expect(controller.messageHistory(orgB, 'leaked-thread-id')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      controller.messageHistory(orgB, 'leaked-thread-id'),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(messages.find).not.toHaveBeenCalled();
   });
 
   it("deleteThread on the caller's OWN thread proceeds (full org-scoped cascade)", async () => {
-    const { controller, deleteJobDeep, claimDeleteJob } = makeController('orgB'); // thread belongs to org B
+    const { controller, deleteJobDeep, claimDeleteJob } =
+      makeController('orgB'); // thread belongs to org B
     await controller.deleteThread(orgB, 'my-thread-id');
     // Claims the delete (durable `deleting` state), then backgrounds the org-scoped teardown+cascade.
     expect(claimDeleteJob).toHaveBeenCalledWith('my-thread-id', 'orgB');

@@ -70,7 +70,7 @@ export class MetaGroup {
       '     that detail at the altitude of an implementation diff.',
       '  6. VERSION / DEPENDENCY mismatch — the plan assumes an API shape, config flag, component name, or CLI',
       '     syntax that does not match the version actually installed in this repo. Read the REAL installed',
-      '     version (package.json / the lockfile / the imports), then WEB-SEARCH that version\'s OWN official docs',
+      "     version (package.json / the lockfile / the imports), then WEB-SEARCH that version's OWN official docs",
       '     to confirm the API shape the plan uses actually exists there — do not certify a version-sensitive',
       '     choice from memory. Flag anything that mixes patterns from a different version or generation of a',
       '     library, SDK, framework, or platform than what is in use.',

@@ -40,7 +40,11 @@ function dbOpts() {
   };
 }
 
-const marker = (id: string, text = id) => ({ id, text, at: '2026-06-26T00:00:00.000Z' });
+const marker = (id: string, text = id) => ({
+  id,
+  text,
+  at: '2026-06-26T00:00:00.000Z',
+});
 
 describe('PipelineAwarenessStore (live Postgres)', () => {
   let mod: TestingModule;
@@ -75,9 +79,15 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
   });
 
   afterAll(async () => {
-    await ds?.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+      .catch(() => undefined);
     await mod?.close();
   });
 
@@ -91,7 +101,10 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
 
   it('defaults to an empty buffer for a fresh thread (the migration backfill)', async () => {
     const jobId = await newThread();
-    const rows = await ds.query(`SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`, [jobId]);
+    const rows = await ds.query(
+      `SELECT pipeline_awareness AS a FROM jobs WHERE id = $1`,
+      [jobId],
+    );
     expect(rows[0].a).toEqual({ markerQueue: [], conveyedStateSig: null });
   });
 
@@ -99,12 +112,18 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
     const jobId = await newThread();
     await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.'));
     await store.appendMarker(jobId, marker('approved:dr-1', 'Plan approved.')); // dup id
-    await store.appendMarker(jobId, marker('dispatched:dr-1', 'Build started.'));
+    await store.appendMarker(
+      jobId,
+      marker('dispatched:dr-1', 'Build started.'),
+    );
 
     // A FRESH store instance (a new process) reads the durable buffer — proves it's persisted, not in-mem.
     const fresh = new PipelineAwarenessStore(ds);
     const { markers } = await fresh.drainAndAdvance(jobId, null);
-    expect(markers.map((m) => m.id)).toEqual(['approved:dr-1', 'dispatched:dr-1']);
+    expect(markers.map((m) => m.id)).toEqual([
+      'approved:dr-1',
+      'dispatched:dr-1',
+    ]);
   });
 
   it('drains markers exactly once (a second drain is empty)', async () => {
@@ -138,7 +157,10 @@ describe('PipelineAwarenessStore (live Postgres)', () => {
     const ids = Array.from({ length: 20 }, (_, i) => `step:${i}:done`);
     const appends = ids.map((id) => store.appendMarker(jobId, marker(id)));
     const drain = store.drainAndAdvance(jobId, null);
-    const [{ markers: drained }] = await Promise.all([drain, ...appends.map((p) => p.then(() => undefined))]);
+    const [{ markers: drained }] = await Promise.all([
+      drain,
+      ...appends.map((p) => p.then(() => undefined)),
+    ]);
 
     // Whatever the interleaving, every marker is accounted for EXACTLY once: some were drained, the rest
     // remain queued — none vanished (a lost-update would lose appends that landed during a read-clear).

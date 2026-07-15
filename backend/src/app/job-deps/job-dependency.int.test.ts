@@ -14,7 +14,11 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
@@ -81,7 +85,13 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
               repoId: string,
               input: { seed: string | null; note: string | null },
             ) => {
-              wakes.push({ jobId, orgId, repoId, seed: input.seed, note: input.note });
+              wakes.push({
+                jobId,
+                orgId,
+                repoId,
+                seed: input.seed,
+                note: input.note,
+              });
             },
           },
         },
@@ -123,7 +133,9 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     wakes = [];
   });
 
-  async function makeJob(overrides: Partial<JobEntity> = {}): Promise<JobEntity> {
+  async function makeJob(
+    overrides: Partial<JobEntity> = {},
+  ): Promise<JobEntity> {
     return jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -144,21 +156,41 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     const b = await makeJob();
 
     // b depends on a — fine.
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: b.id, dependsOnJobId: a.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: b.id,
+      dependsOnJobId: a.id,
+    });
     // a depends on b — would close a cycle (a → b → a).
     await expect(
-      service.addDependency({ orgId: ORG_ID, repoId, jobId: a.id, dependsOnJobId: b.id }),
+      service.addDependency({
+        orgId: ORG_ID,
+        repoId,
+        jobId: a.id,
+        dependsOnJobId: b.id,
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // Self-edge is rejected too.
     await expect(
-      service.addDependency({ orgId: ORG_ID, repoId, jobId: b.id, dependsOnJobId: b.id }),
+      service.addDependency({
+        orgId: ORG_ID,
+        repoId,
+        jobId: b.id,
+        dependsOnJobId: b.id,
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
     // Cross-repo: a blocker in a different repo is not found in this repo scope.
     const foreign = await makeJob({ repo_id: otherRepoId });
     await expect(
-      service.addDependency({ orgId: ORG_ID, repoId, jobId: b.id, dependsOnJobId: foreign.id }),
+      service.addDependency({
+        orgId: ORG_ID,
+        repoId,
+        jobId: b.id,
+        dependsOnJobId: foreign.id,
+      }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -187,7 +219,12 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     const dependent = await makeJob({ activity: 'turn' });
 
     await expect(
-      service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id }),
+      service.addDependency({
+        orgId: ORG_ID,
+        repoId,
+        jobId: dependent.id,
+        dependsOnJobId: blocker.id,
+      }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
@@ -204,14 +241,21 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
 
     // The blocker's PR merges.
-    await jobs.update({ id: blocker.id }, { pr_state: 'merged', status: 'done' });
+    await jobs.update(
+      { id: blocker.id },
+      { pr_state: 'merged', status: 'done' },
+    );
     await service.onBlockerResolved(blocker.id, 'merged');
 
     const reloaded = await jobs.findOneByOrFail({ id: dependent.id });
     expect(reloaded.status).toBe('open');
     expect(reloaded.blocked_seed_message).toBeNull();
     expect(wakes).toHaveLength(1);
-    expect(wakes[0]).toMatchObject({ jobId: dependent.id, seed: 'build the follow-up', note: null });
+    expect(wakes[0]).toMatchObject({
+      jobId: dependent.id,
+      seed: 'build the follow-up',
+      note: null,
+    });
   });
 
   // ── (d) multi-blocker: stays blocked until the LAST blocker resolves ───────────────────────────
@@ -219,19 +263,33 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     const a = await makeJob({ status: 'running' });
     const c = await makeJob({ status: 'running' });
     const dependent = await makeJob();
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: a.id });
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: c.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: a.id,
+    });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: c.id,
+    });
 
     // First blocker merges — dependent still blocked on c.
     await jobs.update({ id: a.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(a.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'blocked',
+    );
     expect(wakes).toHaveLength(0);
 
     // Last blocker merges — now it unblocks.
     await jobs.update({ id: c.id }, { pr_state: 'merged', status: 'done' });
     await service.onBlockerResolved(c.id, 'merged');
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes).toHaveLength(1);
     expect(wakes[0].note).toBeNull(); // both merged cleanly
   });
@@ -240,12 +298,22 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
   it('(e) closed-unmerged unblocks with a "PR closed without merging" note', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob({ title: 'downstream' });
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
 
-    await jobs.update({ id: blocker.id }, { pr_state: 'closed', status: 'done' });
+    await jobs.update(
+      { id: blocker.id },
+      { pr_state: 'closed', status: 'done' },
+    );
     await service.onBlockerResolved(blocker.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes).toHaveLength(1);
     expect(wakes[0].note).toContain('did NOT merge');
     expect(wakes[0].note).toContain('PR closed without merging');
@@ -254,40 +322,75 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
   it('(e) a cancelled blocker unblocks with a "job cancelled" note', async () => {
     const blocker = await makeJob({ status: 'running', title: 'the blocker' });
     const dependent = await makeJob();
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
 
     await jobs.update({ id: blocker.id }, { status: 'cancelled' });
     await service.onBlockerResolved(blocker.id, 'cancelled');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes[0].note).toContain('job cancelled');
   });
 
   it('(e) a deleted blocker (row still present at call time) unblocks with a "job deleted" note', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
 
     // deleteJobDeep calls onBlockerResolved BEFORE the row delete — the blocker still looks non-terminal
     // from state, so the funnel must treat the resolving blocker as terminal unconditionally.
     await service.onBlockerResolved(blocker.id, 'deleted');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes[0].note).toContain('job deleted');
   });
 
   it('treats an already-deleting sibling blocker as terminal and labels it deleted', async () => {
-    const deleting = await makeJob({ status: 'running', title: 'teardown blocker' });
-    const closing = await makeJob({ status: 'running', title: 'closing blocker' });
+    const deleting = await makeJob({
+      status: 'running',
+      title: 'teardown blocker',
+    });
+    const closing = await makeJob({
+      status: 'running',
+      title: 'closing blocker',
+    });
     const dependent = await makeJob();
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: deleting.id });
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: closing.id });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: deleting.id,
+    });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: closing.id,
+    });
 
     await jobs.update({ id: deleting.id }, { status: 'deleting' });
-    await jobs.update({ id: closing.id }, { pr_state: 'closed', status: 'done' });
+    await jobs.update(
+      { id: closing.id },
+      { pr_state: 'closed', status: 'done' },
+    );
     await service.onBlockerResolved(closing.id, 'closed_unmerged');
 
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes).toHaveLength(1);
     expect(wakes[0].note).toContain('job deleted');
     expect(wakes[0].note).toContain('PR closed without merging');
@@ -298,8 +401,15 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
   it('(f) the sweep unblocks a blocked job whose blocker edge has vanished', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
-    await service.addDependency({ orgId: ORG_ID, repoId, jobId: dependent.id, dependsOnJobId: blocker.id });
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('blocked');
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'blocked',
+    );
 
     // A dropped wake event: the blocker vanishes (hard delete cascades its job_dependencies edge) but
     // the dependent is still parked. The sweep must reconcile it.
@@ -307,7 +417,9 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
 
     const unblocked = await sweep.tick();
     expect(unblocked).toBe(1);
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe('open');
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
     expect(wakes).toHaveLength(1);
     expect(wakes[0].note).toBeNull(); // the sweep is a backstop; the event path composes any note
   });
@@ -318,7 +430,11 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
 
     it('is repo-scoped: never returns a job from another repo', async () => {
       const here = await makeJob({ status: 'running', title: 'here' });
-      const foreign = await makeJob({ repo_id: otherRepoId, status: 'running', title: 'foreign' });
+      const foreign = await makeJob({
+        repo_id: otherRepoId,
+        status: 'running',
+        title: 'foreign',
+      });
 
       const rows = await service.listJobs({ orgId: ORG_ID, repoId });
       expect(idsOf(rows).has(here.id)).toBe(true);
@@ -326,12 +442,31 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
 
     it('DEFAULT filter mirrors the terminal-blocker rule (NULL-safe)', async () => {
-      const doneOpenPr = await makeJob({ status: 'done', pr_state: 'open', title: 'done-open-pr' });
+      const doneOpenPr = await makeJob({
+        status: 'done',
+        pr_state: 'open',
+        title: 'done-open-pr',
+      });
       const amending = await makeJob({ status: 'amending', title: 'amending' });
-      const noPr = await makeJob({ status: 'planning', pr_state: null, title: 'no-pr-yet' });
-      const doneMerged = await makeJob({ status: 'done', pr_state: 'merged', title: 'done-merged' });
-      const closed = await makeJob({ status: 'done', pr_state: 'closed', title: 'closed' });
-      const cancelled = await makeJob({ status: 'cancelled', title: 'cancelled' });
+      const noPr = await makeJob({
+        status: 'planning',
+        pr_state: null,
+        title: 'no-pr-yet',
+      });
+      const doneMerged = await makeJob({
+        status: 'done',
+        pr_state: 'merged',
+        title: 'done-merged',
+      });
+      const closed = await makeJob({
+        status: 'done',
+        pr_state: 'closed',
+        title: 'closed',
+      });
+      const cancelled = await makeJob({
+        status: 'cancelled',
+        title: 'cancelled',
+      });
       const deleting = await makeJob({ status: 'deleting', title: 'deleting' });
 
       const rows = await service.listJobs({ orgId: ORG_ID, repoId });
@@ -348,14 +483,33 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     });
 
     it('an exact status filter bypasses the terminal exclusion; "all" returns everything', async () => {
-      const doneOpen = await makeJob({ status: 'done', pr_state: 'open', title: 'done-open' });
-      const doneMerged = await makeJob({ status: 'done', pr_state: 'merged', title: 'done-merged' });
-      const cancelled = await makeJob({ status: 'cancelled', title: 'cancelled' });
+      const doneOpen = await makeJob({
+        status: 'done',
+        pr_state: 'open',
+        title: 'done-open',
+      });
+      const doneMerged = await makeJob({
+        status: 'done',
+        pr_state: 'merged',
+        title: 'done-merged',
+      });
+      const cancelled = await makeJob({
+        status: 'cancelled',
+        title: 'cancelled',
+      });
 
-      const done = await service.listJobs({ orgId: ORG_ID, repoId, status: 'done' });
+      const done = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        status: 'done',
+      });
       expect(idsOf(done)).toEqual(new Set([doneOpen.id, doneMerged.id])); // incl. the merged one
 
-      const all = await service.listJobs({ orgId: ORG_ID, repoId, status: 'all' });
+      const all = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        status: 'all',
+      });
       const allIds = idsOf(all);
       expect(allIds.has(cancelled.id)).toBe(true);
       expect(allIds.has(doneMerged.id)).toBe(true);
@@ -365,7 +519,11 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       const auth = await makeJob({ status: 'running', title: 'Fix AUTH flow' });
       await makeJob({ status: 'running', title: 'Refactor billing' });
 
-      const rows = await service.listJobs({ orgId: ORG_ID, repoId, query: 'auth' });
+      const rows = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        query: 'auth',
+      });
       expect(idsOf(rows)).toEqual(new Set([auth.id]));
     });
 
@@ -375,13 +533,21 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
         const j = await makeJob({ status: 'running', title: `job ${i}` });
         created.push(j.id);
       }
-      const limited = await service.listJobs({ orgId: ORG_ID, repoId, limit: 2 });
+      const limited = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        limit: 2,
+      });
       expect(limited).toHaveLength(2);
       // newest-first: the last two created, most-recent first.
       expect(limited.map((r) => r.id)).toEqual([created[4], created[3]]);
 
       // hard cap: an over-limit request is clamped to 100 (well above our 5 rows, so all 5 return).
-      const capped = await service.listJobs({ orgId: ORG_ID, repoId, limit: 9999 });
+      const capped = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        limit: 9999,
+      });
       expect(capped.length).toBe(5);
     });
 
@@ -393,7 +559,11 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
         build_path: 'plan',
         title: 'projection',
       });
-      const [row] = await service.listJobs({ orgId: ORG_ID, repoId, query: 'projection' });
+      const [row] = await service.listJobs({
+        orgId: ORG_ID,
+        repoId,
+        query: 'projection',
+      });
       expect(row).toMatchObject({
         id: job.id,
         title: 'projection',

@@ -1,7 +1,15 @@
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import type { AdapterRunArgs, EngineRunResult } from '@workspace/agent-engine';
 import { agentMessage } from '../prompt-kit/message';
 import type { EngineHomeKey } from './engine-home';
@@ -16,10 +24,18 @@ import { EngineCore } from './engine-core';
  * so it is replaced with a capturing fake here — a unit test must never shell out.
  */
 
-const HOME_ROOT = join(tmpdir(), `atlas-engine-core-appserver-selector-spec-${process.pid}`);
+const HOME_ROOT = join(
+  tmpdir(),
+  `atlas-engine-core-appserver-selector-spec-${process.pid}`,
+);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
-const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
+const TEST_KEY: EngineHomeKey = {
+  orgId: 'acme',
+  repoId: 'atlas',
+  jobId: 'feat',
+  type: 'build',
+};
 
 const VALID_CODEX_AUTH = JSON.stringify({
   OPENAI_API_KEY: null,
@@ -35,11 +51,17 @@ const appServerResult: EngineRunResult = {
 };
 
 vi.mock('@workspace/agent-engine', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@workspace/agent-engine')>();
+  const actual =
+    await importOriginal<typeof import('@workspace/agent-engine')>();
   return {
     ...actual,
     CodexAppServerAdapter: class {
-      readonly capabilities = new Set(['writeGuard', 'postToolUseContext', 'midTurnSteer', 'richStream']);
+      readonly capabilities = new Set([
+        'writeGuard',
+        'postToolUseContext',
+        'midTurnSteer',
+        'richStream',
+      ]);
       async run(args: AdapterRunArgs): Promise<EngineRunResult> {
         appServerRunCalls.push(args);
         return appServerResult;
@@ -61,8 +83,14 @@ function fakeLegacyCodexSdk() {
         runStreamed: async () => ({
           events: (async function* () {
             yield { type: 'thread.started', job_id: 'legacy-thread-1' };
-            yield { type: 'item.completed', item: { type: 'agent_message', text: 'legacy codex done' } };
-            yield { type: 'turn.completed', usage: { input_tokens: 4, output_tokens: 1 } };
+            yield {
+              type: 'item.completed',
+              item: { type: 'agent_message', text: 'legacy codex done' },
+            };
+            yield {
+              type: 'turn.completed',
+              usage: { input_tokens: 4, output_tokens: 1 },
+            };
           })(),
         }),
       };
@@ -71,7 +99,10 @@ function fakeLegacyCodexSdk() {
       return this.startThread(opts);
     }
   }
-  return { sdk: { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk'), threadCalls };
+  return {
+    sdk: { Codex: FakeCodex } as unknown as typeof import('@openai/codex-sdk'),
+    threadCalls,
+  };
 }
 
 function fakeClaudeSdk() {

@@ -31,7 +31,9 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     repo = mkdtempSync(join(tmpdir(), 'atlas-leak-'));
     stateDir = mkdtempSync(join(tmpdir(), 'atlas-leak-state-'));
     process.env.ATLAS_HYDRATION_STATE = stateDir;
-    git = new LocalGitService({ get: () => undefined } as unknown as EnvService);
+    git = new LocalGitService({
+      get: () => undefined,
+    } as unknown as EnvService);
 
     await g(['init', '-q']);
     await g(['config', 'user.email', 'test@atlas.dev']);
@@ -64,7 +66,9 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     await g(['add', '-f', '.env.keys']);
     await g(['commit', '-qm', 'sneak in a secret']);
 
-    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([
+      '.env.keys',
+    ]);
   });
 
   it('catches a secret ADDED then DELETED in a later commit (per-commit, not the net diff)', async () => {
@@ -82,7 +86,9 @@ describe('LocalGitService — gitignore + pre-ship leak-scan (real git)', () => 
     const netDiff = await g(['diff', '--name-only', `${baseSha}..HEAD`]);
     expect(netDiff.stdout).not.toContain('.env.keys');
 
-    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual(['.env.keys']);
+    expect(await git.scanBranchForForbidden(repo, baseSha)).toEqual([
+      '.env.keys',
+    ]);
   });
 
   it('returns [] for ordinary changes (forbidden file present but never committed)', async () => {

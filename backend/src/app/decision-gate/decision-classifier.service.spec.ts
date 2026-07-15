@@ -34,7 +34,10 @@ describe('DecisionClassifier', () => {
   it('"add a column to users" → ask (data_model), via rule, no LLM call', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
-      { description: 'Add a deleted_at column to the users table for soft deletes' },
+      {
+        description:
+          'Add a deleted_at column to the users table for soft deletes',
+      },
       emptyRecord,
     );
     expect(res.verdict).toBe('ask');
@@ -70,14 +73,17 @@ describe('DecisionClassifier', () => {
     'Decide the token strategy: refresh token rotation and storage',
     'Encrypt secrets at rest with AES-256',
     'Add OAuth2 login via Google',
-  ])('security/auth-mechanism decision → ask (cross_cutting): %s', async (description) => {
-    const c = new DecisionClassifier(llm);
-    const res = await c.classify({ description }, emptyRecord);
-    expect(res.verdict).toBe('ask');
-    expect(res.decisionClass).toBe('cross_cutting');
-    expect(res.via).toBe('rule');
-    expect(llm.calls).toBe(0);
-  });
+  ])(
+    'security/auth-mechanism decision → ask (cross_cutting): %s',
+    async (description) => {
+      const c = new DecisionClassifier(llm);
+      const res = await c.classify({ description }, emptyRecord);
+      expect(res.verdict).toBe('ask');
+      expect(res.decisionClass).toBe('cross_cutting');
+      expect(res.via).toBe('rule');
+      expect(llm.calls).toBe(0);
+    },
+  );
 
   it('one-way door → ask (one_way_door)', async () => {
     const c = new DecisionClassifier(llm);
@@ -104,7 +110,10 @@ describe('DecisionClassifier', () => {
   it('file placement / test layout → proceed', async () => {
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
-      { description: 'Decide the file placement for the new test layout under __tests__' },
+      {
+        description:
+          'Decide the file placement for the new test layout under __tests__',
+      },
       emptyRecord,
     );
     expect(res.verdict).toBe('proceed');
@@ -119,7 +128,10 @@ describe('DecisionClassifier', () => {
       ruling: 'Reuse the shared JWT guard; no new auth scheme.',
     });
     const res = await c.classify(
-      { description: 'Use the authentication pattern already chosen — the shared JWT guard' },
+      {
+        description:
+          'Use the authentication pattern already chosen — the shared JWT guard',
+      },
       record,
     );
     expect(res.verdict).toBe('covered');
@@ -145,10 +157,17 @@ describe('DecisionClassifier', () => {
 
   // ── ambiguous tail → LLM ──────────────────────────────────────────────────────────────────────
   it('ambiguous case calls the LLM and honors its verdict', async () => {
-    llm = fakeLlm({ verdict: 'ask', decisionClass: 'api_contract', reason: 'changes a public shape' });
+    llm = fakeLlm({
+      verdict: 'ask',
+      decisionClass: 'api_contract',
+      reason: 'changes a public shape',
+    });
     const c = new DecisionClassifier(llm);
     const res = await c.classify(
-      { description: 'Change how the widget service returns its result to callers' },
+      {
+        description:
+          'Change how the widget service returns its result to callers',
+      },
       emptyRecord,
     );
     expect(llm.calls).toBe(1);
@@ -158,7 +177,11 @@ describe('DecisionClassifier', () => {
   });
 
   it('LLM "ask" on a class the record already covers → downgraded to covered', async () => {
-    llm = fakeLlm({ verdict: 'ask', decisionClass: 'api_contract', reason: 'public shape' });
+    llm = fakeLlm({
+      verdict: 'ask',
+      decisionClass: 'api_contract',
+      reason: 'public shape',
+    });
     const c = new DecisionClassifier(llm);
     const record = recordWith({
       decisionClass: 'api_contract',
@@ -166,7 +189,10 @@ describe('DecisionClassifier', () => {
       ruling: 'No breaking changes to v1 responses.',
     });
     const res = await c.classify(
-      { description: 'Tweak how the widget service returns to callers, staying v1-compatible' },
+      {
+        description:
+          'Tweak how the widget service returns to callers, staying v1-compatible',
+      },
       record,
     );
     expect(res.verdict).toBe('covered');

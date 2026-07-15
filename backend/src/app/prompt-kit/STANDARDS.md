@@ -8,12 +8,12 @@ change the code in a way this doc should reflect, update the doc in the same cha
 
 The hub is split into four named sub-areas, one per category of agent-facing text:
 
-| Area | Pillar | What lives there |
-| --- | --- | --- |
-| `system/` | System prompts | the `@Fragment`/`@FragmentGroup` library assembled per `Agent` (`groups/`, `agent.ts`, `assemble.ts`, `fragments.ts`, `conditions.ts`, `prompt-ctx.ts`, `fragment.decorator.ts`, `job-kind.ts`, `preview.ts`) |
-| `messages/` | Message templates | user-message / task-body templates (the relocated task builders + `turns/`) |
-| `harness/` | Harness messages | the seeded system-event catalog + the ONE owned XML tag vocabulary |
-| `jit/` | JIT context | the declarative JIT-context rule catalog (trigger · threshold · delivery · payload, co-located) |
+| Area        | Pillar            | What lives there                                                                                                                                                                                              |
+| ----------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system/`   | System prompts    | the `@Fragment`/`@FragmentGroup` library assembled per `Agent` (`groups/`, `agent.ts`, `assemble.ts`, `fragments.ts`, `conditions.ts`, `prompt-ctx.ts`, `fragment.decorator.ts`, `job-kind.ts`, `preview.ts`) |
+| `messages/` | Message templates | user-message / task-body templates (the relocated task builders + `turns/`)                                                                                                                                   |
+| `harness/`  | Harness messages  | the seeded system-event catalog + the ONE owned XML tag vocabulary                                                                                                                                            |
+| `jit/`      | JIT context       | the declarative JIT-context rule catalog (trigger · threshold · delivery · payload, co-located)                                                                                                               |
 
 Each area has an `index.ts` barrel; the root `index.ts` re-exports them. `prompt.service.ts` /
 `prompt-kit.module.ts` are the DI facade over `system/` and stay at the root (wiring, not content).
@@ -139,18 +139,18 @@ Integer `order` only, in the documented per-agent bands below. No fractional ord
 
 The bands as they stand today (descriptive of current reality — keep new fragments inside the right band):
 
-| Band | Range | What lives there |
-| --- | --- | --- |
-| Subagent kernel | `90` | shared subagent-kernel note |
-| Worker persona | `100`, `110-119`, `200-302`, `400-430` | worker role + orchestration tail |
-| Brain identity | `1000-1001` | ATLAS_MAIN identity |
-| Brain body | `1005-1160` | orientation, conversation, context, planning |
-| Review persona | `1082-1090` | review-surface fragments |
-| Build ceremony | `1180-1290` | plan/ship build instructions |
-| Job-kind switch | `1900-1902` | the per-`jobKind` framing |
-| Onboarding | `2000-2130` | onboarding bring-up persona + settings groups |
-| Behavioral tail | `7990-8050` | baseline-first / spike / live-validation behavioral notes |
-| Ship / autofix / meta | `100-110` | ship master-review, autofix, plan-review personas |
+| Band                  | Range                                  | What lives there                                          |
+| --------------------- | -------------------------------------- | --------------------------------------------------------- |
+| Subagent kernel       | `90`                                   | shared subagent-kernel note                               |
+| Worker persona        | `100`, `110-119`, `200-302`, `400-430` | worker role + orchestration tail                          |
+| Brain identity        | `1000-1001`                            | ATLAS_MAIN identity                                       |
+| Brain body            | `1005-1160`                            | orientation, conversation, context, planning              |
+| Review persona        | `1082-1090`                            | review-surface fragments                                  |
+| Build ceremony        | `1180-1290`                            | plan/ship build instructions                              |
+| Job-kind switch       | `1900-1902`                            | the per-`jobKind` framing                                 |
+| Onboarding            | `2000-2130`                            | onboarding bring-up persona + settings groups             |
+| Behavioral tail       | `7990-8050`                            | baseline-first / spike / live-validation behavioral notes |
+| Ship / autofix / meta | `100-110`                              | ship master-review, autofix, plan-review personas         |
 
 ### 6. Comments
 

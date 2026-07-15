@@ -22,19 +22,27 @@ describe('turns / golden snapshots', () => {
       defaultBranch: 'main',
       title: 'Add the widget',
     });
-    await expect(out).toMatchFileSnapshot('./__snapshots__/ship-open-pr-body.txt');
+    await expect(out).toMatchFileSnapshot(
+      './__snapshots__/ship-open-pr-body.txt',
+    );
   });
 
   it('ROTATION_PREAMBLE', async () => {
-    await expect(ROTATION_PREAMBLE).toMatchFileSnapshot('./__snapshots__/rotation-preamble.txt');
+    await expect(ROTATION_PREAMBLE).toMatchFileSnapshot(
+      './__snapshots__/rotation-preamble.txt',
+    );
   });
 
   it('ROTATION_RESUME_TAIL', async () => {
-    await expect(ROTATION_RESUME_TAIL).toMatchFileSnapshot('./__snapshots__/rotation-resume-tail.txt');
+    await expect(ROTATION_RESUME_TAIL).toMatchFileSnapshot(
+      './__snapshots__/rotation-resume-tail.txt',
+    );
   });
 
   it('ROTATION_SOFT_NUDGE', async () => {
-    await expect(ROTATION_SOFT_NUDGE).toMatchFileSnapshot('./__snapshots__/rotation-soft-nudge.txt');
+    await expect(ROTATION_SOFT_NUDGE).toMatchFileSnapshot(
+      './__snapshots__/rotation-soft-nudge.txt',
+    );
   });
 
   it('ROTATION_REMINDER_NUDGE', async () => {
@@ -56,6 +64,8 @@ describe('turns / golden snapshots', () => {
   });
 
   it('HANDOFF_SCHEMA', async () => {
-    await expect(HANDOFF_SCHEMA.join('\n')).toMatchFileSnapshot('./__snapshots__/handoff-schema.txt');
+    await expect(HANDOFF_SCHEMA.join('\n')).toMatchFileSnapshot(
+      './__snapshots__/handoff-schema.txt',
+    );
   });
 });

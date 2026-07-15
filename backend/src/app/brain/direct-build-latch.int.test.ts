@@ -72,7 +72,9 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       })
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -132,10 +134,9 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
 
     // Arm the flag exactly as `finalize_build` does at its ship success return, then run the turn-end latch
     // (what `runChatTurn`'s finally calls once the finalize turn completes).
-    (manager as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending.set(
-      jobId,
-      true,
-    );
+    (
+      manager as unknown as { directBuildShipPending: Map<string, boolean> }
+    ).directBuildShipPending.set(jobId, true);
 
     // Pre-condition: still running, no PR recorded.
     const before = await readJob(dataSource, jobId);
@@ -143,7 +144,9 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
     expect(before.pr_url).toBeNull();
 
     await (
-      manager as unknown as { latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void> }
+      manager as unknown as {
+        latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void>;
+      }
     ).latchDirectBuildAtTurnEnd(stimulus);
 
     // The REAL setPrReady UPDATE landed in live Postgres.
@@ -154,15 +157,23 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
     expect(after.pr_number).not.toBeNull();
 
     // The PR was discovered by the LIVE (current) branch, not the host-named feature branch.
-    expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === LIVE_BRANCH)).toBe(true);
-    expect(fakePr.opened.some((o) => (o.args as { head?: string }).head === FEATURE_BRANCH)).toBe(false);
+    expect(
+      fakePr.opened.some(
+        (o) => (o.args as { head?: string }).head === LIVE_BRANCH,
+      ),
+    ).toBe(true);
+    expect(
+      fakePr.opened.some(
+        (o) => (o.args as { head?: string }).head === FEATURE_BRANCH,
+      ),
+    ).toBe(false);
 
     // The latch only records the PR + flips status. The flag was consumed — a subsequent turn-end must
     // not re-latch.
     expect(
-      (manager as unknown as { directBuildShipPending: Map<string, boolean> }).directBuildShipPending.has(
-        jobId,
-      ),
+      (
+        manager as unknown as { directBuildShipPending: Map<string, boolean> }
+      ).directBuildShipPending.has(jobId),
     ).toBe(false);
   }, 60_000);
 });
@@ -170,7 +181,12 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
 async function readJob(
   ds: DataSource,
   jobId: string,
-): Promise<{ status: string; pr_url: string | null; pr_number: number | null; pr_state: string | null }> {
+): Promise<{
+  status: string;
+  pr_url: string | null;
+  pr_number: number | null;
+  pr_state: string | null;
+}> {
   const [row] = await ds.query(
     `SELECT status, pr_url, pr_number, pr_state FROM jobs WHERE id = $1`,
     [jobId],

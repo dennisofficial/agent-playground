@@ -1,4 +1,10 @@
-import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Injectable,
+  Logger,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
@@ -146,7 +152,10 @@ export class AutoMergeService {
     }
   }
 
-  private async mergeNowLocked(jobId: string, ruledBy: string): Promise<boolean> {
+  private async mergeNowLocked(
+    jobId: string,
+    ruledBy: string,
+  ): Promise<boolean> {
     const job = await this.jobs.findOneBy({ id: jobId });
     if (!job || !prMergeReady(job)) return false; // re-check under the guard
     const repo = await this.repos.findOne({ where: { id: job.repo_id } });
@@ -182,9 +191,7 @@ export class AutoMergeService {
           .catch(() => undefined);
       }
       await this.lifecycle.applyGithubPrState(job, 'merged'); // pr_state='merged' + teardown
-      await this.driverStore
-        .neutralizeMergeCard(jobId)
-        .catch(() => undefined);
+      await this.driverStore.neutralizeMergeCard(jobId).catch(() => undefined);
       this.logger.log(
         `merged PR #${job.pr_number} (${method}) for job ${jobId}, ruled by ${ruledBy}`,
       );
@@ -231,7 +238,8 @@ export class AutoMergeService {
       where: { job_id: job.id, ts },
     });
     if (existing) return;
-    if (!this.jobBootstrap) throw new Error('auto-merge: JobBootstrapService not wired');
+    if (!this.jobBootstrap)
+      throw new Error('auto-merge: JobBootstrapService not wired');
     const threadId = await this.jobBootstrap.planningThreadId(job.id);
     await this.messages
       .save(

@@ -36,7 +36,10 @@ export interface BridgeClaudeOptions {
  * separate from the stdio-coupled server construction — is what makes the regression-prone shape
  * testable.
  */
-export function buildBridgeClaudeOptions(server: unknown, toolNames: string[]): BridgeClaudeOptions {
+export function buildBridgeClaudeOptions(
+  server: unknown,
+  toolNames: string[],
+): BridgeClaudeOptions {
   return {
     extraClaudeOptions: { mcpServers: { [BRIDGE_SERVER_NAME]: server } },
     bridgeToolNames: qualifyBridgeToolNames(toolNames),

@@ -65,7 +65,7 @@ export class ConventionsGroup {
       'NOTICING THE HOUSE STYLE SHOULD CHANGE — the conventions above are a REUSABLE, org-level profile shared by',
       'every repo that opts into it, so they are NOT yours to rewrite mid-build. But if, while planning or',
       'building, you notice the CONVENTION ITSELF is wrong, outdated, or would be clearly better changed (not',
-      'merely that THIS repo\'s code diverges — where you just follow the code), do not silently work around it and',
+      "merely that THIS repo's code diverges — where you just follow the code), do not silently work around it and",
       'do not hand-edit repo code to force a different convention. Instead:',
       '  - A genuine HOUSE-STYLE change (it should apply to every repo on this profile) → call',
       '    propose_convention_profile_change({ slug, body, rationale }) — it posts an OWNER-approved proposal;',

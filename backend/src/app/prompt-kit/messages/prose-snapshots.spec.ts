@@ -18,8 +18,16 @@ import type { DecisionRecord, Step } from '../../domain';
 const record: DecisionRecord = {
   overview: 'Build the widget catalog end-to-end.',
   decisions: [
-    { decisionClass: 'data_model', title: 'Use pgvector', ruling: 'HNSW index on embeddings' },
-    { decisionClass: 'cross_cutting', title: 'Ship in-sandbox', ruling: 'Atlas opens the PR itself' },
+    {
+      decisionClass: 'data_model',
+      title: 'Use pgvector',
+      ruling: 'HNSW index on embeddings',
+    },
+    {
+      decisionClass: 'cross_cutting',
+      title: 'Ship in-sandbox',
+      ruling: 'Atlas opens the PR itself',
+    },
   ],
 } as unknown as DecisionRecord;
 
@@ -72,9 +80,9 @@ describe('driver-run turn prose golden snapshots', () => {
   });
 
   it('renderBatchTask — with a decision record (decisions branch baselined too)', async () => {
-    await expect(renderBatchTask(record, baseThread, steps)).toMatchFileSnapshot(
-      './__snapshots__/render-batch-task-with-record.txt',
-    );
+    await expect(
+      renderBatchTask(record, baseThread, steps),
+    ).toMatchFileSnapshot('./__snapshots__/render-batch-task-with-record.txt');
   });
 
   it('renderMasterReviewTask', async () => {
@@ -82,5 +90,4 @@ describe('driver-run turn prose golden snapshots', () => {
       './__snapshots__/render-master-review-task.txt',
     );
   });
-
 });

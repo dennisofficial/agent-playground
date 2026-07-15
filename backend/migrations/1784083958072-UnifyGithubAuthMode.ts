@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Unify in-sandbox GitHub auth onto the single `github_auth_mode` knob and drop the now-dead
@@ -16,17 +16,26 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * recoverable, and the reset to `'pat'` is the intended end state of this migration either way.
  */
 export class UnifyGithubAuthMode1784010000000 implements MigrationInterface {
-    name = 'UnifyGithubAuthMode1784010000000'
+  name = 'UnifyGithubAuthMode1784010000000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`UPDATE "org_credentials" SET "github_auth_mode" = 'pat' WHERE "github_auth_mode" = 'app'`);
-        await queryRunner.query(`ALTER TABLE "org_credentials" DROP CONSTRAINT "CHK_org_credentials_github_identity_mode"`);
-        await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "github_identity_mode"`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `UPDATE "org_credentials" SET "github_auth_mode" = 'pat' WHERE "github_auth_mode" = 'app'`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "org_credentials" DROP CONSTRAINT "CHK_org_credentials_github_identity_mode"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "org_credentials" DROP COLUMN "github_identity_mode"`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "org_credentials" ADD "github_identity_mode" text`);
-        await queryRunner.query(`ALTER TABLE "org_credentials" ADD CONSTRAINT "CHK_org_credentials_github_identity_mode" CHECK ("github_identity_mode" IN ('pat', 'app'))`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "org_credentials" ADD "github_identity_mode" text`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "org_credentials" ADD CONSTRAINT "CHK_org_credentials_github_identity_mode" CHECK ("github_identity_mode" IN ('pat', 'app'))`,
+    );
+  }
 }

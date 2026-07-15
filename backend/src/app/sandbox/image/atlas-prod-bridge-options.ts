@@ -49,6 +49,7 @@ export function partitionAtlasProdTools(all: string[]): {
 } {
   const rest: string[] = [];
   const atlasProd: string[] = [];
-  for (const name of all) (ATLAS_PROD_TOOL_SET.has(name) ? atlasProd : rest).push(name);
+  for (const name of all)
+    (ATLAS_PROD_TOOL_SET.has(name) ? atlasProd : rest).push(name);
   return { rest, atlasProd };
 }

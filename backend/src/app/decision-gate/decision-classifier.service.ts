@@ -28,9 +28,7 @@ import type {
 export class DecisionClassifier {
   private readonly logger = new Logger(DecisionClassifier.name);
 
-  constructor(
-    @Inject(CLASSIFIER_LLM) private readonly llm: ClassifierLlm,
-  ) {}
+  constructor(@Inject(CLASSIFIER_LLM) private readonly llm: ClassifierLlm) {}
 
   /**
    * Classify ONE proposed decision against the record.
@@ -43,7 +41,8 @@ export class DecisionClassifier {
     record: ClassifierRecord,
     orgId?: string,
   ): Promise<DecisionClassification> {
-    const text = `${proposed.description}\n${proposed.context ?? ''}`.toLowerCase();
+    const text =
+      `${proposed.description}\n${proposed.context ?? ''}`.toLowerCase();
 
     // ── 1. Deterministic always-ask detection ───────────────────────────────────────────────────
     // Each class has a keyword signature; the FIRST that hits decides the touched class.
@@ -74,7 +73,8 @@ export class DecisionClassifier {
     if (NEVER_ASK_RE.test(text)) {
       return {
         verdict: 'proceed',
-        reason: 'Internal structure / naming / file placement / test layout — never-ask.',
+        reason:
+          'Internal structure / naming / file placement / test layout — never-ask.',
         via: 'rule',
       };
     }
@@ -133,7 +133,8 @@ const CLASS_LABELS: Record<DecisionClass, string> = {
   api_contract: 'public / cross-service API contract',
   dependency: 'new dependency / library / service',
   infrastructure: 'infrastructure / topology',
-  cross_cutting: 'cross-cutting pattern (auth/caching/state/concurrency/error-handling)',
+  cross_cutting:
+    'cross-cutting pattern (auth/caching/state/concurrency/error-handling)',
   one_way_door: 'one-way door (irreversible)',
 };
 

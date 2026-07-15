@@ -18,7 +18,8 @@ export const jobKindIs =
     c.jobKind === kind;
 
 /** The job is an onboarding bring-up (the onboarding-persona fragments). */
-export const isOnboarding = (c: PromptCtx): boolean => c.jobKind === 'onboarding';
+export const isOnboarding = (c: PromptCtx): boolean =>
+  c.jobKind === 'onboarding';
 
 /** The job reviews an existing external PR (the review-persona fragments). */
 export const isReview = (c: PromptCtx): boolean => c.jobKind === 'review';
@@ -30,7 +31,8 @@ export const notReview = (c: PromptCtx): boolean => c.jobKind !== 'review';
  * Anything BUT onboarding — the shared non-onboarding surface (how to read harness tags, investigate,
  * sandbox basics, safety, task list). BOTH the normal build brain AND a review job compose these.
  */
-export const notOnboarding = (c: PromptCtx): boolean => c.jobKind !== 'onboarding';
+export const notOnboarding = (c: PromptCtx): boolean =>
+  c.jobKind !== 'onboarding';
 
 /**
  * The NORMAL planning/build brain — everything that grills, locks decisions, plans, and ships a build.
@@ -43,17 +45,22 @@ export const isBuildBrain = (c: PromptCtx): boolean =>
 
 /** Standing operator/org instructions are present (the conditional operator fragment). */
 export const hasOrgInstructions = (c: PromptCtx): boolean =>
-  !!c.settings?.userOrgInstructions && c.settings.userOrgInstructions.trim().length > 0;
+  !!c.settings?.userOrgInstructions &&
+  c.settings.userOrgInstructions.trim().length > 0;
 
 /** Per-job auto-approve is ON (any mode but 'off') — inject the autonomous-mode fragment. */
-export const hasAutoApprove = (c: PromptCtx): boolean => (c.settings?.autoApproveMode ?? 'off') !== 'off';
+export const hasAutoApprove = (c: PromptCtx): boolean =>
+  (c.settings?.autoApproveMode ?? 'off') !== 'off';
 
 /** Per-job auto-merge is ON — inject the auto-merge fragment. */
-export const hasAutoMerge = (c: PromptCtx): boolean => c.settings?.autoMerge === true;
+export const hasAutoMerge = (c: PromptCtx): boolean =>
+  c.settings?.autoMerge === true;
 
 /** The repo has an attached house-style profile (the conditional conventions fragment). */
 export const hasRepoConventions = (c: PromptCtx): boolean =>
-  !!c.settings?.repoConventions && c.settings.repoConventions.body.trim().length > 0;
+  !!c.settings?.repoConventions &&
+  c.settings.repoConventions.body.trim().length > 0;
 
 /** This job runs on the Atlas repo itself (slug === ATLAS_REPO_SLUG) — gates the atlas-prod host-tool fragment. */
-export const isAtlasRepo = (c: PromptCtx): boolean => c.job?.isAtlasRepo === true;
+export const isAtlasRepo = (c: PromptCtx): boolean =>
+  c.job?.isAtlasRepo === true;

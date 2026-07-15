@@ -8,7 +8,9 @@ import {
 
 describe('normalizeRepoSlug', () => {
   it('normalizes https / ssh / bare refs to lower-cased owner/repo', () => {
-    expect(normalizeRepoSlug('https://github.com/Acme/Web.git')).toBe('acme/web');
+    expect(normalizeRepoSlug('https://github.com/Acme/Web.git')).toBe(
+      'acme/web',
+    );
     expect(normalizeRepoSlug('git@github.com:Acme/Web.git')).toBe('acme/web');
     expect(normalizeRepoSlug('Acme/Web')).toBe('acme/web');
     expect(normalizeRepoSlug('https://github.com/Acme/Web')).toBe('acme/web');
@@ -33,7 +35,13 @@ function svc(repos: RepoEntity[]): ProjectRoutingService {
 }
 
 const repo = (over: Partial<RepoEntity>): RepoEntity =>
-  ({ id: 'repo-web', org_id: 'T1', slug: 'web', git_url: 'https://github.com/acme/web.git', ...over }) as RepoEntity;
+  ({
+    id: 'repo-web',
+    org_id: 'T1',
+    slug: 'web',
+    git_url: 'https://github.com/acme/web.git',
+    ...over,
+  }) as RepoEntity;
 
 describe('ProjectRoutingService', () => {
   it('routes a github repo across orgs by normalized git_url', async () => {

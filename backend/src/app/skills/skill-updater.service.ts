@@ -43,7 +43,9 @@ const SKILL_UPDATER_INTERVAL = 'skills:skill-updater';
  * assumed — see the P2 handoff summary.
  */
 @Injectable()
-export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class SkillUpdaterService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(SkillUpdaterService.name);
   private promoteSub?: { unsubscribe(): void };
   private demoteSub?: { unsubscribe(): void };
@@ -80,7 +82,10 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
     if (!this.scheduler) return;
     if (this.scheduler.doesExist('interval', SKILL_UPDATER_INTERVAL)) return;
     void this.reconcileAll(); // boot/promotion sweep
-    const iv = setInterval(() => void this.reconcileAll(), RECONCILE_INTERVAL_MS);
+    const iv = setInterval(
+      () => void this.reconcileAll(),
+      RECONCILE_INTERVAL_MS,
+    );
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
     this.scheduler.addInterval(SKILL_UPDATER_INTERVAL, iv);
     this.logger.log('skill updater started (leader)');
@@ -98,7 +103,9 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
     const rows = await this.skills.find({ where: { provenance: 'git' } });
     for (const row of rows) {
       await this.reconcileOne(row).catch((err) =>
-        this.logger.warn(`update-check failed org=${row.org_id} scope=${row.scope} name=${row.name}: ${err}`),
+        this.logger.warn(
+          `update-check failed org=${row.org_id} scope=${row.scope} name=${row.name}: ${err}`,
+        ),
       );
     }
   }
@@ -115,20 +122,28 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
         Promise.all(
           rows.map((row) =>
             this.reconcileOne(row).catch((err) =>
-              this.logger.warn(`update-check failed org=${row.org_id} scope=${row.scope} name=${row.name}: ${err}`),
+              this.logger.warn(
+                `update-check failed org=${row.org_id} scope=${row.scope} name=${row.name}: ${err}`,
+              ),
             ),
           ),
         ),
       )
-      .catch((err) => this.logger.warn(`update-check failed org=${orgId}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`update-check failed org=${orgId}: ${err}`),
+      );
   }
 
   /** Apply-now for one row, regardless of `update_policy` — the console's "update" button / API endpoint. */
   async applyNow(orgId: string, scope: string, name: string): Promise<void> {
-    const row = await this.skills.findOne({ where: { org_id: orgId, scope, name } });
+    const row = await this.skills.findOne({
+      where: { org_id: orgId, scope, name },
+    });
     if (!row) throw new BadRequestException(`unknown skill '${name}'`);
     if (row.provenance !== 'git' || !row.source_url) {
-      throw new BadRequestException(`'${name}' has no git source to update from (provenance=${row.provenance})`);
+      throw new BadRequestException(
+        `'${name}' has no git source to update from (provenance=${row.provenance})`,
+      );
     }
     await this.installer.install({
       orgId: row.org_id,
@@ -140,7 +155,10 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
       surfaces: row.surfaces,
     });
     if (row.update_available) {
-      await this.skills.update({ org_id: row.org_id, scope: row.scope, name: row.name }, { update_available: false });
+      await this.skills.update(
+        { org_id: row.org_id, scope: row.scope, name: row.name },
+        { update_available: false },
+      );
     }
   }
 
@@ -149,11 +167,18 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
     const token = row.source_url.startsWith('https://github.com/')
       ? await this.creds.hostGithubToken(row.org_id)
       : undefined;
-    const head = await this.git.resolveRemoteRef(row.source_url, row.source_ref ?? undefined, token);
+    const head = await this.git.resolveRemoteRef(
+      row.source_url,
+      row.source_ref ?? undefined,
+      token,
+    );
 
     if (head.sha === row.installed_sha) {
       if (row.update_available) {
-        await this.skills.update({ org_id: row.org_id, scope: row.scope, name: row.name }, { update_available: false });
+        await this.skills.update(
+          { org_id: row.org_id, scope: row.scope, name: row.name },
+          { update_available: false },
+        );
       }
       return; // already current
     }
@@ -172,14 +197,20 @@ export class SkillUpdaterService implements OnApplicationBootstrap, OnApplicatio
         `auto-updated skill org=${row.org_id} scope=${row.scope} name=${row.name} → ${head.sha.slice(0, 8)}`,
       );
       if (row.update_available) {
-        await this.skills.update({ org_id: row.org_id, scope: row.scope, name: row.name }, { update_available: false });
+        await this.skills.update(
+          { org_id: row.org_id, scope: row.scope, name: row.name },
+          { update_available: false },
+        );
       }
       return;
     }
 
     // `pinned` / `manual`: badge only — the row is applied via `applyNow`, not here.
     if (!row.update_available) {
-      await this.skills.update({ org_id: row.org_id, scope: row.scope, name: row.name }, { update_available: true });
+      await this.skills.update(
+        { org_id: row.org_id, scope: row.scope, name: row.name },
+        { update_available: true },
+      );
     }
   }
 }

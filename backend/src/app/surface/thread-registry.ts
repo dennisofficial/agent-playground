@@ -67,7 +67,8 @@ export const THREAD_REGISTRY: readonly ThreadDescriptor[] = [
     kind: 'builder',
     input: 'operator',
     lane: (threadId) => `thread:${threadId}`,
-    match: (lane) => (lane.startsWith('thread:') ? [lane.slice('thread:'.length)] : null),
+    match: (lane) =>
+      lane.startsWith('thread:') ? [lane.slice('thread:'.length)] : null,
     taskScope: ({ ids }) => ({ kind: 'thread', id: ids[0] }),
   },
   {
@@ -104,19 +105,25 @@ export const THREAD_REGISTRY: readonly ThreadDescriptor[] = [
     kind: 'ship',
     input: 'none',
     lane: (jobId) => `ship:${jobId}`,
-    match: (lane) => (lane.startsWith('ship:') ? [lane.slice('ship:'.length)] : null),
+    match: (lane) =>
+      lane.startsWith('ship:') ? [lane.slice('ship:'.length)] : null,
     taskScope: () => null,
   },
   {
     kind: 'codex-review',
     input: 'agent',
     lane: (jobId) => `codex-review:${jobId}`,
-    match: (lane) => (lane.startsWith('codex-review:') ? [lane.slice('codex-review:'.length)] : null),
+    match: (lane) =>
+      lane.startsWith('codex-review:')
+        ? [lane.slice('codex-review:'.length)]
+        : null,
     taskScope: () => null,
   },
 ];
 
-const BY_KIND = new Map<ThreadKind, ThreadDescriptor>(THREAD_REGISTRY.map((d) => [d.kind, d]));
+const BY_KIND = new Map<ThreadKind, ThreadDescriptor>(
+  THREAD_REGISTRY.map((d) => [d.kind, d]),
+);
 
 /** Build the wire lane string for a thread kind. Replaces the scattered per-feature lane helpers. */
 export function laneFor(kind: ThreadKind, ...ids: string[]): string {
@@ -126,7 +133,9 @@ export function laneFor(kind: ThreadKind, ...ids: string[]): string {
 }
 
 /** Find the descriptor (and captured ids) that owns a lane string, or `null`. */
-export function descriptorForLane(lane: string): { descriptor: ThreadDescriptor; ids: string[] } | null {
+export function descriptorForLane(
+  lane: string,
+): { descriptor: ThreadDescriptor; ids: string[] } | null {
   for (const descriptor of THREAD_REGISTRY) {
     const ids = descriptor.match(lane);
     if (ids) return { descriptor, ids };
@@ -138,7 +147,10 @@ export function descriptorForLane(lane: string): { descriptor: ThreadDescriptor;
  * Resolve which entity's tasks column a task event on `lane` folds into. Replaces the hand-written switch
  * that lived in {@link TurnHarnessFactory}. `jobId` is needed because the `main` lane encodes no id.
  */
-export function taskScopeForLane(lane: string, jobId: string): TaskScope | null {
+export function taskScopeForLane(
+  lane: string,
+  jobId: string,
+): TaskScope | null {
   const hit = descriptorForLane(lane);
   return hit ? hit.descriptor.taskScope({ jobId, ids: hit.ids }) : null;
 }

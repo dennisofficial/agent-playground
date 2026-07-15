@@ -25,13 +25,21 @@ afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 /** A steerInput that never yields — it only flips the engine into streaming-input mode so `input` exists. */
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
   [Symbol.asyncIterator]() {
-    return { next: () => new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}) };
+    return {
+      next: () =>
+        new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
+    };
   },
 };
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 type ResultFields = { terminal_reason?: string; stop_reason?: string | null };
-type RunState = { inputClosedAt?: number; toolAttemptedAt?: number; inputClosedAtAttempt?: boolean };
+type RunState = {
+  inputClosedAt?: number;
+  toolAttemptedAt?: number;
+  inputClosedAtAttempt?: boolean;
+};
 
 /**
  * Faithful CLI stand-in. Emits one success `result` carrying `resultFields`, then — after a pause LONGER
@@ -40,7 +48,12 @@ type RunState = { inputClosedAt?: number; toolAttemptedAt?: number; inputClosedA
  */
 function streamClosedSdk(resultFields: ResultFields, state: RunState) {
   return {
-    query: ({ prompt }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) =>
+    query: ({
+      prompt,
+    }: {
+      prompt: AsyncIterable<unknown>;
+      options: Record<string, unknown>;
+    }) =>
       (async function* () {
         // Background: drain the engine's manual input stream; note when it ENDS (input.end()).
         let inputClosed = false;
@@ -60,11 +73,22 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
         await sleep(5);
         yield {
           type: 'assistant',
-          message: { model: 'claude-opus-4-8', content: [{ type: 'text', text: 'Here is my recommendation.' }], usage: { input_tokens: 20_000 } },
+          message: {
+            model: 'claude-opus-4-8',
+            content: [{ type: 'text', text: 'Here is my recommendation.' }],
+            usage: { input_tokens: 20_000 },
+          },
         };
         await sleep(5);
         // The success result under test. Its terminal_reason/stop_reason decide whether the engine closes.
-        yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'recommendation', usage: { input_tokens: 1, output_tokens: 1 }, ...resultFields };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'recommendation',
+          usage: { input_tokens: 1, output_tokens: 1 },
+          ...resultFields,
+        };
 
         // Pause LONGER than the 350ms grace (the incident had 70s gaps under heavy throttling), then try the
         // host-tool call. If the engine closed input during the pause, the control round-trip can't complete.
@@ -74,16 +98,44 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
         const toolId = 'toolu_ask_1';
         yield {
           type: 'assistant',
-          message: { model: 'claude-opus-4-8', content: [{ type: 'tool_use', id: toolId, name: 'mcp__atlas-host-bridge__ask_question', input: { args: { header: 'Scope of the retract fix' } } }], usage: { input_tokens: 20_100 } },
+          message: {
+            model: 'claude-opus-4-8',
+            content: [
+              {
+                type: 'tool_use',
+                id: toolId,
+                name: 'mcp__atlas-host-bridge__ask_question',
+                input: { args: { header: 'Scope of the retract fix' } },
+              },
+            ],
+            usage: { input_tokens: 20_100 },
+          },
         };
         await sleep(5);
         yield {
           type: 'user',
-          message: { content: [{ type: 'tool_result', tool_use_id: toolId, is_error: inputClosed, content: inputClosed ? 'Stream closed' : 'ok' }] },
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: toolId,
+                is_error: inputClosed,
+                content: inputClosed ? 'Stream closed' : 'ok',
+              },
+            ],
+          },
         };
         await sleep(5);
         // The turn genuinely finishes now — the generator returns, ending the run.
-        yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'final', terminal_reason: 'completed', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'final',
+          terminal_reason: 'completed',
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
       })(),
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
@@ -93,22 +145,43 @@ const STEER_GRACE_PAD = 500;
 
 type ToolResult = { id: string; isError?: boolean; result: unknown };
 
-async function runTurn(resultFields: ResultFields): Promise<{ state: RunState; toolResults: ToolResult[] }> {
+async function runTurn(
+  resultFields: ResultFields,
+): Promise<{ state: RunState; toolResults: ToolResult[] }> {
   const state: RunState = {};
   const toolResults: ToolResult[] = [];
-  const core = new EngineCore(streamClosedSdk(resultFields, state), {} as never, { homeRoot: HOME_ROOT });
+  const core = new EngineCore(
+    streamClosedSdk(resultFields, state),
+    {} as never,
+    { homeRoot: HOME_ROOT },
+  );
   await core.run({
     engine: 'claude',
     task: 'trace the withdraw flow and post the scope card',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
+    sandboxKey: {
+      orgId: 'acme',
+      repoId: 'atlas',
+      jobId: 'feat',
+      type: 'build',
+    } as EngineHomeKey,
     mode: 'execute',
     richStream: true,
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
-    onEvent: (e: { kind: string; id?: string; isError?: boolean; result?: unknown }) => {
-      if (e.kind === 'tool_result') toolResults.push({ id: e.id ?? '', isError: e.isError, result: e.result });
+    onEvent: (e: {
+      kind: string;
+      id?: string;
+      isError?: boolean;
+      result?: unknown;
+    }) => {
+      if (e.kind === 'tool_result')
+        toolResults.push({
+          id: e.id ?? '',
+          isError: e.isError,
+          result: e.result,
+        });
     },
   } as never);
   return { state, toolResults };
@@ -116,7 +189,9 @@ async function runTurn(resultFields: ResultFields): Promise<{ state: RunState; t
 
 describe('EngineCore — streaming input-close gated on a genuinely-completed result (d1)', () => {
   it('non-completed result (blocking_limit) keeps input OPEN → mid-turn host tool succeeds', async () => {
-    const { state, toolResults } = await runTurn({ terminal_reason: 'blocking_limit' });
+    const { state, toolResults } = await runTurn({
+      terminal_reason: 'blocking_limit',
+    });
     expect(state.inputClosedAtAttempt).toBe(false);
     // Input closes only during normal teardown (the finally block), strictly AFTER the host tool ran.
     expect(state.inputClosedAt!).toBeGreaterThan(state.toolAttemptedAt!);
@@ -134,7 +209,10 @@ describe('EngineCore — streaming input-close gated on a genuinely-completed re
   });
 
   it("completed result (terminal_reason:'completed', stop_reason:'end_turn') CLOSES input after the grace", async () => {
-    const { state } = await runTurn({ terminal_reason: 'completed', stop_reason: 'end_turn' });
+    const { state } = await runTurn({
+      terminal_reason: 'completed',
+      stop_reason: 'end_turn',
+    });
     expect(state.inputClosedAtAttempt).toBe(true);
     expect(state.inputClosedAt).toBeDefined();
     expect(state.toolAttemptedAt).toBeDefined();
@@ -170,7 +248,13 @@ function toolResultStreamSdk(
   state: CircuitState,
 ) {
   return {
-    query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
+    query: ({
+      prompt,
+      options,
+    }: {
+      prompt: AsyncIterable<unknown>;
+      options: Record<string, unknown>;
+    }) => {
       state.abortController = options.abortController as AbortController;
       return (async function* () {
         // Drain the engine's manual input stream in the background so pushes never block.
@@ -186,20 +270,37 @@ function toolResultStreamSdk(
         await sleep(5);
         yield {
           type: 'assistant',
-          message: { model: 'claude-opus-4-8', content: [{ type: 'text', text: 'working on it' }] },
+          message: {
+            model: 'claude-opus-4-8',
+            content: [{ type: 'text', text: 'working on it' }],
+          },
         };
         await sleep(5);
         for (const r of results) {
           yield {
             type: 'user',
-            message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_x', is_error: r.isError, content: r.content }] },
+            message: {
+              content: [
+                {
+                  type: 'tool_result',
+                  tool_use_id: 'toolu_x',
+                  is_error: r.isError,
+                  content: r.content,
+                },
+              ],
+            },
           };
           await sleep(5);
         }
         if (emitFinalResult) {
           yield {
-            type: 'result', subtype: 'success', session_id: 'sess-1', result: 'final',
-            terminal_reason: 'completed', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 },
+            type: 'result',
+            subtype: 'success',
+            session_id: 'sess-1',
+            result: 'final',
+            terminal_reason: 'completed',
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 1, output_tokens: 1 },
           };
         }
       })();
@@ -207,17 +308,25 @@ function toolResultStreamSdk(
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
 
-const STREAM_CLOSED_TEXT = 'Tool permission request failed: Error: Stream closed';
+const STREAM_CLOSED_TEXT =
+  'Tool permission request failed: Error: Stream closed';
 const HEALTHY_TEXT = 'ok';
 
-function runCircuitTurn(sdk: typeof import('@anthropic-ai/claude-agent-sdk')): ReturnType<EngineCore['run']> {
+function runCircuitTurn(
+  sdk: typeof import('@anthropic-ai/claude-agent-sdk'),
+): ReturnType<EngineCore['run']> {
   const core = new EngineCore(sdk, {} as never, { homeRoot: HOME_ROOT });
   return core.run({
     engine: 'claude',
     task: 'post the scope card',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
+    sandboxKey: {
+      orgId: 'acme',
+      repoId: 'atlas',
+      jobId: 'feat',
+      type: 'build',
+    } as EngineHomeKey,
     mode: 'execute',
     richStream: true,
     auth: { secret: 'oauth-tok' },
@@ -229,7 +338,8 @@ function runCircuitTurn(sdk: typeof import('@anthropic-ai/claude-agent-sdk')): R
 describe('EngineCore — stream-closed circuit breaker (d1)', () => {
   const ORIG_THRESHOLD = process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
   afterEach(() => {
-    if (ORIG_THRESHOLD === undefined) delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
+    if (ORIG_THRESHOLD === undefined)
+      delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
     else process.env.ENGINE_STREAM_CLOSED_THRESHOLD = ORIG_THRESHOLD;
   });
 
@@ -255,10 +365,13 @@ describe('EngineCore — stream-closed circuit breaker (d1)', () => {
     const state: CircuitState = {};
     const sdk = toolResultStreamSdk(
       [
-        { isError: true, content: [{ type: 'text', text: STREAM_CLOSED_TEXT.toLowerCase() }] },   // run: 1
-        { isError: false, content: HEALTHY_TEXT },         // resets the run to 0
-        { isError: true, content: STREAM_CLOSED_TEXT },   // run: 1
-        { isError: true, content: STREAM_CLOSED_TEXT },   // run: 2 — never reaches the threshold of 3
+        {
+          isError: true,
+          content: [{ type: 'text', text: STREAM_CLOSED_TEXT.toLowerCase() }],
+        }, // run: 1
+        { isError: false, content: HEALTHY_TEXT }, // resets the run to 0
+        { isError: true, content: STREAM_CLOSED_TEXT }, // run: 1
+        { isError: true, content: STREAM_CLOSED_TEXT }, // run: 2 — never reaches the threshold of 3
       ],
       true,
       state,

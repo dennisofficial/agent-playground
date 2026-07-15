@@ -33,7 +33,9 @@ export class McpOAuthCallbackController {
     @Query('error_description') errorDescription?: string,
   ): Promise<string> {
     if (error) {
-      this.logger.warn(`oauth callback error=${error} desc=${errorDescription ?? ''}`);
+      this.logger.warn(
+        `oauth callback error=${error} desc=${errorDescription ?? ''}`,
+      );
       return this.page(false, errorDescription || error);
     }
     if (!state || !code) return this.page(false, 'missing state or code');

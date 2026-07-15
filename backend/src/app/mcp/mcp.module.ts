@@ -18,9 +18,23 @@ import { SystemMcpResolver } from './system-mcp-resolver.service';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([McpServerEntity, RepoEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature([McpServerEntity, RepoEntity], DB_CONNECTION),
+  ],
   controllers: [McpServersController, McpOAuthCallbackController],
-  providers: [McpServerStore, McpResolver, McpProbeService, McpOAuthService, SystemMcpResolver],
-  exports: [McpServerStore, McpResolver, McpProbeService, McpOAuthService, SystemMcpResolver],
+  providers: [
+    McpServerStore,
+    McpResolver,
+    McpProbeService,
+    McpOAuthService,
+    SystemMcpResolver,
+  ],
+  exports: [
+    McpServerStore,
+    McpResolver,
+    McpProbeService,
+    McpOAuthService,
+    SystemMcpResolver,
+  ],
 })
 export class McpModule {}

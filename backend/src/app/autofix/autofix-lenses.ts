@@ -11,7 +11,11 @@
 // Direct path (not the `../thread-kind` barrel, which re-exports `registry.ts` — that file imports
 // FROM here, so going through the barrel would cycle). `thread-types.ts` itself imports nothing.
 import type { ThreadType } from '../thread-kind/thread-types';
-import type { FindingSeverity, ReviewFinding, ReviewLens } from './autofix.types';
+import type {
+  FindingSeverity,
+  ReviewFinding,
+  ReviewLens,
+} from './autofix.types';
 
 /**
  * The two ALWAYS-ON lenses: one narrow diff-scoped CORRECTNESS lens plus one always-on HOLISTIC lens.
@@ -117,10 +121,17 @@ export function reviewAgentsForThread(
 }
 
 /** Severity rank for thresholds + sort (high first). */
-const SEVERITY_RANK: Record<FindingSeverity, number> = { low: 0, medium: 1, high: 2 };
+const SEVERITY_RANK: Record<FindingSeverity, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
 
 /** Is `sev` at least `min`? Drives the fix-turn gate. */
-export function meetsSeverity(sev: FindingSeverity, min: FindingSeverity): boolean {
+export function meetsSeverity(
+  sev: FindingSeverity,
+  min: FindingSeverity,
+): boolean {
   return SEVERITY_RANK[sev] >= SEVERITY_RANK[min];
 }
 
@@ -139,7 +150,9 @@ export function parseFindings(lensId: string, report: string): ReviewFinding[] {
     return [];
   }
   const arr =
-    parsed && typeof parsed === 'object' && Array.isArray((parsed as { findings?: unknown }).findings)
+    parsed &&
+    typeof parsed === 'object' &&
+    Array.isArray((parsed as { findings?: unknown }).findings)
       ? (parsed as { findings: unknown[] }).findings
       : Array.isArray(parsed)
         ? (parsed as unknown[])
@@ -170,7 +183,9 @@ function normalizeSeverity(v: unknown): FindingSeverity {
 
 /** Pull the last fenced ```json … ``` block, else the last bare ``` block, else the first `{…}`. */
 function extractJson(text: string): string | null {
-  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) =>
+    m[1].trim(),
+  );
   for (let i = fenced.length - 1; i >= 0; i--) {
     if (fenced[i].includes('{')) return fenced[i];
   }
@@ -203,7 +218,9 @@ export function dedupeFindings(all: ReviewFinding[]): ReviewFinding[] {
     existing.lens = [...lenses].join('+');
     if (f.detail.length > existing.detail.length) existing.detail = f.detail;
   }
-  return [...byKey.values()].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+  return [...byKey.values()].sort(
+    (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
+  );
 }
 
 /** Normalize a title for dedupe: lowercase, collapse whitespace, drop trailing punctuation. */

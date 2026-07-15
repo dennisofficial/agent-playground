@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { EnvService } from '@core/config/env/env.service';
 import { EventFilterService } from './event-filter.service';
 
-function makeFilter(overrides: Record<string, unknown> = {}): EventFilterService {
+function makeFilter(
+  overrides: Record<string, unknown> = {},
+): EventFilterService {
   const map: Record<string, unknown> = {
     EVENT_DEDUP_WINDOW_S: 300,
     EVENT_RATE_LIMIT: 5,
@@ -13,7 +15,12 @@ function makeFilter(overrides: Record<string, unknown> = {}): EventFilterService
   return new EventFilterService(env);
 }
 
-const KEY = { orgId: 'T1', repoId: 'web', source: 'github', dedupeKey: 'run:1' };
+const KEY = {
+  orgId: 'T1',
+  repoId: 'web',
+  source: 'github',
+  dedupeKey: 'run:1',
+};
 
 describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
   it('admits the first event for a key', () => {
@@ -51,7 +58,11 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
 
   it('rate-limits a key whose dedupeKey keeps mutating within the rate window', () => {
     // Short dedup window so dedup doesn't mask the rate-limit; 3 admissions / 60s.
-    const f = makeFilter({ EVENT_DEDUP_WINDOW_S: 1, EVENT_RATE_LIMIT: 3, EVENT_RATE_WINDOW_S: 60 });
+    const f = makeFilter({
+      EVENT_DEDUP_WINDOW_S: 1,
+      EVENT_RATE_LIMIT: 3,
+      EVENT_RATE_WINDOW_S: 60,
+    });
     const base = { orgId: 'T1', repoId: 'web', source: 'github' };
     expect(f.admit({ ...base, dedupeKey: 'a' }, 0).pass).toBe(true);
     expect(f.admit({ ...base, dedupeKey: 'b' }, 2_000).pass).toBe(true);
@@ -64,7 +75,11 @@ describe('EventFilterService (mechanical dedup + rate-limit, no LLM)', () => {
 
   it('rate-limits repeated DISTINCT-but-same-tuple bursts past the limit', () => {
     // To trip the rate-limit on ONE key, space hits past the dedup window but within the rate window.
-    const f = makeFilter({ EVENT_DEDUP_WINDOW_S: 5, EVENT_RATE_LIMIT: 3, EVENT_RATE_WINDOW_S: 600 });
+    const f = makeFilter({
+      EVENT_DEDUP_WINDOW_S: 5,
+      EVENT_RATE_LIMIT: 3,
+      EVENT_RATE_WINDOW_S: 600,
+    });
     expect(f.admit(KEY, 0).pass).toBe(true); // hit 1
     expect(f.admit(KEY, 10_000).pass).toBe(true); // hit 2 (past 5s dedup, within 600s rate)
     expect(f.admit(KEY, 20_000).pass).toBe(true); // hit 3

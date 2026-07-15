@@ -18,4 +18,3 @@ export interface TranscriptLine {
   isAtlas: boolean;
   text: string;
 }
-

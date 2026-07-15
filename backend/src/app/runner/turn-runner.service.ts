@@ -140,17 +140,46 @@ export interface RunTurnInput {
 // TURN_INPUT_FORWARD_KEYS — the exhaustiveness check below fails the build if a new optional field is added
 // to RunTurnInput without being forwarded (so it can never again be silently dropped at this hop).
 type TurnInputDerivedOrRequiredKey =
-  | 'orgId' | 'jobId' | 'stepId' | 'sandbox' | 'gitAuth' | 'evidenceDir' // derived (→ target / sandboxKey) / host-only
-  | 'onEvent' | 'signal' | 'onTurnRegistered' // host-wrapped, set explicitly
-  | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
-type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
+  | 'orgId'
+  | 'jobId'
+  | 'stepId'
+  | 'sandbox'
+  | 'gitAuth'
+  | 'evidenceDir' // derived (→ target / sandboxKey) / host-only
+  | 'onEvent'
+  | 'signal'
+  | 'onTurnRegistered' // host-wrapped, set explicitly
+  | 'engine'
+  | 'mode'
+  | 'task'
+  | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
+type TurnInputForwardKey = Exclude<
+  keyof RunTurnInput,
+  TurnInputDerivedOrRequiredKey
+>;
 const TURN_INPUT_FORWARD_KEYS = [
-  'auth', 'userMcpServers', 'skills', 'previewInstructions', 'model', 'modelReasoningEffort',
-  'richStream', 'steerable', 'rotationNudge', 'toolBridge', 'turnMeta',
+  'auth',
+  'userMcpServers',
+  'skills',
+  'previewInstructions',
+  'model',
+  'modelReasoningEffort',
+  'richStream',
+  'steerable',
+  'rotationNudge',
+  'toolBridge',
+  'turnMeta',
 ] as const satisfies readonly TurnInputForwardKey[];
-const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>] extends [never]
+const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [
+  Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>,
+] extends [never]
   ? true
-  : { ADD_TO_TURN_INPUT_FORWARD_KEYS: Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]> } = true;
+  : {
+      ADD_TO_TURN_INPUT_FORWARD_KEYS: Exclude<
+        TurnInputForwardKey,
+        (typeof TURN_INPUT_FORWARD_KEYS)[number]
+      >;
+    } = true;
 void _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE;
 
 /** The result of one turn — the engine report + the live SessionRef for the next turn. */
@@ -203,13 +232,20 @@ export class TurnRunnerService {
     // step IS the thread row, so the `stepId` the driver passes is the thread's own id (see driver-store's
     // `toSyntheticStep`). Rotation is now "insert the next builder thread row" (d1), so there is no per-step
     // rotation state to fold here — a rotated Leg is simply a fresh thread row born with `session_id = null`.
-    const priorThread = stepId ? await this.threads.findOne({ where: { id: stepId } }) : null;
+    const priorThread = stepId
+      ? await this.threads.findOne({ where: { id: stepId } })
+      : null;
     const priorSessionId = priorThread?.session_id ?? undefined;
 
     // The engine-home key namespaces the isolated home + Codex client cache, so two concurrent jobs never
     // share engine state. Keyed by JOB, not branch — a job owns its branch 1:1 (every step/thread of the
     // job commits to the same branch), so the leaf stays STABLE across the job's whole build, not per-turn.
-    const sandboxKey: EngineHomeKey = { orgId: input.orgId, repoId: sandbox.repoId, jobId, type: 'build' };
+    const sandboxKey: EngineHomeKey = {
+      orgId: input.orgId,
+      repoId: sandbox.repoId,
+      jobId,
+      type: 'build',
+    };
 
     // Cold re-attach + resume: the container was created/restarted fresh (warm === false) but we're
     // resuming a session that remembers prior in-container state — tell it the box was reset. Flip warm
@@ -230,7 +266,9 @@ export class TurnRunnerService {
     // spawning a fresh one. Best-effort write; the turn-end + auth-error persists below are belt-and-braces.
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'session' && stepId && e.sessionId) {
-        void this.threads.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+        void this.threads
+          .update({ id: stepId }, { session_id: e.sessionId })
+          .catch(() => undefined);
       }
       input.onEvent?.(e);
     };
@@ -253,7 +291,9 @@ export class TurnRunnerService {
                 worktreeHost: sandbox.worktreePath,
                 ...(sandbox.execUser ? { user: sandbox.execUser } : {}),
                 ...(input.gitAuth ? { gitAuth: input.gitAuth } : {}),
-                ...(input.evidenceDir ? { evidenceDir: input.evidenceDir } : {}),
+                ...(input.evidenceDir
+                  ? { evidenceDir: input.evidenceDir }
+                  : {}),
               },
             }
           : {}),
@@ -263,13 +303,18 @@ export class TurnRunnerService {
         ...pickKeys(input, TURN_INPUT_FORWARD_KEYS),
         onEvent,
         ...(input.signal ? { signal: input.signal } : {}),
-        ...(input.onTurnRegistered ? { onTurnRegistered: input.onTurnRegistered } : {}),
+        ...(input.onTurnRegistered
+          ? { onTurnRegistered: input.onTurnRegistered }
+          : {}),
       });
     } catch (err) {
       // On a 401/auth failure, PERSIST the session id so a re-ping resumes this same session (the
       // agent's partial work is on disk in the worktree) instead of starting the step from scratch.
       if (err instanceof EngineAuthError && stepId && err.sessionId) {
-        await this.threads.update({ id: stepId }, { session_id: err.sessionId });
+        await this.threads.update(
+          { id: stepId },
+          { session_id: err.sessionId },
+        );
       }
       throw err;
     }
@@ -290,12 +335,19 @@ export class TurnRunnerService {
     // failing the build. Only the build lane calls runTurn (the brain reads result.sessionLimit directly).
     if (result.sessionLimit) {
       if (stepId && result.sessionId) {
-        await this.threads.update({ id: stepId }, { session_id: result.sessionId });
+        await this.threads.update(
+          { id: stepId },
+          { session_id: result.sessionId },
+        );
       }
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
       throw new EngineSessionLimitError(
-        message, resetAt, rateLimitType, result.sessionId, input.auth?.refreshBack?.credentialId,
+        message,
+        resetAt,
+        rateLimitType,
+        result.sessionId,
+        input.auth?.refreshBack?.credentialId,
       );
     }
 
@@ -303,7 +355,10 @@ export class TurnRunnerService {
     // belt-and-braces for the turn-START `session` event above (a turn that surfaced no session event
     // still records its id here).
     if (stepId && result.sessionId) {
-      await this.threads.update({ id: stepId }, { session_id: result.sessionId });
+      await this.threads.update(
+        { id: stepId },
+        { session_id: result.sessionId },
+      );
     }
 
     // Durable per-model usage/cost analytics (best-effort; never blocks the turn). Every build/step/
@@ -388,9 +443,16 @@ export class TurnRunnerService {
    * master-review leg is running, or nothing is) returns false so the caller queues into the next-turn drain
    * rather than an unread input stream. Mirrors the brain's `steerIntoLiveBrainTurn`, lane-generic.
    */
-  async steerLane(jobId: string, lane: string, id: string, text: string): Promise<boolean> {
+  async steerLane(
+    jobId: string,
+    lane: string,
+    id: string,
+    text: string,
+  ): Promise<boolean> {
     if (!this.turnRegistry || !this.engine.steer) return false;
-    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
+    const live = await this.turnRegistry
+      .runningSteerableTurn(jobId, lane)
+      .catch(() => null);
     if (!live?.turn_id) return false;
     await this.engine.steer(live.turn_id, id, text);
     return true;
@@ -402,7 +464,9 @@ export class TurnRunnerService {
    */
   async stopLane(jobId: string, lane: string): Promise<boolean> {
     if (!this.turnRegistry || !this.engine.stop) return false;
-    const live = await this.turnRegistry.runningSteerableTurn(jobId, lane).catch(() => null);
+    const live = await this.turnRegistry
+      .runningSteerableTurn(jobId, lane)
+      .catch(() => null);
     if (!live?.turn_id) return false;
     await this.engine.stop(live.turn_id);
     return true;
@@ -432,16 +496,22 @@ export class TurnRunnerService {
     credentialId?: string;
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
-      throw new Error('bound ENGINE_RUNNER has no reattach() — cannot re-attach turn');
+      throw new Error(
+        'bound ENGINE_RUNNER has no reattach() — cannot re-attach turn',
+      );
     }
     const { turnId, containerId, stepId } = input;
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'session' && stepId && e.sessionId) {
-        void this.threads.update({ id: stepId }, { session_id: e.sessionId }).catch(() => undefined);
+        void this.threads
+          .update({ id: stepId }, { session_id: e.sessionId })
+          .catch(() => undefined);
       }
       input.onEvent?.(e);
     };
-    this.logger.log(`Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`);
+    this.logger.log(
+      `Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`,
+    );
     const result = await this.engine.reattach(turnId, containerId, {
       onEvent,
       ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
@@ -449,13 +519,19 @@ export class TurnRunnerService {
       ...(input.credentialId ? { credentialId: input.credentialId } : {}),
     });
     if (stepId && result.sessionId) {
-      await this.threads.update({ id: stepId }, { session_id: result.sessionId }).catch(() => undefined);
+      await this.threads
+        .update({ id: stepId }, { session_id: result.sessionId })
+        .catch(() => undefined);
     }
     if (result.sessionLimit) {
       const { resetAt, rateLimitType } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
       throw new EngineSessionLimitError(
-        message, resetAt, rateLimitType, result.sessionId, input.credentialId,
+        message,
+        resetAt,
+        rateLimitType,
+        result.sessionId,
+        input.credentialId,
       );
     }
     const credentialId = result.credentialId ?? input.credentialId ?? null;

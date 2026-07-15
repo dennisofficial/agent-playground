@@ -30,8 +30,14 @@ export class AuthRefreshSinkService implements AuthRefreshSink {
   ): Promise<void> {
     const { orgId, engine, credentialId } = provenance;
     try {
-      if (engine === 'codex') await this.tenantStore.advanceCodexAuthSecret(orgId, secret);
-      else if (engine === 'claude') await this.claudeStore.advanceClaudeCredential(orgId, credentialId, secret);
+      if (engine === 'codex')
+        await this.tenantStore.advanceCodexAuthSecret(orgId, secret);
+      else if (engine === 'claude')
+        await this.claudeStore.advanceClaudeCredential(
+          orgId,
+          credentialId,
+          secret,
+        );
     } catch (err) {
       // Best-effort: a failed write-back leaves the (still-valid this turn) stored blob in place; the next
       // successful turn re-persists. Never propagate — this runs after the turn already produced its result.

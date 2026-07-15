@@ -49,19 +49,29 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('reads the legacy .atlas/worktree.json when atlas.json is absent', () => {
-    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }] }));
+    writeLegacyManifest(
+      JSON.stringify({ mounts: [{ path: 'reference', mode: 'shared-ro' }] }),
+    );
     const { manifest } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([{ path: 'reference', mode: 'shared-ro' }]);
   });
 
   it('prefers atlas.json over the legacy path when both exist', () => {
-    writeLegacyManifest(JSON.stringify({ mounts: [{ path: 'legacy', mode: 'per-thread' }] }));
-    writeManifest(JSON.stringify({ mounts: [{ path: 'current', mode: 'per-thread' }] }));
-    expect(loadLegacyManifestFile(wt).manifest.mounts).toEqual([{ path: 'current', mode: 'per-thread' }]);
+    writeLegacyManifest(
+      JSON.stringify({ mounts: [{ path: 'legacy', mode: 'per-thread' }] }),
+    );
+    writeManifest(
+      JSON.stringify({ mounts: [{ path: 'current', mode: 'per-thread' }] }),
+    );
+    expect(loadLegacyManifestFile(wt).manifest.mounts).toEqual([
+      { path: 'current', mode: 'per-thread' },
+    ]);
   });
 
   it('defaults an unknown/absent mount mode to per-thread (with a warning for unknown)', () => {
-    writeManifest(JSON.stringify({ mounts: [{ path: 'a' }, { path: 'b', mode: 'bogus' }] }));
+    writeManifest(
+      JSON.stringify({ mounts: [{ path: 'a' }, { path: 'b', mode: 'bogus' }] }),
+    );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([
       { path: 'a', mode: 'per-thread' },
@@ -94,7 +104,9 @@ describe('loadLegacyManifestFile', () => {
       }),
     );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
-    expect(manifest.mounts).toEqual([{ path: '.next/cache', mode: 'per-thread' }]);
+    expect(manifest.mounts).toEqual([
+      { path: '.next/cache', mode: 'per-thread' },
+    ]);
     expect(warnings.filter((w) => w.includes('auto-managed')).length).toBe(2);
   });
 
@@ -115,7 +127,11 @@ describe('loadLegacyManifestFile', () => {
   });
 
   it('ignores a manifest that exceeds the size limit', () => {
-    writeManifest(JSON.stringify({ mounts: [{ path: 'x'.repeat(70 * 1024), mode: 'per-thread' }] }));
+    writeManifest(
+      JSON.stringify({
+        mounts: [{ path: 'x'.repeat(70 * 1024), mode: 'per-thread' }],
+      }),
+    );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts).toEqual([]);
     expect(warnings[0]).toMatch(/exceeds/);
@@ -123,7 +139,12 @@ describe('loadLegacyManifestFile', () => {
 
   it('caps an over-long array and warns', () => {
     writeManifest(
-      JSON.stringify({ mounts: Array.from({ length: 250 }, (_, i) => ({ path: `f${i}`, mode: 'per-thread' })) }),
+      JSON.stringify({
+        mounts: Array.from({ length: 250 }, (_, i) => ({
+          path: `f${i}`,
+          mode: 'per-thread',
+        })),
+      }),
     );
     const { manifest, warnings } = loadLegacyManifestFile(wt);
     expect(manifest.mounts.length).toBe(100);

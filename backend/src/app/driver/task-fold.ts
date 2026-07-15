@@ -50,9 +50,12 @@ export function foldTaskEvent(
   result: unknown,
 ): TaskItem[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const strArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter(isStr) : []);
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter(isStr) : [];
   // Optional display fields captured when the call carries them (create sets, update overwrites/keeps).
-  const extras = (prev?: TaskItem): Pick<TaskItem, 'description' | 'activeForm'> => ({
+  const extras = (
+    prev?: TaskItem,
+  ): Pick<TaskItem, 'description' | 'activeForm'> => ({
     ...(isStr(input.description)
       ? { description: input.description }
       : prev?.description
@@ -68,7 +71,11 @@ export function foldTaskEvent(
   const blockedEdges = (prev?: TaskItem): Pick<TaskItem, 'blockedBy'> => {
     const remove = new Set(strArr(input.removeBlockedBy));
     const merged = [
-      ...new Set([...(prev?.blockedBy ?? []), ...strArr(input.blockedBy), ...strArr(input.addBlockedBy)]),
+      ...new Set([
+        ...(prev?.blockedBy ?? []),
+        ...strArr(input.blockedBy),
+        ...strArr(input.addBlockedBy),
+      ]),
     ].filter((b) => !remove.has(b));
     return merged.length > 0 ? { blockedBy: merged } : {};
   };
@@ -77,7 +84,11 @@ export function foldTaskEvent(
   const applyInverseEdges = (id: string): void => {
     for (const target of strArr(input.addBlocks)) {
       const t = byId.get(target);
-      if (t) byId.set(target, { ...t, blockedBy: [...new Set([...(t.blockedBy ?? []), id])] });
+      if (t)
+        byId.set(target, {
+          ...t,
+          blockedBy: [...new Set([...(t.blockedBy ?? []), id])],
+        });
     }
     for (const target of strArr(input.removeBlocks)) {
       const t = byId.get(target);
@@ -95,7 +106,13 @@ export function foldTaskEvent(
       : isStr(input.description)
         ? input.description
         : id;
-    byId.set(id, { id, subject, status: 'pending', ...extras(), ...blockedEdges() });
+    byId.set(id, {
+      id,
+      subject,
+      status: 'pending',
+      ...extras(),
+      ...blockedEdges(),
+    });
     applyInverseEdges(id);
   } else if (toolName === 'taskupdate') {
     const id = isStr(input.taskId) ? input.taskId : null;
@@ -108,8 +125,16 @@ export function foldTaskEvent(
     }
     const existing = byId.get(id);
     const status = mapTaskStatus(input.status) ?? existing?.status ?? 'pending';
-    const subject = isStr(input.subject) ? input.subject : (existing?.subject ?? id);
-    byId.set(id, { id, subject, status, ...extras(existing), ...blockedEdges(existing) });
+    const subject = isStr(input.subject)
+      ? input.subject
+      : (existing?.subject ?? id);
+    byId.set(id, {
+      id,
+      subject,
+      status,
+      ...extras(existing),
+      ...blockedEdges(existing),
+    });
     applyInverseEdges(id);
   } else {
     return tasks; // TaskList / TaskGet are reads — no mutation

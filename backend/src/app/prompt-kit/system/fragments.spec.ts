@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { composePreviewPrepSeed, fencedRecipe, renderBuildLanePreviewRecipe, PREVIEW_PREP_SEED_BODY } from './fragments';
+import {
+  composePreviewPrepSeed,
+  fencedRecipe,
+  renderBuildLanePreviewRecipe,
+  PREVIEW_PREP_SEED_BODY,
+} from './fragments';
 
 /**
  * `fencedRecipe` was factored out of `composePreviewPrepSeed` (the operator Spin-up-preview seed) so the
@@ -14,14 +19,18 @@ describe('composePreviewPrepSeed (refactor guard)', () => {
       fencedRecipe(recipe);
     // The refactor this guards owns the preamble → blank → exact fenced block structure; the trailing footer
     // prose is composePreviewPrepSeed's own (evolves independently), so assert the block, not the whole string.
-    expect(composePreviewPrepSeed(recipe)).toContain([PREVIEW_PREP_SEED_BODY, '', block, ''].join('\n'));
+    expect(composePreviewPrepSeed(recipe)).toContain(
+      [PREVIEW_PREP_SEED_BODY, '', block, ''].join('\n'),
+    );
   });
 
   it('splices the empty-recipe fenced block when nothing is saved yet', () => {
     const block =
       'Repo preview recipe (Atlas-managed — you author/update it via `write_preview_instructions`):\n' +
       fencedRecipe('(no preview recipe saved yet)');
-    expect(composePreviewPrepSeed(null)).toContain([PREVIEW_PREP_SEED_BODY, '', block, ''].join('\n'));
+    expect(composePreviewPrepSeed(null)).toContain(
+      [PREVIEW_PREP_SEED_BODY, '', block, ''].join('\n'),
+    );
   });
 });
 

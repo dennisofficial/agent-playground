@@ -29,7 +29,12 @@ import {
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import type { DecisionApprovalCard } from './approval-blocks';
-import { webApprovalCard, webShipReviewCard, webVerdictCard, parseWebApprovalMeta } from './web-approval-card';
+import {
+  webApprovalCard,
+  webShipReviewCard,
+  webVerdictCard,
+  parseWebApprovalMeta,
+} from './web-approval-card';
 
 // ── Fixtures ──────────────────────────────────��──────────────────────────���──────────────────────
 
@@ -86,15 +91,22 @@ describe('WebSurface — inbound + outbound', () => {
 
   it('seedSystemNotification emits a System-authored, <system_notice>-wrapped, non-persisted seed', async () => {
     const received = firstValueFrom(surface.inbound$.pipe(take(1)));
-    const ts = surface.seedSystemNotification('C-web', 'thread-9', agentMessage('Build failed on step 3'), {
-      orgId: 'T-acme',
-    });
+    const ts = surface.seedSystemNotification(
+      'C-web',
+      'thread-9',
+      agentMessage('Build failed on step 3'),
+      {
+        orgId: 'T-acme',
+      },
+    );
     const msg = await received;
     expect(msg.id).toBe(ts);
     expect(msg.threadTs).toBe('thread-9'); // lands in the thread
     expect(msg.seed).toBe(true); // NOT persisted as a chat bubble (intake skips recordChatStimulus)
     expect(msg.authorId).toBe('U-SYSTEM'); // System, not the operator (no awareness drain)
-    expect(msg.text).toBe('<system_notice>Build failed on step 3</system_notice>');
+    expect(msg.text).toBe(
+      '<system_notice>Build failed on step 3</system_notice>',
+    );
     expect(msg.orgId).toBe('T-acme');
   });
 
@@ -124,7 +136,9 @@ describe('WebSurface — inbound + outbound', () => {
   });
 
   it('post() emits multiple messages in order', async () => {
-    const collected = firstValueFrom(surface.outbound$.pipe(take(3), toArray()));
+    const collected = firstValueFrom(
+      surface.outbound$.pipe(take(3), toArray()),
+    );
 
     await surface.post('C-web', 'First');
     await surface.post('C-web', 'Second');
@@ -148,7 +162,11 @@ describe('WebSurface — approval card conversion', () => {
     const blocks = decisionApprovalBlocks(SAMPLE_CARD);
     const outbound = firstValueFrom(surface.outbound$.pipe(take(1)));
 
-    const ts = await surface.post('C-web', `Plan proposal — ${SAMPLE_CARD.title}`, { blocks });
+    const ts = await surface.post(
+      'C-web',
+      `Plan proposal — ${SAMPLE_CARD.title}`,
+      { blocks },
+    );
     expect(ts).toBeDefined();
 
     const msg = await outbound;
@@ -172,7 +190,9 @@ describe('WebSurface — approval card conversion', () => {
     expect(actionIds).not.toContain(REQUEST_CHANGES_ACTION_ID);
 
     // The value round-trips through JSON correctly.
-    const approveAction = card.actions.find((a) => a.actionId === APPROVE_ACTION_ID)!;
+    const approveAction = card.actions.find(
+      (a) => a.actionId === APPROVE_ACTION_ID,
+    )!;
     expect(approveAction.style).toBe('primary');
     const meta = parseWebApprovalMeta(approveAction.value);
     expect(meta?.jobId).toBe('job-abc');
@@ -183,8 +203,18 @@ describe('WebSurface — approval card conversion', () => {
     const card: DecisionApprovalCard = {
       ...SAMPLE_CARD,
       decisions: [
-        { decisionClass: 'dependency', title: 'Payment gateway', ruling: 'Stripe', confirmedByOperator: true },
-        { decisionClass: 'api_contract', title: 'Webhook route', ruling: 'POST /webhooks', confirmedByOperator: false },
+        {
+          decisionClass: 'dependency',
+          title: 'Payment gateway',
+          ruling: 'Stripe',
+          confirmedByOperator: true,
+        },
+        {
+          decisionClass: 'api_contract',
+          title: 'Webhook route',
+          ruling: 'POST /webhooks',
+          confirmedByOperator: false,
+        },
       ],
     };
     const blocks = decisionApprovalBlocks(card);
@@ -203,7 +233,9 @@ describe('WebSurface — approval card conversion', () => {
   });
 
   it('post() with non-approval blocks does NOT produce a card', async () => {
-    const blocks = [{ type: 'thread', text: { type: 'mrkdwn', text: 'Hello' } }];
+    const blocks = [
+      { type: 'thread', text: { type: 'mrkdwn', text: 'Hello' } },
+    ];
     await surface.post('C-web', 'Hello', { blocks });
     expect(surface.outbox[0].card).toBeUndefined();
   });
@@ -221,7 +253,10 @@ describe('WebSurface — approval click via approval$', () => {
     const surface = new WebSurface();
     const click = firstValueFrom(surface.approval$.pipe(take(1)));
 
-    const value = JSON.stringify({ jobId: 'job-abc', decisionRecordId: 'dr-xyz' });
+    const value = JSON.stringify({
+      jobId: 'job-abc',
+      decisionRecordId: 'dr-xyz',
+    });
     surface.receiveApprovalClick(APPROVE_ACTION_ID, value, 'U-dennis');
 
     const event = await click;
@@ -246,7 +281,12 @@ describe('WebSurface — approval click via approval$', () => {
     const click = firstValueFrom(surface.approval$.pipe(take(1)));
 
     const value = JSON.stringify({ jobId: 'job-abc' });
-    surface.receiveApprovalClick(DENY_ACTION_ID, value, 'U-dennis', 'use Stripe, not Braintree');
+    surface.receiveApprovalClick(
+      DENY_ACTION_ID,
+      value,
+      'U-dennis',
+      'use Stripe, not Braintree',
+    );
 
     const event = await click;
     expect(event.note).toBe('use Stripe, not Braintree');
@@ -256,7 +296,11 @@ describe('WebSurface — approval click via approval$', () => {
     const surface = new WebSurface();
     const click = firstValueFrom(surface.approval$.pipe(take(1)));
 
-    surface.receiveApprovalClick(APPROVE_ACTION_ID, JSON.stringify({ jobId: 'job-abc' }), 'U-dennis');
+    surface.receiveApprovalClick(
+      APPROVE_ACTION_ID,
+      JSON.stringify({ jobId: 'job-abc' }),
+      'U-dennis',
+    );
 
     const event = await click;
     expect(event.note).toBeUndefined();
@@ -280,7 +324,11 @@ describe('WebSurface — update()', () => {
 
     // Post the original approval card.
     const blocks = decisionApprovalBlocks(SAMPLE_CARD);
-    const ts = await surface.post('C-web', `Plan proposal — ${SAMPLE_CARD.title}`, { blocks });
+    const ts = await surface.post(
+      'C-web',
+      `Plan proposal — ${SAMPLE_CARD.title}`,
+      { blocks },
+    );
     expect(ts).toBeDefined();
 
     // Subscribe BEFORE calling update.
@@ -292,8 +340,16 @@ describe('WebSurface — update()', () => {
     );
 
     // Simulate a verdict: update with a verdict card.
-    const verdict = webVerdictCard('job-abc', 'Payments integration', 'approve', 'Approved by Dennis');
-    surface.update('C-web', ts!, { text: 'Approved by Dennis', card: verdict as any });
+    const verdict = webVerdictCard(
+      'job-abc',
+      'Payments integration',
+      'approve',
+      'Approved by Dennis',
+    );
+    surface.update('C-web', ts!, {
+      text: 'Approved by Dennis',
+      card: verdict as any,
+    });
 
     const msg = await updated;
     expect(msg.ts).toBe(ts);
@@ -309,7 +365,9 @@ describe('WebSurface — update()', () => {
 
   it('update on a non-existent ts is a silent no-op', () => {
     const surface = new WebSurface();
-    expect(() => surface.update('C-web', 'ts-ghost', { text: 'noop' })).not.toThrow();
+    expect(() =>
+      surface.update('C-web', 'ts-ghost', { text: 'noop' }),
+    ).not.toThrow();
   });
 });
 
@@ -335,7 +393,10 @@ describe('webApprovalCard (pure builder)', () => {
 
   it('includes a View plan link button only when planUrl is given', () => {
     const without = webApprovalCard(SAMPLE_CARD);
-    const withUrl = webApprovalCard({ ...SAMPLE_CARD, planUrl: 'https://x/plan' });
+    const withUrl = webApprovalCard({
+      ...SAMPLE_CARD,
+      planUrl: 'https://x/plan',
+    });
 
     expect(without.planUrl).toBeUndefined();
     expect(without.actions.some((a) => a.url)).toBe(false);
@@ -370,7 +431,9 @@ describe('webApprovalCard (pure builder)', () => {
       label: 'Amend build',
       style: 'default',
     });
-    expect(parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value)).toEqual({
+    expect(
+      parseWebApprovalMeta(actions.get(RETRACT_SHIP_ACTION_ID)!.value),
+    ).toEqual({
       jobId: 'job-ship',
     });
   });
@@ -398,7 +461,9 @@ describe('parseWebApprovalMeta', () => {
   });
 
   it('returns undefined when jobId is missing', () => {
-    expect(parseWebApprovalMeta(JSON.stringify({ other: 'field' }))).toBeUndefined();
+    expect(
+      parseWebApprovalMeta(JSON.stringify({ other: 'field' })),
+    ).toBeUndefined();
   });
 });
 

@@ -42,7 +42,8 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
   beforeAll(async () => {
     process.env.SURFACE = 'agent';
     // Guarantee engine-auth resolves (env fallback) without throwing before the stubbed run.
-    process.env.CLAUDE_OAUTH_TOKEN = process.env.CLAUDE_OAUTH_TOKEN ?? 'it-fake-token';
+    process.env.CLAUDE_OAUTH_TOKEN =
+      process.env.CLAUDE_OAUTH_TOKEN ?? 'it-fake-token';
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(CLASSIFIER_LLM)
@@ -57,7 +58,9 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -75,7 +78,9 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     else process.env.CLAUDE_OAUTH_TOKEN = prevToken;
   });
 
-  async function seedJobWithSession(sessionId: string | null): Promise<{ jobId: string; repoId: string }> {
+  async function seedJobWithSession(
+    sessionId: string | null,
+  ): Promise<{ jobId: string; repoId: string }> {
     await dataSource.query(
       `INSERT INTO organizations (id, name, slug, status)
          VALUES ($1, 'Compaction Org', 'compaction-it-org', 'active')
@@ -122,14 +127,16 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     const { jobId, repoId } = await seedJobWithSession('fat-session-abc');
 
     // Drive the REAL compaction path. FakeEngineRunner answers the mode:'review' summary turn with canned text.
-    await (mgr as unknown as {
-      runCompaction: (
-        s: ChatStimulus,
-        sandbox: { worktreePath: string; containerId?: string | null },
-        row: { session_id: string | null } | null,
-        sessionId: string | undefined,
-      ) => Promise<void>;
-    }).runCompaction(
+    await (
+      mgr as unknown as {
+        runCompaction: (
+          s: ChatStimulus,
+          sandbox: { worktreePath: string; containerId?: string | null },
+          row: { session_id: string | null } | null,
+          sessionId: string | undefined,
+        ) => Promise<void>;
+      }
+    ).runCompaction(
       stim(jobId, repoId),
       { worktreePath: '/tmp/compaction-it-worktree', containerId: null },
       { session_id: 'fat-session-abc' },
@@ -154,12 +161,15 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     expect(row.pending_compaction_seed).toContain('(e2e fake) review turn');
 
     // 2. Inspectable summary: a durable build_event message carries the full summary in meta.
-    const [msg]: Array<{ text: string; kind: string; meta: { compactionSummary?: string } | null }> =
-      await dataSource.query(
-        `SELECT text, kind, meta FROM messages
+    const [msg]: Array<{
+      text: string;
+      kind: string;
+      meta: { compactionSummary?: string } | null;
+    }> = await dataSource.query(
+      `SELECT text, kind, meta FROM messages
            WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
-        [jobId],
-      );
+      [jobId],
+    );
     expect(msg).toBeTruthy();
     expect(msg.kind).toBe('build_event');
     expect(msg.text).toContain('Compacted the planning conversation');
@@ -191,11 +201,13 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       runner.engineRunner.run = orig;
     }
 
-    const [row]: Array<{ session_id: string | null; compacting_session_id: string | null }> =
-      await dataSource.query(
-        `SELECT session_id, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
-        [jobId],
-      );
+    const [row]: Array<{
+      session_id: string | null;
+      compacting_session_id: string | null;
+    }> = await dataSource.query(
+      `SELECT session_id, compacting_session_id FROM job_sandboxes WHERE job_id = $1`,
+      [jobId],
+    );
     // Session NOT abandoned; marker cleared → recovery is never suppressed for a still-live session.
     expect(row.session_id).toBe('fat-empty-xyz');
     expect(row.compacting_session_id).toBeNull();
@@ -230,18 +242,22 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     expect(row.pending_compaction_seed).toContain('lean handoff summary');
     expect(row.compacting_session_id).toBe('fat-complete-1'); // kept until the fresh session is born
 
-    const pills: Array<{ meta: { compactionSummary?: string } }> = await dataSource.query(
-      `SELECT meta FROM messages WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
-      [jobId],
-    );
+    const pills: Array<{ meta: { compactionSummary?: string } }> =
+      await dataSource.query(
+        `SELECT meta FROM messages WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
+        [jobId],
+      );
     expect(pills).toHaveLength(1);
     expect(pills[0].meta.compactionSummary).toBe('lean handoff summary');
   }, 30_000);
 
   describe('compaction floor (shouldSkipCompaction)', () => {
     const skip = (jobId: string) =>
-      (mgr as unknown as { shouldSkipCompaction: (j: string) => Promise<boolean> })
-        .shouldSkipCompaction(jobId);
+      (
+        mgr as unknown as {
+          shouldSkipCompaction: (j: string) => Promise<boolean>;
+        }
+      ).shouldSkipCompaction(jobId);
 
     // Seed a brain turn_meta block (no phaseId) with a given occupancy; build blocks carry phaseId.
     const seedTurnMeta = async (
@@ -291,14 +307,16 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
   it('is a no-op when there is no live session to compact', async () => {
     const { jobId, repoId } = await seedJobWithSession(null);
 
-    await (mgr as unknown as {
-      runCompaction: (
-        s: ChatStimulus,
-        sandbox: { worktreePath: string; containerId?: string | null },
-        row: { session_id: string | null } | null,
-        sessionId: string | undefined,
-      ) => Promise<void>;
-    }).runCompaction(
+    await (
+      mgr as unknown as {
+        runCompaction: (
+          s: ChatStimulus,
+          sandbox: { worktreePath: string; containerId?: string | null },
+          row: { session_id: string | null } | null,
+          sessionId: string | undefined,
+        ) => Promise<void>;
+      }
+    ).runCompaction(
       stim(jobId, repoId),
       { worktreePath: '/tmp/compaction-it-worktree', containerId: null },
       { session_id: null },
@@ -306,10 +324,11 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     );
 
     // No reseed, no pill — nothing was compacted.
-    const [row]: Array<{ pending_compaction_seed: string | null }> = await dataSource.query(
-      `SELECT pending_compaction_seed FROM job_sandboxes WHERE job_id = $1`,
-      [jobId],
-    );
+    const [row]: Array<{ pending_compaction_seed: string | null }> =
+      await dataSource.query(
+        `SELECT pending_compaction_seed FROM job_sandboxes WHERE job_id = $1`,
+        [jobId],
+      );
     expect(row.pending_compaction_seed).toBeNull();
     const msgs: Array<{ n: string }> = await dataSource.query(
       `SELECT count(*)::text AS n FROM messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
@@ -321,7 +340,9 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
-  await q(`DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`);
+  await q(
+    `DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
+  );
   await q(`DELETE FROM job_sandboxes WHERE org_id = $1`);
   await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM repos WHERE org_id = $1`);

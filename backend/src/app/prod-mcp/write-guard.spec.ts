@@ -21,7 +21,8 @@ describe('assertSingleWriteStatement', () => {
   });
 
   it('accepts a WITH ... UPDATE statement', () => {
-    const sql = 'WITH t AS (SELECT id FROM x) UPDATE x SET a=1 WHERE id IN (SELECT id FROM t)';
+    const sql =
+      'WITH t AS (SELECT id FROM x) UPDATE x SET a=1 WHERE id IN (SELECT id FROM t)';
     expect(assertSingleWriteStatement(sql)).toBe(sql);
   });
 
@@ -42,9 +43,7 @@ describe('assertSingleWriteStatement', () => {
   });
 
   it('rejects a whitespace-only string', () => {
-    expect(() => assertSingleWriteStatement('   ')).toThrow(
-      'sql is required',
-    );
+    expect(() => assertSingleWriteStatement('   ')).toThrow('sql is required');
   });
 
   it('rejects a SELECT', () => {
@@ -53,14 +52,15 @@ describe('assertSingleWriteStatement', () => {
     );
   });
 
-  it.each(['DROP TABLE x', 'CREATE TABLE x (id int)', 'ALTER TABLE x ADD COLUMN y int'])(
-    'rejects %s',
-    (sql) => {
-      expect(() => assertSingleWriteStatement(sql)).toThrow(
-        'only single-statement INSERT/UPDATE/DELETE/WITH writes are allowed',
-      );
-    },
-  );
+  it.each([
+    'DROP TABLE x',
+    'CREATE TABLE x (id int)',
+    'ALTER TABLE x ADD COLUMN y int',
+  ])('rejects %s', (sql) => {
+    expect(() => assertSingleWriteStatement(sql)).toThrow(
+      'only single-statement INSERT/UPDATE/DELETE/WITH writes are allowed',
+    );
+  });
 
   it('rejects GRANT', () => {
     expect(() => assertSingleWriteStatement('GRANT ALL ON x TO y')).toThrow(

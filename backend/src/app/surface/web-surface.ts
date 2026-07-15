@@ -1,9 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
-import type { ChatSurface, InboundChatMessage, PostOptions } from './chat-surface.port';
+import type {
+  ChatSurface,
+  InboundChatMessage,
+  PostOptions,
+} from './chat-surface.port';
 import type { SeedRow } from '../domain/stimulus';
 import type { AgentMessage } from '../prompt-kit/message';
-import { SYSTEM_SEED_AUTHOR, wrapSystemNotification } from './chat-surface.port';
+import {
+  SYSTEM_SEED_AUTHOR,
+  wrapSystemNotification,
+} from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
 import { webApprovalCard } from './web-approval-card';
@@ -101,7 +108,11 @@ export class WebSurface implements ChatSurface {
   /** Control channel: operator resume requests (POST /web/resume) — the driver subscribes via the port. */
   private readonly resumeSubject = new Subject<{ jobId: string }>();
   /** Thread metadata updates (e.g. an auto-generated title) — the SSE controller fans these to clients. */
-  private readonly threadMetaSubject = new Subject<{ channel: string; jobId: string; title: string }>();
+  private readonly threadMetaSubject = new Subject<{
+    channel: string;
+    jobId: string;
+    title: string;
+  }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
   readonly outbox: WebOutboundMessage[] = [];
@@ -123,7 +134,12 @@ export class WebSurface implements ChatSurface {
    * Approval-card button clicks — the web surface module subscribes and resolves the gate via
    * `DecisionApprovalService.resolve`. Decoupled: the surface never imports the brain.
    */
-  get approval$(): Observable<{ actionId: string; value: string; ruledBy: string; note?: string }> {
+  get approval$(): Observable<{
+    actionId: string;
+    value: string;
+    ruledBy: string;
+    note?: string;
+  }> {
     return this.approvalSubject.asObservable();
   }
 
@@ -133,7 +149,11 @@ export class WebSurface implements ChatSurface {
   }
 
   /** Thread metadata updates (title) — the SSE controller maps these to `{ type: 'thread_meta' }` frames. */
-  get threadMeta$(): Observable<{ channel: string; jobId: string; title: string }> {
+  get threadMeta$(): Observable<{
+    channel: string;
+    jobId: string;
+    title: string;
+  }> {
     return this.threadMetaSubject.asObservable();
   }
 
@@ -172,9 +192,13 @@ export class WebSurface implements ChatSurface {
       ...(opts.seedQuestionId ? { seedQuestionId: opts.seedQuestionId } : {}),
       ...(opts.seedFileId ? { seedFileId: opts.seedFileId } : {}),
       ...(opts.seedSecretId ? { seedSecretId: opts.seedSecretId } : {}),
-      ...(opts.seedQuestionIds?.length ? { seedQuestionIds: opts.seedQuestionIds } : {}),
+      ...(opts.seedQuestionIds?.length
+        ? { seedQuestionIds: opts.seedQuestionIds }
+        : {}),
       ...(opts.seedFileIds?.length ? { seedFileIds: opts.seedFileIds } : {}),
-      ...(opts.seedSecretIds?.length ? { seedSecretIds: opts.seedSecretIds } : {}),
+      ...(opts.seedSecretIds?.length
+        ? { seedSecretIds: opts.seedSecretIds }
+        : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
       ...(opts.priority ? { priority: opts.priority } : {}),
       ...(opts.card ? { card: opts.card } : {}),
@@ -226,12 +250,22 @@ export class WebSurface implements ChatSurface {
       authorId: SYSTEM_SEED_AUTHOR.id,
       authorName: SYSTEM_SEED_AUTHOR.name,
       ...(opts.orgId ? { orgId: opts.orgId } : {}),
-      ...(opts.deliveredQuestionId ? { seedQuestionId: opts.deliveredQuestionId } : {}),
+      ...(opts.deliveredQuestionId
+        ? { seedQuestionId: opts.deliveredQuestionId }
+        : {}),
       ...(opts.deliveredFileId ? { seedFileId: opts.deliveredFileId } : {}),
-      ...(opts.deliveredSecretId ? { seedSecretId: opts.deliveredSecretId } : {}),
-      ...(opts.deliveredQuestionIds?.length ? { seedQuestionIds: opts.deliveredQuestionIds } : {}),
-      ...(opts.deliveredFileIds?.length ? { seedFileIds: opts.deliveredFileIds } : {}),
-      ...(opts.deliveredSecretIds?.length ? { seedSecretIds: opts.deliveredSecretIds } : {}),
+      ...(opts.deliveredSecretId
+        ? { seedSecretId: opts.deliveredSecretId }
+        : {}),
+      ...(opts.deliveredQuestionIds?.length
+        ? { seedQuestionIds: opts.deliveredQuestionIds }
+        : {}),
+      ...(opts.deliveredFileIds?.length
+        ? { seedFileIds: opts.deliveredFileIds }
+        : {}),
+      ...(opts.deliveredSecretIds?.length
+        ? { seedSecretIds: opts.deliveredSecretIds }
+        : {}),
       ...(opts.seedRow ? { seedRow: opts.seedRow } : {}),
     });
   }
@@ -241,9 +275,21 @@ export class WebSurface implements ChatSurface {
    * `POST /web/approve`). Emits on `approval$` so the module bridge can resolve the gate without
    * the surface importing `DecisionApprovalService` (no circular dep).
    */
-  receiveApprovalClick(actionId: string, value: string, ruledBy: string, note?: string): void {
-    this.logger.debug(`receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`);
-    this.approvalSubject.next({ actionId, value, ruledBy, ...(note ? { note } : {}) });
+  receiveApprovalClick(
+    actionId: string,
+    value: string,
+    ruledBy: string,
+    note?: string,
+  ): void {
+    this.logger.debug(
+      `receiveApprovalClick action=${actionId} ruledBy=${ruledBy}`,
+    );
+    this.approvalSubject.next({
+      actionId,
+      value,
+      ruledBy,
+      ...(note ? { note } : {}),
+    });
   }
 
   // ── OUTBOUND (ChatSurface contract) ─────────────────────────────────────────────────────────────
@@ -255,7 +301,11 @@ export class WebSurface implements ChatSurface {
    * the blocks are converted to a `WebApprovalCard` payload so the web client can render the card
    * with its action buttons — no Slack-specific shapes leak to the web layer.
    */
-  async post(channel: string, text: string, opts: PostOptions = {}): Promise<string | undefined> {
+  async post(
+    channel: string,
+    text: string,
+    opts: PostOptions = {},
+  ): Promise<string | undefined> {
     const ts = this.mintTs();
 
     let card: WebApprovalCard | undefined;
@@ -301,7 +351,8 @@ export class WebSurface implements ChatSurface {
   channelMessages(channel: string, threadTs?: string): WebOutboundMessage[] {
     return this.outbox.filter(
       (m) =>
-        m.channel === channel && (threadTs === undefined || m.threadTs === threadTs),
+        m.channel === channel &&
+        (threadTs === undefined || m.threadTs === threadTs),
     );
   }
 
@@ -331,7 +382,9 @@ function detectAndConvertApprovalCard(
   let meta: { jobId: string; decisionRecordId?: string } | undefined;
   for (const block of blocks) {
     if (block.type !== 'actions') continue;
-    const elements = block.elements as Array<Record<string, unknown>> | undefined;
+    const elements = block.elements as
+      | Array<Record<string, unknown>>
+      | undefined;
     if (!elements) continue;
     for (const el of elements) {
       if (el.action_id !== APPROVE_ACTION_ID) continue;
@@ -362,7 +415,9 @@ function detectAndConvertApprovalCard(
   // The headline is either "*Plan proposal — <title>*" (full ceremony) or "*Direct build — <title>*"
   // (fast path); the list block is labelled "*Threads*" or "*Changes*" to match.
   let kind: 'plan' | 'direct' = 'plan';
-  let title = text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() || text;
+  let title =
+    text.replace(/^(?:Plan proposal|Direct build)\s*[—-]\s*/, '').trim() ||
+    text;
 
   for (const block of blocks) {
     if (block.type === 'thread') {
@@ -371,7 +426,9 @@ function detectAndConvertApprovalCard(
       if (raw.startsWith('*Plan proposal') || raw.startsWith('*Direct build')) {
         kind = raw.startsWith('*Direct build') ? 'direct' : 'plan';
         // Extract title from the headline block.
-        const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(raw);
+        const match = /(?:Plan proposal|Direct build)\s*[—-]\s*(.+)\*$/.exec(
+          raw,
+        );
         if (match) title = match[1].trim();
       } else if (!summary) {
         summary = raw;
@@ -387,9 +444,10 @@ function detectAndConvertApprovalCard(
         // provenance tag is an optional leading group so the greedy ruling capture is unaffected.
         const lines = raw.split('\n').slice(1);
         for (const line of lines) {
-          const m = /^•\s+(?:\[(confirmed|authored)\]\s+)?\*(.+?)\*\s+_\((.+?)\)_\s+[—-]\s+(.+)$/.exec(
-            line.trim(),
-          );
+          const m =
+            /^•\s+(?:\[(confirmed|authored)\]\s+)?\*(.+?)\*\s+_\((.+?)\)_\s+[—-]\s+(.+)$/.exec(
+              line.trim(),
+            );
           if (m) {
             decisions.push({
               title: m[2],
@@ -402,7 +460,9 @@ function detectAndConvertApprovalCard(
       }
     }
     if (block.type === 'actions') {
-      const elements = block.elements as Array<Record<string, unknown>> | undefined;
+      const elements = block.elements as
+        | Array<Record<string, unknown>>
+        | undefined;
       for (const el of elements ?? []) {
         if (typeof el.url === 'string') planUrl = el.url;
       }
@@ -411,7 +471,9 @@ function detectAndConvertApprovalCard(
 
   return webApprovalCard({
     jobId: meta.jobId,
-    ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}),
+    ...(meta.decisionRecordId
+      ? { decisionRecordId: meta.decisionRecordId }
+      : {}),
     kind,
     title,
     summary,

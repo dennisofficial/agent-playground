@@ -45,7 +45,9 @@ const threadItem = z.object({
   brief: z.string().optional(),
   type: z.string().optional(),
   steps: z
-    .array(z.object({ title: z.string().optional(), brief: z.string().optional() }))
+    .array(
+      z.object({ title: z.string().optional(), brief: z.string().optional() }),
+    )
     .optional(),
 });
 
@@ -84,7 +86,9 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_update: {
     taskId: z.string(),
-    status: z.enum(['pending', 'in_progress', 'completed', 'deleted']).optional(),
+    status: z
+      .enum(['pending', 'in_progress', 'completed', 'deleted'])
+      .optional(),
     subject: z.string().optional(),
     description: z.string().optional(),
     activeForm: z.string().optional(),
@@ -396,8 +400,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   block_thread:
     'Voluntarily HALT this thread — you cannot make progress this turn and there is nothing to poll for. ' +
     'Use complete_thread when done instead.',
-  record_leg_handoff: 'Record a handoff note for the next leg of this thread before you stop.',
-  record_deviation: 'Log a one-line off-spec change you made so it surfaces to the operator.',
+  record_leg_handoff:
+    'Record a handoff note for the next leg of this thread before you stop.',
+  record_deviation:
+    'Log a one-line off-spec change you made so it surfaces to the operator.',
   task_create:
     'Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it ' +
     'up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.',
@@ -417,19 +423,23 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
 
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
-  get_pipeline_state: 'Read the current pipeline state (threads, decisions, plan) for this job.',
+  get_pipeline_state:
+    'Read the current pipeline state (threads, decisions, plan) for this job.',
   get_decision_record: 'Read the full decision record for this job.',
   dispatch_build:
     'Start the approved build after the base-check (branches internally: full plan → build pipeline, direct → in-session implement).',
   hold_build:
     'Hold the approved build and return to planning when the rebased base makes the plan redundant or requires revision (reason surfaced to the operator).',
-  finalize_build: 'Finalize the build once every thread is complete and verified.',
+  finalize_build:
+    'Finalize the build once every thread is complete and verified.',
   list_mcp_servers: 'List the MCP servers configured for this org/repo.',
   list_skills: 'List the skills available to this workspace.',
-  list_convention_profiles: 'List the convention (house-style) profiles for this repo.',
+  list_convention_profiles:
+    'List the convention (house-style) profiles for this repo.',
   recall: 'Recall stored facts relevant to an optional query.',
   remember: 'Store a durable fact at the given scope for later recall.',
-  ask_question: 'Ask the operator a question, optionally with pickable options and a decision class.',
+  ask_question:
+    'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',
   withdraw_plan: 'Withdraw the current proposed plan.',
   withdraw_ship:
@@ -439,9 +449,12 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',
   delete_decision: 'Delete a decision by id.',
-  review_plan: 'Review and revise the current plan overview, goal, decisions, and threads.',
-  propose_plan: 'Propose a plan: an overview, goal, decisions, and the threads to build.',
-  start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
+  review_plan:
+    'Review and revise the current plan overview, goal, decisions, and threads.',
+  propose_plan:
+    'Propose a plan: an overview, goal, decisions, and the threads to build.',
+  start_direct_build:
+    'Start a direct build with a summary, change outline, and decisions.',
   create_job:
     'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',
   list_jobs:
@@ -456,25 +469,28 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   request_secret:
     'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
-  request_file: 'Request a file from the operator at a given path, with a description.',
+  request_file:
+    'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
-  withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
+  withdraw_secret_request:
+    'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script:
     'Write the per-sandbox cold-boot setup script for this workspace — idempotent commands that ARM the box ' +
     '(install deps, build, index) start-ready. It does NOT start runtime services (docker/DB/app server); ' +
     'those are started on demand by the turn that needs them.',
   read_setup_script:
-    'Read the repo\'s current cold-boot setup script (the raw body, not just its length) so you can edit it ' +
+    "Read the repo's current cold-boot setup script (the raw body, not just its length) so you can edit it " +
     'safely before calling write_setup_script — which REPLACES the whole script. Returns { ok, present, script }.',
   write_preview_instructions:
-    'Save the repo\'s PREVIEW RECIPE ({ instructions }) — how to stand up this repo\'s demo-ready preview ' +
+    "Save the repo's PREVIEW RECIPE ({ instructions }) — how to stand up this repo's demo-ready preview " +
     'stack (envs, ports, compose/migrate/seed, deep-link). Injected into the "Spin up preview" seed for every ' +
     'job on this repo (no PR). REPLACES the whole recipe — read_preview_instructions FIRST to amend. Blank clears it.',
   read_preview_instructions:
-    'Read the repo\'s current PREVIEW RECIPE (raw body) so you can edit it safely before write_preview_instructions ' +
+    "Read the repo's current PREVIEW RECIPE (raw body) so you can edit it safely before write_preview_instructions " +
     '(which overwrites the whole thing). Returns { ok, present, instructions }.',
-  derive_secret: 'Derive and store a secret file at a path from a computed value.',
+  derive_secret:
+    'Derive and store a secret file at a path from a computed value.',
   reset_sandbox:
     'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +
     'CONTAINER only (worktree + session survive). `hard:true`: recreates the WHOLE sandbox from scratch — ' +
@@ -484,14 +500,17 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'a dirty tree or unpushed commits (the host never commits for you — commit + push first). The reset ' +
     'happens on your NEXT turn — call it, then STOP.',
   propose_skill: 'Propose a new skill for this org or repo, with rationale.',
-  propose_skill_install: 'Propose installing a skill from a source URL for this org or repo.',
-  request_skill_edit_access: 'Request edit access to an existing skill, with rationale.',
+  propose_skill_install:
+    'Propose installing a skill from a source URL for this org or repo.',
+  request_skill_edit_access:
+    'Request edit access to an existing skill, with rationale.',
   propose_skill_removal: 'Propose removing a skill from this org or repo.',
   propose_mcp_servers:
     'Propose one or more MCP servers for this org or repo. Use authKind:"oauth" (http/sse, no secret slot) ' +
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
-  propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
+  propose_convention_profile:
+    'Propose a new convention (house-style) profile for this repo.',
   finish_onboarding:
     'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
     'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
@@ -500,7 +519,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 
   // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query:
-    'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON\'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c "SELECT ... FROM \'<file>\'"`, or Read a line-range (offset/limit).',
+    "Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c \"SELECT ... FROM '<file>'\"`, or Read a line-range (offset/limit).",
   atlas_schema:
     'List every public table and its columns (name, data type, nullability) from information_schema — the map for writing atlas_query SQL.',
   atlas_job_overview:
@@ -509,7 +528,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Raw Claude Code session JSONL for a job — list sessions, render a session (atlas-tx `show` semantics), or grep across sessions.',
   atlas_context_read:
     "A job's durable /context dir (specs/generated/artifacts) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
-  atlas_worktree_tree: "A job's git worktree file tree (skips .git, node_modules).",
+  atlas_worktree_tree:
+    "A job's git worktree file tree (skips .git, node_modules).",
   atlas_worktree_file: "One file's contents from a job's git worktree.",
   propose_prod_write:
     'Propose an arbitrary single-statement SQL WRITE (INSERT/UPDATE/DELETE/WITH) against the production ' +

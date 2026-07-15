@@ -22,7 +22,12 @@ import { OrganizationService } from './organization.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [OrganizationEntity, OrganizationMemberEntity, OrgInviteEntity, UserEntity],
+      [
+        OrganizationEntity,
+        OrganizationMemberEntity,
+        OrgInviteEntity,
+        UserEntity,
+      ],
       DB_CONNECTION,
     ),
   ],

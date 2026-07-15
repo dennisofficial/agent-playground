@@ -34,7 +34,10 @@ export interface RawNotification {
  * mapping; the intake seam adds the id, `receivedAt`, `jobId` (the seeded thread), and the
  * `kind`/`trust`/`source` invariants.
  */
-export type ParsedEvent = Omit<EventStimulus, 'id' | 'receivedAt' | 'kind' | 'trust' | 'jobId'>;
+export type ParsedEvent = Omit<
+  EventStimulus,
+  'id' | 'receivedAt' | 'kind' | 'trust' | 'jobId'
+>;
 
 /** Why an adapter rejected a request — surfaced as the HTTP status the controller returns. */
 export type IngressRejectionReason =

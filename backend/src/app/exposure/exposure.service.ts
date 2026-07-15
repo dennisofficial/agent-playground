@@ -11,7 +11,11 @@ import { JobEntity } from '../persistence/entities';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { CaddyAdminClient } from './caddy-admin.client';
 import { hostFor, routeId, routePrefix, urlFor } from './exposure-naming';
-import { derivePortState, readServiceMarkers, serviceStatus } from './service-markers';
+import {
+  derivePortState,
+  readServiceMarkers,
+  serviceStatus,
+} from './service-markers';
 
 /**
  * Drives Caddy to publish a thread sandbox's live, opted-in dev-servers at deterministic preview URLs.
@@ -28,11 +32,15 @@ export class ExposureService {
     @Inject(SANDBOX_PROVIDER) private readonly provider: SandboxProvider,
     private readonly caddy: CaddyAdminClient,
     private readonly env: EnvService,
-    @InjectRepository(JobEntity, DB_CONNECTION) private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   private secret(): string {
-    return this.env.get('PREVIEW_ID_SECRET') ?? this.env.get('SECRETS_ENCRYPTION_KEY');
+    return (
+      this.env.get('PREVIEW_ID_SECRET') ??
+      this.env.get('SECRETS_ENCRYPTION_KEY')
+    );
   }
 
   private baseDomain(): string | undefined {
@@ -67,7 +75,9 @@ export class ExposureService {
   async reconcile(jobId: string): Promise<void> {
     const dir = this.provider.supervisorDirHost(jobId);
     const markers = dir ? readServiceMarkers(dir) : [];
-    const allPgids = markers.map((m) => m.pgid).filter((p): p is number => p != null);
+    const allPgids = markers
+      .map((m) => m.pgid)
+      .filter((p): p is number => p != null);
     const probe = await this.provider
       .probeLiveness(jobId, allPgids)
       .catch(() => ({ status: 'unknown' }) as ServiceLivenessProbe);
@@ -76,14 +86,23 @@ export class ExposureService {
     // flaps the badge (mirrors the Caddy `unknown` guard below). Change-gated: no row UPDATE, no WAL delta
     // when unchanged.
     if (!(markers.length > 0 && probe.status === 'unknown')) {
-      const portState = derivePortState(markers, probe, (m) => this.urlFor(jobId, m.name) != null);
+      const portState = derivePortState(
+        markers,
+        probe,
+        (m) => this.urlFor(jobId, m.name) != null,
+      );
       await this.jobs
         .createQueryBuilder()
         .update()
         .set({ port_state: portState })
-        .where('id = :id AND port_state IS DISTINCT FROM :ps', { id: jobId, ps: portState })
+        .where('id = :id AND port_state IS DISTINCT FROM :ps', {
+          id: jobId,
+          ps: portState,
+        })
         .execute()
-        .catch((err) => this.logger.debug(`persist port_state(${jobId}) failed: ${err}`));
+        .catch((err) =>
+          this.logger.debug(`persist port_state(${jobId}) failed: ${err}`),
+        );
     }
 
     if (!this.enabled) return;
@@ -97,7 +116,9 @@ export class ExposureService {
     // (`up`/`down`). On `unknown` with markers present, leave the existing routes + bridge untouched.
     if (exposable.length > 0 && probe.status === 'unknown') return;
 
-    const desired = exposable.filter((m) => serviceStatus(m, probe) === 'running');
+    const desired = exposable.filter(
+      (m) => serviceStatus(m, probe) === 'running',
+    );
 
     const secret = this.secret();
     const prefix = routePrefix(jobId, secret);
@@ -105,7 +126,9 @@ export class ExposureService {
     if (desired.length === 0) {
       await this.caddy
         .deleteRoutesByPrefix(prefix)
-        .catch((err) => this.logger.debug(`deleteRoutesByPrefix(${prefix}) failed: ${err}`));
+        .catch((err) =>
+          this.logger.debug(`deleteRoutesByPrefix(${prefix}) failed: ${err}`),
+        );
       await this.provider
         .unbridgeCaddyFromSandbox(jobId)
         .catch((err) => this.logger.debug(`unbridge(${jobId}) failed: ${err}`));
@@ -114,7 +137,9 @@ export class ExposureService {
 
     await this.provider
       .bridgeCaddyToSandbox(jobId)
-      .catch((err) => this.logger.warn(`bridgeCaddyToSandbox(${jobId}) failed: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`bridgeCaddyToSandbox(${jobId}) failed: ${err}`),
+      );
 
     const upstreamHost = this.provider.sandboxContainerName(jobId);
     const desiredRouteIds = new Set<string>();
@@ -138,7 +163,9 @@ export class ExposureService {
       for (const id of stale) {
         await this.caddy
           .deleteRoute(id)
-          .catch((err) => this.logger.debug(`deleteRoute(${id}) failed: ${err}`));
+          .catch((err) =>
+            this.logger.debug(`deleteRoute(${id}) failed: ${err}`),
+          );
       }
     } catch (err) {
       this.logger.debug(`stale-route reconcile for ${jobId} failed: ${err}`);
@@ -161,7 +188,12 @@ export class ExposureService {
       .update()
       .set({ port_state: null })
       .where('port_state IS NOT NULL');
-    if (jobIds.length > 0) qb.andWhere('id NOT IN (:...live)', { live: jobIds });
-    await qb.execute().catch((err) => this.logger.debug(`port_state teardown sweep failed: ${err}`));
+    if (jobIds.length > 0)
+      qb.andWhere('id NOT IN (:...live)', { live: jobIds });
+    await qb
+      .execute()
+      .catch((err) =>
+        this.logger.debug(`port_state teardown sweep failed: ${err}`),
+      );
   }
 }

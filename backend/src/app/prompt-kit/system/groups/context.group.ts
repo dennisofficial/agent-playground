@@ -11,7 +11,11 @@ import { isBuildBrain } from '../conditions';
 @FragmentGroup()
 export class ContextGroup {
   /** The /context shared folder. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1150, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1150,
+    condition: isBuildBrain,
+  })
   contextFolder(): string {
     return [
       'THE /context SHARED FOLDER: `/context` is a durable, per-thread space OUTSIDE the repo, shared with the',
@@ -32,7 +36,7 @@ export class ContextGroup {
       '    `# <goal>` H1 may be revised until you submit. WHY THE CADENCE IS NON-NEGOTIABLE — CONTEXT ROT: what you',
       '    hold only in your head is the FIRST thing lost when your session is compacted at approval or degrades',
       '    under a filling window. The instant a thread is understood, its understanding belongs on disk in',
-      "    `sections/NN.md` — a durable artifact survives compaction; your working memory does not. Batching the",
+      '    `sections/NN.md` — a durable artifact survives compaction; your working memory does not. Batching the',
       '    write-up to the end gambles the whole plan against a window that is rotting the longer you wait.',
       '  • `/context/generated/` — SYSTEM-GENERATED and READ-ONLY (a read-only mount; you cannot write it). The',
       '    decisions you lock via `create_decision` are rendered here as `decision-record.md`, live, on every call.',
@@ -46,7 +50,11 @@ export class ContextGroup {
   }
 
   /** normal block 15b — default to an HTML preview for UI work + link /context files. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1152, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1152,
+    condition: isBuildBrain,
+  })
   uiPreviewAndLinks(): string {
     return [
       "UI PREVIEW BY DEFAULT — SHOW, DON'T DESCRIBE: when the work creates or meaningfully alters a",
@@ -65,7 +73,7 @@ export class ContextGroup {
       '    capture of the REAL running app).',
       "  • Build it against the app's REAL fonts/tokens/components where you can, so it reads true.",
       '  • DELEGATE the prototype build to the dedicated `prototype` subagent, NAMING the exact',
-      '    `/context/artifacts/<file>` for it to write. It DISCOVERS the app\'s real design system (tokens,',
+      "    `/context/artifacts/<file>` for it to write. It DISCOVERS the app's real design system (tokens,",
       '    theme, fonts, components) and reproduces it faithfully, then renders and self-checks the mockup — so',
       '    what you show the operator is on-brand, not a generic guess. It returns only a summary (the file +',
       '    the design sources it used), so the raw HTML never rots your planning context. Then reference it.',

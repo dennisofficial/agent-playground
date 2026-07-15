@@ -36,31 +36,51 @@ function makeManager(opts: {
 }) {
   const store = {
     getQuestionCard: opts.getQuestionCard ?? vi.fn().mockResolvedValue(null),
-    markQuestionDelivered: opts.markQuestionDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markQuestionDelivered:
+      opts.markQuestionDelivered ?? vi.fn().mockResolvedValue(undefined),
     getSecretCard: opts.getSecretCard ?? vi.fn().mockResolvedValue(null),
-    markSecretDelivered: opts.markSecretDelivered ?? vi.fn().mockResolvedValue(undefined),
-    clearAwaitingSecret: opts.clearAwaitingSecret ?? vi.fn().mockResolvedValue(undefined),
+    markSecretDelivered:
+      opts.markSecretDelivered ?? vi.fn().mockResolvedValue(undefined),
+    clearAwaitingSecret:
+      opts.clearAwaitingSecret ?? vi.fn().mockResolvedValue(undefined),
     getFileCard: opts.getFileCard ?? vi.fn().mockResolvedValue(null),
-    markFileDelivered: opts.markFileDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markFileDelivered:
+      opts.markFileDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const stimulusStore = {
     findChatStimulusById: opts.findChatStimulusById,
-    markChatDelivered: opts.markChatDelivered ?? vi.fn().mockResolvedValue(undefined),
+    markChatDelivered:
+      opts.markChatDelivered ?? vi.fn().mockResolvedValue(undefined),
   };
   const inert = {} as never;
   const manager = new AgentSessionManager(
     store as never, // store (1)
-    inert, inert, inert, inert, inert, // driverStore, autoMerge, memory, approvals, lifecycle (6)
+    inert,
+    inert,
+    inert,
+    inert,
+    inert, // driverStore, autoMerge, memory, approvals, lifecycle (6)
     inert, // engineRunner (7)
     inert, // turnRegistry (8)
-    inert, inert, inert, // planReview, dispatcher, surface (11)
+    inert,
+    inert,
+    inert, // planReview, dispatcher, surface (11)
     inert, // sandboxRows (12)
     inert, // stimulusRows (13)
     stimulusStore as never, // stimulusStore (14)
-    inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+    inert,
+    inert,
+    inert,
+    inert,
+    inert,
+    inert,
+    inert, // turnHarness…creds (21)
     inert, // mcp (22)
     inert, // election (23)
-    inert, inert, inert, inert, // turnRecovery…git (27)
+    inert,
+    inert,
+    inert,
+    inert, // turnRecovery…git (27)
     inert, // prompts (PromptService)
     inert, // threadInput (ThreadInputService)
     inert, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -76,7 +96,9 @@ async function flush() {
 }
 
 function callStampInputAck(manager: AgentSessionManager, e: EngineEvent) {
-  (manager as unknown as { stampInputAck: (e: EngineEvent) => void }).stampInputAck(e);
+  (
+    manager as unknown as { stampInputAck: (e: EngineEvent) => void }
+  ).stampInputAck(e);
 }
 
 describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () => {
@@ -105,13 +127,11 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const findChatStimulusById = vi
       .fn()
       .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
-    const getSecretCard = vi
-      .fn()
-      .mockResolvedValue({
-        provided_at: new Date('2026-07-02T12:00:00Z'),
-        delivered_at: null,
-        ephemeral: true,
-      });
+    const getSecretCard = vi.fn().mockResolvedValue({
+      provided_at: new Date('2026-07-02T12:00:00Z'),
+      delivered_at: null,
+      ephemeral: true,
+    });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getSecretCard,
@@ -131,9 +151,10 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const findChatStimulusById = vi
       .fn()
       .mockResolvedValue(stimulusStub({ seedFileId: 'f1' }));
-    const getFileCard = vi
-      .fn()
-      .mockResolvedValue({ provided_at: new Date('2026-07-02T12:00:00Z'), delivered_at: null });
+    const getFileCard = vi.fn().mockResolvedValue({
+      provided_at: new Date('2026-07-02T12:00:00Z'),
+      delivered_at: null,
+    });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getFileCard,
@@ -163,7 +184,9 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const findChatStimulusById = vi
       .fn()
       .mockResolvedValue(stimulusStub({ seedQuestionId: 'q1' }));
-    const getQuestionCard = vi.fn().mockResolvedValue({ answer: null, deliveredAt: null });
+    const getQuestionCard = vi
+      .fn()
+      .mockResolvedValue({ answer: null, deliveredAt: null });
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getQuestionCard,
@@ -183,7 +206,9 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const getQuestionCard = vi
       .fn()
       .mockResolvedValue({ answer: 'yes', deliveredAt: null });
-    const markQuestionDelivered = vi.fn().mockRejectedValue(new Error('db write failed'));
+    const markQuestionDelivered = vi
+      .fn()
+      .mockRejectedValue(new Error('db write failed'));
     const { manager, stimulusStore } = makeManager({
       findChatStimulusById,
       getQuestionCard,
@@ -223,14 +248,14 @@ describe('AgentSessionManager.stampInputAck / markCardDeliveredForStimulus', () 
     const findChatStimulusById = vi
       .fn()
       .mockResolvedValue(stimulusStub({ seedSecretId: 's1' }));
-    const getSecretCard = vi
+    const getSecretCard = vi.fn().mockResolvedValue({
+      provided_at: new Date('2026-07-02T12:00:00Z'),
+      delivered_at: null,
+      ephemeral: true,
+    });
+    const clearAwaitingSecret = vi
       .fn()
-      .mockResolvedValue({
-        provided_at: new Date('2026-07-02T12:00:00Z'),
-        delivered_at: null,
-        ephemeral: true,
-      });
-    const clearAwaitingSecret = vi.fn().mockRejectedValue(new Error('gate clear failed'));
+      .mockRejectedValue(new Error('gate clear failed'));
     const { manager, store, stimulusStore } = makeManager({
       findChatStimulusById,
       getSecretCard,

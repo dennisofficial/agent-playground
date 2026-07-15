@@ -2,7 +2,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { type FeatureSandbox } from '../git';
 import { McpResolver } from '../mcp';
 import { WorkspaceConfigStore } from '../onboarding';
-import { SANDBOX_PROVIDER, type SandboxMilestoneStage, type SandboxProvider } from '../sandbox';
+import {
+  SANDBOX_PROVIDER,
+  type SandboxMilestoneStage,
+  type SandboxProvider,
+} from '../sandbox';
 import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
@@ -51,7 +55,9 @@ export class WorktreeProvisioner {
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
   ) {}
 
-  async provisionAndAttach(input: ProvisionAndAttachInput): Promise<ProvisionAndAttachResult> {
+  async provisionAndAttach(
+    input: ProvisionAndAttachInput,
+  ): Promise<ProvisionAndAttachResult> {
     const { sandbox, orgId, jobId, repoDbId } = input;
     const worktreePath = sandbox.worktreePath;
 
@@ -65,21 +71,33 @@ export class WorktreeProvisioner {
     if (repoDbId) {
       await this.config
         .importLegacyIfEmpty(orgId, repoDbId, worktreePath)
-        .catch((err) => this.logger.debug(`legacy workspace config import skipped (continuing): ${err}`));
+        .catch((err) =>
+          this.logger.debug(
+            `legacy workspace config import skipped (continuing): ${err}`,
+          ),
+        );
     }
 
     // Mounts are cheap to (re)compute and must be passed on EVERY attach (a cold recreate needs them).
-    const mounts = repoDbId ? await this.hydrator.resolveMounts(orgId, repoDbId, worktreePath) : [];
+    const mounts = repoDbId
+      ? await this.hydrator.resolveMounts(orgId, repoDbId, worktreePath)
+      : [];
 
     // The repo's cold-boot setup script — resolved like the mounts and passed on EVERY attach; `attach` runs it
     // only on a COLD bring-up and folds its hash into the recreate fingerprint. Failures ride back on the
     // returned sandbox (`setupScriptResult`); `JobLifecycleService` stamps them + wakes the brain (this
     // provisioner has no brain access, so it never surfaces them itself).
-    const setupScript = repoDbId ? await this.config.getSetupScript(orgId, repoDbId) : null;
+    const setupScript = repoDbId
+      ? await this.config.getSetupScript(orgId, repoDbId)
+      : null;
 
     // File hydration is gated: re-run only when the manifest/secret/grant signature changed, or when
     // forced (a freshly cut or restored worktree has no files yet).
-    const hydrationSig = await this.hydrator.computeSig(worktreePath, orgId, repoDbId);
+    const hydrationSig = await this.hydrator.computeSig(
+      worktreePath,
+      orgId,
+      repoDbId,
+    );
     if (input.forceHydrate || hydrationSig !== input.knownSig) {
       const { notices } = await this.hydrator.hydrateFiles({
         worktreePath,
@@ -96,7 +114,11 @@ export class WorktreeProvisioner {
             text: `⚠ workspace config — ${notices.length} issue(s): ${notices.join('; ')}`,
             at: new Date().toISOString(),
           })
-          .catch((err) => this.logger.debug(`worktree notice append failed (continuing): ${err}`));
+          .catch((err) =>
+            this.logger.debug(
+              `worktree notice append failed (continuing): ${err}`,
+            ),
+          );
       }
     }
 
@@ -116,10 +138,16 @@ export class WorktreeProvisioner {
     // (`mcp_servers.scope`), so resolve by `repoDbId` — NOT `sandbox.repoId`, which is the slug-valued
     // container/worktree name (see SandboxProvider.repoId doc). Passing the slug silently resolves to `[]`.
     if (repoDbId && this.sandboxProvider.kickMcpHubRefresh) {
-      const servers = await this.mcp.resolveForSandbox(orgId, repoDbId).catch(() => []);
+      const servers = await this.mcp
+        .resolveForSandbox(orgId, repoDbId)
+        .catch(() => []);
       void this.sandboxProvider
         .kickMcpHubRefresh({ jobId, servers })
-        .catch((err) => this.logger.debug(`mcp-hub refresh kick skipped (continuing): ${err}`));
+        .catch((err) =>
+          this.logger.debug(
+            `mcp-hub refresh kick skipped (continuing): ${err}`,
+          ),
+        );
     }
 
     return { sandbox: attached, hydrationSig };

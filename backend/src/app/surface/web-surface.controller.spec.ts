@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { formatReviewComments, mapMessageSource } from './web-surface.controller';
+import {
+  formatReviewComments,
+  mapMessageSource,
+} from './web-surface.controller';
 
 /**
  * `formatReviewComments` is what actually drives Atlas's turn (the `review_comments_card` persisted
@@ -31,7 +34,9 @@ describe('formatReviewComments', () => {
   });
 
   it('omits the <note> element for a comment with no note', () => {
-    const text = formatReviewComments([{ file: 'plan.md', quote: 'quote only' }]);
+    const text = formatReviewComments([
+      { file: 'plan.md', quote: 'quote only' },
+    ]);
     expect(text).toContain('<quote>quote only</quote>');
     expect(text).not.toContain('<note>');
   });
@@ -41,7 +46,9 @@ describe('formatReviewComments', () => {
       [{ file: 'plan.md', quote: 'q' }],
       'please also double-check the retry logic',
     );
-    expect(text).toContain('<message>please also double-check the retry logic</message>');
+    expect(text).toContain(
+      '<message>please also double-check the retry logic</message>',
+    );
   });
 
   it('omits <message> for a whitespace-only message', () => {
@@ -61,16 +68,23 @@ describe('formatReviewComments', () => {
           oldEnd: 3,
           newStart: 10,
           newEnd: 10,
-          fragment: '- const lines = [headers.join(",")];\n+ const lines = [headers.map(escapeCell).join(",")];',
+          fragment:
+            '- const lines = [headers.join(",")];\n+ const lines = [headers.map(escapeCell).join(",")];',
         },
       },
     ]);
-    expect(text).toContain('<comment file="src/csv-export.ts" old-lines="3" new-lines="10">');
+    expect(text).toContain(
+      '<comment file="src/csv-export.ts" old-lines="3" new-lines="10">',
+    );
     expect(text).toContain('```diff');
     expect(text).toContain('- const lines = [headers.join(",")];');
-    expect(text).toContain('+ const lines = [headers.map(escapeCell).join(",")];');
+    expect(text).toContain(
+      '+ const lines = [headers.map(escapeCell).join(",")];',
+    );
     // note is XML-escaped
-    expect(text).toContain('<note>use the helper &amp; keep &lt;T&gt; generic</note>');
+    expect(text).toContain(
+      '<note>use the helper &amp; keep &lt;T&gt; generic</note>',
+    );
     expect(text).not.toContain('<quote>');
   });
 
@@ -79,7 +93,12 @@ describe('formatReviewComments', () => {
       {
         file: 'a.ts',
         quote: '- gone',
-        lines: { path: 'src/a.ts', oldStart: 20, oldEnd: 21, fragment: '- gone();\n- also();' },
+        lines: {
+          path: 'src/a.ts',
+          oldStart: 20,
+          oldEnd: 21,
+          fragment: '- gone();\n- also();',
+        },
       },
     ]);
     expect(text).toContain('old-lines="20-21"');

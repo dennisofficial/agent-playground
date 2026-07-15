@@ -46,12 +46,19 @@ export class WorkspaceSecretFileStore {
   }
 
   /** All secret files for an org (paths + labels, never values), optionally scoped to one repo. */
-  async list(orgId: string, repoId?: string): Promise<WorkspaceSecretFileRef[]> {
+  async list(
+    orgId: string,
+    repoId?: string,
+  ): Promise<WorkspaceSecretFileRef[]> {
     const rows = await this.files.find({
       where: repoId ? { org_id: orgId, repo_id: repoId } : { org_id: orgId },
       select: ['repo_id', 'path', 'label'],
     });
-    return rows.map((r) => ({ repoId: r.repo_id, path: r.path, label: r.label ?? null }));
+    return rows.map((r) => ({
+      repoId: r.repo_id,
+      path: r.path,
+      label: r.label ?? null,
+    }));
   }
 
   /**
@@ -59,7 +66,10 @@ export class WorkspaceSecretFileStore {
    * re-hydration sig computation. A rotated value bumps `updated_at`, so the sig changes and the next
    * attach re-renders it; an added/removed row changes the path set.
    */
-  async listForRepo(orgId: string, repoId: string): Promise<WorkspaceSecretFileVersion[]> {
+  async listForRepo(
+    orgId: string,
+    repoId: string,
+  ): Promise<WorkspaceSecretFileVersion[]> {
     const rows = await this.files.find({
       where: { org_id: orgId, repo_id: repoId },
       select: ['path', 'label', 'updated_at'],
@@ -72,8 +82,14 @@ export class WorkspaceSecretFileStore {
   }
 
   /** Decrypted value for (orgId, repoId, path), or null when no row exists. Not cached (cold provision path). */
-  async read(orgId: string, repoId: string, path: string): Promise<string | null> {
-    const row = await this.files.findOne({ where: { org_id: orgId, repo_id: repoId, path } });
+  async read(
+    orgId: string,
+    repoId: string,
+    path: string,
+  ): Promise<string | null> {
+    const row = await this.files.findOne({
+      where: { org_id: orgId, repo_id: repoId, path },
+    });
     return row ? decryptSecret(row.value_enc, this.key()) : null;
   }
 
@@ -90,17 +106,22 @@ export class WorkspaceSecretFileStore {
   ): Promise<void> {
     const key = this.key();
     const row =
-      (await this.files.findOne({ where: { org_id: orgId, repo_id: repoId, path } })) ??
-      this.files.create({ org_id: orgId, repo_id: repoId, path });
+      (await this.files.findOne({
+        where: { org_id: orgId, repo_id: repoId, path },
+      })) ?? this.files.create({ org_id: orgId, repo_id: repoId, path });
     row.value_enc = encryptSecret(value, key);
     if (label !== undefined) row.label = label;
     await this.files.save(row);
-    this.logger.log(`wrote workspace secret file org=${orgId} repo=${repoId} path=${path}`);
+    this.logger.log(
+      `wrote workspace secret file org=${orgId} repo=${repoId} path=${path}`,
+    );
   }
 
   /** Delete a secret file at (orgId, repoId, path). */
   async delete(orgId: string, repoId: string, path: string): Promise<void> {
     await this.files.delete({ org_id: orgId, repo_id: repoId, path });
-    this.logger.log(`deleted workspace secret file org=${orgId} repo=${repoId} path=${path}`);
+    this.logger.log(
+      `deleted workspace secret file org=${orgId} repo=${repoId} path=${path}`,
+    );
   }
 }

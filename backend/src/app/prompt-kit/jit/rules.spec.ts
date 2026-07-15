@@ -4,8 +4,14 @@
  * specs are the guardrail for that parity, alongside the driver/engine specs that consume the same catalog.
  */
 import { describe, it, expect } from 'vitest';
-import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
-import { PREVIEW_PREP_SEED_BODY, composePreviewPrepSeed } from '../system/fragments';
+import {
+  ROTATION_REMINDER_NUDGE,
+  ROTATION_SOFT_NUDGE,
+} from '../messages/build-handoff';
+import {
+  PREVIEW_PREP_SEED_BODY,
+  composePreviewPrepSeed,
+} from '../system/fragments';
 import {
   JIT_RULES,
   bgTaskCapRule,
@@ -20,7 +26,10 @@ import {
 } from './rules';
 import { validateJitRules } from './rule';
 import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
-import { detectGithubHtmlUrl, renderGithubFetchNudge } from './github-fetch-guard';
+import {
+  detectGithubHtmlUrl,
+  renderGithubFetchNudge,
+} from './github-fetch-guard';
 import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 
@@ -32,21 +41,30 @@ describe('svcNudgeRule', () => {
     'nohup ./run.sh',
     'node server.js &',
     'uvicorn app:app --reload',
-  ])('trigger.match fires on %j (parity with detectLongRunningCommand)', (cmd) => {
-    if (svcNudgeRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
-    expect(svcNudgeRule.trigger.match(cmd)).not.toBeNull();
-  });
-
-  it.each(['pnpm test', 'pnpm build', 'git status', 'atlas-svc run --name web -- pnpm dev'])(
-    'trigger.match does NOT fire on %j',
+  ])(
+    'trigger.match fires on %j (parity with detectLongRunningCommand)',
     (cmd) => {
-      if (svcNudgeRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
-      expect(svcNudgeRule.trigger.match(cmd)).toBeNull();
+      if (svcNudgeRule.trigger.kind !== 'tool-match')
+        throw new Error('expected tool-match trigger');
+      expect(svcNudgeRule.trigger.match(cmd)).not.toBeNull();
     },
   );
 
+  it.each([
+    'pnpm test',
+    'pnpm build',
+    'git status',
+    'atlas-svc run --name web -- pnpm dev',
+  ])('trigger.match does NOT fire on %j', (cmd) => {
+    if (svcNudgeRule.trigger.kind !== 'tool-match')
+      throw new Error('expected tool-match trigger');
+    expect(svcNudgeRule.trigger.match(cmd)).toBeNull();
+  });
+
   it('render is byte-identical to renderSvcNudge', () => {
-    expect(svcNudgeRule.render({ command: 'vite' })).toBe(renderSvcNudge('vite'));
+    expect(svcNudgeRule.render({ command: 'vite' })).toBe(
+      renderSvcNudge('vite'),
+    );
   });
 
   it('throttle mirrors svcNudgeShouldFire at the declared delta', () => {
@@ -63,28 +81,38 @@ describe('githubFetchGuardRule', () => {
     'https://github.com/owner/repo/issues/1',
     'https://gist.github.com/someone/abc',
   ])('trigger.match fires on %j (parity with detectGithubHtmlUrl)', (url) => {
-    if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
-    expect(githubFetchGuardRule.trigger.match(url)).toBe(detectGithubHtmlUrl(url));
+    if (githubFetchGuardRule.trigger.kind !== 'url-match')
+      throw new Error('expected url-match trigger');
+    expect(githubFetchGuardRule.trigger.match(url)).toBe(
+      detectGithubHtmlUrl(url),
+    );
     expect(githubFetchGuardRule.trigger.match(url)).not.toBeNull();
   });
 
-  it.each(['https://raw.githubusercontent.com/o/r/main/f', 'https://api.github.com/repos/o/r', 'not a url'])(
-    'trigger.match does NOT fire on %j',
-    (url) => {
-      if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
-      expect(githubFetchGuardRule.trigger.match(url)).toBeNull();
-    },
-  );
+  it.each([
+    'https://raw.githubusercontent.com/o/r/main/f',
+    'https://api.github.com/repos/o/r',
+    'not a url',
+  ])('trigger.match does NOT fire on %j', (url) => {
+    if (githubFetchGuardRule.trigger.kind !== 'url-match')
+      throw new Error('expected url-match trigger');
+    expect(githubFetchGuardRule.trigger.match(url)).toBeNull();
+  });
 
   it('watches the fetch tools and delivers as PostToolUse additionalContext', () => {
-    if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
-    expect(githubFetchGuardRule.trigger.toolMatcher).toBe('WebFetch|mcp__fetch__.*');
+    if (githubFetchGuardRule.trigger.kind !== 'url-match')
+      throw new Error('expected url-match trigger');
+    expect(githubFetchGuardRule.trigger.toolMatcher).toBe(
+      'WebFetch|mcp__fetch__.*',
+    );
     expect(githubFetchGuardRule.delivery).toBe('postToolUse-additionalContext');
   });
 
   it('render is byte-identical to renderGithubFetchNudge, empty when absent', () => {
     const url = 'https://github.com/owner/repo/tree/main';
-    expect(githubFetchGuardRule.render({ url })).toBe(renderGithubFetchNudge(url));
+    expect(githubFetchGuardRule.render({ url })).toBe(
+      renderGithubFetchNudge(url),
+    );
     expect(githubFetchGuardRule.render({})).toBe(renderGithubFetchNudge(''));
   });
 
@@ -97,8 +125,11 @@ describe('installAwarenessRule', () => {
   it.each(['pnpm add eslint', 'apt-get install doctl', 'pnpm remove eslint'])(
     'trigger.match fires on %j (parity with detectInstallCommand)',
     (cmd) => {
-      if (installAwarenessRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
-      expect(installAwarenessRule.trigger.match(cmd)).toBe(detectInstallCommand(cmd)?.label ?? null);
+      if (installAwarenessRule.trigger.kind !== 'tool-match')
+        throw new Error('expected tool-match trigger');
+      expect(installAwarenessRule.trigger.match(cmd)).toBe(
+        detectInstallCommand(cmd)?.label ?? null,
+      );
       expect(installAwarenessRule.trigger.match(cmd)).not.toBeNull();
     },
   );
@@ -106,13 +137,16 @@ describe('installAwarenessRule', () => {
   it.each(['pnpm install', 'npm ci', 'pnpm outdated', 'git status'])(
     'trigger.match does NOT fire on %j',
     (cmd) => {
-      if (installAwarenessRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+      if (installAwarenessRule.trigger.kind !== 'tool-match')
+        throw new Error('expected tool-match trigger');
       expect(installAwarenessRule.trigger.match(cmd)).toBeNull();
     },
   );
 
   it('renders the host-supplied text verbatim, and empty when absent', () => {
-    expect(installAwarenessRule.render({ installAwarenessText: 'checklist text' })).toBe('checklist text');
+    expect(
+      installAwarenessRule.render({ installAwarenessText: 'checklist text' }),
+    ).toBe('checklist text');
     expect(installAwarenessRule.render({})).toBe('');
   });
 
@@ -123,7 +157,8 @@ describe('installAwarenessRule', () => {
 
 describe('legRotationRule', () => {
   it('declares the operator-chosen thresholds', () => {
-    if (legRotationRule.trigger.kind !== 'token-threshold') throw new Error('expected token-threshold trigger');
+    if (legRotationRule.trigger.kind !== 'token-threshold')
+      throw new Error('expected token-threshold trigger');
     expect(legRotationRule.trigger.softTokens).toBe(150_000);
     expect(legRotationRule.trigger.reminderDeltaTokens).toBe(25_000);
   });
@@ -134,13 +169,16 @@ describe('legRotationRule', () => {
   });
 
   it('renders the REMINDER nudge for phase "reminder"', () => {
-    expect(legRotationRule.render({ phase: 'reminder' })).toBe(ROTATION_REMINDER_NUDGE);
+    expect(legRotationRule.render({ phase: 'reminder' })).toBe(
+      ROTATION_REMINDER_NUDGE,
+    );
   });
 });
 
 describe('bgTaskCapRule', () => {
   it('declares the default hold cap and byte-identical notice', () => {
-    if (bgTaskCapRule.trigger.kind !== 'hold-timer') throw new Error('expected hold-timer trigger');
+    if (bgTaskCapRule.trigger.kind !== 'hold-timer')
+      throw new Error('expected hold-timer trigger');
     expect(bgTaskCapRule.trigger.holdMs).toBe(600_000);
     expect(bgTaskCapRule.render({})).toBe(BG_TASK_CAP_NOTICE);
   });
@@ -148,19 +186,26 @@ describe('bgTaskCapRule', () => {
 
 describe('previewPrepRule', () => {
   it('is a lifecycle preview-requested rule delivered as a host seed notice', () => {
-    expect(previewPrepRule.trigger).toEqual({ kind: 'lifecycle', event: 'preview-requested' });
+    expect(previewPrepRule.trigger).toEqual({
+      kind: 'lifecycle',
+      event: 'preview-requested',
+    });
     expect(previewPrepRule.delivery).toBe('host-seed-notice');
     expect(previewPrepRule.render({})).toContain(PREVIEW_PREP_SEED_BODY);
   });
 
   it('carries the shipped seed label + chunkKey', () => {
     expect(previewPrepRule.seed?.label).toBe('Spin up preview requested');
-    expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:preview:J');
+    expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe(
+      'seed:preview:J',
+    );
   });
 
   it('splices the saved preview recipe body verbatim inside the managed fence', () => {
     const recipe = '  export WEB_PORT=3000\npnpm seed\nOpen /dashboard\n';
-    expect(composePreviewPrepSeed(recipe)).toContain('```md\n' + recipe + '```');
+    expect(composePreviewPrepSeed(recipe)).toContain(
+      '```md\n' + recipe + '```',
+    );
   });
 });
 
@@ -176,7 +221,9 @@ describe('memoryPrependRule (turn-prefix rail, d18)', () => {
   });
 
   it('renders the supplied prepend text (the rail the follow-up recall job fills)', () => {
-    expect(memoryPrependRule.render({ prependText: 'memory: prefers pnpm' })).toBe('memory: prefers pnpm');
+    expect(
+      memoryPrependRule.render({ prependText: 'memory: prefers pnpm' }),
+    ).toBe('memory: prefers pnpm');
   });
 
   it('operatorMessageRules() enumerates it', () => {

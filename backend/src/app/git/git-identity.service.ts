@@ -14,7 +14,9 @@ export class GitIdentityService {
   private readonly cache = new Map<string, SandboxGitIdentity>();
   constructor(private readonly github: GithubPrService) {}
 
-  async resolve(token: string | undefined): Promise<SandboxGitIdentity | undefined> {
+  async resolve(
+    token: string | undefined,
+  ): Promise<SandboxGitIdentity | undefined> {
     if (!token) return undefined;
     if (this.cache.has(token)) return this.cache.get(token);
     let u: Awaited<ReturnType<GithubPrService['getAuthenticatedUser']>>;

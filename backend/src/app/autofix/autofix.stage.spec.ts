@@ -19,15 +19,30 @@ function mockHarness(): {
 } {
   const finish = vi.fn(async () => {});
   const abort = vi.fn(async () => {});
-  const harness = { onEvent: vi.fn(), finish, abort, emitPrompt: vi.fn(async () => {}) };
+  const harness = {
+    onEvent: vi.fn(),
+    finish,
+    abort,
+    emitPrompt: vi.fn(async () => {}),
+  };
   const create = vi.fn(() => harness);
-  return { factory: { create } as unknown as TurnHarnessFactory, create, finish, abort };
+  return {
+    factory: { create } as unknown as TurnHarnessFactory,
+    create,
+    finish,
+    abort,
+  };
 }
 
 /** A context that supplies its own changedFiles so the stage never shells out to git for the review framing. */
 const ctx: AutoFixContext = {
   worktreePath: '/tmp/wt',
-  sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'autofix' },
+  sandboxKey: {
+    orgId: 'acme',
+    repoId: 'atlas',
+    jobId: 'feat',
+    type: 'autofix',
+  },
   gitRange: 'abc123..HEAD',
   changedFiles: ['src/x.ts'],
   intent: 'add a y constant',
@@ -52,7 +67,9 @@ function reportWith(findings: Array<Record<string, unknown>>): string {
  */
 /** The lens id embedded in a review turn's `sandboxKey.subId` (`review-<lensId>`), or undefined off-lens. */
 function reviewLensId(sandboxKey: EngineHomeKey): string | undefined {
-  return sandboxKey.subId?.startsWith('review-') ? sandboxKey.subId.slice('review-'.length) : undefined;
+  return sandboxKey.subId?.startsWith('review-')
+    ? sandboxKey.subId.slice('review-'.length)
+    : undefined;
 }
 
 type EngineCall = {
@@ -90,11 +107,17 @@ function mockEngine(opts: {
         modelReasoningEffort: args.modelReasoningEffort,
       });
       if (args.mode === 'execute') {
-        return { result: opts.fixReport ?? 'fixed finding 1', sessionId: 'fix-sess' };
+        return {
+          result: opts.fixReport ?? 'fixed finding 1',
+          sessionId: 'fix-sess',
+        };
       }
       // review turn — pick the report by the lens embedded in the sandbox key.
       const lensId = reviewLensId(args.sandboxKey);
-      return { result: opts.reviewReports[lensId ?? ''] ?? reportWith([]), sessionId: `rev-${lensId}` };
+      return {
+        result: opts.reviewReports[lensId ?? ''] ?? reportWith([]),
+        sessionId: `rev-${lensId}`,
+      };
     },
   );
   return { engine: { run } as unknown as EngineRunnerPort, calls };
@@ -107,7 +130,9 @@ function mockEngine(opts: {
  * on the post-turn read (agent committed) vs stay at base (nothing to fix). `commitAll` is kept on the mock
  * only to assert the host NEVER calls it.
  */
-function mockGit(opts: { hasChanges?: boolean; didCommit?: boolean; sha?: string } = {}): {
+function mockGit(
+  opts: { hasChanges?: boolean; didCommit?: boolean; sha?: string } = {},
+): {
   git: LocalGitService;
   commitAll: ReturnType<typeof vi.fn>;
   headSha: ReturnType<typeof vi.fn>;
@@ -117,7 +142,9 @@ function mockGit(opts: { hasChanges?: boolean; didCommit?: boolean; sha?: string
   const didCommit = opts.didCommit ?? true;
   let call = 0;
   // First read = pre-fix base; subsequent reads = the agent's commit sha (advanced) or base (no commit).
-  const headSha = vi.fn(async () => (++call === 1 ? base : didCommit ? committed : base));
+  const headSha = vi.fn(async () =>
+    ++call === 1 ? base : didCommit ? committed : base,
+  );
   const commitAll = vi.fn(async () => 'HOST-COMMIT-MUST-NOT-HAPPEN');
   const git = {
     hasChanges: vi.fn(async () => opts.hasChanges ?? false),
@@ -131,8 +158,12 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   it('fans out one review pass PER lens (N passes) and aggregates findings', async () => {
     const { engine, calls } = mockEngine({
       reviewReports: {
-        l1: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'finding A' }]),
-        l2: reportWith([{ severity: 'medium', file: 'src/y.ts', title: 'finding B' }]),
+        l1: reportWith([
+          { severity: 'high', file: 'src/x.ts', title: 'finding A' },
+        ]),
+        l2: reportWith([
+          { severity: 'medium', file: 'src/y.ts', title: 'finding B' },
+        ]),
       },
     });
     const { git } = mockGit({ sha: 'sha-1' });
@@ -143,15 +174,22 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const reviewCalls = calls.filter((c) => c.mode === 'review');
     expect(reviewCalls).toHaveLength(2); // N = number of lenses
     expect(summary.lensesRun).toEqual(['l1', 'l2']);
-    expect(summary.findings.map((f) => f.title).sort()).toEqual(['finding A', 'finding B']);
+    expect(summary.findings.map((f) => f.title).sort()).toEqual([
+      'finding A',
+      'finding B',
+    ]);
     expect(summary.clean).toBe(false);
   });
 
   it('dedupes findings the same finding flagged by multiple lenses', async () => {
     const { engine } = mockEngine({
       reviewReports: {
-        l1: reportWith([{ severity: 'low', file: 'src/x.ts', title: 'Missing guard.' }]),
-        l2: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'missing guard' }]),
+        l1: reportWith([
+          { severity: 'low', file: 'src/x.ts', title: 'Missing guard.' },
+        ]),
+        l2: reportWith([
+          { severity: 'high', file: 'src/x.ts', title: 'missing guard' },
+        ]),
       },
     });
     const { git } = mockGit({ sha: 'sha-1' });
@@ -167,7 +205,14 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   it('applies fixes via an execute turn — the fix AGENT commits, the host reads HEAD (no host commit)', async () => {
     const { engine, calls } = mockEngine({
       reviewReports: {
-        l1: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'finding A', detail: 'fix it' }]),
+        l1: reportWith([
+          {
+            severity: 'high',
+            file: 'src/x.ts',
+            title: 'finding A',
+            detail: 'fix it',
+          },
+        ]),
         l2: reportWith([]),
       },
       fixReport: 'I fixed finding A.',
@@ -184,7 +229,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.fixesAttempted).toBe(true);
     expect(summary.fixReport).toBe('I fixed finding A.');
     expect(summary.commits).toEqual([
-      { sha: 'commitsha1', message: expect.stringContaining('thread review fixes') },
+      {
+        sha: 'commitsha1',
+        message: expect.stringContaining('thread review fixes'),
+      },
     ]);
   });
 
@@ -201,7 +249,11 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([finding]) },
       fixReport: 'fixed finding A.',
     });
-    const claudeStage = new AutoFixStage(claude.engine, mockGit({ sha: 'claude-sha' }).git, mockHarness().factory);
+    const claudeStage = new AutoFixStage(
+      claude.engine,
+      mockGit({ sha: 'claude-sha' }).git,
+      mockHarness().factory,
+    );
 
     await claudeStage.runReviewLens(ctx, LENSES[0]);
     expect(claude.calls[0]).toMatchObject({
@@ -221,7 +273,11 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
       reviewReports: { l1: reportWith([finding]) },
       fixReport: 'fixed finding A.',
     });
-    const codexStage = new AutoFixStage(codex.engine, mockGit({ sha: 'codex-sha' }).git, mockHarness().factory);
+    const codexStage = new AutoFixStage(
+      codex.engine,
+      mockGit({ sha: 'codex-sha' }).git,
+      mockHarness().factory,
+    );
 
     await codexStage.runReviewLens(ctx, LENSES[0], { engine: 'codex' });
     expect(codex.calls[0]).toMatchObject({ mode: 'review', engine: 'codex' });
@@ -234,7 +290,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
 
   it('PR-tail mode tags the commit message + summary mode (from the agent-authored HEAD)', async () => {
     const { engine } = mockEngine({
-      reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]),
+        l2: reportWith([]),
+      },
     });
     const { git, commitAll } = mockGit({ sha: 'prsha' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
@@ -244,7 +303,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     expect(summary.mode).toBe('pull_request');
     expect(commitAll).not.toHaveBeenCalled();
     expect(summary.commits).toEqual([
-      { sha: 'prsha', message: expect.stringContaining('PR-tail review fixes') },
+      {
+        sha: 'prsha',
+        message: expect.stringContaining('PR-tail review fixes'),
+      },
     ]);
   });
 
@@ -258,7 +320,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
-    const summary = await stage.autofixThread(ctx, { lenses: LENSES, fixMinSeverity: 'medium' });
+    const summary = await stage.autofixThread(ctx, {
+      lenses: LENSES,
+      fixMinSeverity: 'medium',
+    });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(false);
     expect(commitAll).not.toHaveBeenCalled();
@@ -268,12 +333,18 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
 
   it('report-only (applyFixes:false) reviews but never writes/commits', async () => {
     const { engine, calls } = mockEngine({
-      reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]),
+        l2: reportWith([]),
+      },
     });
     const { git, commitAll } = mockGit({});
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
 
-    const summary = await stage.autofixThread(ctx, { lenses: LENSES, applyFixes: false });
+    const summary = await stage.autofixThread(ctx, {
+      lenses: LENSES,
+      applyFixes: false,
+    });
 
     expect(calls.some((c) => c.mode === 'execute')).toBe(false);
     expect(commitAll).not.toHaveBeenCalled();
@@ -319,7 +390,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
 
   it('produces no commit when the fix agent changes nothing (HEAD unchanged from base)', async () => {
     const { engine } = mockEngine({
-      reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]),
+        l2: reportWith([]),
+      },
     });
     // The fix turn ran but the agent found nothing worth changing → clean tree, HEAD still at base.
     const { git, commitAll } = mockGit({ didCommit: false });
@@ -334,7 +408,10 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
 
   it('reports no commit when the fix agent LEFT a dirty tree (forgot to commit its own work)', async () => {
     const { engine } = mockEngine({
-      reviewReports: { l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]), l2: reportWith([]) },
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', title: 'x', file: 'a.ts' }]),
+        l2: reportWith([]),
+      },
     });
     // The agent wrote changes but did NOT commit — the host must NOT commit on its behalf; report empty.
     const { git, commitAll } = mockGit({ hasChanges: true });
@@ -349,13 +426,19 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
 
   it('a single failed review pass is dropped, not fatal (other lenses still aggregate)', async () => {
     const calls: Array<{ mode: string; sandboxKey: EngineHomeKey }> = [];
-    const run = vi.fn(async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
-      calls.push({ mode: args.mode, sandboxKey: args.sandboxKey });
-      if (args.mode === 'execute') return { result: 'fixed' };
-      const lensId = reviewLensId(args.sandboxKey);
-      if (lensId === 'l1') throw new Error('engine boom');
-      return { result: reportWith([{ severity: 'high', file: 'a.ts', title: 'survivor' }]) };
-    });
+    const run = vi.fn(
+      async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
+        calls.push({ mode: args.mode, sandboxKey: args.sandboxKey });
+        if (args.mode === 'execute') return { result: 'fixed' };
+        const lensId = reviewLensId(args.sandboxKey);
+        if (lensId === 'l1') throw new Error('engine boom');
+        return {
+          result: reportWith([
+            { severity: 'high', file: 'a.ts', title: 'survivor' },
+          ]),
+        };
+      },
+    );
     const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({ sha: 's' });
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
@@ -368,15 +451,17 @@ describe('AutoFixStage — fan-out + aggregate + fix + commit', () => {
   it('respects the configured concurrency cap (batched fan-out)', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const run = vi.fn(async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
-      if (args.mode === 'review') {
-        inFlight++;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise((r) => setTimeout(r, 5));
-        inFlight--;
-      }
-      return { result: reportWith([]) };
-    });
+    const run = vi.fn(
+      async (args: { mode: string; sandboxKey: EngineHomeKey }) => {
+        if (args.mode === 'review') {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+        }
+        return { result: reportWith([]) };
+      },
+    );
     const engine = { run } as unknown as EngineRunnerPort;
     const { git } = mockGit({});
     const stage = new AutoFixStage(engine, git, mockHarness().factory);
@@ -405,7 +490,9 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
   it('streams each lens + the fix turn on its own lane with the meta contract', async () => {
     const { engine, calls } = mockEngine({
       reviewReports: {
-        l1: reportWith([{ severity: 'high', file: 'src/x.ts', title: 'A', detail: 'fix it' }]),
+        l1: reportWith([
+          { severity: 'high', file: 'src/x.ts', title: 'A', detail: 'fix it' },
+        ]),
         l2: reportWith([]),
       },
       fixReport: 'fixed A',
@@ -417,9 +504,10 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
     await stage.autofixThread(streamCtx, { lenses: LENSES });
 
     // A harness per turn: 2 review lenses + 1 fix turn, each on its own sub-lane.
-    const byLane = new Map<string, { jobId: string; channel: string; metaTag: unknown }>(
-      h.create.mock.calls.map((c) => [c[0].lane, c[0]]),
-    );
+    const byLane = new Map<
+      string,
+      { jobId: string; channel: string; metaTag: unknown }
+    >(h.create.mock.calls.map((c) => [c[0].lane, c[0]]));
     expect([...byLane.keys()].sort()).toEqual([
       'autofix:thread-1:fix',
       'autofix:thread-1:l1',
@@ -436,13 +524,18 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
       fixTurn: true,
     });
     // Every engine turn opted into rich streaming + forwarded events; each harness was finished.
-    expect(calls.every((c) => c.richStream === true && c.hasOnEvent)).toBe(true);
+    expect(calls.every((c) => c.richStream === true && c.hasOnEvent)).toBe(
+      true,
+    );
     expect(h.finish).toHaveBeenCalledTimes(3);
   });
 
   it('does NOT create a harness (nor richStream) when the ctx carries no streaming identity', async () => {
     const { engine, calls } = mockEngine({
-      reviewReports: { l1: reportWith([{ severity: 'high', file: 'a.ts', title: 'A' }]), l2: reportWith([]) },
+      reviewReports: {
+        l1: reportWith([{ severity: 'high', file: 'a.ts', title: 'A' }]),
+        l2: reportWith([]),
+      },
     });
     const { git } = mockGit({ sha: 's' });
     const h = mockHarness();
@@ -456,7 +549,12 @@ describe('AutoFixStage — streaming onto the transcript spine', () => {
 
   it('aborts (not finishes) the lens harness when a review pass throws', async () => {
     const run = vi.fn(
-      async (args: { mode: string; sandboxKey: EngineHomeKey; richStream?: boolean; onEvent?: unknown }) => {
+      async (args: {
+        mode: string;
+        sandboxKey: EngineHomeKey;
+        richStream?: boolean;
+        onEvent?: unknown;
+      }) => {
         if (args.mode === 'review' && args.sandboxKey.subId === 'review-l1') {
           throw new Error('engine boom');
         }
@@ -488,19 +586,29 @@ describe('AutoFixStage — framework lens injects skill bodies into the runtime 
 
   const frameworkCtx: AutoFixContext = {
     ...ctx,
-    frameworkBodies: [{ name: 'react-review-checklist', body: `# Rules\n\n- ${injectedRule}` }],
+    frameworkBodies: [
+      { name: 'react-review-checklist', body: `# Rules\n\n- ${injectedRule}` },
+    ],
   };
 
   it('hands the injected skill body to engine.run and parses the returned finding', async () => {
     let capturedTask: string | undefined;
     let capturedMode: string | undefined;
     const run = vi.fn(
-      async (args: { mode: string; task: string; sandboxKey: EngineHomeKey }) => {
+      async (args: {
+        mode: string;
+        task: string;
+        sandboxKey: EngineHomeKey;
+      }) => {
         capturedTask = args.task;
         capturedMode = args.mode;
         return {
           result: reportWith([
-            { severity: 'high', file: 'src/List.tsx', title: 'array index used as key' },
+            {
+              severity: 'high',
+              file: 'src/List.tsx',
+              title: 'array index used as key',
+            },
           ]),
           sessionId: 'rev-framework',
         };
@@ -518,6 +626,10 @@ describe('AutoFixStage — framework lens injects skill bodies into the runtime 
     expect(capturedTask).toContain('react-review-checklist');
     // …and the returned report was parsed into a finding tagged with the framework lens.
     expect(findings).toHaveLength(1);
-    expect(findings[0]).toMatchObject({ lens: 'framework', severity: 'high', file: 'src/List.tsx' });
+    expect(findings[0]).toMatchObject({
+      lens: 'framework',
+      severity: 'high',
+      file: 'src/List.tsx',
+    });
   });
 });

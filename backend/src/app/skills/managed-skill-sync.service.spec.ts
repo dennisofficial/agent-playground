@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,7 +43,14 @@ let gitEntry: { url: string; subpath: string; ref: string } | undefined;
 vi.mock('./system-skill-registry', () => ({
   buildSystemSkills: () =>
     gitEntry
-      ? [{ name: 'fixture-skill', description: 'd', surfaces: ['build'], git: gitEntry }]
+      ? [
+          {
+            name: 'fixture-skill',
+            description: 'd',
+            surfaces: ['build'],
+            git: gitEntry,
+          },
+        ]
       : [],
 }));
 
@@ -53,7 +67,10 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
     store = join(tmp, 'store');
     initRepo(join(tmp, 'work'));
     mkdirSync(work, { recursive: true });
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: fixture-skill\ndescription: v1\n---\nBody v1.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: fixture-skill\ndescription: v1\n---\nBody v1.\n',
+    );
   });
 
   afterEach(() => {
@@ -62,11 +79,16 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
   });
 
   function make(): ManagedSkillSyncService {
-    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? store : undefined) } as EnvService;
+    const env = {
+      get: (key: string) => (key === 'SKILLS_ROOT' ? store : undefined),
+    } as EnvService;
     const git = new LocalGitService({ get: () => undefined } as never);
     return new ManagedSkillSyncService(
       git,
-      { onPromote: () => ({ unsubscribe() {} }), onDemote: () => ({ unsubscribe() {} }) } as unknown as LeaderElectionService,
+      {
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as unknown as LeaderElectionService,
       env,
     );
   }
@@ -94,7 +116,10 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
     await svc.syncAll(); // remote unchanged — must be a no-op
     expect(existsSync(join(dest, 'SENTINEL.txt'))).toBe(true);
 
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: fixture-skill\ndescription: v2\n---\nBody v2.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: fixture-skill\ndescription: v2\n---\nBody v2.\n',
+    );
     commitAndBare(join(tmp, 'work'), sourceUrl);
     await svc.syncAll();
     expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('v2');
@@ -103,16 +128,28 @@ describe('ManagedSkillSyncService (real git, local fixture repo)', () => {
 
   it('is fail-soft: a bad subpath is skipped, not thrown, and never crashes syncAll', async () => {
     commitAndBare(join(tmp, 'work'), sourceUrl);
-    gitEntry = { url: sourceUrl, subpath: 'skills/does-not-exist', ref: 'main' };
+    gitEntry = {
+      url: sourceUrl,
+      subpath: 'skills/does-not-exist',
+      ref: 'main',
+    };
     const svc = make();
     await expect(svc.syncAll()).resolves.toBeUndefined();
-    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(false);
+    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(
+      false,
+    );
   });
 
   it('is fail-soft: an unreachable remote is skipped, not thrown', async () => {
-    gitEntry = { url: join(tmp, 'does-not-exist.git'), subpath: 'skills/fixture-skill', ref: 'main' };
+    gitEntry = {
+      url: join(tmp, 'does-not-exist.git'),
+      subpath: 'skills/fixture-skill',
+      ref: 'main',
+    };
     const svc = make();
     await expect(svc.syncAll()).resolves.toBeUndefined();
-    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(false);
+    expect(existsSync(managedGitSkillDirHost(store, 'fixture-skill'))).toBe(
+      false,
+    );
   });
 });

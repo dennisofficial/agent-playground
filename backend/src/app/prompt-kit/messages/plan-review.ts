@@ -27,14 +27,22 @@ export type PlanReviewInput = {
  * reviewer task — the operator's GOAL (falling back to the overview when unset) + the overview. Single
  * source so the eval's calibration harness can never drift from what the real review turn actually reads.
  */
-export function renderReviewIntent(input: { goal: string; overview: string }): string {
+export function renderReviewIntent(input: {
+  goal: string;
+  overview: string;
+}): string {
   const intent = [
     '<intent>',
     'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
     '',
     `GOAL: ${input.goal || '(see overview)'}`,
   ];
-  intent.push('', "OVERVIEW (Atlas's framing of the work):", input.overview, '</intent>');
+  intent.push(
+    '',
+    "OVERVIEW (Atlas's framing of the work):",
+    input.overview,
+    '</intent>',
+  );
   return intent.join('\n');
 }
 
@@ -96,7 +104,10 @@ export function renderPlanForReview(input: PlanReviewInput): AgentMessage {
  * adjudicate per the <output_contract>'s RE-REVIEW rule (concede what's fixed, hold firm on what stands,
  * don't manufacture ever-smaller findings).
  */
-export function renderReReview(input: PlanReviewInput, note?: string): AgentMessage {
+export function renderReReview(
+  input: PlanReviewInput,
+  note?: string,
+): AgentMessage {
   return agentMessage(
     [
       '<re_review>',

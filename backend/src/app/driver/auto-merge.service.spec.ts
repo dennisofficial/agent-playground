@@ -75,14 +75,16 @@ function make(
     create: messagesCreate,
   } as unknown as Repository<MessageEntity>;
 
-  const getPullDetail = vi.fn(async (): Promise<PullDetail> => ({
-    number: 7,
-    url: 'https://github.com/acme/app/pull/7',
-    state: 'open' as const,
-    mergeableState: 'clean',
-    headSha: 'HEAD',
-    headRef: 'atlas/feature',
-  }));
+  const getPullDetail = vi.fn(
+    async (): Promise<PullDetail> => ({
+      number: 7,
+      url: 'https://github.com/acme/app/pull/7',
+      state: 'open' as const,
+      mergeableState: 'clean',
+      headSha: 'HEAD',
+      headRef: 'atlas/feature',
+    }),
+  );
   const mergePullRequest = vi.fn(
     async () => over.mergeResult ?? { ok: true, sha: 'merged-sha' },
   );

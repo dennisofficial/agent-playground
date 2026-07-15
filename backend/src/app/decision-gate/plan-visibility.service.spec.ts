@@ -1,10 +1,6 @@
 import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
-import type {
-  ChatSurface,
-  InboundChatMessage,
-  PostOptions,
-} from '../surface';
+import type { ChatSurface, InboundChatMessage, PostOptions } from '../surface';
 import type { DecisionClassification } from './decision-gate.types';
 import {
   PlanVisibilityService,
@@ -14,8 +10,13 @@ import {
 class FakeSurface implements ChatSurface {
   readonly name = 'fake';
   readonly inbound$ = new Subject<InboundChatMessage>();
-  readonly posts: Array<{ channel: string; text: string; opts?: PostOptions }> = [];
-  async post(channel: string, text: string, opts?: PostOptions): Promise<string | undefined> {
+  readonly posts: Array<{ channel: string; text: string; opts?: PostOptions }> =
+    [];
+  async post(
+    channel: string,
+    text: string,
+    opts?: PostOptions,
+  ): Promise<string | undefined> {
     this.posts.push({ channel, text, ...(opts ? { opts } : {}) });
     return 'ts-1';
   }

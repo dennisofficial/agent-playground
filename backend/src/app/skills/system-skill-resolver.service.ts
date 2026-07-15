@@ -29,7 +29,14 @@ export class SystemSkillResolver {
   list(): SystemSkillView[] {
     const root = this.env.get('SKILLS_ROOT');
     return buildSystemSkills().map((s) =>
-      s.git ? { ...s, synced: existsSync(join(managedGitSkillDirHost(root, s.name), 'SKILL.md')) } : s,
+      s.git
+        ? {
+            ...s,
+            synced: existsSync(
+              join(managedGitSkillDirHost(root, s.name), 'SKILL.md'),
+            ),
+          }
+        : s,
     );
   }
 }

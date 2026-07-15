@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { SANDBOX_RESET_NOTICE, BG_TASK_CAP_NOTICE } from '../engine/engine.types';
+import {
+  SANDBOX_RESET_NOTICE,
+  BG_TASK_CAP_NOTICE,
+} from '../engine/engine.types';
 import { SVC_NUDGE_TEXT } from '../engine/engine-core';
 
 /**
@@ -12,14 +15,20 @@ import { SVC_NUDGE_TEXT } from '../engine/engine-core';
 
 describe('driver/engine prose golden snapshots', () => {
   it('SANDBOX_RESET_NOTICE', async () => {
-    await expect(SANDBOX_RESET_NOTICE).toMatchFileSnapshot('./__snapshots__/sandbox-reset-notice.txt');
+    await expect(SANDBOX_RESET_NOTICE).toMatchFileSnapshot(
+      './__snapshots__/sandbox-reset-notice.txt',
+    );
   });
 
   it('BG_TASK_CAP_NOTICE', async () => {
-    await expect(BG_TASK_CAP_NOTICE).toMatchFileSnapshot('./__snapshots__/bg-task-cap-notice.txt');
+    await expect(BG_TASK_CAP_NOTICE).toMatchFileSnapshot(
+      './__snapshots__/bg-task-cap-notice.txt',
+    );
   });
 
   it('SVC_NUDGE_TEXT', async () => {
-    await expect(SVC_NUDGE_TEXT).toMatchFileSnapshot('./__snapshots__/svc-nudge-text.txt');
+    await expect(SVC_NUDGE_TEXT).toMatchFileSnapshot(
+      './__snapshots__/svc-nudge-text.txt',
+    );
   });
 });

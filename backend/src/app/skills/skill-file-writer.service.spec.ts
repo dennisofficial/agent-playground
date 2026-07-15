@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +18,9 @@ describe('SkillFileWriter — forkSkillDir (fork-to-custom)', () => {
 
   beforeEach(() => {
     storeRoot = mkdtempSync(join(tmpdir(), 'atlas-skill-fork-'));
-    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never;
+    const env = {
+      get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined),
+    } as never;
     writer = new SkillFileWriter(env);
   });
 
@@ -43,18 +52,25 @@ describe('SkillFileWriter — forkSkillDir (fork-to-custom)', () => {
 
   it('is a no-op when the source skill has nothing on disk', () => {
     writer.forkSkillDir('org1', '*', 'missing-skill', 'missing-skill-custom');
-    expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'missing-skill-custom'))).toBe(false);
+    expect(
+      existsSync(skillDirHost(storeRoot, 'org1', '*', 'missing-skill-custom')),
+    ).toBe(false);
   });
 
   it('leaves a SKILL.md with no `name:` frontmatter line untouched (defensive — never crashes)', () => {
     const src = skillDirHost(storeRoot, 'org1', '*', 'no-name-skill');
     mkdirSync(src, { recursive: true });
-    writeFileSync(join(src, 'SKILL.md'), '---\ndescription: no name field here\n---\n\nBody.\n');
+    writeFileSync(
+      join(src, 'SKILL.md'),
+      '---\ndescription: no name field here\n---\n\nBody.\n',
+    );
 
     writer.forkSkillDir('org1', '*', 'no-name-skill', 'no-name-skill-custom');
 
     const dest = skillDirHost(storeRoot, 'org1', '*', 'no-name-skill-custom');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('description: no name field here');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain(
+      'description: no name field here',
+    );
   });
 });
 
@@ -66,7 +82,9 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
   beforeEach(() => {
     storeRoot = mkdtempSync(join(tmpdir(), 'atlas-skill-draft-store-'));
     draftRoot = mkdtempSync(join(tmpdir(), 'atlas-skill-draft-ctx-'));
-    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never;
+    const env = {
+      get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined),
+    } as never;
     writer = new SkillFileWriter(env);
   });
 
@@ -79,7 +97,10 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
   function authorDraft(name: string, body: string): string {
     const dir = join(draftRoot, 'skill-drafts', name);
     mkdirSync(join(dir, 'references'), { recursive: true });
-    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: Use when X\n---\n\n${body}\n`);
+    writeFileSync(
+      join(dir, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: Use when X\n---\n\n${body}\n`,
+    );
     writeFileSync(join(dir, 'references', 'r.md'), '# ref\n');
     return dir;
   }
@@ -94,13 +115,20 @@ describe('SkillFileWriter — draft freeze / vendor / preview (file-based author
     expect(preview?.files.sort()).toEqual(['SKILL.md', 'references/r.md']);
 
     // The brain keeps editing the LIVE draft after proposing — must not change what installs.
-    writeFileSync(join(draft, 'SKILL.md'), '---\nname: house-migrations\ndescription: Use when X\n---\n\nVersion B (mutated).\n');
+    writeFileSync(
+      join(draft, 'SKILL.md'),
+      '---\nname: house-migrations\ndescription: Use when X\n---\n\nVersion B (mutated).\n',
+    );
 
     // Approval vendors the frozen staging copy, NOT the mutated live draft.
     writer.vendorDir(staging, 'org1', '*', 'house-migrations');
     const dest = skillDirHost(storeRoot, 'org1', '*', 'house-migrations');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Version A.');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain('Version B');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain(
+      'Version A.',
+    );
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).not.toContain(
+      'Version B',
+    );
     expect(existsSync(join(dest, 'references', 'r.md'))).toBe(true); // full multi-file fidelity
 
     // removeStaging cleans up the frozen copy.

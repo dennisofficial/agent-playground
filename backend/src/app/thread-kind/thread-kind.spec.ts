@@ -36,7 +36,10 @@ describe('thread-kind registry', () => {
   });
 
   it('only builder + master_review are driver-executable top-level kinds', () => {
-    expect([...driverExecutableKinds].sort()).toEqual(['builder', 'master_review']);
+    expect([...driverExecutableKinds].sort()).toEqual([
+      'builder',
+      'master_review',
+    ]);
     expect(isDriverExecutableKind('builder')).toBe(true);
     expect(isDriverExecutableKind('master_review')).toBe(true);
     expect(isDriverExecutableKind('planning')).toBe(false);
@@ -61,7 +64,9 @@ describe('thread-kind registry', () => {
     expect(kids.filter((k) => k.kind === 'review_agent')).toHaveLength(0);
     const posts = kids.filter((k) => k.kind === 'review_fix');
     expect(posts).toHaveLength(1);
-    expect((posts[0].config as { minSeverity?: string }).minSeverity).toBeTruthy();
+    expect(
+      (posts[0].config as { minSeverity?: string }).minSeverity,
+    ).toBeTruthy();
   });
 
   it('threadKindSpec throws on an unknown kind', () => {
@@ -71,21 +76,36 @@ describe('thread-kind registry', () => {
   it('operatorInput (d12): enabled for builder + planning, read-only elsewhere by default', () => {
     expect(threadKindSpec('builder').operatorInput).toBe(true);
     expect(threadKindSpec('planning').operatorInput).toBe(true);
-    for (const role of ['plan_review', 'review_agent', 'review_fix', 'master_review', 'post_build', 'ci']) {
+    for (const role of [
+      'plan_review',
+      'review_agent',
+      'review_fix',
+      'master_review',
+      'post_build',
+      'ci',
+    ]) {
       expect(threadKindSpec(role).operatorInput).toBe(false);
     }
   });
 
   it('validateThreadKinds rejects an unknown Agent', () => {
     const bad: ThreadKindSpec[] = [
-      { ...threadKindSpec('builder'), agent: 'not_an_agent' as unknown as Agent, children: undefined },
+      {
+        ...threadKindSpec('builder'),
+        agent: 'not_an_agent' as unknown as Agent,
+        children: undefined,
+      },
     ];
     expect(() => validateThreadKinds(bad)).toThrow(/unknown Agent/);
   });
 
   it('validateThreadKinds rejects an unknown laneKind', () => {
     const bad: ThreadKindSpec[] = [
-      { ...threadKindSpec('builder'), laneKind: 'nonsense' as never, children: undefined },
+      {
+        ...threadKindSpec('builder'),
+        laneKind: 'nonsense' as never,
+        children: undefined,
+      },
     ];
     expect(() => validateThreadKinds(bad)).toThrow(/unknown laneKind/);
   });
@@ -109,7 +129,10 @@ describe('thread-kind registry', () => {
   it('validateThreadKinds rejects a duplicate kind', () => {
     // Strip children so the child-kind check (which would fire first on this 2-element array) doesn't mask
     // the duplicate check we're asserting.
-    const leaf: ThreadKindSpec = { ...threadKindSpec('builder'), children: undefined };
+    const leaf: ThreadKindSpec = {
+      ...threadKindSpec('builder'),
+      children: undefined,
+    };
     const bad: ThreadKindSpec[] = [leaf, leaf];
     expect(() => validateThreadKinds(bad)).toThrow(/duplicate spec/);
   });

@@ -304,7 +304,10 @@ describe('CredentialRefreshService.ensureFresh (live Postgres + stub OAuth token
   });
 
   it('the keep-alive sweep refreshes a NON-selected personal credential nearing expiry', async () => {
-    const credId = await seedCredUnselected(10 * 60_000, 'keepalive-unselected'); // inside the 35-min sweep window
+    const credId = await seedCredUnselected(
+      10 * 60_000,
+      'keepalive-unselected',
+    ); // inside the 35-min sweep window
     const before = await getRow(credId);
     expect(before.last_refreshed_at).toBeNull();
 

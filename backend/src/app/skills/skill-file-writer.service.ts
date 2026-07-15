@@ -1,6 +1,15 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable } from '@nestjs/common';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { pendingSkillDirHost, skillDirHost } from './skill-store-paths';
 
@@ -21,7 +30,13 @@ export class SkillFileWriter {
   }
 
   /** Write (or overwrite) `<store>/…/<name>/SKILL.md` with a `description` frontmatter block + `body`. */
-  writeSkillMd(orgId: string, scope: string, name: string, description: string, body: string): void {
+  writeSkillMd(
+    orgId: string,
+    scope: string,
+    name: string,
+    description: string,
+    body: string,
+  ): void {
     const dir = skillDirHost(this.root(), orgId, scope, name);
     mkdirSync(dir, { recursive: true });
     const frontmatter = `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}\n---\n`;
@@ -30,8 +45,15 @@ export class SkillFileWriter {
 
   /** The current `SKILL.md` body (frontmatter stripped), or undefined when nothing's on disk yet — used
    *  to show the owner what an `update` proposal would replace (`WebSkillProposalCard.priorBody`). */
-  readSkillBody(orgId: string, scope: string, name: string): string | undefined {
-    const file = join(skillDirHost(this.root(), orgId, scope, name), 'SKILL.md');
+  readSkillBody(
+    orgId: string,
+    scope: string,
+    name: string,
+  ): string | undefined {
+    const file = join(
+      skillDirHost(this.root(), orgId, scope, name),
+      'SKILL.md',
+    );
     if (!existsSync(file)) return undefined;
     const raw = readFileSync(file, 'utf8');
     const match = /^---\n[\s\S]*?\n---\n/.exec(raw);
@@ -40,7 +62,10 @@ export class SkillFileWriter {
 
   /** Remove a skill's whole dir (a `propose_skill_removal` approval). No-op if nothing's on disk. */
   removeSkillDir(orgId: string, scope: string, name: string): void {
-    rmSync(skillDirHost(this.root(), orgId, scope, name), { recursive: true, force: true });
+    rmSync(skillDirHost(this.root(), orgId, scope, name), {
+      recursive: true,
+      force: true,
+    });
   }
 
   /** Every FILE (not dir) under a skill's dir, as POSIX-style paths relative to its root, sorted — the
@@ -72,7 +97,10 @@ export class SkillFileWriter {
 
   /** Remove a proposal's frozen staging dir (on approve OR dismiss). No-op if nothing's there. */
   removeStaging(orgId: string, requestId: string): void {
-    rmSync(pendingSkillDirHost(this.root(), orgId, requestId), { recursive: true, force: true });
+    rmSync(pendingSkillDirHost(this.root(), orgId, requestId), {
+      recursive: true,
+      force: true,
+    });
   }
 
   /** Vendor an already-authored skill dir (the frozen staging copy) into the durable store at
@@ -90,7 +118,9 @@ export class SkillFileWriter {
   previewDir(dir: string): { skillMd: string; files: string[] } | null {
     const skillMd = join(dir, 'SKILL.md');
     if (!existsSync(skillMd)) return null;
-    const entries = existsSync(dir) ? (readdirSync(dir, { recursive: true }) as string[]) : [];
+    const entries = existsSync(dir)
+      ? (readdirSync(dir, { recursive: true }) as string[])
+      : [];
     const files = entries
       .filter((rel) => statSync(join(dir, rel)).isFile())
       .map((rel) => rel.split(sep).join('/'))
@@ -106,7 +136,12 @@ export class SkillFileWriter {
    * identity disagree with the on-disk dir it's symlinked as). No-op-safe on a missing source (nothing to
    * fork — the caller's registry write is the one that would fail loudly instead).
    */
-  forkSkillDir(orgId: string, scope: string, fromName: string, toName: string): void {
+  forkSkillDir(
+    orgId: string,
+    scope: string,
+    fromName: string,
+    toName: string,
+  ): void {
     const src = skillDirHost(this.root(), orgId, scope, fromName);
     if (!existsSync(src)) return;
     const dest = skillDirHost(this.root(), orgId, scope, toName);
@@ -121,7 +156,13 @@ export class SkillFileWriter {
       // substring at its found position, so a plain `replace` (first-occurrence) targets just that block.
       const block = /^---\r?\n[\s\S]*?\r?\n---/.exec(raw);
       if (block && /^name:.*$/m.test(block[0])) {
-        writeFileSync(skillMd, raw.replace(block[0], block[0].replace(/^name:.*$/m, `name: ${toName}`)));
+        writeFileSync(
+          skillMd,
+          raw.replace(
+            block[0],
+            block[0].replace(/^name:.*$/m, `name: ${toName}`),
+          ),
+        );
       }
     }
   }

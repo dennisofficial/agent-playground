@@ -23,17 +23,23 @@ describe('ThreadInputService — the shared send seam', () => {
   it('THROWS on a read-only (input:"none") lane rather than silently dropping the message', async () => {
     const svc = new ThreadInputService();
     // ship is `input:'none'` — no handler should ever be consulted.
-    await expect(svc.postToThread(laneFor('ship', 'J'), ctx, 'x')).rejects.toThrow(/read-only/);
+    await expect(
+      svc.postToThread(laneFor('ship', 'J'), ctx, 'x'),
+    ).rejects.toThrow(/read-only/);
   });
 
   it('THROWS when an input-accepting kind has no registered handler (a boot-order bug)', async () => {
     const svc = new ThreadInputService();
-    await expect(svc.postToThread(laneFor('main', 'J'), ctx, 'x')).rejects.toThrow(/no input handler/);
+    await expect(
+      svc.postToThread(laneFor('main', 'J'), ctx, 'x'),
+    ).rejects.toThrow(/no input handler/);
   });
 
   it('THROWS on a lane no thread kind owns', async () => {
     const svc = new ThreadInputService();
-    await expect(svc.postToThread('bogus:lane', ctx, 'x')).rejects.toThrow(/no thread kind owns/);
+    await expect(svc.postToThread('bogus:lane', ctx, 'x')).rejects.toThrow(
+      /no thread kind owns/,
+    );
   });
 
   it('canPost reflects handler presence AND the read-only invariant', () => {

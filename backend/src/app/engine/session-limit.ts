@@ -17,7 +17,9 @@ export type { SessionLimitHit } from '@workspace/agent-engine';
  * 1970. Guard both units: anything below 1e12 is treated as seconds and scaled to ms; a value already in ms
  * passes through. Returns undefined for missing/NaN input.
  */
-export function resetEpochToIso(resetsAt: number | undefined | null): string | undefined {
+export function resetEpochToIso(
+  resetsAt: number | undefined | null,
+): string | undefined {
   if (resetsAt == null) return undefined;
   const ms = resetsAt < 1e12 ? resetsAt * 1000 : resetsAt;
   const d = new Date(ms);
@@ -48,7 +50,9 @@ const SESSION_LIMIT_RE =
   /\b(?:hit your (?:usage|session) limit|usage limit reached|session limit reached)\b/i;
 
 /** FALLBACK for CLI drift / older frames: does this assistant text or error message announce a limit hit? */
-export function detectSessionLimitText(text: string | null | undefined): boolean {
+export function detectSessionLimitText(
+  text: string | null | undefined,
+): boolean {
   return typeof text === 'string' && SESSION_LIMIT_RE.test(text);
 }
 
@@ -62,7 +66,9 @@ export const SESSION_LIMIT_DEFAULT_RESUME_MS = 5 * 60 * 60 * 1000;
 
 /** A bounded fallback reset instant (now + shortest subscription window) so a durable resume clock is always set. */
 export function defaultResumeAt(now: Date = new Date()): string {
-  return new Date(now.getTime() + SESSION_LIMIT_DEFAULT_RESUME_MS).toISOString();
+  return new Date(
+    now.getTime() + SESSION_LIMIT_DEFAULT_RESUME_MS,
+  ).toISOString();
 }
 
 /** A clock time like "5:20pm", "5pm", "11:30am" — optional minutes, required am/pm marker. */
@@ -81,7 +87,10 @@ function to24Hour(hour12: number, meridiem: 'a' | 'p'): number | null {
  * the NEXT occurrence of that clock time. Any trailing timezone-ish text is ignored (the time is treated as
  * local). Returns undefined when no clock time is present. `now` is injectable for deterministic tests.
  */
-export function parseResetAt(text: string, now: Date = new Date()): string | undefined {
+export function parseResetAt(
+  text: string,
+  now: Date = new Date(),
+): string | undefined {
   const match = CLOCK_RE.exec(text);
   if (!match) return undefined;
   const minutes = match[2] ? Number(match[2]) : 0;

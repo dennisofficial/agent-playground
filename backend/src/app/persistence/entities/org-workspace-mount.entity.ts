@@ -1,4 +1,11 @@
-import { Entity, Index, JoinColumn, ManyToOne, PrimaryColumn, Column } from 'typeorm';
+import {
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+  Column,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';

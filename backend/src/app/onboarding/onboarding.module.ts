@@ -23,7 +23,10 @@ import { CredentialKeepAliveService } from './credential-keepalive.service';
 import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';
 import { OrgCredentialsController } from './credentials.controller';
-import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
+import {
+  GithubAppCallbackController,
+  GithubAppController,
+} from './github-app.controller';
 import { GithubAppStateStore } from './github-app-state.store';
 import { OauthUsageService } from './oauth-usage.service';
 import { OnboardingController } from './onboarding.controller';

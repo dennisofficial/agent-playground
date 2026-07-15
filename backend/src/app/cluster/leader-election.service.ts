@@ -32,7 +32,9 @@ export type LeaderState = 'follower' | 'leader' | 'draining';
  * predecessor is done. Singleton duties never run in two processes at once.
  */
 @Injectable()
-export class LeaderElectionService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class LeaderElectionService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(LeaderElectionService.name);
 
   /** Unique per process — suffixes this leader's realtime replication slot (see `RealtimeService`). */
@@ -95,7 +97,9 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
     // and a real advisory lock would make concurrent int-test workers contend. Skip election in tests.
     if (this.env.get('POSTGRES_DB')?.endsWith('_test')) {
       this.state = 'leader';
-      this.logger.log('leader election skipped (test database) — implicit leader');
+      this.logger.log(
+        'leader election skipped (test database) — implicit leader',
+      );
       return;
     }
     await this.connectAndAcquire();
@@ -117,11 +121,15 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
     // run pg_advisory_unlock on a session that never locked (it would no-op + log misleadingly).
     if (!this.heldLock || !this.client) return;
     try {
-      await this.client.query('SELECT pg_advisory_unlock($1::bigint)', [LEADER_LOCK_KEY]);
+      await this.client.query('SELECT pg_advisory_unlock($1::bigint)', [
+        LEADER_LOCK_KEY,
+      ]);
       this.heldLock = false;
       this.logger.log('released leadership (advisory lock unlocked)');
     } catch (err) {
-      this.logger.warn(`advisory unlock failed (lock will release on disconnect): ${err}`);
+      this.logger.warn(
+        `advisory unlock failed (lock will release on disconnect): ${err}`,
+      );
     }
   }
 
@@ -149,7 +157,9 @@ export class LeaderElectionService implements OnApplicationBootstrap, OnApplicat
         keepAlive: true,
       });
       client.on('error', (err) => this.onConnectionLost(err));
-      client.on('end', () => this.onConnectionLost(new Error('connection ended')));
+      client.on('end', () =>
+        this.onConnectionLost(new Error('connection ended')),
+      );
       await client.connect();
       this.client = client;
       this.connecting = false;

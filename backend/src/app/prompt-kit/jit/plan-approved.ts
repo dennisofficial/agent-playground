@@ -45,6 +45,7 @@ export const planApprovedRule: JitRule = {
   render: (ctx) => agentMessage(renderPlanApprovedSeed(ctx)),
   seed: {
     label: 'Plan approved — checking the base branch before starting',
-    chunkKey: (ctx) => chunkKey.planApproved(ctx.decisionRecordId ?? ctx.jobId ?? ''),
+    chunkKey: (ctx) =>
+      chunkKey.planApproved(ctx.decisionRecordId ?? ctx.jobId ?? ''),
   },
 };

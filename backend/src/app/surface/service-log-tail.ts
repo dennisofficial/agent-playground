@@ -10,7 +10,12 @@ export interface ServiceLogTail {
 }
 
 /** Read the last `n` lines of `<dir>/<id>.log`, capped at `maxBytes`. Empty result if the file doesn't exist. */
-export function readServiceLogTail(dir: string | null, id: string, n: number, maxBytes: number): ServiceLogTail {
+export function readServiceLogTail(
+  dir: string | null,
+  id: string,
+  n: number,
+  maxBytes: number,
+): ServiceLogTail {
   const path = join(dir ?? '', `${id}.log`);
   let st: ReturnType<typeof statSync>;
   try {
@@ -36,7 +41,11 @@ export type TailPollResult =
  * (an fd already open on the log file); shrank → the file was truncated by an `atlas-svc run` restart, so
  * the caller must re-snapshot from scratch (a fresh `readServiceLogTail`) rather than trust `offset`.
  */
-export function nextTailFrame(offset: number, size: number, fd: number): TailPollResult {
+export function nextTailFrame(
+  offset: number,
+  size: number,
+  fd: number,
+): TailPollResult {
   if (size === offset) return { kind: 'unchanged' };
   if (size < offset) return { kind: 'reset', nextOffset: size };
   const len = size - offset;

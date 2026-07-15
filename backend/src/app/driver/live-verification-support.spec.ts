@@ -43,7 +43,8 @@ describe('renderTerminalRecordSummary', () => {
   it('surfaces a decisive token that sits past char 300 of an outputTail (the ADR-0005 job bug)', () => {
     // Reproduces job 76f0ee2a: the `effort=high` proof landed ~char 900, past the old 300-char slice.
     const outputTail =
-      'health check + login curl'.padEnd(900, '.') + 'RESPONSE BODY: {"effort":"high"}';
+      'health check + login curl'.padEnd(900, '.') +
+      'RESPONSE BODY: {"effort":"high"}';
     const summary = renderTerminalRecordSummary({
       summary: 'plumbed effort',
       verification: [ev({ outputTail })],
@@ -54,9 +55,21 @@ describe('renderTerminalRecordSummary', () => {
   it('never drops a whole evidence item — the LAST (proof) item survives a diagnostics-first array', () => {
     // The report_verification schema orders diagnostics/typecheck FIRST, live proof LAST.
     const verification = [
-      ev({ kind: 'diagnostics', command: 'diagnostics', outputTail: 'D'.repeat(2500) }),
-      ev({ kind: 'typecheck', command: 'pnpm typecheck', outputTail: 'T'.repeat(2500) }),
-      ev({ kind: 'reported', command: 'curl /pipeline', outputTail: 'PROOF_TOKEN_effort_high' }),
+      ev({
+        kind: 'diagnostics',
+        command: 'diagnostics',
+        outputTail: 'D'.repeat(2500),
+      }),
+      ev({
+        kind: 'typecheck',
+        command: 'pnpm typecheck',
+        outputTail: 'T'.repeat(2500),
+      }),
+      ev({
+        kind: 'reported',
+        command: 'curl /pipeline',
+        outputTail: 'PROOF_TOKEN_effort_high',
+      }),
     ];
     const summary = renderTerminalRecordSummary({ summary: 's', verification });
     expect(summary).toContain('PROOF_TOKEN_effort_high');

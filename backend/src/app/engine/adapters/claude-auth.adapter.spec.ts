@@ -5,11 +5,21 @@ import { describe, expect, it } from 'vitest';
 import { atlasEngineHomeDir, type EngineHomeKey } from '../engine-home';
 import { claudeAuthAdapter } from './claude-auth.adapter';
 
-const key: EngineHomeKey = { orgId: 'org', repoId: 'repo', jobId: 'job', type: 'build' };
+const key: EngineHomeKey = {
+  orgId: 'org',
+  repoId: 'repo',
+  jobId: 'job',
+  type: 'build',
+};
 
 function oauthBlob(expiresAt: number, accessToken = 'access'): string {
   return JSON.stringify({
-    claudeAiOauth: { accessToken, refreshToken: 'refresh', expiresAt, scopes: ['user:inference'] },
+    claudeAiOauth: {
+      accessToken,
+      refreshToken: 'refresh',
+      expiresAt,
+      scopes: ['user:inference'],
+    },
   });
 }
 
@@ -17,9 +27,17 @@ describe('claudeAuthAdapter.materialize', () => {
   it('personal: writes .credentials.json and does NOT set the env token (env token outranks the file)', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     const secret = oauthBlob(1_000_000);
-    const env: Record<string, string | undefined> = { ANTHROPIC_API_KEY: 'sk-stale' };
+    const env: Record<string, string | undefined> = {
+      ANTHROPIC_API_KEY: 'sk-stale',
+    };
 
-    const dir = claudeAuthAdapter.materialize({ homeRoot: root, key, secret, kind: 'personal', env });
+    const dir = claudeAuthAdapter.materialize({
+      homeRoot: root,
+      key,
+      secret,
+      kind: 'personal',
+      env,
+    });
 
     expect(readFileSync(join(dir, '.credentials.json'), 'utf8')).toBe(secret);
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -30,10 +48,21 @@ describe('claudeAuthAdapter.materialize', () => {
   it('setup-token: sets CLAUDE_CODE_OAUTH_TOKEN, strips API keys, and removes a stale personal file', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     const dir = atlasEngineHomeDir(root, 'claude', key);
-    writeFileSync(join(dir, '.credentials.json'), oauthBlob(1), { mode: 0o600 });
-    const env: Record<string, string | undefined> = { ANTHROPIC_API_KEY: 'sk-stale', ANTHROPIC_AUTH_TOKEN: 'stale' };
+    writeFileSync(join(dir, '.credentials.json'), oauthBlob(1), {
+      mode: 0o600,
+    });
+    const env: Record<string, string | undefined> = {
+      ANTHROPIC_API_KEY: 'sk-stale',
+      ANTHROPIC_AUTH_TOKEN: 'stale',
+    };
 
-    claudeAuthAdapter.materialize({ homeRoot: root, key, secret: 'a-setup-token', kind: 'setup-token', env });
+    claudeAuthAdapter.materialize({
+      homeRoot: root,
+      key,
+      secret: 'a-setup-token',
+      kind: 'setup-token',
+      env,
+    });
 
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('a-setup-token');
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
@@ -45,7 +74,12 @@ describe('claudeAuthAdapter.materialize', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     const env: Record<string, string | undefined> = {};
 
-    claudeAuthAdapter.materialize({ homeRoot: root, key, secret: 'legacy-token', env });
+    claudeAuthAdapter.materialize({
+      homeRoot: root,
+      key,
+      secret: 'legacy-token',
+      env,
+    });
 
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('legacy-token');
   });
@@ -56,28 +90,56 @@ describe('claudeAuthAdapter.readBackRefresh', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     const written = oauthBlob(1_000_000);
     const env: Record<string, string | undefined> = {};
-    claudeAuthAdapter.materialize({ homeRoot: root, key, secret: written, kind: 'personal', env });
+    claudeAuthAdapter.materialize({
+      homeRoot: root,
+      key,
+      secret: written,
+      kind: 'personal',
+      env,
+    });
 
     const dir = atlasEngineHomeDir(root, 'claude', key);
     const rotated = oauthBlob(2_000_000);
     writeFileSync(join(dir, '.credentials.json'), rotated, { mode: 0o600 });
 
-    expect(claudeAuthAdapter.readBackRefresh({ homeRoot: root, key, writtenSecret: written })).toBe(rotated);
+    expect(
+      claudeAuthAdapter.readBackRefresh({
+        homeRoot: root,
+        key,
+        writtenSecret: written,
+      }),
+    ).toBe(rotated);
   });
 
   it('returns undefined when the file is unchanged (same bytes)', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     const written = oauthBlob(1_000_000);
     const env: Record<string, string | undefined> = {};
-    claudeAuthAdapter.materialize({ homeRoot: root, key, secret: written, kind: 'personal', env });
+    claudeAuthAdapter.materialize({
+      homeRoot: root,
+      key,
+      secret: written,
+      kind: 'personal',
+      env,
+    });
 
-    expect(claudeAuthAdapter.readBackRefresh({ homeRoot: root, key, writtenSecret: written })).toBeUndefined();
+    expect(
+      claudeAuthAdapter.readBackRefresh({
+        homeRoot: root,
+        key,
+        writtenSecret: written,
+      }),
+    ).toBeUndefined();
   });
 
   it('returns undefined when the file is absent', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-auth-'));
     expect(
-      claudeAuthAdapter.readBackRefresh({ homeRoot: root, key: { ...key, jobId: 'never-written' }, writtenSecret: 'x' }),
+      claudeAuthAdapter.readBackRefresh({
+        homeRoot: root,
+        key: { ...key, jobId: 'never-written' },
+        writtenSecret: 'x',
+      }),
     ).toBeUndefined();
   });
 });

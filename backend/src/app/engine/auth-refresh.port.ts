@@ -17,7 +17,10 @@ export interface AuthRefreshSink {
    * be safe to call concurrently (atomic + monotonic) and MUST NOT throw into the caller's
    * turn-completion path.
    */
-  persist(provenance: { orgId: string; engine: SessionEngine; credentialId?: string }, secret: string): Promise<void>;
+  persist(
+    provenance: { orgId: string; engine: SessionEngine; credentialId?: string },
+    secret: string,
+  ): Promise<void>;
 }
 
 /** DI token for {@link AuthRefreshSink} (bound in the @Global onboarding module). */

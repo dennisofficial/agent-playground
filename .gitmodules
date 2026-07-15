@@ -1,12 +1,12 @@
-[submodule "packages/nestjs-core-essentials"]
-	path = packages/nestjs-core-essentials
+[submodule "submodules/nestjs-core-essentials"]
+	path = submodules/nestjs-core-essentials
 	url = https://github.com/dennisofficial/nestjs-core-essentials.git
-[submodule "packages/jwt-auth"]
-	path = packages/jwt-auth
+[submodule "submodules/jwt-auth"]
+	path = submodules/jwt-auth
 	url = https://github.com/dennisofficial/jwt-auth.git
-[submodule "packages/nestjs-ai-essentials"]
-	path = packages/nestjs-ai-essentials
+[submodule "submodules/nestjs-ai-essentials"]
+	path = submodules/nestjs-ai-essentials
 	url = https://github.com/dennisofficial/nestjs-ai-essentials
-[submodule "packages/ai-testing"]
-	path = packages/ai-testing
+[submodule "submodules/ai-testing"]
+	path = submodules/ai-testing
 	url = https://github.com/dennisofficial/langchain-testing-framework

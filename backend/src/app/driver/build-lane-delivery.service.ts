@@ -1,4 +1,8 @@
-import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+} from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type { CollectedPending, DeliveryLane } from '../stimulus';
 import { DeliveryPump, StimulusStoreService } from '../stimulus';
@@ -45,7 +49,9 @@ export interface LaneSeeder {
  * whenever a builder lane is input-enabled.
  */
 @Injectable()
-export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootstrap {
+export class BuildLaneDeliveryService
+  implements LaneSeeder, OnApplicationBootstrap
+{
   private readonly logger = new Logger(BuildLaneDeliveryService.name);
 
   constructor(
@@ -81,12 +87,18 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
     this.threadInput.register('builder', {
       post: async ({ jobId, orgId, repoId, ids, author }, message) => {
         const threadId = ids[0];
-        const ownerJobId = await this.driverStore.threadJobId(threadId).catch(() => null);
+        const ownerJobId = await this.driverStore
+          .threadJobId(threadId)
+          .catch(() => null);
         if (ownerJobId !== jobId) {
-          throw new Error(`postToThread: thread ${threadId} is not part of job ${jobId}`);
+          throw new Error(
+            `postToThread: thread ${threadId} is not part of job ${jobId}`,
+          );
         }
 
-        const halted = (await this.driverStore.haltOutcome(threadId).catch(() => null)) != null;
+        const halted =
+          (await this.driverStore.haltOutcome(threadId).catch(() => null)) !=
+          null;
         if (halted) {
           // Persist the operator's own bubble first — mirrors the live/pending branch below, so the
           // message shows up in the thread's transcript even though this branch drives it via
@@ -143,7 +155,8 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
       orgId: target.orgId,
       repoId: target.repoId,
       lane,
-      resolveLiveTurn: () => this.turnRegistry.runningSteerableTurn(target.jobId, lane),
+      resolveLiveTurn: () =>
+        this.turnRegistry.runningSteerableTurn(target.jobId, lane),
       canSteer: () => this.turnRunner.canSteer(),
       steer: (turnId, id, body) => this.turnRunner.steer(turnId, id, body),
       renderBody: (pending) => pending.body,
@@ -181,10 +194,14 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
     // The read-only build-lane analog of the operator bubble — never an operator message. Tag it to the
     // thread's current anchor step + Leg so the web slices it under the right thread node. Display-only, so a
     // thread with no step yet (never planned) simply skips the visible row; delivery still rides the pump.
-    const steps = await this.driverStore.stepsForThread(target.threadId).catch(() => []);
+    const steps = await this.driverStore
+      .stepsForThread(target.threadId)
+      .catch(() => []);
     // Reverse-find (steps are ordinal ASC) so this prefers the LATEST session-bearing step — the ACTIVE one —
     // not the oldest; same idiom as `DriverStoreService.resolveSessionAnchor`.
-    const anchor = [...steps].reverse().find((s) => s.sessionId != null) ?? steps[steps.length - 1];
+    const anchor =
+      [...steps].reverse().find((s) => s.sessionId != null) ??
+      steps[steps.length - 1];
     if (anchor) {
       await this.driverStore
         .recordBuildSystemChunk({
@@ -196,7 +213,9 @@ export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootst
           chunkKey: `seed:host:${seed.id}`,
         })
         .catch((err) =>
-          this.logger.warn(`build-lane seed row failed for thread=${target.threadId}: ${err}`),
+          this.logger.warn(
+            `build-lane seed row failed for thread=${target.threadId}: ${err}`,
+          ),
         );
     }
 

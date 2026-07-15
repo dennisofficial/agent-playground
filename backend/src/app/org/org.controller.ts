@@ -12,7 +12,14 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 import { AUTO_APPROVE_MODES, type AutoApproveMode } from '@workspace/shared';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { UserEntity } from '../persistence/entities';
@@ -28,7 +35,9 @@ import {
 
 class CreateOrgDto {
   @IsString()
-  @MinLength(2, { message: 'OrganizationEntity name must be at least 2 characters' })
+  @MinLength(2, {
+    message: 'OrganizationEntity name must be at least 2 characters',
+  })
   name!: string;
 }
 
@@ -37,7 +46,9 @@ class UpdateOrgDto {
   // absent (otherwise an omitted `name` would still fail `@IsString`/`@MinLength`).
   @IsOptional()
   @IsString()
-  @MinLength(2, { message: 'OrganizationEntity name must be at least 2 characters' })
+  @MinLength(2, {
+    message: 'OrganizationEntity name must be at least 2 characters',
+  })
   name?: string;
 
   @IsOptional()
@@ -78,7 +89,10 @@ export class OrgController {
 
   /** `POST /web/orgs` — create an org; the caller becomes owner. */
   @Post()
-  async create(@CurrentUser() user: UserEntity, @Body() body: CreateOrgDto): Promise<OrgSummary> {
+  async create(
+    @CurrentUser() user: UserEntity,
+    @Body() body: CreateOrgDto,
+  ): Promise<OrgSummary> {
     return this.orgs.create(user.id, body.name);
   }
 

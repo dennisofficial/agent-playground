@@ -110,7 +110,11 @@ export interface AutoFixOptions {
    * finding count) after it. Lets the driver persist live per-agent review status onto the thread so the
    * navigator's review folder can show each agent's state. Best-effort: the stage swallows hook errors.
    */
-  onLensStatus?: (lensId: string, status: LensStatus, findings?: number) => void;
+  onLensStatus?: (
+    lensId: string,
+    status: LensStatus,
+    findings?: number,
+  ) => void;
 }
 
 /** A review lens's live status as the auto-fix stage reports it (`pending` is the driver's seed state). */

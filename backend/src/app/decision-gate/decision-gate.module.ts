@@ -1,9 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CredentialResolver } from '../onboarding';
-import {
-  CLASSIFIER_LLM,
-  AnthropicClassifierLlm,
-} from './classifier-llm';
+import { CLASSIFIER_LLM, AnthropicClassifierLlm } from './classifier-llm';
 import { DecisionClassifier } from './decision-classifier.service';
 import { PlanVisibilityService } from './plan-visibility.service';
 
@@ -33,10 +30,6 @@ import { PlanVisibilityService } from './plan-visibility.service';
     DecisionClassifier,
     PlanVisibilityService,
   ],
-  exports: [
-    DecisionClassifier,
-    PlanVisibilityService,
-    CLASSIFIER_LLM,
-  ],
+  exports: [DecisionClassifier, PlanVisibilityService, CLASSIFIER_LLM],
 })
 export class DecisionGateModule {}

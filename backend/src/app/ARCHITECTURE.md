@@ -1,6 +1,6 @@
 # Atlas — architecture & the job/session model
 
-> **Canonical, read-first.** This is the source of truth for how Atlas is *modelled*. Companions:
+> **Canonical, read-first.** This is the source of truth for how Atlas is _modelled_. Companions:
 > `../../../CLAUDE.md` (product model + conventions), `ATLAS_V2.md` (deep detail + build history — but it
 > predates the org→repo→job rebuild AND uses the old vocabulary; trust THIS file for the model),
 > `../../../web/BACKEND_GAPS.md` (web API gaps), `../../../docs/adr/0008-first-class-stages.md` (why the
@@ -25,25 +25,25 @@ Where intent ≠ wiring, both are stated — this doc describes reality, not the
 
 ## 1. The model in one paragraph
 
-Atlas turns a **request** — a human message *or* an automated event — into a reviewed **PR**. The unit of
-work is a **job**. A job is its own git branch, its own sandbox, and its own *continuous* Claude Code
+Atlas turns a **request** — a human message _or_ an automated event — into a reviewed **PR**. The unit of
+work is a **job**. A job is its own git branch, its own sandbox, and its own _continuous_ Claude Code
 session — **the job brain**, now represented as the job's `planning` stage-thread — which scopes, grills,
 locks decisions, proposes a plan, and steers. Once the plan is approved, a deterministic **driver** ("the
 harness takes the wheel") walks the plan's **stages** (each an ordinal-ordered §N grouping of one or more
 threads) in order, and you watch the build stream live. **There is no central "Atlas" persona.** "Atlas"
-*is* the job brain, and the job brain *is* the **main Claude Code session running inside that job's sandbox**
-— when you open a job and type, you talk directly to that session (its system prompt opens with *"You are
-Atlas"* — `brain/agent-session-manager.service.ts:56`). Everything else — the driver, the intake guards, the
+_is_ the job brain, and the job brain _is_ the **main Claude Code session running inside that job's sandbox**
+— when you open a job and type, you talk directly to that session (its system prompt opens with _"You are
+Atlas"_ — `brain/agent-session-manager.service.ts:56`). Everything else — the driver, the intake guards, the
 web surface — is host-side plumbing wrapped around that session and the later stage-threads (`post_build`,
 `ci`) that take over its tail-end duties. An automated event doesn't talk to a central brain either; it
 **spawns a new job** and becomes that job brain's opening (harness) message.
 
-## 2. Product model — Organization → Repos → Jobs → Stages → Threads  ✅
+## 2. Product model — Organization → Repos → Jobs → Stages → Threads ✅
 
 > **Deployment model: private, not SaaS.** Atlas is a personal/private tool for Dennis and a small circle of
 > close friends — **not** a commercial multi-tenant SaaS. The org/sandbox isolation below keeps friends'
 > work separate (and is defence-in-depth), not a boundary for untrusted paying customers. Read
-> "tenant"/"multi-tenant" as *private multi-workspace*. See `saas-credential-compliance` for why selling was
+> "tenant"/"multi-tenant" as _private multi-workspace_. See `saas-credential-compliance` for why selling was
 > ruled out (subscription credentials can't back a sold product; API keys too costly to resell).
 
 The hierarchy (detail in `CLAUDE.md`):
@@ -99,26 +99,27 @@ branch + sandbox + session the moment you talk to it (see §8).
 
 There are **two completely different kinds of Claude Code session**. Conflating them is the #1 source of
 wrong mental models. The **job brain** — now the job's `planning` stage-thread — is the job's one main,
-continuous session, the thing you converse with. The **build sessions** are what the *driver* runs to build
+continuous session, the thing you converse with. The **build sessions** are what the _driver_ runs to build
 the approved plan, one per `builder` thread; you don't converse with them (you observe them, and can steer
 the current build turn via per-thread operator chat — see §6).
 
-| | **Job brain (`planning` stage-thread)** | **Build session (per `builder` thread)** |
-|---|---|---|
-| Count | **One** per job, *continuous* | **One orchestrator session per builder thread**, fresh & ephemeral |
-| Session state | resumes `job_sandboxes.session_id` **every turn** | `threads.session_id` (relocated off the retired `steps` table) — resumed **only** on a mid-turn halt |
-| Role | intent → grill → lock decisions → propose plan → **steer** | build **one builder leg** of a build/direct_build stage |
-| System prompt | **custom plan mode** (NOT the SDK's native `ExitPlanMode`) | orchestrator prompt (Opus) that fans out to writer subagents |
-| You talk to it via | the job **Conversation** (`say`) | the build **transcript** (per-thread operator chat, §6) |
-| Code | `brain/agent-session-manager.service.ts` (`handleChatTurn`) | `driver/thread-driver.service.ts` (`driveBuildStage`) |
+|                    | **Job brain (`planning` stage-thread)**                     | **Build session (per `builder` thread)**                                                             |
+| ------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Count              | **One** per job, _continuous_                               | **One orchestrator session per builder thread**, fresh & ephemeral                                   |
+| Session state      | resumes `job_sandboxes.session_id` **every turn**           | `threads.session_id` (relocated off the retired `steps` table) — resumed **only** on a mid-turn halt |
+| Role               | intent → grill → lock decisions → propose plan → **steer**  | build **one builder leg** of a build/direct_build stage                                              |
+| System prompt      | **custom plan mode** (NOT the SDK's native `ExitPlanMode`)  | orchestrator prompt (Opus) that fans out to writer subagents                                         |
+| You talk to it via | the job **Conversation** (`say`)                            | the build **transcript** (per-thread operator chat, §6)                                              |
+| Code               | `brain/agent-session-manager.service.ts` (`handleChatTurn`) | `driver/thread-driver.service.ts` (`driveBuildStage`)                                                |
 
 **Job brain — the host tools** (`agent-session-manager.service.ts` `buildTools`). ~15 tools, grouped:
-- *read/plan:* `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
-- *decisions/questions:* `create_decision`, `ask_question`, `answer`
-- *memory:* `recall`, `remember`
-- *spin-off / intake:* `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
+
+- _read/plan:_ `get_pipeline_state`, `get_decision_record`, `submit_plan`, `finalize_plan`, `dispatch_build`
+- _decisions/questions:_ `create_decision`, `ask_question`, `answer`
+- _memory:_ `recall`, `remember`
+- _spin-off / intake:_ `create_job` (a NEW independent job on this repo — own base branch, starts scoping),
   `request_secret` (onboarding)
-- *fast path:* `start_direct_build` (a small localized change routed through the `direct_build` stage kind —
+- _fast path:_ `start_direct_build` (a small localized change routed through the `direct_build` stage kind —
   see below — with lightweight approval)
 
 The brain is genuinely continuous: each turn resumes the same `session_id`, so it remembers the grilling,
@@ -130,18 +131,18 @@ persists the plan (stages + their threads) + requests an async Codex review (the
 host-bridge MCP (`app/prod-mcp/`), wired in ONLY when the repo slug === `ATLAS_REPO_SLUG` (`isAtlasRepo`) —
 fail-closed, so no non-Atlas job ever sees it. It serves the 7 read-only `atlas_*` diagnostics tools on a
 dedicated **SELECT-only** DB role (`mcp_reader`, its own DataSource — never the backend's `app` connection),
-plus a **structurally-gated** write tool `propose_prod_write`: the brain can only *propose* one single SQL
+plus a **structurally-gated** write tool `propose_prod_write`: the brain can only _propose_ one single SQL
 statement; it is previewed (an `EXPLAIN` planner estimate on the read-only role — the `mcp_writer` credential
-is never touched pre-approval) and posted as an operator **approval card**. Only on approval does a *separate*
+is never touched pre-approval) and posted as an operator **approval card**. Only on approval does a _separate_
 code path execute the exact approved statement on a **DML-only** role (`mcp_writer`, INSERT/UPDATE/DELETE, no
 DDL) and write a durable audit row (`prod_maintenance_write`, which the writer role cannot itself mutate). The
-agent holds only *propose* — the recorded approval is what executes — so a confused/looping agent physically
+agent holds only _propose_ — the recorded approval is what executes — so a confused/looping agent physically
 cannot mutate prod. This is the same human-approval-gate shape as the plan/ship gates above, applied to prod
 recovery.
 
 **`create_job`.** ✅ The brain spins off a **new, independent** job on the same repo (`create_job({ title,
 firstMessage })`) when work splits into its own unit. It inherits the base branch and starts scoping
-immediately (`createFollowUpJob` → `startFollowUpJob`). Intentionally *independent* — an earlier
+immediately (`createFollowUpJob` → `startFollowUpJob`). Intentionally _independent_ — an earlier
 "blocked-until-merge" dependency variant was removed as too fragile.
 
 **Build sessions.** After approval, each **builder thread** runs (default **ORCHESTRATE mode**) as ONE Opus
@@ -149,7 +150,7 @@ orchestrator session that decomposes its stage into a live, **stage-owned task l
 `TaskCreate`/`TaskUpdate`, persisted to the `tasks` table keyed by `stage_id` rather than a per-thread jsonb
 blob) and fans the implementation out to **writer subagents** (`implement` Sonnet / `implement-deep` Opus,
 each recorded as a `subagents` row). They stream live to the SSE surface (the build transcript / the
-navigator's task list + agents). A build session is *not* the job brain — steering one via operator chat
+navigator's task list + agents). A build session is _not_ the job brain — steering one via operator chat
 steers that coding turn, not the job's intent.
 
 **Legs are gone as a concept — a "leg" IS a builder thread.** A `build`/`direct_build` stage starts with
@@ -165,7 +166,7 @@ it still flows through `post_build` + `ci` like every other pipeline; it is one 
 not a special code path.
 
 **Two more live stages take over what Main used to do at the tail end.** `post_build` (spawned once all
-build/direct_build stages + `master_review` complete — `DriverStoreService.ensurePostBuildThread`, called
+build/direct*build stages + `master_review` complete — `DriverStoreService.ensurePostBuildThread`, called
 from `BuildShipService`) now owns the ship/amend flow, including `openPrAtShip` — moved OFF the planning
 brain onto this thread's own fresh session (`threads.session_id`, isolated from `job_sandboxes.session_id`);
 `ci` (spawned once the PR is recorded — `DriverStoreService.ensureCiThread`, called from
@@ -173,9 +174,9 @@ brain onto this thread's own fresh session (`threads.session_id`, isolated from 
 `stimuli.lane = thread:<ciThreadId>`. **This split is orchestration-only**: `post_build`/`ci` reuse the EXACT
 SAME brain system prompting as today (`Agent.ATLAS_MAIN`, `thread-kind/registry.ts`), seeded with a minimal
 message (`post_build` gets the same "ship now" user message Main used to receive). Dedicated per-stage
-system/JIT prompting is deferred to a follow-up job — these are new spawn *seams*, not new prompt tuning.
+system/JIT prompting is deferred to a follow-up job — these are new spawn \_seams*, not new prompt tuning.
 
-## 5. The pipeline / driver — the hands  ✅
+## 5. The pipeline / driver — the hands ✅
 
 After a plan is approved, **`ThreadDriver`** (`driver/thread-driver.service.ts`) takes the wheel: a
 deterministic, legible, **resumable** loop that walks the job's **stages** in ordinal order
@@ -185,7 +186,7 @@ inline. Each executable stage (one whose spec contains a driver-executable role 
 cumulative diff) → auto-fix → handoff`; render-only stages (`planning`, `plan_review`, `post_build`, `ci`)
 never enter this loop — their runtime is a Claude Code session driven by the brain, not the driver. Stages
 stack on the **one** feature branch; **one PR per job**. It is a plain `await`-each-stage loop, **not an
-implicit FSM** — explicit `status`/`condition` rows on `threads` exist *only* so `resume()` can re-enter
+implicit FSM** — explicit `status`/`condition` rows on `threads` exist _only_ so `resume()` can re-enter
 after a restart (`resume()` re-drives `running` jobs; `resumePaused(jobId)` continues a paused one).
 
 **The driver is HEADLESS.** The old `BrainGateway` had five methods; three are gone —
@@ -203,42 +204,42 @@ thread folds the message into its orientation and re-drives it (`ThreadDriver.re
 driver escalating on its own — see §6.
 
 The brain and the driver run **concurrently**: you can keep talking to the job brain while the driver builds.
-The brain has no tool to *alter* a running build (its tools are read/plan/dispatch); live steering happens on
+The brain has no tool to _alter_ a running build (its tools are read/plan/dispatch); live steering happens on
 the thread itself via operator chat (§6).
 
 ## 6. Inputs & steering surfaces
 
-| Input | Route | Target | Status |
-|---|---|---|---|
-| Operator message | `POST …/jobs/:jobId/say` | job brain (`handleChatTurn`, the `planning` stage-thread) | ✅ (provisions the sandbox lazily on first turn — §8) |
-| Plan verdict | `POST …/jobs/:jobId/approve` | approval gate → dispatch on approve | ✅ |
-| Answer a question card | `POST …/jobs/:jobId/answer-question` | brain (`answer`) | ✅ |
-| Provide a secret | `POST …/jobs/:jobId/provide-secret` | encrypted store + grant (onboarding) | ✅ |
-| Live observability | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime` | outbound stream (chat + cards + build events; cross-org "needs you") | ✅ |
-| Automated event | `POST /webhooks/github/events` | event intake → **route to the owning job (its `ci` stage-thread once one exists, else planning), else drop** — route-only, never seeds (§7) | ✅ |
-| Per-thread operator chat | `postToThread(lane, …)`, `lane = "thread:<id>"` (web `/say`-style route) | the addressed thread — steers a live turn, or (if halted) folds into the thread's orientation and re-drives it | ✅ uniform capability on every thread; per-role `operatorInput` toggle gates whether a role accepts it (ON by default for `builder`/`planning`, OFF for `review_agent`/`review_fix`/`master_review`/`plan_review`/`post_build`/`ci` — flippable in one registry line) |
-| Retry / resume a halted build | operator posts to the halted thread's lane (above) | `ThreadDriver.redriveThread` | ✅ operator-initiated — no more brain-auto-fix loop (§5) |
-| Pause / revert step / NL steering ("undo that step", "simplify the rest") | — | driver | ⛔ not built |
+| Input                                                                     | Route                                                                    | Target                                                                                                                                      | Status                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operator message                                                          | `POST …/jobs/:jobId/say`                                                 | job brain (`handleChatTurn`, the `planning` stage-thread)                                                                                   | ✅ (provisions the sandbox lazily on first turn — §8)                                                                                                                                                                                                                 |
+| Plan verdict                                                              | `POST …/jobs/:jobId/approve`                                             | approval gate → dispatch on approve                                                                                                         | ✅                                                                                                                                                                                                                                                                    |
+| Answer a question card                                                    | `POST …/jobs/:jobId/answer-question`                                     | brain (`answer`)                                                                                                                            | ✅                                                                                                                                                                                                                                                                    |
+| Provide a secret                                                          | `POST …/jobs/:jobId/provide-secret`                                      | encrypted store + grant (onboarding)                                                                                                        | ✅                                                                                                                                                                                                                                                                    |
+| Live observability                                                        | `GET …/repos/:repoId/events` (SSE) + `GET /web/jobs/realtime`            | outbound stream (chat + cards + build events; cross-org "needs you")                                                                        | ✅                                                                                                                                                                                                                                                                    |
+| Automated event                                                           | `POST /webhooks/github/events`                                           | event intake → **route to the owning job (its `ci` stage-thread once one exists, else planning), else drop** — route-only, never seeds (§7) | ✅                                                                                                                                                                                                                                                                    |
+| Per-thread operator chat                                                  | `postToThread(lane, …)`, `lane = "thread:<id>"` (web `/say`-style route) | the addressed thread — steers a live turn, or (if halted) folds into the thread's orientation and re-drives it                              | ✅ uniform capability on every thread; per-role `operatorInput` toggle gates whether a role accepts it (ON by default for `builder`/`planning`, OFF for `review_agent`/`review_fix`/`master_review`/`plan_review`/`post_build`/`ci` — flippable in one registry line) |
+| Retry / resume a halted build                                             | operator posts to the halted thread's lane (above)                       | `ThreadDriver.redriveThread`                                                                                                                | ✅ operator-initiated — no more brain-auto-fix loop (§5)                                                                                                                                                                                                              |
+| Pause / revert step / NL steering ("undo that step", "simplify the rest") | —                                                                        | driver                                                                                                                                      | ⛔ not built                                                                                                                                                                                                                                                          |
 
 ## The Workspace Profile — the one provisioning area Atlas keeps current
 
 Everything a repo needs to be a **runnable, correctly-configured workspace** is one named area: the
 **Workspace Profile**. It has seven dimensions, each stored separately but conceived as one thing:
 
-| Dimension | Storage | Upkeep tool |
-|---|---|---|
-| Secret files | `org_workspace_secret_files` | `request_secret` / `request_file` / `derive_secret` |
-| Mounts | `org_workspace_mounts` | `write_workspace_config` |
-| Cache folders | mounts (`shared-rw`) + fixed durable HOME binds | `write_workspace_config` |
-| Setup / SDK installs | `repos.setup_script` | `write_setup_script` |
-| MCP servers | `mcp_servers` | `propose_mcp_servers` (owner-approved) |
-| Skills | `workspace_skills` | `propose_skill` (owner-approved reusable `SKILL.md`) |
-| House style | `convention_profiles` + `repos.convention_profile_slug` | `propose_convention_profile[_change]` (owner-approved) |
+| Dimension            | Storage                                                 | Upkeep tool                                            |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
+| Secret files         | `org_workspace_secret_files`                            | `request_secret` / `request_file` / `derive_secret`    |
+| Mounts               | `org_workspace_mounts`                                  | `write_workspace_config`                               |
+| Cache folders        | mounts (`shared-rw`) + fixed durable HOME binds         | `write_workspace_config`                               |
+| Setup / SDK installs | `repos.setup_script`                                    | `write_setup_script`                                   |
+| MCP servers          | `mcp_servers`                                           | `propose_mcp_servers` (owner-approved)                 |
+| Skills               | `workspace_skills`                                      | `propose_skill` (owner-approved reusable `SKILL.md`)   |
+| House style          | `convention_profiles` + `repos.convention_profile_slug` | `propose_convention_profile[_change]` (owner-approved) |
 
 The tables stay separate; the unification is at four seams:
 
 - **Read-model** — `WorkspaceProfileService` (`workspace-profile/`) composes the seven per-dimension stores
-  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret *value*. It also
+  into one snapshot (`describe` → `render`). No storage of its own; never exposes a secret _value_. It also
   derives host-visible **gaps** (`computeGaps` → `renderGaps`) the brain can't see from the snapshot — v1:
   an approved MCP server with an unfilled secret slot (it silently fails auth). Rendered only when present.
 - **Bridge** — every dimension's upkeep tool lives on a dedicated `workspace-profile` MCP bridge
@@ -250,7 +251,7 @@ The tables stay separate; the unification is at four seams:
 - **Lifecycle** — **onboarding is the first BULK pass** over the profile (`isOnboarding` fragments +
   `finish_onboarding`); **every job after keeps it current INCREMENTALLY** — the same upkeep tools live in
   the shared `intake` bundle so any build fixes a gap it hits (a missing secret, a new cache, a skill worth
-  adding) so the *next* job inherits it. Same area, same tools, different framing.
+  adding) so the _next_ job inherits it. Same area, same tools, different framing.
 
 The onboarding bulk pass also makes each **user-facing surface** live-accessible in a browser through the
 preview proxy — it exposes the surface (`atlas-svc run --port <n> --expose`, opt-in, + Caddy reconcile a deterministic
@@ -335,14 +336,14 @@ and split by event set + downstream behavior — named by behavior so the purpos
   `git/github-pr.service.ts`) — run through `StimulusIntake.intakeEvent`, which ROUTES to the job that owns the
   event's PR/branch and DROPS anything unowned (route-only, **d6** — §7 above). This wakes the owning job's brain.
 - **`/webhooks/github/state` — pure state facts (silent).** Carries two `STATE_EVENTS`:
-  - A `pull_request` event (opened / closed / merged / reopened) is a *fact* about a PR, not a task:
+  - A `pull_request` event (opened / closed / merged / reopened) is a _fact_ about a PR, not a task:
     `GithubNotificationSource` classifies it as a `pr-sync` delta (`ingress/ingress-http.ts` `runPrWebhook`)
     applied by `GithubPrStateSync` → `JobLifecycleService.applyGithubPrState` (`driver/job-lifecycle.service.ts`),
     which writes the sync columns DIRECTLY — `pr_state`; plus `pr_url` / `pr_number` / `status:'done'` when the
     branch is owned by a job (opened); sandbox teardown on close/merge; `pr_state` back to `open` on reopen.
   - A `push` to the repo's **DEFAULT branch** is the real-time base-move-conflict unlock: `GithubNotificationSource`
     emits a `repo-push` outcome → `GitStateReconciler.markRepoDue` stamps every OPEN PR on that repo `next_poll_at =
-    now()`, so the fast heartbeat re-checks mergeability within seconds. This catches a base-induced conflict —
+now()`, so the fast heartbeat re-checks mergeability within seconds. This catches a base-induced conflict —
     the one PR-state change GitHub emits **no** webhook for (a moved base silently makes an open PR `dirty`).
     Non-default-branch pushes are ignored (a feature head moving is the PR's own commit — the ~45s cadence has it).
 
@@ -385,8 +386,8 @@ and split by event set + downstream behavior — named by behavior so the purpos
 ## 8. Known divergences & tech debt
 
 - **Provisioning** — ✅ closed on the brain path: `handleChatTurn` lazily provisions branch + sandbox +
-  session via `lifecycle.ensureProvisioned` before the first turn (posting *"Setting up an isolated
-  workspace…"*). **Still open:** an **event-seeded** job that reaches the driver *without* ever taking a brain
+  session via `lifecycle.ensureProvisioned` before the first turn (posting _"Setting up an isolated
+  workspace…"_). **Still open:** an **event-seeded** job that reaches the driver _without_ ever taking a brain
   turn skips lazy provision — `ensureSandbox` then takes the legacy fallback branch name.
 - **Operator steering** — per-thread operator chat + retry/resume via re-drive are built (§6); pause /
   revert-stage / NL steering are ⛔ not built.
@@ -398,7 +399,7 @@ and split by event set + downstream behavior — named by behavior so the purpos
   and predates the redesign; treat it as history, not truth. `docs/adr/0008-first-class-stages.md` is the
   decision record for the stage/thread model this file now describes.
 
-## 9. Durability — how a halt resumes  ✅
+## 9. Durability — how a halt resumes ✅
 
 The contract: a halt **continues the same engine session**, it doesn't spawn a fresh one. The key fix is
 persisting `threads.session_id` at turn **start** (the first NDJSON frame), not just at success — relocated

@@ -39,7 +39,10 @@ export function composeTurn(input: ComposeTurnInput): AgentMessage {
  * `<user>` rendering; the caller marks the non-hub body via `fromExternal` at the seam. Byte-identical to the old
  * inline `framedPrefix ? `${framedPrefix}\n${body}` : body`.
  */
-export function composeSeedTurn(prefixChunks: TurnChunk[], body: AgentMessage): AgentMessage {
+export function composeSeedTurn(
+  prefixChunks: TurnChunk[],
+  body: AgentMessage,
+): AgentMessage {
   const framedPrefix = renderTurn(prefixChunks);
   return agentMessage(framedPrefix ? `${framedPrefix}\n${body}` : body);
 }
@@ -50,6 +53,9 @@ export function composeSeedTurn(prefixChunks: TurnChunk[], body: AgentMessage): 
  * with the engine types), so it crosses the seam via `fromExternal`; the hub owns the fold + mint rather than the
  * caller free-handing an `agentMessage`. Byte-identical to `${notice}\n\n${task}`.
  */
-export function prependNotice(notice: string, task: AgentMessage): AgentMessage {
+export function prependNotice(
+  notice: string,
+  task: AgentMessage,
+): AgentMessage {
   return agentMessage(`${fromExternal(notice)}\n\n${task}`);
 }

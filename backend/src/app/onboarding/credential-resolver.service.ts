@@ -3,7 +3,10 @@ import { GitHubAppTokenService } from '../git/github-app-token.service';
 import { GitIdentityService } from '../git/git-identity.service';
 import type { EngineAuth, SandboxGitIdentity } from '../engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
-import { TenantCredentialStore, type TenantCredentials } from './tenant-credential.store';
+import {
+  TenantCredentialStore,
+  type TenantCredentials,
+} from './tenant-credential.store';
 
 /**
  * THE credential seam. Every consumer (the LLM factories, the engine runner via the driver, the GitHub
@@ -48,7 +51,9 @@ export class CredentialResolver {
    *  AND an installation is connected, else 'pat'. Transport, commit identity, and GH_TOKEN all derive from
    *  THIS one choice so the pusher, author, and PR-opener can never diverge. */
   private effectiveCredential(creds: TenantCredentials): 'app' | 'pat' {
-    return creds.githubAuthMode === 'app' && creds.githubAppInstallationId ? 'app' : 'pat';
+    return creds.githubAuthMode === 'app' && creds.githubAppInstallationId
+      ? 'app'
+      : 'pat';
   }
 
   /** GitHub token for clone/push/PR: an installation token for app-mode orgs, else the org PAT, else undefined. NEVER throws — a mint blip yields undefined (same as an absent PAT). */
@@ -117,7 +122,9 @@ export class CredentialResolver {
     if (!creds) return undefined;
     if (!creds.githubAppInstallationId) return creds.githubPat; // App absent → bootstrap/degraded PAT
     try {
-      return await this.appTokens.getInstallationToken(creds.githubAppInstallationId);
+      return await this.appTokens.getInstallationToken(
+        creds.githubAppInstallationId,
+      );
     } catch (e) {
       this.logger.error(
         `host installation-token mint failed for org ${orgId}: ${(e as Error).message}`,

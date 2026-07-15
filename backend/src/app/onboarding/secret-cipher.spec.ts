@@ -15,11 +15,15 @@ describe('secret-cipher', () => {
     });
 
     it('refuses loudly when unset', () => {
-      expect(() => loadSecretsKey(undefined)).toThrow(/SECRETS_ENCRYPTION_KEY is not set/);
+      expect(() => loadSecretsKey(undefined)).toThrow(
+        /SECRETS_ENCRYPTION_KEY is not set/,
+      );
     });
 
     it('refuses a wrong-length key', () => {
-      expect(() => loadSecretsKey(Buffer.alloc(16).toString('base64'))).toThrow(/32 bytes/);
+      expect(() => loadSecretsKey(Buffer.alloc(16).toString('base64'))).toThrow(
+        /32 bytes/,
+      );
     });
   });
 
@@ -49,7 +53,9 @@ describe('secret-cipher', () => {
       const [iv, tag, ct] = blob.split('.');
       const tamperedCt = Buffer.from(ct, 'base64');
       tamperedCt[0] ^= 0xff;
-      expect(() => decryptSecret(`${iv}.${tag}.${tamperedCt.toString('base64')}`, key)).toThrow();
+      expect(() =>
+        decryptSecret(`${iv}.${tag}.${tamperedCt.toString('base64')}`, key),
+      ).toThrow();
     });
 
     it('rejects a malformed blob', () => {

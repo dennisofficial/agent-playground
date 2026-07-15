@@ -57,7 +57,9 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -144,16 +146,26 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(second.thread.title).toBe('rate limiting v2');
 
     // Sections reflect ONLY the new proposal — the stale ones are gone.
-    expect(await threadTitles(dataSource, jobId)).toEqual(['backend middleware only']);
+    expect(await threadTitles(dataSource, jobId)).toEqual([
+      'backend middleware only',
+    ]);
 
     // The prior draft record is superseded; exactly one draft remains (the new one).
-    expect(await recordStatus(dataSource, first.decisionRecordId)).toBe('superseded');
-    expect(await recordStatus(dataSource, second.decisionRecordId)).toBe('draft');
+    expect(await recordStatus(dataSource, first.decisionRecordId)).toBe(
+      'superseded',
+    );
+    expect(await recordStatus(dataSource, second.decisionRecordId)).toBe(
+      'draft',
+    );
     expect(await draftCount(dataSource, jobId)).toBe(1);
   }, 30_000);
 
   it('PLAN VERSIONING: a re-propose over a DONE builder preserves the prior revision as history and forges a new one', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-repo');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'versioning-repo',
+    );
 
     // First proposal — one builder — then simulate it BUILT & committed (status=done).
     const first = await store.persistPlan({
@@ -172,7 +184,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     );
 
     // Ship-review retracted → amending (the gate the operator released); re-propose is allowed here.
-    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+    await dataSource.query(
+      `UPDATE jobs SET status = 'amending' WHERE id = $1`,
+      [jobId],
+    );
 
     // Second proposal with a NEW builder — must NOT delete the done v1 builder.
     const second = await store.persistPlan({
@@ -188,8 +203,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(second.decisionRecordId).not.toBe(first.decisionRecordId);
 
     // The prior revision's done builder SURVIVES (history), and the new revision's builder exists too.
-    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
-    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual(['backend two']);
+    expect(
+      await builderBriefsForRecord(dataSource, first.decisionRecordId),
+    ).toEqual(['backend one']);
+    expect(
+      await builderBriefsForRecord(dataSource, second.decisionRecordId),
+    ).toEqual(['backend two']);
     // Exactly ONE main row across both revisions (create-if-absent, not recreated per revision).
     expect(await mainCount(dataSource, jobId)).toBe(1);
 
@@ -197,7 +216,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // (Both `threads` arrays also carry the revision's `master_review` root — filter to builders to compare.)
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
       threads: Array<{ brief: string; kind: string }>;
-      priorRevisions: Array<{ revision: number; threads: Array<{ brief: string; kind: string }> }>;
+      priorRevisions: Array<{
+        revision: number;
+        threads: Array<{ brief: string; kind: string }>;
+      }>;
     };
     const builders = (ts: Array<{ brief: string; kind: string }>) =>
       ts.filter((t) => t.kind === 'builder').map((t) => t.brief);
@@ -208,7 +230,11 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   }, 30_000);
 
   it('PLAN VERSIONING: a DIRECT build (empty threadTitles) over done work preserves history and creates no builders', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'versioning-direct-repo');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'versioning-direct-repo',
+    );
 
     const first = await store.persistPlan({
       orgId: TEAM_ID,
@@ -224,7 +250,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
       [first.decisionRecordId],
     );
-    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+    await dataSource.query(
+      `UPDATE jobs SET status = 'amending' WHERE id = $1`,
+      [jobId],
+    );
 
     // Direct build: empty threadTitles → no new builders, no master_review.
     const second = await store.persistPlan({
@@ -237,19 +266,27 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       decisions: [],
       threadTitles: [],
     });
-    expect(await builderBriefsForRecord(dataSource, first.decisionRecordId)).toEqual(['backend one']);
-    expect(await builderBriefsForRecord(dataSource, second.decisionRecordId)).toEqual([]);
+    expect(
+      await builderBriefsForRecord(dataSource, first.decisionRecordId),
+    ).toEqual(['backend one']);
+    expect(
+      await builderBriefsForRecord(dataSource, second.decisionRecordId),
+    ).toEqual([]);
     expect(await masterReviewCount(dataSource, jobId)).toBe(1); // only v1's master review remains
 
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
       threads: Array<{ brief: string; kind: string }>;
-      priorRevisions: Array<{ threads: Array<{ brief: string; kind: string }> }>;
+      priorRevisions: Array<{
+        threads: Array<{ brief: string; kind: string }>;
+      }>;
     };
     // Active revision has no lanes (empty direct build), but the done v1 builder is browsable history.
     expect(state.threads).toEqual([]);
     expect(state.priorRevisions).toHaveLength(1);
     expect(
-      state.priorRevisions[0].threads.filter((t) => t.kind === 'builder').map((t) => t.brief),
+      state.priorRevisions[0].threads
+        .filter((t) => t.kind === 'builder')
+        .map((t) => t.brief),
     ).toEqual(['backend one']);
   }, 30_000);
 
@@ -279,24 +316,46 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const jobId = thread.id;
 
     // Empty title → status flips to planning but the existing title is preserved.
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: '', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: '',
+      kind: 'feature',
+    });
     let row = await loadThreadRow(dataSource, jobId);
     expect(row?.status).toBe('planning');
     expect(row?.title).toBe('Discuss next feature');
 
     // Whitespace-only title is treated the same (no clobber).
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: '   ', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: '   ',
+      kind: 'feature',
+    });
     row = await loadThreadRow(dataSource, jobId);
     expect(row?.title).toBe('Discuss next feature');
 
     // A meaningful title still updates (propose_plan / direct-build path — the rename feature works).
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'Profile picture CRUD', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'Profile picture CRUD',
+      kind: 'feature',
+    });
     row = await loadThreadRow(dataSource, jobId);
     expect(row?.title).toBe('Profile picture CRUD');
   }, 30_000);
 
   it('persistPlan coerces off-vocabulary thread types at the write boundary', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-thread-types-it');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-thread-types-it',
+    );
     await store.openJob({
       orgId: TEAM_ID,
       repoId,
@@ -317,7 +376,11 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTypes: ['analytics', 'BACKEND'],
     });
 
-    expect(await threadTypes(dataSource, jobId)).toEqual(['general', 'backend', 'general']);
+    expect(await threadTypes(dataSource, jobId)).toEqual([
+      'general',
+      'backend',
+      'general',
+    ]);
   }, 30_000);
 
   it('stamps appended blocks with their emission time so a mid-turn user message keeps chronological order', async () => {
@@ -349,8 +412,16 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // The turn-1 question (persisted first).
     await insertUserMessage(dataSource, jobId, 'first question', at(0));
     // The turn streams two blocks — captured at emission times 1s and 2s into the turn…
-    await store.appendBlock(jobId, { kind: 'chat', text: 'investigating', createdAt: at(1) });
-    await store.appendBlock(jobId, { kind: 'chat', text: 'here is the answer', createdAt: at(2) });
+    await store.appendBlock(jobId, {
+      kind: 'chat',
+      text: 'investigating',
+      createdAt: at(1),
+    });
+    await store.appendBlock(jobId, {
+      kind: 'chat',
+      text: 'here is the answer',
+      createdAt: at(2),
+    });
     // …but the operator's follow-up landed (real send time, 3s in) BEFORE the blocks were written at turn
     // end. Inserted AFTER the blocks here on purpose, to mirror the real INSERT order that caused the bug.
     await insertUserMessage(dataSource, jobId, 'later question', at(3));
@@ -386,7 +457,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       baseBranch: 'main',
     });
     const row = await loadThreadRow(dataSource, followUpId);
-    expect(row).toMatchObject({ status: 'open', origin: 'control', title: 'follow-up', base_branch: 'main' });
+    expect(row).toMatchObject({
+      status: 'open',
+      origin: 'control',
+      title: 'follow-up',
+      base_branch: 'main',
+    });
     expect(row?.created_by_job_id).toBeNull();
     expect(row?.created_by).toBeNull();
 
@@ -401,7 +477,10 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
     const grandchildRow = await loadThreadRow(dataSource, grandchildId);
     expect(grandchildRow?.created_by_job_id).toBe(followUpId);
-    expect(grandchildRow?.created_by).toEqual({ jobId: followUpId, title: 'parent' });
+    expect(grandchildRow?.created_by).toEqual({
+      jobId: followUpId,
+      title: 'parent',
+    });
   }, 30_000);
 
   it('CRUDs decisions in the working set by stable id and reads them back via the answered card', async () => {
@@ -429,11 +508,22 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.appendCardMessage(jobId, {
       ts: 'q-1',
       text: 'Editable or fixed?',
-      card: { type: 'question_card', jobId, questionId: 'q-1', question: 'Editable or fixed?', options: [] },
+      card: {
+        type: 'question_card',
+        jobId,
+        questionId: 'q-1',
+        question: 'Editable or fixed?',
+        options: [],
+      },
     });
-    await store.updateCardMessage(jobId, 'q-1', { answer: 'Editable', answeredAt: '2026-06-26T00:00:00Z' });
+    await store.updateCardMessage(jobId, 'q-1', {
+      answer: 'Editable',
+      answeredAt: '2026-06-26T00:00:00Z',
+    });
     const answered = await store.latestAnsweredQuestionCard(jobId);
-    expect((answered?.card as { answer?: string } | null)?.answer).toBe('Editable');
+    expect((answered?.card as { answer?: string } | null)?.answer).toBe(
+      'Editable',
+    );
 
     // CREATE two decisions → stable sequential ids d1, d2 (id-addressed, not class+title keyed).
     const first = await store.createDecision(jobId, {
@@ -453,8 +543,13 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(second.all).toHaveLength(2);
 
     // UPDATE by id revises just that row.
-    const updated = await store.updateDecision(jobId, 'd1', { ruling: 'fixed (final)' });
-    expect(updated?.decision).toMatchObject({ id: 'd1', ruling: 'fixed (final)' });
+    const updated = await store.updateDecision(jobId, 'd1', {
+      ruling: 'fixed (final)',
+    });
+    expect(updated?.decision).toMatchObject({
+      id: 'd1',
+      ruling: 'fixed (final)',
+    });
     expect(await store.updateDecision(jobId, 'd9', { ruling: 'x' })).toBeNull(); // unknown id
 
     // DELETE by id; the next create does NOT reuse the freed id (max-based allocation).
@@ -497,7 +592,13 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'authored', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'authored',
+      kind: 'feature',
+    });
 
     // Full-plan-up-front: 2 threads, the first with 2 authored steps, the second with 1.
     await store.persistPlan({
@@ -525,7 +626,9 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       'add the service at server.service.ts:1',
       'add the page at page.tsx:1',
     ]);
-    expect(phases1.every((p) => p.status === 'pending' && p.stage === 'build')).toBe(true);
+    expect(
+      phases1.every((p) => p.status === 'pending' && p.stage === 'build'),
+    ).toBe(true);
     // thread.plan is set on BOTH threads (so the pipeline view reports hasPlan).
     const plans1 = await sectionPlans(dataSource, jobId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
@@ -573,39 +676,72 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const mkCard = (id: string, q: string) => ({
       ts: id,
       text: q,
-      card: { type: 'question_card', jobId, questionId: id, question: q, options: [] },
+      card: {
+        type: 'question_card',
+        jobId,
+        questionId: id,
+        question: q,
+        options: [],
+      },
     });
 
     // open q-1 → card row + counter bump commit together (atomic).
-    expect(await store.openQuestion(jobId, mkCard('q-1', 'Editable or fixed?'))).toEqual({ ok: true });
+    expect(
+      await store.openQuestion(jobId, mkCard('q-1', 'Editable or fixed?')),
+    ).toEqual({ ok: true });
     expect(await openCount(dataSource, jobId)).toBe(1);
-    expect((await store.getQuestionCard(jobId, 'q-1'))?.question).toBe('Editable or fixed?');
+    expect((await store.getQuestionCard(jobId, 'q-1'))?.question).toBe(
+      'Editable or fixed?',
+    );
 
     // STACKING: a second question while q-1 is unanswered is allowed — counter goes to 2, both persist.
-    expect(await store.openQuestion(jobId, mkCard('q-2', 'Which region?'))).toEqual({ ok: true });
+    expect(
+      await store.openQuestion(jobId, mkCard('q-2', 'Which region?')),
+    ).toEqual({ ok: true });
     expect(await openCount(dataSource, jobId)).toBe(2);
-    expect((await store.getQuestionCard(jobId, 'q-2'))?.question).toBe('Which region?');
+    expect((await store.getQuestionCard(jobId, 'q-2'))?.question).toBe(
+      'Which region?',
+    );
 
     // answer q-1 (out of order is fine) → first answer wins + decrements; a second answer is idempotent.
-    expect(await store.markQuestionAnswered(jobId, 'q-1', 'Editable')).toEqual({ firstAnswer: true });
-    expect(await store.markQuestionAnswered(jobId, 'q-1', 'Editable-again')).toEqual({ firstAnswer: false });
+    expect(await store.markQuestionAnswered(jobId, 'q-1', 'Editable')).toEqual({
+      firstAnswer: true,
+    });
+    expect(
+      await store.markQuestionAnswered(jobId, 'q-1', 'Editable-again'),
+    ).toEqual({ firstAnswer: false });
     expect(await openCount(dataSource, jobId)).toBe(1); // only the winning answer decremented
-    expect((await store.getQuestionCard(jobId, 'q-1'))?.answer).toBe('Editable'); // not overwritten
+    expect((await store.getQuestionCard(jobId, 'q-1'))?.answer).toBe(
+      'Editable',
+    ); // not overwritten
 
     // q-1 is now answered-but-undelivered → the boot sweep recovers it (scans card rows, not a pointer).
     expect(await store.findUndeliveredAnsweredQuestions()).toContainEqual(
-      expect.objectContaining({ jobId, orgId: TEAM_ID, repoId, questionId: 'q-1', answer: 'Editable' }),
+      expect.objectContaining({
+        jobId,
+        orgId: TEAM_ID,
+        repoId,
+        questionId: 'q-1',
+        answer: 'Editable',
+      }),
     );
 
     // a delivery turn stamps q-1 delivered → no longer a recovery candidate; q-2 (unanswered) is not one either.
     await store.markQuestionDelivered(jobId, 'q-1');
-    expect((await store.getQuestionCard(jobId, 'q-1'))?.deliveredAt).toBeTruthy();
     expect(
-      (await store.findUndeliveredAnsweredQuestions()).some((q) => q.jobId === jobId),
+      (await store.getQuestionCard(jobId, 'q-1'))?.deliveredAt,
+    ).toBeTruthy();
+    expect(
+      (await store.findUndeliveredAnsweredQuestions()).some(
+        (q) => q.jobId === jobId,
+      ),
     ).toBe(false);
 
     // reconcile recomputes the counter from the actual unanswered cards (q-2 only) — heals any drift.
-    await dataSource.query(`UPDATE jobs SET open_question_count = 99 WHERE id = $1`, [jobId]);
+    await dataSource.query(
+      `UPDATE jobs SET open_question_count = 99 WHERE id = $1`,
+      [jobId],
+    );
     await store.reconcileOpenQuestionCounts();
     expect(await openCount(dataSource, jobId)).toBe(1); // q-2 still unanswered
 
@@ -614,22 +750,37 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(open1.map((c) => c.questionId)).toEqual(['q-2']);
 
     // WITHDRAW q-2 → terminal, decrements the counter, drops out of the open list.
-    expect(await store.withdrawQuestion(jobId, 'q-2', 'reworded')).toEqual({ withdrawn: true });
+    expect(await store.withdrawQuestion(jobId, 'q-2', 'reworded')).toEqual({
+      withdrawn: true,
+    });
     expect(await openCount(dataSource, jobId)).toBe(0);
-    expect((await store.getQuestionCard(jobId, 'q-2'))?.withdrawnAt).toBeTruthy();
-    expect((await store.getQuestionCard(jobId, 'q-2'))?.withdrawnReason).toBe('reworded');
+    expect(
+      (await store.getQuestionCard(jobId, 'q-2'))?.withdrawnAt,
+    ).toBeTruthy();
+    expect((await store.getQuestionCard(jobId, 'q-2'))?.withdrawnReason).toBe(
+      'reworded',
+    );
     expect(await store.openQuestionCards(jobId)).toEqual([]);
 
     // Idempotent: a second withdraw is a no-op; an answer racing in after withdrawal must NOT fire.
-    expect(await store.withdrawQuestion(jobId, 'q-2', 'again')).toEqual({ withdrawn: false });
-    expect(await store.markQuestionAnswered(jobId, 'q-2', 'too late')).toEqual({ firstAnswer: false });
+    expect(await store.withdrawQuestion(jobId, 'q-2', 'again')).toEqual({
+      withdrawn: false,
+    });
+    expect(await store.markQuestionAnswered(jobId, 'q-2', 'too late')).toEqual({
+      firstAnswer: false,
+    });
     expect(await openCount(dataSource, jobId)).toBe(0); // no double-decrement, no phantom answer
 
     // A withdrawn (unanswered) card is not a boot-recovery candidate, and reconcile ignores it.
     expect(
-      (await store.findUndeliveredAnsweredQuestions()).some((q) => q.questionId === 'q-2'),
+      (await store.findUndeliveredAnsweredQuestions()).some(
+        (q) => q.questionId === 'q-2',
+      ),
     ).toBe(false);
-    await dataSource.query(`UPDATE jobs SET open_question_count = 42 WHERE id = $1`, [jobId]);
+    await dataSource.query(
+      `UPDATE jobs SET open_question_count = 42 WHERE id = $1`,
+      [jobId],
+    );
     await store.reconcileOpenQuestionCounts();
     expect(await openCount(dataSource, jobId)).toBe(0); // withdrawn q-2 no longer counts as open
   }, 30_000);
@@ -667,29 +818,45 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
 
     // open f-1 → card row persists (per-card, no counter) + surfaces as an open card (re-post guard).
-    expect(await store.openFileRequest(jobId, mkFile('f-1', '.env.keys'))).toEqual({ ok: true });
+    expect(
+      await store.openFileRequest(jobId, mkFile('f-1', '.env.keys')),
+    ).toEqual({ ok: true });
     expect((await store.getFileCard(jobId, 'f-1'))?.path).toBe('.env.keys');
-    expect((await store.openFileCards(jobId)).map((c) => c.requestId)).toEqual(['f-1']);
+    expect((await store.openFileCards(jobId)).map((c) => c.requestId)).toEqual([
+      'f-1',
+    ]);
 
     // WITHDRAW f-1 → terminal; stamps withdrawnAt + reason; drops out of the open pipeline.
-    expect(await store.withdrawFileRequest(jobId, 'f-1', 'wrong path')).toEqual({ withdrawn: true });
+    expect(await store.withdrawFileRequest(jobId, 'f-1', 'wrong path')).toEqual(
+      { withdrawn: true },
+    );
     expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnAt).toBeTruthy();
-    expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnReason).toBe('wrong path');
+    expect((await store.getFileCard(jobId, 'f-1'))?.withdrawnReason).toBe(
+      'wrong path',
+    );
     expect(await store.openFileCards(jobId)).toEqual([]); // withdrawn → no longer surfaced
 
     // Idempotent: a second withdraw is a no-op.
-    expect(await store.withdrawFileRequest(jobId, 'f-1', 'again')).toEqual({ withdrawn: false });
+    expect(await store.withdrawFileRequest(jobId, 'f-1', 'again')).toEqual({
+      withdrawn: false,
+    });
 
     // A PROVIDED card cannot be withdrawn (the operator already uploaded → withdraw must not fire).
-    expect(await store.openFileRequest(jobId, mkFile('f-2', 'infra/prod/.env.keys'))).toEqual({ ok: true });
+    expect(
+      await store.openFileRequest(jobId, mkFile('f-2', 'infra/prod/.env.keys')),
+    ).toEqual({ ok: true });
     await store.markFileProvided(jobId, 'f-2', 'prod.env.keys');
-    expect(await store.withdrawFileRequest(jobId, 'f-2', 'too late')).toEqual({ withdrawn: false });
+    expect(await store.withdrawFileRequest(jobId, 'f-2', 'too late')).toEqual({
+      withdrawn: false,
+    });
     expect((await store.getFileCard(jobId, 'f-2'))?.withdrawnAt).toBeFalsy();
     expect(await store.openFileCards(jobId)).toEqual([]); // provided → also not surfaced as open
 
     // A withdrawn (unprovided) card is not a boot-redelivery candidate.
     expect(
-      (await store.findUndeliveredProvidedFiles()).some((f) => f.requestId === 'f-1'),
+      (await store.findUndeliveredProvidedFiles()).some(
+        (f) => f.requestId === 'f-1',
+      ),
     ).toBe(false);
   }, 30_000);
 
@@ -721,9 +888,13 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // Identical text within the window → matched (the guard suppresses the second box).
     expect(await store.hasRecentSystemOperatorNotice(jobId, err)).toBe(true);
     // A DIFFERENT error is never suppressed.
-    expect(await store.hasRecentSystemOperatorNotice(jobId, `${err} (other)`)).toBe(false);
+    expect(
+      await store.hasRecentSystemOperatorNotice(jobId, `${err} (other)`),
+    ).toBe(false);
     // Outside the recency window (a `since` in the future) → not matched.
-    expect(await store.hasRecentSystemOperatorNotice(jobId, err, -60_000)).toBe(false);
+    expect(await store.hasRecentSystemOperatorNotice(jobId, err, -60_000)).toBe(
+      false,
+    );
     // Scoped to the thread — another thread's identical notice doesn't match.
     expect(await store.hasRecentSystemOperatorNotice(TEAM_ID, err)).toBe(false);
   }, 30_000);
@@ -760,11 +931,15 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
 
     // The row is stored CLEAN (no XML tag), source-tagged so the classifier renders it distinctly.
-    const rows: Array<{ text: string; kind: string; author_bot_id: string | null; meta: Record<string, unknown> }> =
-      await dataSource.query(
-        `SELECT text, kind, author_bot_id, meta FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
-        [jobId],
-      );
+    const rows: Array<{
+      text: string;
+      kind: string;
+      author_bot_id: string | null;
+      meta: Record<string, unknown>;
+    }> = await dataSource.query(
+      `SELECT text, kind, author_bot_id, meta FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
+      [jobId],
+    );
     expect(rows).toHaveLength(1);
     expect(rows[0].text).toBe('open questions: q-1 (which region?)');
     expect(rows[0].kind).toBe('chat');
@@ -818,7 +993,9 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await store.recordSystemChunk({
       jobId,
       kind: 'system_notice',
-      text: agentMessage('A harness system notification was delivered to Atlas.'),
+      text: agentMessage(
+        'A harness system notification was delivered to Atlas.',
+      ),
       chunkKey: `seed:fullbody:${jobId}:with`,
       fullBody: agentMessage(rawPayload),
     });
@@ -830,21 +1007,33 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       chunkKey: `seed:fullbody:${jobId}:without`,
     });
 
-    const withRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
-      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
-      [jobId, `seed:fullbody:${jobId}:with`],
-    );
-    const withoutRow: Array<{ meta: Record<string, unknown> }> = await dataSource.query(
-      `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
-      [jobId, `seed:fullbody:${jobId}:without`],
-    );
+    const withRow: Array<{ meta: Record<string, unknown> }> =
+      await dataSource.query(
+        `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+        [jobId, `seed:fullbody:${jobId}:with`],
+      );
+    const withoutRow: Array<{ meta: Record<string, unknown> }> =
+      await dataSource.query(
+        `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+        [jobId, `seed:fullbody:${jobId}:without`],
+      );
     expect(withRow[0].meta.fullBody).toBe(rawPayload);
     expect(withoutRow[0].meta.fullBody).toBeUndefined();
   }, 30_000);
 
   it('withdrawPlan on an awaiting job atomically flips it back to planning and supersedes the draft record', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw-it');
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'withdraw me', kind: 'feature' });
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-withdraw-it',
+    );
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'withdraw me',
+      kind: 'feature',
+    });
     const { decisionRecordId } = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -857,18 +1046,32 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     });
     expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval');
 
-    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({ withdrawn: true });
+    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({
+      withdrawn: true,
+    });
 
     expect(await jobStatus(dataSource, jobId)).toBe('planning');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
   }, 30_000);
 
   it('withdrawPlan on a job that is NOT awaiting approval is a no-op ({withdrawn:false}), status unchanged', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-withdraw2-it');
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'not awaiting', kind: 'feature' });
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-withdraw2-it',
+    );
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'not awaiting',
+      kind: 'feature',
+    });
     expect(await jobStatus(dataSource, jobId)).toBe('planning'); // openJob leaves it in planning, not awaiting
 
-    expect(await store.withdrawPlan(jobId, 'nothing to withdraw')).toEqual({ withdrawn: false });
+    expect(await store.withdrawPlan(jobId, 'nothing to withdraw')).toEqual({
+      withdrawn: false,
+    });
 
     expect(await jobStatus(dataSource, jobId)).toBe('planning'); // unchanged
   }, 30_000);
@@ -877,17 +1080,40 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     // Regression: post-withdraw_ship the job sits in `amending`; before this fix openJobOnThread only
     // recognized `planning`, so the next chat message would re-anchor onto a FRESH job instead of
     // continuing the amendment on the existing one.
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-amending-it');
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'amend me', kind: 'feature' });
-    await dataSource.query(`UPDATE jobs SET status = 'amending' WHERE id = $1`, [jobId]);
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-amending-it',
+    );
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'amend me',
+      kind: 'feature',
+    });
+    await dataSource.query(
+      `UPDATE jobs SET status = 'amending' WHERE id = $1`,
+      [jobId],
+    );
 
     expect(await store.openJobOnThread(jobId)).toBe(jobId);
   }, 30_000);
 
   it('RACE: withdrawPlan wins over a stale approve — approve(jobId, recId, approvedBy) returns null once withdrawn', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-race-it');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-race-it',
+    );
     const approverId = await seedApprover(dataSource);
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'race', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'race',
+      kind: 'feature',
+    });
     const { decisionRecordId } = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -899,19 +1125,33 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend'],
     });
 
-    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({ withdrawn: true });
+    expect(await store.withdrawPlan(jobId, 'pivoting')).toEqual({
+      withdrawn: true,
+    });
 
     // The operator's approve click races in AFTER the withdraw — the guard (status='awaiting_approval')
     // already failed, so it must approve NOTHING.
-    expect(await store.approve(jobId, decisionRecordId, approverId, 'plan')).toBeNull();
+    expect(
+      await store.approve(jobId, decisionRecordId, approverId, 'plan'),
+    ).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('planning');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('superseded');
   }, 30_000);
 
   it('HAPPY PATH: approve(jobId, recId, approvedBy) atomically flips the job to running and stamps the record approved', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-happy-it');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-happy-it',
+    );
     const approverId = await seedApprover(dataSource);
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'happy path', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'happy path',
+      kind: 'feature',
+    });
     const { decisionRecordId } = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -923,7 +1163,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend'],
     });
 
-    const running = await store.approve(jobId, decisionRecordId, approverId, 'plan');
+    const running = await store.approve(
+      jobId,
+      decisionRecordId,
+      approverId,
+      'plan',
+    );
 
     expect(running?.status).toBe('running');
     expect(await recordStatus(dataSource, decisionRecordId)).toBe('approved');
@@ -931,9 +1176,19 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   }, 30_000);
 
   it('VERSION PIN: a stale approve on the superseded R1 record fails the guard; approve on the current R2 record succeeds (the exact stale-card scenario)', async () => {
-    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'brainstore-versionpin-it');
+    const { jobId, repoId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-versionpin-it',
+    );
     const approverId = await seedApprover(dataSource);
-    await store.openJob({ orgId: TEAM_ID, repoId, jobId, title: 'version pin v1', kind: 'feature' });
+    await store.openJob({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'version pin v1',
+      kind: 'feature',
+    });
     const r1 = await store.persistPlan({
       orgId: TEAM_ID,
       repoId,
@@ -959,23 +1214,41 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     // A stale click on the R1 card: the job is still awaiting_approval, but decision_record_id now points
     // at R2, so the guard on R1 fails → null, and nothing about the job changes.
-    expect(await store.approve(jobId, r1.decisionRecordId, approverId, 'plan')).toBeNull();
+    expect(
+      await store.approve(jobId, r1.decisionRecordId, approverId, 'plan'),
+    ).toBeNull();
     expect(await jobStatus(dataSource, jobId)).toBe('awaiting_approval'); // still pointing at R2
-    expect(await recordStatus(dataSource, r1.decisionRecordId)).toBe('superseded');
+    expect(await recordStatus(dataSource, r1.decisionRecordId)).toBe(
+      'superseded',
+    );
 
     // The CURRENT card (R2) approves cleanly.
-    const running = await store.approve(jobId, r2.decisionRecordId, approverId, 'plan');
+    const running = await store.approve(
+      jobId,
+      r2.decisionRecordId,
+      approverId,
+      'plan',
+    );
     expect(running?.status).toBe('running');
-    expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe('approved');
+    expect(await recordStatus(dataSource, r2.decisionRecordId)).toBe(
+      'approved',
+    );
   }, 30_000);
 
   // Q2 (decision d1): appendSystemNotice writes a CALM, System-authored operator-mirror row — the exact
   // shape `/messages` returns verbatim to the web. NOT Atlas's voice (author_bot_id null) and NO error
   // semantics. This is the persistence side of the approval-ack re-voicing, exercised against live Postgres.
   it('appendSystemNotice persists a calm System-authored operator row (meta.source=system_notice, bot_id null)', async () => {
-    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-sysnotice-it');
+    const { jobId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-sysnotice-it',
+    );
 
-    await store.appendSystemNotice(jobId, 'Plan approved — dispatching the build.');
+    await store.appendSystemNotice(
+      jobId,
+      'Plan approved — dispatching the build.',
+    );
 
     const row = await loadMessageRow(dataSource, jobId);
     expect(row).toMatchObject({
@@ -992,7 +1265,11 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
   // meta.framing (its own block for the web) — the amber fence body stays the clean lane self-report, and
   // the whole framed+fenced engine payload is NOT folded into meta.fullBody. Live-DB proof of the split.
   it('recordSystemChunk on an untrusted wake row stores meta.framing separately, without leaking the engine body into fullBody', async () => {
-    const { jobId } = await seedJob(dataSource, TEAM_ID, 'brainstore-framing-it');
+    const { jobId } = await seedJob(
+      dataSource,
+      TEAM_ID,
+      'brainstore-framing-it',
+    );
 
     await store.recordSystemChunk({
       jobId,
@@ -1008,7 +1285,9 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     const row = await loadMessageRow(dataSource, jobId);
     expect(row?.meta?.source).toBe('untrusted');
     expect(row?.meta?.untrustedSource).toBe('thread-done:th-x');
-    expect(row?.meta?.framing).toBe('An AUTONOMOUS wake — you may NOT ship without the operator.');
+    expect(row?.meta?.framing).toBe(
+      'An AUTONOMOUS wake — you may NOT ship without the operator.',
+    );
     expect(row?.meta?.fullBody).toBeUndefined(); // the trusted framing rides in meta.framing, not the amber pill
     expect(row?.text).toBe('summary: build parked at ship gate'); // amber fence = clean lane self-report only
   }, 30_000);
@@ -1089,7 +1368,10 @@ async function threadTypes(ds: DataSource, jobId: string): Promise<string[]> {
 }
 
 /** The count of appended master-review threads for a job (should be exactly 1 after a full plan). */
-async function masterReviewCount(ds: DataSource, jobId: string): Promise<number> {
+async function masterReviewCount(
+  ds: DataSource,
+  jobId: string,
+): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
     `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'master_review'`,
     [jobId],
@@ -1098,7 +1380,10 @@ async function masterReviewCount(ds: DataSource, jobId: string): Promise<number>
 }
 
 /** Builder briefs scoped to ONE plan revision (decision record) — the versioning read. */
-async function builderBriefsForRecord(ds: DataSource, recordId: string): Promise<string[]> {
+async function builderBriefsForRecord(
+  ds: DataSource,
+  recordId: string,
+): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
     `SELECT brief FROM threads WHERE decision_record_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
     [recordId],
@@ -1118,7 +1403,14 @@ async function mainCount(ds: DataSource, jobId: string): Promise<number> {
 async function phasesFor(
   ds: DataSource,
   jobId: string,
-): Promise<Array<{ brief: string; status: string; stage: string; batch_ordinal: number | null }>> {
+): Promise<
+  Array<{
+    brief: string;
+    status: string;
+    stage: string;
+    batch_ordinal: number | null;
+  }>
+> {
   return ds.query(
     `SELECT p.brief, p.status, p.stage, p.batch_ordinal
        FROM steps p JOIN threads s ON s.id = p.thread_id
@@ -1128,7 +1420,10 @@ async function phasesFor(
 }
 
 /** FEATURE (builder) thread plans — excludes the master-review thread (plan null) and the `main` row. */
-async function sectionPlans(ds: DataSource, jobId: string): Promise<Array<string | null>> {
+async function sectionPlans(
+  ds: DataSource,
+  jobId: string,
+): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
     `SELECT plan FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
     [jobId],
@@ -1161,7 +1456,10 @@ async function loadThreadRow(
   return rows[0] ?? null;
 }
 
-async function recordStatus(ds: DataSource, recordId: string): Promise<string | null> {
+async function recordStatus(
+  ds: DataSource,
+  recordId: string,
+): Promise<string | null> {
   const rows: Array<{ status: string }> = await ds.query(
     `SELECT status FROM decision_records WHERE id = $1`,
     [recordId],
@@ -1178,12 +1476,18 @@ async function draftCount(ds: DataSource, jobId: string): Promise<number> {
 }
 
 /** The job row's current status (reuses `loadThreadRow`'s underlying query, narrowed to just the field). */
-async function jobStatus(ds: DataSource, jobId: string): Promise<string | null> {
+async function jobStatus(
+  ds: DataSource,
+  jobId: string,
+): Promise<string | null> {
   return (await loadThreadRow(ds, jobId))?.status ?? null;
 }
 
 /** The committed build path stamped by `approve()` ('direct' | 'plan'), or null before any approval. */
-async function buildPath(ds: DataSource, jobId: string): Promise<string | null> {
+async function buildPath(
+  ds: DataSource,
+  jobId: string,
+): Promise<string | null> {
   const rows: Array<{ build_path: string | null }> = await ds.query(
     `SELECT build_path FROM jobs WHERE id = $1`,
     [jobId],
@@ -1240,6 +1544,8 @@ async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
   await q(`DELETE FROM jobs WHERE org_id = $1`);
   await q(`DELETE FROM repos WHERE org_id = $1`);
-  await ds.query(`DELETE FROM users WHERE email = $1`, [APPROVER_EMAIL]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = $1`, [APPROVER_EMAIL])
+    .catch(() => undefined);
   await q(`DELETE FROM organizations WHERE id = $1`);
 }

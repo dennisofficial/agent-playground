@@ -33,13 +33,26 @@ import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { FakeClassifierLlm, FakeEngineRunner, FakeLocalGitService, FakeThreadTitler } from '../e2e/e2e-stubs';
+import {
+  FakeClassifierLlm,
+  FakeEngineRunner,
+  FakeLocalGitService,
+  FakeThreadTitler,
+} from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { AgentSessionManager, JOB_DISPATCHER } from '../brain';
@@ -92,21 +105,41 @@ async function register(email: string): Promise<{ id: string }> {
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM decision_records WHERE id = ANY($1)`, [[PLAN_DR, DIRECT_DR]])
+    .query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
+      [PLAN_DR, DIRECT_DR],
+    ])
     .catch(() => undefined);
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [[PLAN_JOB, DIRECT_JOB]]).catch(() => undefined);
-  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+      [PLAN_JOB, DIRECT_JOB],
+    ])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
+    .catch(() => undefined);
 }
 
 /**
  * Seed a job parked at `awaiting_approval` + its `decision_records` row. `threadTitles` empty ⇒ direct
  * build (`isDirect`); non-empty ⇒ full-plan build — exactly how `resolveApprovalDurably` derives the path.
  */
-async function seedAwaitingApproval(jobId: string, drId: string, threadTitles: string[]): Promise<void> {
+async function seedAwaitingApproval(
+  jobId: string,
+  drId: string,
+  threadTitles: string[],
+): Promise<void> {
   // `jobs.decision_record_id` and `decision_records.job_id` are mutually-referential FKs, so seed the job
   // WITHOUT the pointer first, insert the record (its `job_id` now resolves), then stamp the pointer.
   await ds.query(
@@ -119,11 +152,19 @@ async function seedAwaitingApproval(jobId: string, drId: string, threadTitles: s
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,
     [drId, ORG, REPO, jobId, threadTitles],
   );
-  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [drId, jobId]);
+  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [
+    drId,
+    jobId,
+  ]);
 }
 
-async function jobRow(jobId: string): Promise<{ status: string; activity: string; build_path: string | null }> {
-  const rows = (await ds.query(`SELECT status, activity, build_path FROM jobs WHERE id = $1`, [jobId])) as Array<{
+async function jobRow(
+  jobId: string,
+): Promise<{ status: string; activity: string; build_path: string | null }> {
+  const rows = (await ds.query(
+    `SELECT status, activity, build_path FROM jobs WHERE id = $1`,
+    [jobId],
+  )) as Array<{
     status: string;
     activity: string;
     build_path: string | null;
@@ -132,7 +173,9 @@ async function jobRow(jobId: string): Promise<{ status: string; activity: string
 }
 
 /** Collect the seed turns the surface emits during `fn` (the seed fires synchronously off `fireLifecycle`). */
-async function captureSeeds(fn: () => Promise<void>): Promise<InboundChatMessage[]> {
+async function captureSeeds(
+  fn: () => Promise<void>,
+): Promise<InboundChatMessage[]> {
   const seeds: InboundChatMessage[] = [];
   const sub = surface.inbound$.subscribe((m) => {
     if (m.seed) seeds.push(m);
@@ -183,7 +226,9 @@ beforeAll(async () => {
     .useValue({})
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.enableShutdownHooks();
   await app.init();
 
@@ -200,7 +245,10 @@ beforeAll(async () => {
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Approval Dispatch Org', 'approval-dispatch-org', 'active')`,
     [ORG],
   );
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [ORG, ownerId]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [ORG, ownerId],
+  );
   await ds.query(
     `INSERT INTO repos (id, org_id, slug, name, git_url, default_branch, access_ok)
      VALUES ($1, $2, 'approval-dispatch-repo', 'Approval Dispatch Repo', 'https://github.com/atlas-it/approval-dispatch.git', 'main', true)`,
@@ -214,9 +262,15 @@ beforeAll(async () => {
 beforeEach(async () => {
   dispatchSpy.mockClear();
   engineRunSpy.mockClear();
-  await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [[PLAN_DR, DIRECT_DR]]);
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [[PLAN_JOB, DIRECT_JOB]]);
-  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [[PLAN_JOB, DIRECT_JOB]]);
+  await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
+    [PLAN_DR, DIRECT_DR],
+  ]);
+  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    [PLAN_JOB, DIRECT_JOB],
+  ]);
+  await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [
+    [PLAN_JOB, DIRECT_JOB],
+  ]);
 });
 
 afterAll(async () => {
@@ -229,7 +283,9 @@ function expectPlanApprovedSeed(seed: InboundChatMessage, drId: string): void {
   expect(seed.authorId).toBe(SYSTEM_SEED_AUTHOR.id);
   const seedRow = seed.seedRow as SeedRowObject;
   expect(seedRow.chunkKey).toBe(`seed:plan-approved:${drId}`);
-  expect(seedRow.label).toBe('Plan approved — checking the base branch before starting');
+  expect(seedRow.label).toBe(
+    'Plan approved — checking the base branch before starting',
+  );
   // The rebase-check instruction: mechanical rebase → semantic validity → dispatch_build / hold_build.
   expect(seed.text).toContain('rebase');
   expect(seed.text).toContain('dispatch_build');
@@ -243,7 +299,13 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
-      acted = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
+      acted = await asm.resolveApprovalDurably(
+        PLAN_JOB,
+        'approve',
+        ownerId,
+        undefined,
+        PLAN_DR,
+      );
     });
 
     expect(acted).toBe(true);
@@ -268,7 +330,13 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
 
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
-      acted = await asm.resolveApprovalDurably(DIRECT_JOB, 'approve', ownerId, undefined, DIRECT_DR);
+      acted = await asm.resolveApprovalDurably(
+        DIRECT_JOB,
+        'approve',
+        ownerId,
+        undefined,
+        DIRECT_DR,
+      );
     });
 
     expect(acted).toBe(true);
@@ -289,7 +357,13 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
   it('IDEMPOTENT: re-delivering the approval after the job is running is a no-op — no second seed, no dispatch', async () => {
     await seedAwaitingApproval(PLAN_JOB, PLAN_DR, ['Backend']);
 
-    const first = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
+    const first = await asm.resolveApprovalDurably(
+      PLAN_JOB,
+      'approve',
+      ownerId,
+      undefined,
+      PLAN_DR,
+    );
     expect(first).toBe(true);
     dispatchSpy.mockClear();
     engineRunSpy.mockClear();
@@ -297,7 +371,13 @@ describe('approval-gated dispatch — approval fires the base-check JIT seed, no
     let acted!: boolean;
     const seeds = await captureSeeds(async () => {
       // Job is now 'running', no longer 'awaiting_approval' → the durable guard rejects the re-delivery.
-      acted = await asm.resolveApprovalDurably(PLAN_JOB, 'approve', ownerId, undefined, PLAN_DR);
+      acted = await asm.resolveApprovalDurably(
+        PLAN_JOB,
+        'approve',
+        ownerId,
+        undefined,
+        PLAN_DR,
+      );
     });
 
     expect(acted).toBe(false);

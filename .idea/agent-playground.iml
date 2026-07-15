@@ -16,8 +16,10 @@
       <excludeFolder url="file://$MODULE_DIR$/.design-sync/.cache" />
       <excludeFolder url="file://$MODULE_DIR$/.ds-sync" />
       <excludeFolder url="file://$MODULE_DIR$/ds-bundle" />
-      <excludeFolder url="file://$MODULE_DIR$/packages/nestjs-ai-essentials/ai-testing/dist" />
       <excludeFolder url="file://$MODULE_DIR$/web/.design-sync-build" />
+      <excludeFolder url="file://$MODULE_DIR$/.docker" />
+      <excludeFolder url="file://$MODULE_DIR$/backend/.playwright-cli" />
+      <excludeFolder url="file://$MODULE_DIR$/submodules/nestjs-ai-essentials/ai-testing/dist" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

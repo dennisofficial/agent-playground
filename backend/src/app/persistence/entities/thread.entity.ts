@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
@@ -280,7 +287,12 @@ export interface ThreadTerminalRecord {
   /** What changed, terse — feeds the next thread's handoff. */
   changes?: string[];
   /** Verification the orchestrator actually ran, with captured evidence (not prose claims). */
-  verification?: { kind: string; command: string; exitCode: number; outputTail: string }[];
+  verification?: {
+    kind: string;
+    command: string;
+    exitCode: number;
+    outputTail: string;
+  }[];
   /** Off-spec changes the orchestrator flagged. */
   deviations?: string[];
   /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
@@ -290,7 +302,12 @@ export interface ThreadTerminalRecord {
    *  was UNREACHABLE (transient Anthropic outage / key rate-or-credit limit) — a done thread must HOLD and
    *  retry when the service recovers, NOT burn its autonomous fix budget and rest as `budget_exhausted`. */
   blocked?: {
-    reason: 'question' | 'needs_env' | 'decision' | 'unverified' | 'judge_unavailable';
+    reason:
+      | 'question'
+      | 'needs_env'
+      | 'decision'
+      | 'unverified'
+      | 'judge_unavailable';
     detail: string;
   };
   /** Operator "Skip & accept" marker for a judge_unavailable hold (jsonb, no migration): set by

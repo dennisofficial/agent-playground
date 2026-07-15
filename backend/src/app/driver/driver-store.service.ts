@@ -33,10 +33,18 @@ import type {
   ThreadTerminalRecord,
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
-import { coerceThreadType, laneDefaultFooter, threadKindSpec } from '../thread-kind';
+import {
+  coerceThreadType,
+  laneDefaultFooter,
+  threadKindSpec,
+} from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
-import { webAmendProposalCard, webMergeReadyCard, webVerdictCard } from '../surface/web-approval-card';
+import {
+  webAmendProposalCard,
+  webMergeReadyCard,
+  webVerdictCard,
+} from '../surface/web-approval-card';
 import { prMergeReady } from './auto-merge.service';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import type { AgentMessage } from '../prompt-kit/message';
@@ -207,7 +215,10 @@ export class DriverStoreService {
       .where('job_id = :jobId', { jobId })
       .andWhere('ts = :questionId', { questionId })
       .andWhere("kind = 'card'")
-      .setParameter('patch', JSON.stringify({ deliveredAt: new Date().toISOString() }))
+      .setParameter(
+        'patch',
+        JSON.stringify({ deliveredAt: new Date().toISOString() }),
+      )
       .execute();
   }
 
@@ -215,9 +226,7 @@ export class DriverStoreService {
 
   /** Load one thread as the domain shape. */
   async loadJob(jobId: string): Promise<Job> {
-    return toJob(
-      await this.jobs.findOneOrFail({ where: { id: jobId } }),
-    );
+    return toJob(await this.jobs.findOneOrFail({ where: { id: jobId } }));
   }
 
   /** The org OWNER's user id (organization_members.role='owner') — the approver-attribution fallback when
@@ -284,7 +293,8 @@ export class DriverStoreService {
       select: { id: true, meta: true },
     });
     return existing.some(
-      (m) => (m.meta as { source?: unknown } | null)?.source === 'system_operator',
+      (m) =>
+        (m.meta as { source?: unknown } | null)?.source === 'system_operator',
     );
   }
 
@@ -445,7 +455,9 @@ export class DriverStoreService {
    * whether THIS caller stamped it (the winner then seeds the preview procedure).
    */
   async markPreviewRequested(jobId: string): Promise<boolean> {
-    const patch = JSON.stringify({ previewRequestedAt: new Date().toISOString() });
+    const patch = JSON.stringify({
+      previewRequestedAt: new Date().toISOString(),
+    });
     const res = await this.messages
       .createQueryBuilder()
       .update(MessageEntity)
@@ -478,7 +490,9 @@ export class DriverStoreService {
     reason: string,
   ): Promise<'posted' | 'not-parked' | 'already-open'> {
     return this.dataSource.transaction(async (m) => {
-      const job = await m.getRepository(JobEntity).findOne({ where: { id: jobId } });
+      const job = await m
+        .getRepository(JobEntity)
+        .findOne({ where: { id: jobId } });
       if (!job || job.status !== 'awaiting_ship_review') return 'not-parked';
       const messages = m.getRepository(MessageEntity);
       const existing = await messages.find({
@@ -486,7 +500,13 @@ export class DriverStoreService {
       });
       // An amend proposal is still actionable while its card is an `approval_card` (a resolved one has been
       // rewritten to a `verdict_card`). If one is live, don't stack a second.
-      if (existing.some((row) => (row.card as Record<string, unknown> | null)?.['type'] === 'approval_card')) {
+      if (
+        existing.some(
+          (row) =>
+            (row.card as Record<string, unknown> | null)?.['type'] ===
+            'approval_card',
+        )
+      ) {
         return 'already-open';
       }
       await messages.save(
@@ -499,7 +519,10 @@ export class DriverStoreService {
           text: reason || 'Amend build?',
           kind: 'card',
           ts: `amend-proposal:${jobId}`,
-          card: webAmendProposalCard({ jobId, reason }) as unknown as Record<string, unknown>,
+          card: webAmendProposalCard({ jobId, reason }) as unknown as Record<
+            string,
+            unknown
+          >,
         }),
       );
       return 'posted';
@@ -512,7 +535,10 @@ export class DriverStoreService {
    * carrying `verdictLine`. Idempotent: already-neutralized rows (`verdict_card`) are skipped. Does NOT
    * touch job status (the Approve path's retract handles that; Dismiss leaves the gate parked).
    */
-  async neutralizeAmendProposal(jobId: string, verdictLine: string): Promise<void> {
+  async neutralizeAmendProposal(
+    jobId: string,
+    verdictLine: string,
+  ): Promise<void> {
     const rows = await this.messages.find({
       where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
     });
@@ -520,8 +546,15 @@ export class DriverStoreService {
       const card = row.card as Record<string, unknown> | null;
       if (card?.['type'] !== 'approval_card') continue;
       const title = String(card?.['title'] ?? 'Amend build?');
-      const verdict = verdictLine.toLowerCase().includes('dismiss') ? 'dismissed' : 'approved';
-      row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
+      const verdict = verdictLine.toLowerCase().includes('dismiss')
+        ? 'dismissed'
+        : 'approved';
+      row.card = webVerdictCard(
+        jobId,
+        title,
+        verdict,
+        verdictLine,
+      ) as unknown as Record<string, unknown>;
       await this.messages.save(row);
     }
   }
@@ -534,7 +567,9 @@ export class DriverStoreService {
   async postMergeCard(jobId: string): Promise<void> {
     const ts = `merge-ready:${jobId}`;
     const card = webMergeReadyCard(jobId) as unknown as Record<string, unknown>;
-    const existing = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    const existing = await this.messages.findOne({
+      where: { job_id: jobId, ts, kind: 'card' },
+    });
     if (existing) {
       existing.card = card;
       await this.messages.save(existing);
@@ -560,9 +595,14 @@ export class DriverStoreService {
    *  from the PR merely leaving the merge-ready state (`'not-ready'` → 'No longer ready to merge.'): the
    *  latter fires whenever the PR turns dirty / CI regresses / it closes unmerged, so it must NOT claim
    *  success. Best-effort: a missing or already-neutralized row is a silent no-op. */
-  async neutralizeMergeCard(jobId: string, outcome: 'merged' | 'not-ready' = 'merged'): Promise<void> {
+  async neutralizeMergeCard(
+    jobId: string,
+    outcome: 'merged' | 'not-ready' = 'merged',
+  ): Promise<void> {
     const ts = `merge-ready:${jobId}`;
-    const row = await this.messages.findOne({ where: { job_id: jobId, ts, kind: 'card' } });
+    const row = await this.messages.findOne({
+      where: { job_id: jobId, ts, kind: 'card' },
+    });
     if (!row) return;
     const card = row.card as Record<string, unknown> | null;
     if (card?.['type'] !== 'approval_card') return;
@@ -571,7 +611,12 @@ export class DriverStoreService {
       outcome === 'merged'
         ? (['merged', '✅ Merged.'] as const)
         : (['expired', 'No longer ready to merge.'] as const);
-    row.card = webVerdictCard(jobId, title, verdict, verdictLine) as unknown as Record<string, unknown>;
+    row.card = webVerdictCard(
+      jobId,
+      title,
+      verdict,
+      verdictLine,
+    ) as unknown as Record<string, unknown>;
     await this.messages.save(row);
   }
 
@@ -633,7 +678,8 @@ export class DriverStoreService {
       .innerJoin(StageEntity, 's', 's.id = t.stage_id')
       .where('t.job_id = :jobId', { jobId })
       .orderBy('t.ordinal', 'ASC');
-    if (activeRecordId) qb.andWhere('s.decision_record_id = :activeRecordId', { activeRecordId });
+    if (activeRecordId)
+      qb.andWhere('s.decision_record_id = :activeRecordId', { activeRecordId });
     else qb.andWhere('s.decision_record_id IS NULL');
     const rows = await qb.getMany();
     return rows.map(toThread);
@@ -643,7 +689,10 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { status });
   }
 
-  async setThreadCondition(threadId: string, condition: ThreadCondition): Promise<void> {
+  async setThreadCondition(
+    threadId: string,
+    condition: ThreadCondition,
+  ): Promise<void> {
     await this.threads.update({ id: threadId }, { condition });
   }
 
@@ -653,8 +702,14 @@ export class DriverStoreService {
    * read-back then returns whatever actually landed so every drive converges on the same `start_sha..HEAD`
    * review range. Idempotent — a second call with the row already set is a no-op returning the stored sha.
    */
-  async ensureThreadStartSha(threadId: string, candidate: string): Promise<string> {
-    await this.threads.update({ id: threadId, start_sha: IsNull() }, { start_sha: candidate });
+  async ensureThreadStartSha(
+    threadId: string,
+    candidate: string,
+  ): Promise<string> {
+    await this.threads.update(
+      { id: threadId, start_sha: IsNull() },
+      { start_sha: candidate },
+    );
     const row = await this.threads.findOne({ where: { id: threadId } });
     return row?.start_sha ?? candidate;
   }
@@ -692,11 +747,19 @@ export class DriverStoreService {
     });
     if (!thread) return;
     const config = isRecord(thread.config) ? thread.config : {};
-    const priorPeak = typeof config.contextTokensPeak === 'number' ? config.contextTokensPeak : null;
-    const nextPeak = contextTokensPeak != null ? Math.max(priorPeak ?? 0, contextTokensPeak) : null;
+    const priorPeak =
+      typeof config.contextTokensPeak === 'number'
+        ? config.contextTokensPeak
+        : null;
+    const nextPeak =
+      contextTokensPeak != null
+        ? Math.max(priorPeak ?? 0, contextTokensPeak)
+        : null;
     const patch = {
       ...(sessionId != null ? { session_id: sessionId } : {}),
-      ...(nextPeak != null ? { config: { ...config, contextTokensPeak: nextPeak } } : {}),
+      ...(nextPeak != null
+        ? { config: { ...config, contextTokensPeak: nextPeak } }
+        : {}),
     };
     if (Object.keys(patch).length === 0) return;
     await this.threads.update({ id: anchorStepId }, patch);
@@ -750,10 +813,16 @@ export class DriverStoreService {
     seed: string;
     rotationCapped?: boolean;
     contextTokensPeak?: number | null;
-  }): Promise<{ fromLeg: number; toLeg: number; abandonedSessionId: string } | null> {
+  }): Promise<{
+    fromLeg: number;
+    toLeg: number;
+    abandonedSessionId: string;
+  } | null> {
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(ThreadEntity);
-      const current = await threads.findOne({ where: { id: input.anchorStepId } });
+      const current = await threads.findOne({
+        where: { id: input.anchorStepId },
+      });
       if (!current || !current.session_id) return null; // nothing live to rotate
       const abandonedSessionId = current.session_id;
       const siblings = await threads.find({
@@ -794,7 +863,9 @@ export class DriverStoreService {
       where: { id: anchorStepId },
       select: { id: true, config: true },
     });
-    const seed = isRecord(thread?.config) ? thread!.config.pendingLegSeed : null;
+    const seed = isRecord(thread?.config)
+      ? thread!.config.pendingLegSeed
+      : null;
     return typeof seed === 'string' ? seed : null;
   }
 
@@ -843,7 +914,10 @@ export class DriverStoreService {
     plan: string,
     handoffIn: string | null,
   ): Promise<void> {
-    await this.threads.update({ id: threadId }, { plan, handoff_in: handoffIn });
+    await this.threads.update(
+      { id: threadId },
+      { plan, handoff_in: handoffIn },
+    );
   }
 
   /**
@@ -858,7 +932,10 @@ export class DriverStoreService {
   }
 
   /** Record the thread's handoff note for the next thread (set when the thread is done). */
-  async setThreadHandoffOut(threadId: string, handoffOut: string): Promise<void> {
+  async setThreadHandoffOut(
+    threadId: string,
+    handoffOut: string,
+  ): Promise<void> {
     await this.threads.update({ id: threadId }, { handoff_out: handoffOut });
   }
 
@@ -866,7 +943,10 @@ export class DriverStoreService {
    *  Idempotent on note text so a re-driven turn re-recording the same fix doesn't duplicate it — the durable
    *  source behind the `/context/generated/deviations.md` projection. Single host writer per thread, so a plain
    *  read-modify-write is race-free. */
-  async recordDeviation(threadId: string, entry: DeviationEntry): Promise<void> {
+  async recordDeviation(
+    threadId: string,
+    entry: DeviationEntry,
+  ): Promise<void> {
     const row = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, deviations: true },
@@ -874,14 +954,19 @@ export class DriverStoreService {
     if (!row) return;
     const current = Array.isArray(row.deviations) ? row.deviations : [];
     if (current.some((d) => d.note.trim() === entry.note.trim())) return;
-    await this.threads.update({ id: threadId }, { deviations: [...current, entry] });
+    await this.threads.update(
+      { id: threadId },
+      { deviations: [...current, entry] },
+    );
   }
 
   /** Every thread of a job that recorded at least one inline deviation, ordered for the `deviations.md`
    *  projection (which re-renders the whole file from this — never appends). */
   async getJobDeviations(
     jobId: string,
-  ): Promise<{ ordinal: number; brief: string; deviations: DeviationEntry[] }[]> {
+  ): Promise<
+    { ordinal: number; brief: string; deviations: DeviationEntry[] }[]
+  > {
     const rows = await this.threads.find({
       where: { job_id: jobId },
       select: { id: true, ordinal: true, brief: true, deviations: true },
@@ -914,7 +999,9 @@ export class DriverStoreService {
 
   /** Read the thread's terminal record FRESH from the DB (the tool wrote it mid-turn; the in-memory thread
    *  object is stale). Null when the turn never asserted an outcome → the driver treats it as `incomplete`. */
-  async getTerminalRecord(threadId: string): Promise<ThreadTerminalRecord | null> {
+  async getTerminalRecord(
+    threadId: string,
+  ): Promise<ThreadTerminalRecord | null> {
     const row = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, terminal_record: true },
@@ -993,7 +1080,10 @@ export class DriverStoreService {
 
   /** Mark a `done` thread as OWED a brain wake — `'final'` (whole build parked at ship gate) or `'notable'`
    *  (done-with-gaps). Idempotent: a repeat call re-asserts the same owed row. */
-  async setDoneWakeOwed(threadId: string, reason: 'final' | 'notable'): Promise<void> {
+  async setDoneWakeOwed(
+    threadId: string,
+    reason: 'final' | 'notable',
+  ): Promise<void> {
     await this.threads.update(
       { id: threadId },
       { done_wake_owed: true, done_wake_reason: reason, done_waked_at: null },
@@ -1004,7 +1094,9 @@ export class DriverStoreService {
    *  one job. Mirrors `threadsAwaitingHaltWake`'s shape (no `gen` — a `done` thread is never re-driven). */
   async threadsAwaitingDoneWake(
     jobId?: string,
-  ): Promise<{ jobId: string; threadId: string; reason: 'final' | 'notable' }[]> {
+  ): Promise<
+    { jobId: string; threadId: string; reason: 'final' | 'notable' }[]
+  > {
     const qb = this.threads
       .createQueryBuilder('t')
       .select(['t.id', 't.job_id', 't.done_wake_reason'])
@@ -1034,7 +1126,8 @@ export class DriverStoreService {
       .andWhere('done_waked_at IS NULL')
       .returning('done_wake_gen')
       .execute();
-    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]?.done_wake_gen;
+    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]
+      ?.done_wake_gen;
     return typeof gen === 'number' ? gen : null;
   }
 
@@ -1264,7 +1357,11 @@ export class DriverStoreService {
    */
   async materializeReviewChildren(
     parent: { id: string; jobId: string; orgId: string },
-    childSpecs: Array<{ kind: string; brief: string; config: Record<string, unknown> }>,
+    childSpecs: Array<{
+      kind: string;
+      brief: string;
+      config: Record<string, unknown>;
+    }>,
   ): Promise<ReviewChildThread[]> {
     const existing = await this.reviewChildren(parent.id);
     if (existing.length > 0) return existing;
@@ -1335,20 +1432,28 @@ export class DriverStoreService {
    * own `session_id` directly (relocated off the old `steps`/`build_legs`), so it works even for an
    * `incomplete` halt whose `terminal_record` is null. `undefined` when the thread never got a session.
    */
-  async resolveSessionAnchor(threadId: string): Promise<SessionAnchor | undefined> {
+  async resolveSessionAnchor(
+    threadId: string,
+  ): Promise<SessionAnchor | undefined> {
     const thread = await this.threads.findOne({
       where: { id: threadId },
       select: { id: true, stage_id: true, session_id: true },
     });
     if (!thread?.session_id) return undefined;
-    return { sessionId: thread.session_id, legOrdinal: await this.builderLegOrdinal(thread) };
+    return {
+      sessionId: thread.session_id,
+      legOrdinal: await this.builderLegOrdinal(thread),
+    };
   }
 
   /**
    * Lock a thread's steps — a no-op now that a thread's single step IS the thread row (the row was created
    * upstream when the thread was materialized). Returns the synthetic step, so callers keep the same shape.
    */
-  async lockSteps(thread: DriverThread, _planned: PlannedStep[]): Promise<Step[]> {
+  async lockSteps(
+    thread: DriverThread,
+    _planned: PlannedStep[],
+  ): Promise<Step[]> {
     return this.stepsForThread(thread.id);
   }
 
@@ -1359,7 +1464,10 @@ export class DriverStoreService {
     _stage: string,
     status: StepStatus,
   ): Promise<void> {
-    await this.threads.update({ id: stepId }, { status: stepStatusToThreadStatus(status) });
+    await this.threads.update(
+      { id: stepId },
+      { status: stepStatusToThreadStatus(status) },
+    );
   }
 
   /** Stamp the thread's commit marker (the review-diff head) the instant its batch commits. */
@@ -1414,12 +1522,16 @@ export class DriverStoreService {
    * AgentSessionManager brain session.
    */
   async getPipelineState(jobId: string, orgId: string): Promise<unknown> {
-    const job = await this.jobs.findOne({ where: { id: jobId, org_id: orgId } });
+    const job = await this.jobs.findOne({
+      where: { id: jobId, org_id: orgId },
+    });
     if (!job) return { status: 'no_job' };
-    const blockedBy = job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
+    const blockedBy =
+      job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
     // The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message,
     // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
-    const blockedSeedMessage = job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
+    const blockedSeedMessage =
+      job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
     // already be keeping a task list on its (always-present) planning stage, and the navigator's Main row shows
     // it. Ride the no_job payload so the web isn't blind to it before a plan exists.
@@ -1441,7 +1553,9 @@ export class DriverStoreService {
         autoApproveMode: job.auto_approve_mode ?? 'off',
         autoMerge: job.auto_merge ?? false,
         mergeReady: prMergeReady(job),
-        mergeValue: prMergeReady(job) ? JSON.stringify({ jobId: job.id }) : null,
+        mergeValue: prMergeReady(job)
+          ? JSON.stringify({ jobId: job.id })
+          : null,
         blockedBy,
         blockedSeedMessage,
       };
@@ -1456,7 +1570,10 @@ export class DriverStoreService {
     const threadsByStage = groupBy(allThreads, (t) => t.stage_id);
     const stageIds = stages.map((s) => s.id);
     const allTasks = stageIds.length
-      ? await this.tasks.find({ where: { stage_id: In(stageIds) }, order: { ordinal: 'ASC' } })
+      ? await this.tasks.find({
+          where: { stage_id: In(stageIds) },
+          order: { ordinal: 'ASC' },
+        })
       : [];
     const tasksByStage = groupBy(allTasks, (t) => t.stage_id);
 
@@ -1476,7 +1593,8 @@ export class DriverStoreService {
       // button (mirrors operatorAcceptStuckThread's server-side guard, so the UI never offers an unsafe accept).
       acceptableOnJudgeOutage:
         t.terminal_record?.blocked?.reason === 'judge_unavailable' &&
-        t.terminal_record?.staticVerification?.verdict?.staticChecksAdequate === true,
+        t.terminal_record?.staticVerification?.verdict?.staticChecksAdequate ===
+          true,
       // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's role.
       defaultFooter: laneDefaultFooter(t.role),
       // Per-role operator-chat toggle (d12) — whether this thread's kind accepts operator input at all. The
@@ -1520,7 +1638,8 @@ export class DriverStoreService {
     // surfaced separately as browsable history.
     const activeRecordId = job.decision_record_id;
     const activeStages = stages.filter(
-      (s) => s.decision_record_id == null || s.decision_record_id === activeRecordId,
+      (s) =>
+        s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
     // derived from the plan_review stage's single thread's status. Null when no plan_review stage exists.
@@ -1549,7 +1668,9 @@ export class DriverStoreService {
         decisionRecordId: rec.id,
         revision,
         status: rec.status,
-        stages: stages.filter((s) => s.decision_record_id === rec.id).map(mapStage),
+        stages: stages
+          .filter((s) => s.decision_record_id === rec.id)
+          .map(mapStage),
       }))
       .filter((r) => r.stages.length > 0);
 
@@ -1616,12 +1737,18 @@ export class DriverStoreService {
 
   /** Every stage of a job, in pipeline order (ORDER BY ordinal). */
   async stagesForJob(jobId: string): Promise<StageEntity[]> {
-    return this.stages.find({ where: { job_id: jobId }, order: { ordinal: 'ASC' } });
+    return this.stages.find({
+      where: { job_id: jobId },
+      order: { ordinal: 'ASC' },
+    });
   }
 
   /** Every thread of a stage, in execution order (ORDER BY ordinal). */
   async threadsForStage(stageId: string): Promise<ThreadEntity[]> {
-    return this.threads.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+    return this.threads.find({
+      where: { stage_id: stageId },
+      order: { ordinal: 'ASC' },
+    });
   }
 
   /** Every thread of a stage as the driver's {@link DriverThread} domain shape, in execution order — the
@@ -1644,12 +1771,17 @@ export class DriverStoreService {
       select: { id: true, stage_id: true },
     });
     if (!thread) return 0;
-    return this.threads.count({ where: { stage_id: thread.stage_id, role: 'builder' } });
+    return this.threads.count({
+      where: { stage_id: thread.stage_id, role: 'builder' },
+    });
   }
 
   /** Every task of a stage's checklist, in display/credit order (ORDER BY ordinal). */
   async tasksForStage(stageId: string): Promise<TaskEntity[]> {
-    return this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+    return this.tasks.find({
+      where: { stage_id: stageId },
+      order: { ordinal: 'ASC' },
+    });
   }
 
   /**
@@ -1683,7 +1815,9 @@ export class DriverStoreService {
   }
 
   /** Alias for {@link createStage} — the pipeline is append-only, so "append" and "create" are one op. */
-  async appendStage(input: Parameters<DriverStoreService['createStage']>[0]): Promise<StageEntity> {
+  async appendStage(
+    input: Parameters<DriverStoreService['createStage']>[0],
+  ): Promise<StageEntity> {
     return this.createStage(input);
   }
 
@@ -1699,7 +1833,9 @@ export class DriverStoreService {
     config?: Record<string, unknown>;
     parentThreadId?: string | null;
   }): Promise<ThreadEntity> {
-    const ordinal = input.ordinal ?? (await this.maxThreadOrdinal(input.stageId)) + ORDINAL_GAP;
+    const ordinal =
+      input.ordinal ??
+      (await this.maxThreadOrdinal(input.stageId)) + ORDINAL_GAP;
     return this.threads.save(
       this.threads.create({
         stage_id: input.stageId,
@@ -1835,7 +1971,8 @@ export class DriverStoreService {
     ordinal?: number;
     blockedBy?: string[];
   }): Promise<TaskEntity> {
-    const ordinal = input.ordinal ?? (await this.maxTaskOrdinal(input.stageId)) + ORDINAL_GAP;
+    const ordinal =
+      input.ordinal ?? (await this.maxTaskOrdinal(input.stageId)) + ORDINAL_GAP;
     return this.tasks.save(
       this.tasks.create({
         stage_id: input.stageId,
@@ -1867,10 +2004,15 @@ export class DriverStoreService {
       order: { ordinal: 'ASC' },
     });
     const thread = stage
-      ? await this.threads.findOne({ where: { stage_id: stage.id }, order: { ordinal: 'ASC' } })
+      ? await this.threads.findOne({
+          where: { stage_id: stage.id },
+          order: { ordinal: 'ASC' },
+        })
       : null;
     if (!thread) {
-      throw new Error(`driver-store: job ${jobId} has no planning-stage thread to anchor a card message`);
+      throw new Error(
+        `driver-store: job ${jobId} has no planning-stage thread to anchor a card message`,
+      );
     }
     return thread.id;
   }
@@ -2049,7 +2191,9 @@ function toReviewChild(row: ThreadEntity): ReviewChildThread {
     config: (row.config as Record<string, unknown>) ?? {},
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
-    reviewFindings: Array.isArray(row.review_findings) ? row.review_findings : null,
+    reviewFindings: Array.isArray(row.review_findings)
+      ? row.review_findings
+      : null,
   };
 }
 
@@ -2073,7 +2217,10 @@ interface PipelineReviewChild {
  * `autofix:<parentId>:<lensId>` for a lens, `autofix:<parentId>:fix` for the fix pass (the SAME lanes the
  * turns stream on). The web uses these as bare child-thread nodes (no synthetic `rev:`/`fix:` ids).
  */
-function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild {
+function toPipelineChild(
+  c: ThreadEntity,
+  parentId: string,
+): PipelineReviewChild {
   const lensId = (c.config as { lensId?: string })?.lensId;
   return {
     id: c.id,
@@ -2082,7 +2229,9 @@ function toPipelineChild(c: ThreadEntity, parentId: string): PipelineReviewChild
     status: c.status,
     condition: c.condition,
     ...(lensId ? { lensId } : {}),
-    findings: Array.isArray(c.review_findings) ? c.review_findings.length : null,
+    findings: Array.isArray(c.review_findings)
+      ? c.review_findings.length
+      : null,
     lane:
       c.role === 'review_agent'
         ? laneFor('autofix-lens', parentId, lensId ?? 'review')

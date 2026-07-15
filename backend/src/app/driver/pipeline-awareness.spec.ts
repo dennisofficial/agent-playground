@@ -47,7 +47,9 @@ describe('pipelineStateSignature', () => {
   });
 
   it('is deterministic for the same state', () => {
-    expect(pipelineStateSignature(RUNNING_STATE)).toBe(pipelineStateSignature(RUNNING_STATE));
+    expect(pipelineStateSignature(RUNNING_STATE)).toBe(
+      pipelineStateSignature(RUNNING_STATE),
+    );
   });
 
   it('changes when a thread status advances (the in-place overwrite the snapshot CAN see)', () => {
@@ -64,13 +66,19 @@ describe('pipelineStateSignature', () => {
 
   it('changes when the decision record is replaced (re-proposal → fresh watermark, no stale ordinal)', () => {
     const before = pipelineStateSignature(RUNNING_STATE);
-    const after = pipelineStateSignature({ ...RUNNING_STATE, decisionRecordId: 'dr-2' });
+    const after = pipelineStateSignature({
+      ...RUNNING_STATE,
+      decisionRecordId: 'dr-2',
+    });
     expect(after).not.toBe(before);
   });
 
   it('changes when a PR opens', () => {
     const before = pipelineStateSignature(RUNNING_STATE);
-    const after = pipelineStateSignature({ ...RUNNING_STATE, prUrl: 'https://gh/pr/9' });
+    const after = pipelineStateSignature({
+      ...RUNNING_STATE,
+      prUrl: 'https://gh/pr/9',
+    });
     expect(after).not.toBe(before);
   });
 });
@@ -80,11 +88,16 @@ describe('renderPipelineStateSummary', () => {
     const summary = renderPipelineStateSummary(RUNNING_STATE);
     expect(summary).toContain('Current build state: running.');
     expect(summary).toContain('Thread 1 "Backend": done [2/2 steps done]');
-    expect(summary).toContain('Thread 2 "Frontend": executing [0/1 steps done]');
+    expect(summary).toContain(
+      'Thread 2 "Frontend": executing [0/1 steps done]',
+    );
   });
 
   it('includes the PR url when present', () => {
-    const summary = renderPipelineStateSummary({ ...RUNNING_STATE, prUrl: 'https://gh/pr/9' });
+    const summary = renderPipelineStateSummary({
+      ...RUNNING_STATE,
+      prUrl: 'https://gh/pr/9',
+    });
     expect(summary).toContain('PR: https://gh/pr/9');
   });
 
@@ -95,19 +108,32 @@ describe('renderPipelineStateSummary', () => {
 
 describe('renderAwarenessPrefix', () => {
   const markers: PipelineMarker[] = [
-    { id: 'a', text: 'Your plan was approved by the operator.', at: '2026-06-26T00:00:00.000Z' },
-    { id: 'b', text: 'The build pipeline has started running the approved plan.', at: '2026-06-26T00:00:01.000Z' },
+    {
+      id: 'a',
+      text: 'Your plan was approved by the operator.',
+      at: '2026-06-26T00:00:00.000Z',
+    },
+    {
+      id: 'b',
+      text: 'The build pipeline has started running the approved plan.',
+      at: '2026-06-26T00:00:01.000Z',
+    },
   ];
 
   it('frames the prefix as informational (not a command) and lists every marker', () => {
     const prefix = renderAwarenessPrefix(markers, null);
     expect(prefix).toContain('informational, no action needed unless asked');
     expect(prefix).toContain('- Your plan was approved by the operator.');
-    expect(prefix).toContain('- The build pipeline has started running the approved plan.');
+    expect(prefix).toContain(
+      '- The build pipeline has started running the approved plan.',
+    );
   });
 
   it('appends the net-state summary when one is conveyed', () => {
-    const prefix = renderAwarenessPrefix(markers, 'Current build state: running.');
+    const prefix = renderAwarenessPrefix(
+      markers,
+      'Current build state: running.',
+    );
     expect(prefix).toContain('Current build state: running.');
   });
 

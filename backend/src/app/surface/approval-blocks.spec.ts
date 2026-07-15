@@ -24,20 +24,33 @@ describe('decisionApprovalBlocks', () => {
     expect(json).toContain('Use Stripe');
     expect(json).toContain('1. backend: stripe client + webhooks');
     expect(json).toContain('2. frontend: checkout page');
-    const actions = blocks.find((b) => b.type === 'actions') as { elements: Array<{ action_id: string; value: string }> };
+    const actions = blocks.find((b) => b.type === 'actions') as {
+      elements: Array<{ action_id: string; value: string }>;
+    };
     const ids = actions.elements.map((e) => e.action_id);
     expect(ids).toContain(APPROVE_ACTION_ID);
     expect(ids).toContain(DENY_ACTION_ID);
     // The button value carries the stateless ids.
-    expect(JSON.parse(actions.elements[0].value)).toEqual({ jobId: 'job-1', decisionRecordId: 'dr-1' });
+    expect(JSON.parse(actions.elements[0].value)).toEqual({
+      jobId: 'job-1',
+      decisionRecordId: 'dr-1',
+    });
   });
 
   it('renders the locked decisions when present, and omits the block when absent (issue #7)', () => {
     const withDecisions = decisionApprovalBlocks({
       ...card,
       decisions: [
-        { decisionClass: 'dependency', title: 'JWT library', ruling: 'use jose' },
-        { decisionClass: 'cross_cutting', title: 'Password hashing', ruling: 'argon2id' },
+        {
+          decisionClass: 'dependency',
+          title: 'JWT library',
+          ruling: 'use jose',
+        },
+        {
+          decisionClass: 'cross_cutting',
+          title: 'Password hashing',
+          ruling: 'argon2id',
+        },
       ],
     });
     const json = JSON.stringify(withDecisions);
@@ -46,14 +59,21 @@ describe('decisionApprovalBlocks', () => {
     expect(json).toContain('use jose');
     expect(json).toContain('argon2id');
     // No decisions → no Decisions block at all.
-    expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain('*Decisions*');
+    expect(JSON.stringify(decisionApprovalBlocks(card))).not.toContain(
+      '*Decisions*',
+    );
   });
 
   it('adds a View-plan link button only when planUrl is given', () => {
     const without = decisionApprovalBlocks(card);
-    const withUrl = decisionApprovalBlocks({ ...card, planUrl: 'https://x/plan' });
+    const withUrl = decisionApprovalBlocks({
+      ...card,
+      planUrl: 'https://x/plan',
+    });
     const idsOf = (bs: Array<Record<string, unknown>>) => {
-      const a = bs.find((b) => b.type === 'actions') as { elements: Array<{ action_id: string }> };
+      const a = bs.find((b) => b.type === 'actions') as {
+        elements: Array<{ action_id: string }>;
+      };
       return a.elements.map((e) => e.action_id);
     };
     expect(idsOf(without)).not.toContain(VIEW_PLAN_ACTION_ID);

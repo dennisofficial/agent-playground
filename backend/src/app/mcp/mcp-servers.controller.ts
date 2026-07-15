@@ -45,7 +45,11 @@ import { SystemMcpResolver } from './system-mcp-resolver.service';
 import { type SystemMcpServer } from './system-mcp-registry';
 
 const SURFACES = ['brain', 'build', 'review'] as const;
-const TOKEN_AUTH_METHODS = ['none', 'client_secret_post', 'client_secret_basic'] as const;
+const TOKEN_AUTH_METHODS = [
+  'none',
+  'client_secret_post',
+  'client_secret_basic',
+] as const;
 
 class McpHeaderDto implements McpHeaderInput {
   @IsString() @MinLength(1) name!: string;
@@ -56,7 +60,9 @@ class McpHeaderDto implements McpHeaderInput {
 
 class McpOAuthConfigDto {
   @IsOptional() @IsString() scope?: string;
-  @IsOptional() @IsIn(TOKEN_AUTH_METHODS) tokenAuthMethod?: McpOAuthTokenAuthMethod;
+  @IsOptional()
+  @IsIn(TOKEN_AUTH_METHODS)
+  tokenAuthMethod?: McpOAuthTokenAuthMethod;
 }
 
 class SetMcpServerDto {
@@ -64,12 +70,24 @@ class SetMcpServerDto {
   @IsOptional() @IsString() url?: string;
   @IsOptional() @IsString() command?: string;
   @IsOptional() @IsArray() @IsString({ each: true }) args?: string[];
-  @IsOptional() @ValidateNested({ each: true }) @Type(() => McpHeaderDto) headers?: McpHeaderDto[];
-  @IsOptional() @ValidateNested({ each: true }) @Type(() => McpHeaderDto) env?: McpHeaderDto[];
-  @IsOptional() @IsArray() @IsIn(SURFACES, { each: true }) surfaces?: McpSurface[];
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => McpHeaderDto)
+  headers?: McpHeaderDto[];
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => McpHeaderDto)
+  env?: McpHeaderDto[];
+  @IsOptional()
+  @IsArray()
+  @IsIn(SURFACES, { each: true })
+  surfaces?: McpSurface[];
   @IsOptional() @IsBoolean() enabled?: boolean;
   @IsOptional() @IsIn(['static', 'oauth']) authKind?: McpAuthKind;
-  @IsOptional() @ValidateNested() @Type(() => McpOAuthConfigDto) oauth?: McpOAuthConfigDto;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => McpOAuthConfigDto)
+  oauth?: McpOAuthConfigDto;
 }
 
 /**
@@ -138,7 +156,10 @@ export class McpServersController {
     const row = await this.store.rawRow(org.id, dbScope, name);
     if (!row) throw new BadRequestException('unknown mcp server');
     // OAuth servers can't be validated with static headers — go through the SDK client + stored token.
-    const result = row.auth_kind === 'oauth' ? await this.oauth.validate(row) : await this.probe.validate(row);
+    const result =
+      row.auth_kind === 'oauth'
+        ? await this.oauth.validate(row)
+        : await this.probe.validate(row);
     await this.store.recordValidation(org.id, dbScope, name, result);
     return { ok: !result.error, ...result };
   }
@@ -162,18 +183,29 @@ export class McpServersController {
   /** Map `'org'` → the `'*'` sentinel; otherwise require the repo to belong to this org. */
   private async resolveScope(orgId: string, scope: string): Promise<string> {
     if (scope === 'org') return ORG_SCOPE;
-    const repo = await this.repos.findOne({ where: { id: scope, org_id: orgId } });
-    if (!repo) throw new BadRequestException(`unknown repo scope '${scope}' for this org`);
+    const repo = await this.repos.findOne({
+      where: { id: scope, org_id: orgId },
+    });
+    if (!repo)
+      throw new BadRequestException(
+        `unknown repo scope '${scope}' for this org`,
+      );
     return scope;
   }
 
   /** Transport-shape guard the class-validator DTO can't express (url vs command/args mutual need). */
   private assertShape(body: SetMcpServerDto): void {
     if (body.transport === 'stdio') {
-      if (!body.command) throw new BadRequestException('stdio transport requires a command');
-      if (body.authKind === 'oauth') throw new BadRequestException('oauth is only supported for http/sse transports');
+      if (!body.command)
+        throw new BadRequestException('stdio transport requires a command');
+      if (body.authKind === 'oauth')
+        throw new BadRequestException(
+          'oauth is only supported for http/sse transports',
+        );
     } else if (!body.url) {
-      throw new BadRequestException(`${body.transport} transport requires a url`);
+      throw new BadRequestException(
+        `${body.transport} transport requires a url`,
+      );
     }
   }
 }

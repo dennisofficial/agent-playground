@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '../../domain/decision-record';
@@ -193,7 +200,10 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'uuid', nullable: true })
   decision_record_id!: string | null;
 
-  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne(() => DecisionRecordEntity, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 
@@ -374,7 +384,10 @@ export class JobEntity extends TimestampedEntity {
    * jobs that never ran a direct build (driver builds record their verdict on the thread terminal record).
    */
   @Column({ type: 'jsonb', nullable: true })
-  direct_build_verification!: { verdict: LiveVerificationVerdict; at: string } | null;
+  direct_build_verification!: {
+    verdict: LiveVerificationVerdict;
+    at: string;
+  } | null;
 
   /**
    * When the DIRECT-BUILD implementation turn actually STARTED — stamped the instant `dispatch_build` fires

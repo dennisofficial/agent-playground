@@ -50,7 +50,9 @@ export class SandboxRefsService {
   }): Promise<string | undefined> {
     const dir = this.teamRefsDir(input.orgId);
     if (!dir) {
-      this.logger.warn('ensureReference called but no REFS_ROOT/REFS_ROOT configured — skipping');
+      this.logger.warn(
+        'ensureReference called but no REFS_ROOT/REFS_ROOT configured — skipping',
+      );
       return undefined;
     }
     const slug = this.safe(input.repoId);
@@ -63,7 +65,9 @@ export class SandboxRefsService {
       ...gitAuthEnv(input.gitUrl, input.token),
     };
     if (existsSync(join(dest, '.git'))) {
-      await execFileAsync('git', ['-C', dest, 'fetch', '--all', '--prune'], { env });
+      await execFileAsync('git', ['-C', dest, 'fetch', '--all', '--prune'], {
+        env,
+      });
     } else {
       this.logger.log(`cloning reference ${input.gitUrl} → ${dest}`);
       await execFileAsync('git', ['clone', input.gitUrl, dest], { env });

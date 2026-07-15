@@ -15,9 +15,13 @@ import type { DriverThread } from '../../driver/driver-store.service';
  *  durable `threads.tasks` outlives the abandoned session's in-memory to-do, so the fresh Leg keeps its
  *  checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the block. */
 export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
-  const open = tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+  const open = tasks.filter(
+    (t) => t.status === 'pending' || t.status === 'in_progress',
+  );
   if (!open.length) return agentMessage('');
-  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
+  const lines = open.map(
+    (t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`,
+  );
   return agentMessage(
     [
       '<carried_tasks>',
@@ -34,7 +38,9 @@ export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
  *  so it never renders an empty block. This is the model's ONE reminder — anything still open after the next
  *  `complete_thread` is host-dropped from the checklist at the done transition. */
 export function renderOpenTasksWarning(open: TaskItem[]): AgentMessage {
-  const lines = open.map((t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`);
+  const lines = open.map(
+    (t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`,
+  );
   return agentMessage(
     [
       `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
@@ -103,7 +109,9 @@ export function renderBatchTask(
  * newline the surrounding task body splices on. YOU (the writer session) own the commit: the host reads what
  * you leave and does NOT commit for you, so leave a CLEAN tree before you call `complete_thread`.
  */
-export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage('\n' + COMMIT_AND_PUSH_NOTE);
+export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage(
+  '\n' + COMMIT_AND_PUSH_NOTE,
+);
 
 /**
  * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
@@ -111,9 +119,14 @@ export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage('\n' + COM
  * Execute-voice counterpart to the old read-only `run_master_review` tool prompt. No writer-subagent mention
  * (Codex has none). Does NOT push — the host commits the edits and ships.
  */
-export function renderMasterReviewTask(record: DecisionRecord | null, repo: ResolvedRepo): AgentMessage {
+export function renderMasterReviewTask(
+  record: DecisionRecord | null,
+  repo: ResolvedRepo,
+): AgentMessage {
   const decisions = record?.decisions.length
-    ? record.decisions.map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`).join('\n')
+    ? record.decisions
+        .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
+        .join('\n')
     : '(none)';
   return agentMessage(
     [
@@ -140,4 +153,3 @@ export function renderMasterReviewTask(record: DecisionRecord | null, repo: Reso
     ].join('\n'),
   );
 }
-

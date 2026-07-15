@@ -28,7 +28,10 @@ export function computeFeatureBranchName(
  * host chokepoint. Null/empty regex → always valid; an unparseable regex config also passes (never
  * wedge a job on a bad config).
  */
-export function isBranchNameValid(repo: Pick<RepoEntity, 'branch_regex'>, name: string): boolean {
+export function isBranchNameValid(
+  repo: Pick<RepoEntity, 'branch_regex'>,
+  name: string,
+): boolean {
   const pattern = repo.branch_regex?.trim();
   if (!pattern) return true;
   try {

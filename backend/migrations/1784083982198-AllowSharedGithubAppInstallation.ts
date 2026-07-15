@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Drop the global partial UNIQUE index on `org_credentials.github_app_installation_id`. A GitHub App
@@ -8,14 +8,17 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * own another org that already holds it), so the DB-level uniqueness is removed.
  */
 export class AllowSharedGithubAppInstallation1784040000000 implements MigrationInterface {
-    name = 'AllowSharedGithubAppInstallation1784040000000'
+  name = 'AllowSharedGithubAppInstallation1784040000000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`DROP INDEX "UQ_org_credentials_github_app_installation_id"`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `DROP INDEX "UQ_org_credentials_github_app_installation_id"`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`CREATE UNIQUE INDEX "UQ_org_credentials_github_app_installation_id" ON "org_credentials" ("github_app_installation_id") WHERE "github_app_installation_id" IS NOT NULL`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `CREATE UNIQUE INDEX "UQ_org_credentials_github_app_installation_id" ON "org_credentials" ("github_app_installation_id") WHERE "github_app_installation_id" IS NOT NULL`,
+    );
+  }
 }

@@ -31,7 +31,7 @@ services:
       # Postgres bound to the default 5432. POSTGRES_PORT in .env.local.enc/.env.test.enc matches 5433.
       - '5433:5432'
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./.docker/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U agent -d atlas']
       interval: 5s
@@ -55,9 +55,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
-volumes:
-  pgdata:
 
 # `atlas-bus` is the engine bus network each per-job sandbox is attached to so its in-container engine can
 # reach Redis (its ONLY transport). Given a FIXED `name:` (not project-prefixed) so SANDBOX_BUS_NETWORK is a

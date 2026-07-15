@@ -620,9 +620,16 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     };
     const json = JSON.stringify(push);
     const res = await src.handlePrWebhook(
-      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+      raw(push, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'push',
+      }),
     );
-    expect(res).toMatchObject({ outcome: 'repo-push', orgId: 'T1', repoId: 'web' });
+    expect(res).toMatchObject({
+      outcome: 'repo-push',
+      orgId: 'T1',
+      repoId: 'web',
+    });
   });
 
   it('ignores a push to a NON-default branch (a feature head moving is caught by the PR cadence)', async () => {
@@ -633,17 +640,26 @@ describe('GithubNotificationSource.handlePrWebhook', () => {
     };
     const json = JSON.stringify(push);
     const res = await src.handlePrWebhook(
-      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+      raw(push, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'push',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
 
-  it('ignores a push with no default_branch in the payload (can\'t confirm it\'s the base)', async () => {
+  it("ignores a push with no default_branch in the payload (can't confirm it's the base)", async () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
-    const push = { ref: 'refs/heads/main', repository: { full_name: 'Acme/Web' } };
+    const push = {
+      ref: 'refs/heads/main',
+      repository: { full_name: 'Acme/Web' },
+    };
     const json = JSON.stringify(push);
     const res = await src.handlePrWebhook(
-      raw(push, { 'x-hub-signature-256': sign(json), 'x-github-event': 'push' }),
+      raw(push, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'push',
+      }),
     );
     expect(res).toMatchObject({ outcome: 'ignored', reason: 'unsupported' });
   });
@@ -782,7 +798,12 @@ describe('GithubNotificationSource.handleWorkEvent', () => {
       action: 'dismissed',
       repository: { full_name: 'Acme/Web' },
       pull_request: { number: 6, head: { ref: 'feat/b' } },
-      review: { id: 901, state: 'dismissed', body: '', user: { login: 'dennis' } },
+      review: {
+        id: 901,
+        state: 'dismissed',
+        body: '',
+        user: { login: 'dennis' },
+      },
     };
     const headers = {
       'x-hub-signature-256': sign(JSON.stringify(payload)),
@@ -802,7 +823,12 @@ describe('GithubNotificationSource.handleWorkEvent', () => {
     const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
     const payload = {
       repository: { full_name: 'Acme/Web' },
-      check_run: { id: 7, name: 'Typecheck', status: 'completed', conclusion: 'failure' },
+      check_run: {
+        id: 7,
+        name: 'Typecheck',
+        status: 'completed',
+        conclusion: 'failure',
+      },
     };
     const headers = {
       'x-hub-signature-256': sign(JSON.stringify(payload)),

@@ -54,13 +54,18 @@ export type ClaudeOAuthEnvReader = {
  * controller's authorize/exchange, the usage refresh, the credential-refresh core) resolves through, so a
  * test can retarget `tokenUrl` at a local stub server via one env key.
  */
-export function buildClaudeOAuthConfig(env: ClaudeOAuthEnvReader): ClaudeOAuthConfig {
+export function buildClaudeOAuthConfig(
+  env: ClaudeOAuthEnvReader,
+): ClaudeOAuthConfig {
   return {
     ...DEFAULT_CLAUDE_OAUTH_CONFIG,
     authorizeUrl:
-      env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
-    tokenUrl: env.get('CLAUDE_OAUTH_TOKEN_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.tokenUrl,
-    clientId: env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
+      env.get('CLAUDE_OAUTH_AUTHORIZE_URL') ??
+      DEFAULT_CLAUDE_OAUTH_CONFIG.authorizeUrl,
+    tokenUrl:
+      env.get('CLAUDE_OAUTH_TOKEN_URL') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.tokenUrl,
+    clientId:
+      env.get('CLAUDE_OAUTH_CLIENT_ID') ?? DEFAULT_CLAUDE_OAUTH_CONFIG.clientId,
   };
 }
 

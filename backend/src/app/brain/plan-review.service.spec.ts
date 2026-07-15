@@ -15,7 +15,11 @@ import type { EngineRunnerPort, EngineRunResult } from '../engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
-import type { JobEntity, StageEntity, ThreadEntity } from '../persistence/entities';
+import type {
+  JobEntity,
+  StageEntity,
+  ThreadEntity,
+} from '../persistence/entities';
 import type { BlockSink, TurnHarnessFactory } from '../surface';
 import type { JobDependencyService } from '../job-deps';
 
@@ -49,14 +53,19 @@ describe('parsePlanFindings', () => {
       ].join('\n'),
     );
     expect(out).toEqual([
-      { severity: 'BLOCKING', text: 'schema gap — the mic flow needs user_uid (server.ts:12)' },
+      {
+        severity: 'BLOCKING',
+        text: 'schema gap — the mic flow needs user_uid (server.ts:12)',
+      },
       { severity: 'ADVISORY', text: 'rename the helper for clarity' },
     ]);
   });
 
   it('returns [] on NO_FINDINGS (case-insensitive)', () => {
     expect(parsePlanFindings('no_findings')).toEqual([]);
-    expect(parsePlanFindings('Everything looks good.\nNO_FINDINGS')).toEqual([]);
+    expect(parsePlanFindings('Everything looks good.\nNO_FINDINGS')).toEqual(
+      [],
+    );
   });
 
   it('treats a bare untagged FINDING as BLOCKING (lenient back-compat)', () => {
@@ -132,7 +141,8 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
 
   const matches = (row: ThreadEntity, where: Record<string, unknown>) =>
     Object.entries(where).every(
-      ([k, v]) => v == null || (row as unknown as Record<string, unknown>)[k] === v,
+      ([k, v]) =>
+        v == null || (row as unknown as Record<string, unknown>)[k] === v,
     );
 
   return {
@@ -152,10 +162,12 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
       rows.push(saved);
       return saved;
     }),
-    update: vi.fn(async (where: { id: string }, patch: Partial<ThreadEntity>) => {
-      const row = rows.find((x) => x.id === where.id);
-      if (row) Object.assign(row, patch, { updated_at: new Date() });
-    }),
+    update: vi.fn(
+      async (where: { id: string }, patch: Partial<ThreadEntity>) => {
+        const row = rows.find((x) => x.id === where.id);
+        if (row) Object.assign(row, patch, { updated_at: new Date() });
+      },
+    ),
     findOne: vi.fn(
       async ({
         where,
@@ -187,12 +199,18 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
       }
       qb.getMany = async () =>
         rows.filter(
-          (r) => r.role === 'plan_review' && (r.config as { status?: string })?.status === 'running',
+          (r) =>
+            r.role === 'plan_review' &&
+            (r.config as { status?: string })?.status === 'running',
         );
       qb.getRawOne = async () => {
         const jobId = params['jobId'] as string | undefined;
-        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
-        return { max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0) };
+        const matching = rows.filter(
+          (r) => jobId == null || r.job_id === jobId,
+        );
+        return {
+          max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0),
+        };
       };
       return qb;
     },
@@ -206,11 +224,15 @@ function fakeStagesRepo() {
   return {
     findOne: vi.fn(
       async ({ where }: { where: { job_id: string; kind: string } }) =>
-        rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ?? null,
+        rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ??
+        null,
     ),
     create: (r: Partial<StageEntity>) => ({ ...r }) as StageEntity,
     save: vi.fn(async (r: StageEntity) => {
-      const saved = { ...r, id: r.id ?? `stage-${rows.length + 1}` } as StageEntity;
+      const saved = {
+        ...r,
+        id: r.id ?? `stage-${rows.length + 1}`,
+      } as StageEntity;
       rows.push(saved);
       return saved;
     }),
@@ -225,8 +247,12 @@ function fakeStagesRepo() {
       }
       qb.getRawOne = async () => {
         const jobId = params['jobId'] as string | undefined;
-        const matching = rows.filter((r) => jobId == null || r.job_id === jobId);
-        return { max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0) };
+        const matching = rows.filter(
+          (r) => jobId == null || r.job_id === jobId,
+        );
+        return {
+          max: matching.reduce((m, r) => Math.max(m, r.ordinal ?? 0), 0),
+        };
       };
       return qb;
     },
@@ -246,15 +272,15 @@ function makeService(opts: {
   const engine = {
     run: vi.fn(
       opts.engineRun ??
-        (async () => ({ result: 'NO_FINDINGS', sessionId: 'sess-1' }) as EngineRunResult),
+        (async () =>
+          ({ result: 'NO_FINDINGS', sessionId: 'sess-1' }) as EngineRunResult),
     ),
   } as unknown as EngineRunnerPort;
   const lifecycle = {
-    ensureContainer: vi.fn(
-      async () =>
-        opts.ensureContainer === undefined
-          ? { sandbox: { worktreePath: '/tmp/wt', containerId: 'c1' } }
-          : opts.ensureContainer,
+    ensureContainer: vi.fn(async () =>
+      opts.ensureContainer === undefined
+        ? { sandbox: { worktreePath: '/tmp/wt', containerId: 'c1' } }
+        : opts.ensureContainer,
     ),
     contextDirHost: () => opts.contextDirHost ?? '/nonexistent/context',
   } as unknown as JobLifecycleService;
@@ -319,12 +345,16 @@ describe('PlanReviewService.review', () => {
       threads,
       engineRun: async () =>
         ({
-          result: 'FINDING [BLOCKING]: x — breaks build\nFINDING [ADVISORY]: y — nicer',
+          result:
+            'FINDING [BLOCKING]: x — breaks build\nFINDING [ADVISORY]: y — nicer',
           sessionId: 's',
         }) as EngineRunResult,
     });
     const out = await svc.review(baseInput);
-    expect(out.findings.map((f) => f.severity)).toEqual(['BLOCKING', 'ADVISORY']);
+    expect(out.findings.map((f) => f.severity)).toEqual([
+      'BLOCKING',
+      'ADVISORY',
+    ]);
   });
 
   it('flips the control row complete BEFORE persisting the reply transcript (no re-drive window)', async () => {
@@ -333,17 +363,25 @@ describe('PlanReviewService.review', () => {
     const order: string[] = [];
     const threads = fakePlanReviewThreadsRepo();
     const origUpdate = (
-      threads as unknown as { update: (w: unknown, p: Partial<ThreadEntity>) => Promise<void> }
+      threads as unknown as {
+        update: (w: unknown, p: Partial<ThreadEntity>) => Promise<void>;
+      }
     ).update;
     (threads as unknown as { update: unknown }).update = vi.fn(
       async (where: unknown, patch: Partial<ThreadEntity>) => {
-        if ((patch as { config?: { status?: string } }).config?.status === 'complete') {
+        if (
+          (patch as { config?: { status?: string } }).config?.status ===
+          'complete'
+        ) {
           order.push('row:complete');
         }
         return origUpdate(where, patch);
       },
     );
-    const svc = makeService({ threads, onFinish: () => order.push('reply:persisted') });
+    const svc = makeService({
+      threads,
+      onFinish: () => order.push('reply:persisted'),
+    });
     await svc.review(baseInput);
     expect(order).toEqual(['row:complete', 'reply:persisted']);
     // The row is terminal, so the backstop worklist no longer sees it → it can never be re-driven.
@@ -361,7 +399,14 @@ describe('PlanReviewService.review', () => {
 
   it('stops at the re-review ceiling without a new engine run', async () => {
     const threads = fakePlanReviewThreadsRepo([
-      { id: 'r', job_id: 'job-1', org_id: 'org-1', resume_count: 8, status: 'complete', codex_session_id: 's' },
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        resume_count: 8,
+        status: 'complete',
+        codex_session_id: 's',
+      },
     ]);
     const svc = makeService({ threads });
     const out = await svc.review(baseInput);
@@ -401,7 +446,13 @@ describe('PlanReviewService.review — resume_count is the plan-version/round (D
 describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () => {
   it('returns the row when terminal and spec_hash matches the current specs (both null offline)', async () => {
     const threads = fakePlanReviewThreadsRepo([
-      { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: null },
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'complete',
+        spec_hash: null,
+      },
     ]);
     const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
@@ -410,7 +461,14 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
 
   it('a FAILED review still satisfies the gate (a review that ran, even erroring)', async () => {
     const threads = fakePlanReviewThreadsRepo([
-      { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'failed', spec_hash: null, error: 'boom' },
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'failed',
+        spec_hash: null,
+        error: 'boom',
+      },
     ]);
     const svc = makeService({ threads });
     const gate = await svc.reviewForCurrentSpecs('job-1', 'org-1');
@@ -419,7 +477,13 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
 
   it('refuses when the spec_hash no longer matches (specs changed since review)', async () => {
     const threads = fakePlanReviewThreadsRepo([
-      { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: 'OLDHASH' },
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'complete',
+        spec_hash: 'OLDHASH',
+      },
     ]);
     const svc = makeService({ threads });
     expect(await svc.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
@@ -447,7 +511,14 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
 
     // One round below the ceiling, the same mismatch is still refused.
     const belowCeiling = fakePlanReviewThreadsRepo([
-      { id: 'r2', job_id: 'job-1', org_id: 'org-1', status: 'complete', spec_hash: 'OLDHASH', resume_count: 7 },
+      {
+        id: 'r2',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'complete',
+        spec_hash: 'OLDHASH',
+        resume_count: 7,
+      },
     ]);
     const svc2 = makeService({ threads: belowCeiling });
     expect(await svc2.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
@@ -455,7 +526,13 @@ describe('PlanReviewService.reviewForCurrentSpecs (the propose_plan gate)', () =
 
   it('refuses when the only review is still running', async () => {
     const threads = fakePlanReviewThreadsRepo([
-      { id: 'r', job_id: 'job-1', org_id: 'org-1', status: 'running', spec_hash: null },
+      {
+        id: 'r',
+        job_id: 'job-1',
+        org_id: 'org-1',
+        status: 'running',
+        spec_hash: null,
+      },
     ]);
     const svc = makeService({ threads });
     expect(await svc.reviewForCurrentSpecs('job-1', 'org-1')).toBeNull();
@@ -538,7 +615,10 @@ function fakeThreadsRepoForBrainStore(reviewing: boolean) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEntity> }) {
+function makeBrainStore(opts: {
+  reviewRunning: boolean;
+  jobs: Repository<JobEntity>;
+}) {
   const threads = fakeThreadsRepoForBrainStore(opts.reviewRunning);
   const stub = {} as never;
   return new BrainStoreService(
@@ -550,7 +630,9 @@ function makeBrainStore(opts: { reviewRunning: boolean; jobs: Repository<JobEnti
     stub, // stimuli
     stub, // dataSource
     stub, // titler
-    { onBlockerResolved: vi.fn().mockResolvedValue(undefined) } as unknown as JobDependencyService,
+    {
+      onBlockerResolved: vi.fn().mockResolvedValue(undefined),
+    } as unknown as JobDependencyService,
   );
 }
 

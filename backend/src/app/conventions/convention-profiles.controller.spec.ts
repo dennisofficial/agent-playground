@@ -12,7 +12,11 @@ const ORG = { id: 'org-1' } as never;
 
 function make() {
   const resolver = {
-    allProfiles: vi.fn().mockResolvedValue([{ slug: 'p', name: 'P', body: 'b', detectHint: null }]),
+    allProfiles: vi
+      .fn()
+      .mockResolvedValue([
+        { slug: 'p', name: 'P', body: 'b', detectHint: null },
+      ]),
     attachedSlug: vi.fn().mockResolvedValue('p'),
     upsertProfile: vi.fn().mockResolvedValue(undefined),
     deleteProfile: vi.fn().mockResolvedValue(undefined),
@@ -38,35 +42,51 @@ describe('ConventionProfilesController', () => {
   });
 
   it('upserts a profile with a valid slug', async () => {
-    await c.controller.set(ORG, 'nestjs-next-shared', { name: 'N', body: 'B', detectHint: 'H' });
-    expect(c.resolver.upsertProfile).toHaveBeenCalledWith('org-1', 'nestjs-next-shared', {
+    await c.controller.set(ORG, 'nestjs-next-shared', {
       name: 'N',
       body: 'B',
       detectHint: 'H',
     });
+    expect(c.resolver.upsertProfile).toHaveBeenCalledWith(
+      'org-1',
+      'nestjs-next-shared',
+      {
+        name: 'N',
+        body: 'B',
+        detectHint: 'H',
+      },
+    );
   });
 
   it('rejects an invalid slug', async () => {
-    await expect(c.controller.set(ORG, 'Bad Slug!', { name: 'N', body: 'B' })).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      c.controller.set(ORG, 'Bad Slug!', { name: 'N', body: 'B' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(c.resolver.upsertProfile).not.toHaveBeenCalled();
   });
 
   it('attaches a profile to a repo', async () => {
-    expect(await c.controller.attach(ORG, 'repo-1', { slug: 'p' })).toEqual({ ok: true, slug: 'p' });
+    expect(await c.controller.attach(ORG, 'repo-1', { slug: 'p' })).toEqual({
+      ok: true,
+      slug: 'p',
+    });
     expect(c.resolver.attach).toHaveBeenCalledWith('org-1', 'repo-1', 'p');
   });
 
   it('clears the attachment with null slug', async () => {
-    expect(await c.controller.attach(ORG, 'repo-1', { slug: null })).toEqual({ ok: true, slug: null });
+    expect(await c.controller.attach(ORG, 'repo-1', { slug: null })).toEqual({
+      ok: true,
+      slug: null,
+    });
     expect(c.resolver.attach).toHaveBeenCalledWith('org-1', 'repo-1', null);
   });
 
   it('surfaces a bad attach (unknown slug) as a 400', async () => {
-    (c.resolver.attach as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('does not exist'));
-    await expect(c.controller.attach(ORG, 'repo-1', { slug: 'nope' })).rejects.toBeInstanceOf(
-      BadRequestException,
+    (c.resolver.attach as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('does not exist'),
     );
+    await expect(
+      c.controller.attach(ORG, 'repo-1', { slug: 'nope' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

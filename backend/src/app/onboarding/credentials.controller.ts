@@ -93,7 +93,9 @@ export class OrgCredentialsController {
   /** Owner-only: the decoded Codex account email, which is Administer-tier info (not on the member-visible `presence` route). */
   @Get('codex')
   @UseGuards(OrgOwnerGuard)
-  async codex(@CurrentOrg() org: CurrentOrgCtx): Promise<{ present: boolean; accountEmail?: string }> {
+  async codex(
+    @CurrentOrg() org: CurrentOrgCtx,
+  ): Promise<{ present: boolean; accountEmail?: string }> {
     const email = await this.store.codexAccountEmail(org.id);
     const presence = await this.store.presence(org.id);
     return { present: presence.hasCodex, accountEmail: email };

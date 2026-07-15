@@ -1,6 +1,9 @@
 import { Subject } from 'rxjs';
 import { describe, expect, it } from 'vitest';
-import type { ChatSurface, InboundChatMessage } from '../surface/chat-surface.port';
+import type {
+  ChatSurface,
+  InboundChatMessage,
+} from '../surface/chat-surface.port';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
 import { memoryPrependRule, renderPlanApprovedSeed } from '../prompt-kit/jit';
 import { JitHostExecutor } from './jit-host-executor';
@@ -9,7 +12,8 @@ import { JitHostExecutor } from './jit-host-executor';
 class FakeSurface implements ChatSurface {
   readonly name = 'fake';
   readonly inbound$ = new Subject<InboundChatMessage>();
-  calls: Array<Parameters<Required<ChatSurface>['seedSystemNotification']>> = [];
+  calls: Array<Parameters<Required<ChatSurface>['seedSystemNotification']>> =
+    [];
 
   async post(): Promise<string | undefined> {
     return undefined;
@@ -28,7 +32,11 @@ describe('JitHostExecutor', () => {
     const surface = new FakeSurface();
     const executor = new JitHostExecutor(surface);
 
-    const ts = executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J', orgId: 'O' });
+    const ts = executor.fireLifecycle('preview-requested', {
+      repoId: 'R',
+      jobId: 'J',
+      orgId: 'O',
+    });
 
     expect(ts).toBe('seeded-ts');
     expect(surface.calls).toHaveLength(1);
@@ -37,7 +45,10 @@ describe('JitHostExecutor', () => {
     expect(jobId).toBe('J');
     expect(body).toContain(PREVIEW_PREP_SEED_BODY);
     expect(opts?.orgId).toBe('O');
-    expect(opts?.seedRow).toEqual({ label: 'Spin up preview requested', chunkKey: 'seed:preview:J' });
+    expect(opts?.seedRow).toEqual({
+      label: 'Spin up preview requested',
+      chunkKey: 'seed:preview:J',
+    });
   });
 
   it('returns "" when the surface cannot seed (no seedSystemNotification bound)', () => {
@@ -48,7 +59,9 @@ describe('JitHostExecutor', () => {
     };
     const executor = new JitHostExecutor(surface);
 
-    expect(executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J' })).toBe('');
+    expect(
+      executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J' }),
+    ).toBe('');
   });
 
   it('fires the plan-approved rule, threading buildPath/baseBranch/decisionRecordId through to render + chunkKey', () => {
@@ -69,7 +82,14 @@ describe('JitHostExecutor', () => {
     const [channel, jobId, body, opts] = surface.calls[0];
     expect(channel).toBe('R');
     expect(jobId).toBe('J');
-    expect(body).toBe(renderPlanApprovedSeed({ jobId: 'J', buildPath: 'plan', baseBranch: 'main', decisionRecordId: 'dr-1' }));
+    expect(body).toBe(
+      renderPlanApprovedSeed({
+        jobId: 'J',
+        buildPath: 'plan',
+        baseBranch: 'main',
+        decisionRecordId: 'dr-1',
+      }),
+    );
     expect(opts?.seedRow).toEqual({
       label: 'Plan approved — checking the base branch before starting',
       chunkKey: 'seed:plan-approved:dr-1',
@@ -81,7 +101,11 @@ describe('JitHostExecutor', () => {
     const override = new FakeSurface();
     const executor = new JitHostExecutor(injected);
 
-    executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J', surface: override });
+    executor.fireLifecycle('preview-requested', {
+      repoId: 'R',
+      jobId: 'J',
+      surface: override,
+    });
 
     expect(injected.calls).toHaveLength(0);
     expect(override.calls).toHaveLength(1);
@@ -97,8 +121,17 @@ describe('JitHostExecutor', () => {
     it('returns one memory system_reminder chunk once prependText is supplied', () => {
       const executor = new JitHostExecutor(new FakeSurface());
 
-      expect(executor.collectOperatorPrepends({ jobId: 'j', prependText: 'recalled memory' })).toEqual([
-        { kind: 'system_reminder', body: 'recalled memory', attrs: { reminderKind: 'memory' } },
+      expect(
+        executor.collectOperatorPrepends({
+          jobId: 'j',
+          prependText: 'recalled memory',
+        }),
+      ).toEqual([
+        {
+          kind: 'system_reminder',
+          body: 'recalled memory',
+          attrs: { reminderKind: 'memory' },
+        },
       ]);
     });
 
@@ -114,7 +147,12 @@ describe('JitHostExecutor', () => {
       memoryPrependRule.enabled = false;
       try {
         expect(executor.hasEnabledOperatorPrepends()).toBe(false);
-        expect(executor.collectOperatorPrepends({ jobId: 'j', prependText: 'recalled memory' })).toEqual([]);
+        expect(
+          executor.collectOperatorPrepends({
+            jobId: 'j',
+            prependText: 'recalled memory',
+          }),
+        ).toEqual([]);
       } finally {
         memoryPrependRule.enabled = prev;
       }

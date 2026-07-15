@@ -142,13 +142,15 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
    * `collect-pending-for-turn.spec.ts`'s constructor wiring, but deep enough to run a full
    * `runChatTurnInner` turn against the fake leaf engine/sandbox.
    */
-  function makeManager(opts: {
-    live?: boolean;
-    jitChunks?: TurnChunk[];
-    jitEnabled?: boolean;
-    jit?: JitHostExecutor;
-    memoryRecall?: ReturnType<typeof vi.fn>;
-  } = {}) {
+  function makeManager(
+    opts: {
+      live?: boolean;
+      jitChunks?: TurnChunk[];
+      jitEnabled?: boolean;
+      jit?: JitHostExecutor;
+      memoryRecall?: ReturnType<typeof vi.fn>;
+    } = {},
+  ) {
     const runningBrainTurn = vi
       .fn()
       .mockResolvedValue(opts.live ? { turn_id: 'turn-live-1' } : null);
@@ -227,12 +229,18 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     const memory = {
       recall: opts.memoryRecall ?? vi.fn().mockResolvedValue([]),
     };
-    const jit = opts.jit ?? (opts.jitChunks || opts.jitEnabled !== undefined
-      ? ({
-          hasEnabledOperatorPrepends: vi.fn().mockReturnValue(opts.jitEnabled ?? true),
-          collectOperatorPrepends: vi.fn().mockReturnValue(opts.jitChunks ?? []),
-        } as unknown as JitHostExecutor)
-      : undefined);
+    const jit =
+      opts.jit ??
+      (opts.jitChunks || opts.jitEnabled !== undefined
+        ? ({
+            hasEnabledOperatorPrepends: vi
+              .fn()
+              .mockReturnValue(opts.jitEnabled ?? true),
+            collectOperatorPrepends: vi
+              .fn()
+              .mockReturnValue(opts.jitChunks ?? []),
+          } as unknown as JitHostExecutor)
+        : undefined);
 
     const inert = {} as never;
     const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) };
@@ -546,13 +554,20 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
     const task = getCapturedTask();
     expect(task).toContain('<system_reminder source="memory">');
     expect(task).toContain('uses pnpm for package management');
-    expect(task!.indexOf('source="memory"')).toBeLessThan(task!.indexOf('<user'));
+    expect(task!.indexOf('source="memory"')).toBeLessThan(
+      task!.indexOf('<user'),
+    );
   });
 
   it('JIT memory rail disabled: skips auto-recall before any embedding/recall call', async () => {
     const thread = await makeThread('jit-memory-disabled thread');
     const recall = vi.fn().mockResolvedValue([
-      { id: 'fact-1', fact: 'uses pnpm', scope: `project:${repoId}`, sim: 0.9 },
+      {
+        id: 'fact-1',
+        fact: 'uses pnpm',
+        scope: `project:${repoId}`,
+        sim: 0.9,
+      },
     ]);
     const { manager, run, getCapturedTask } = makeManager({
       jitEnabled: false,

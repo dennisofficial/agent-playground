@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import { EngineAuthError, type EngineRunnerPort, type RunEngineArgs } from '../engine';
+import {
+  EngineAuthError,
+  type EngineRunnerPort,
+  type RunEngineArgs,
+} from '../engine';
 import type { ThreadEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
@@ -19,12 +23,16 @@ function fakeSteps(priorSessionId: string | null = null) {
   const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];
   let current = priorSessionId;
   const repo = {
-    findOne: vi.fn(async () => (current === null ? null : ({ session_id: current } as ThreadEntity))),
-    update: vi.fn(async (where: { id: unknown }, patch: { session_id?: string }) => {
-      updates.push({ id: where.id, patch });
-      if (patch.session_id) current = patch.session_id;
-      return { affected: 1 } as never;
-    }),
+    findOne: vi.fn(async () =>
+      current === null ? null : ({ session_id: current } as ThreadEntity),
+    ),
+    update: vi.fn(
+      async (where: { id: unknown }, patch: { session_id?: string }) => {
+        updates.push({ id: where.id, patch });
+        if (patch.session_id) current = patch.session_id;
+        return { affected: 1 } as never;
+      },
+    ),
   } as unknown as Repository<ThreadEntity>;
   return { repo, updates, last: () => current };
 }
@@ -97,7 +105,9 @@ describe('TurnRunnerService — session-handle durability', () => {
       }),
     };
     const runner = new TurnRunnerService(engine, repo);
-    await expect(runner.runTurn(baseInput)).rejects.toBeInstanceOf(EngineAuthError);
+    await expect(runner.runTurn(baseInput)).rejects.toBeInstanceOf(
+      EngineAuthError,
+    );
     expect(last()).toBe('sess-401');
   });
 
@@ -160,7 +170,10 @@ describe('TurnRunnerService — git auth threading', () => {
         return { result: 'ok' };
       }),
     };
-    await new TurnRunnerService(engine, repo).runTurn({ ...baseInput, sandbox: rowSourced });
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+    });
 
     expect(received[0].target?.gitAuth).toBeUndefined();
   });
@@ -193,7 +206,9 @@ describe('TurnRunnerService — evidence dir threading', () => {
       evidenceDir: '/context/evidence/010-backend',
     });
 
-    expect(received[0].target?.evidenceDir).toBe('/context/evidence/010-backend');
+    expect(received[0].target?.evidenceDir).toBe(
+      '/context/evidence/010-backend',
+    );
   });
 
   it('omits evidenceDir on the target when the turn passes none', async () => {
@@ -205,7 +220,10 @@ describe('TurnRunnerService — evidence dir threading', () => {
         return { result: 'ok' };
       }),
     };
-    await new TurnRunnerService(engine, repo).runTurn({ ...baseInput, sandbox: rowSourced });
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+    });
 
     expect(received[0].target?.evidenceDir).toBeUndefined();
   });

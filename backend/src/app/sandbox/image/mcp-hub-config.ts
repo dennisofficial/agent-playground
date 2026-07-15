@@ -52,8 +52,16 @@ export function parseHubConfig(raw: string): McpHubConfig | null {
     if (!v || typeof v !== 'object') return null;
     if (!Array.isArray(v.servers)) return null;
     const spawn = v.spawn;
-    if (!spawn || typeof spawn.cwd !== 'string' || typeof spawn.home !== 'string') return null;
-    return { spawn: { ...spawn, baseEnv: spawn.baseEnv ?? {} }, servers: v.servers };
+    if (
+      !spawn ||
+      typeof spawn.cwd !== 'string' ||
+      typeof spawn.home !== 'string'
+    )
+      return null;
+    return {
+      spawn: { ...spawn, baseEnv: spawn.baseEnv ?? {} },
+      servers: v.servers,
+    };
   } catch {
     return null;
   }
@@ -65,5 +73,13 @@ export function parseHubConfig(raw: string): McpHubConfig | null {
  * (unchanged servers keep their live connection, so a config edit to server A never churns server B).
  */
 export function serverKey(s: ResolvedMcpServer): string {
-  return JSON.stringify([s.name, s.transport, s.url ?? '', s.headers ?? {}, s.command ?? '', s.args ?? [], s.env ?? {}]);
+  return JSON.stringify([
+    s.name,
+    s.transport,
+    s.url ?? '',
+    s.headers ?? {},
+    s.command ?? '',
+    s.args ?? [],
+    s.env ?? {},
+  ]);
 }

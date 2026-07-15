@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Rename the thread status value `scoping` → `planning`. `threads.status` is a plain `text` column
@@ -7,14 +7,17 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * `ThreadStatus` union in `domain/thread.ts` (the canonical "enum").
  */
 export class RenameStatusScopingToPlanning1782754269807 implements MigrationInterface {
-    name = 'RenameStatusScopingToPlanning1782754269807'
+  name = 'RenameStatusScopingToPlanning1782754269807';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`UPDATE "threads" SET "status" = 'planning' WHERE "status" = 'scoping'`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `UPDATE "threads" SET "status" = 'planning' WHERE "status" = 'scoping'`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`UPDATE "threads" SET "status" = 'scoping' WHERE "status" = 'planning'`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `UPDATE "threads" SET "status" = 'scoping' WHERE "status" = 'planning'`,
+    );
+  }
 }

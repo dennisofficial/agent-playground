@@ -91,7 +91,9 @@ export const CONTAINER_PNPM_STORE = `${CONTAINER_AGENT_HOME}/pnpm-store`;
  * into its own worktree. Reserved mounts are dropped (with a warning) both when the brain authors config
  * and when it is resolved at provision time.
  */
-export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set(['.pnpm-store']);
+export const RESERVED_WORKTREE_MOUNTS: ReadonlySet<string> = new Set([
+  '.pnpm-store',
+]);
 
 /**
  * Cache/state mount mode.
@@ -217,7 +219,17 @@ export const RESERVED_CONTAINER_MOUNTS: readonly string[] = [
   CONTAINER_CONTEXT,
   CONTAINER_GIT_COMMON,
   CONTAINER_PLAYGROUND,
-  '/etc', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/proc', '/sys', '/dev', '/run',
+  '/etc',
+  '/usr',
+  '/bin',
+  '/sbin',
+  '/lib',
+  '/lib64',
+  '/boot',
+  '/proc',
+  '/sys',
+  '/dev',
+  '/run',
 ];
 
 /**
@@ -226,11 +238,13 @@ export const RESERVED_CONTAINER_MOUNTS: readonly string[] = [
  * too, since binding a parent would shadow the child system bind). Trailing slashes are ignored.
  */
 export function isReservedContainerPath(path: string): boolean {
-  const norm = (posix.normalize(path).replace(/\/+$/, '') || '/');
+  const norm = posix.normalize(path).replace(/\/+$/, '') || '/';
   if (norm === '/') return true;
   return RESERVED_CONTAINER_MOUNTS.some((r) => {
     const rr = r.replace(/\/+$/, '');
-    return norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`);
+    return (
+      norm === rr || norm.startsWith(`${rr}/`) || rr.startsWith(`${norm}/`)
+    );
   });
 }
 

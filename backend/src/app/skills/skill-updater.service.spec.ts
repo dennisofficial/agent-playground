@@ -30,23 +30,43 @@ class FakeRepo {
     return { update_available: false, ...p } as WorkspaceSkillEntity;
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
-    const i = this.rows.findIndex((r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name);
+    const i = this.rows.findIndex(
+      (r) =>
+        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+    );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({ where }: { where: Partial<WorkspaceSkillEntity> }): Promise<WorkspaceSkillEntity | null> {
+  async findOne({
+    where,
+  }: {
+    where: Partial<WorkspaceSkillEntity>;
+  }): Promise<WorkspaceSkillEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
-  async find({ where }: { where?: Partial<WorkspaceSkillEntity> } = {}): Promise<WorkspaceSkillEntity[]> {
+  async find({
+    where,
+  }: { where?: Partial<WorkspaceSkillEntity> } = {}): Promise<
+    WorkspaceSkillEntity[]
+  > {
     return where ? this.rows.filter((r) => this.match(r, where)) : this.rows;
   }
-  async update(where: Partial<WorkspaceSkillEntity>, patch: Partial<WorkspaceSkillEntity>): Promise<void> {
-    for (const r of this.rows) if (this.match(r, where)) Object.assign(r, patch);
+  async update(
+    where: Partial<WorkspaceSkillEntity>,
+    patch: Partial<WorkspaceSkillEntity>,
+  ): Promise<void> {
+    for (const r of this.rows)
+      if (this.match(r, where)) Object.assign(r, patch);
   }
   async delete(): Promise<void> {}
-  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
-    return Object.entries(where).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v);
+  private match(
+    r: WorkspaceSkillEntity,
+    where: Partial<WorkspaceSkillEntity>,
+  ): boolean {
+    return Object.entries(where).every(
+      ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
+    );
   }
 }
 
@@ -78,21 +98,35 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
     work = join(tmp, 'work');
     sourceUrl = join(tmp, 'origin.git');
     initRepo(work);
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n',
+    );
     commitAndBare(tmp, work, sourceUrl);
 
-    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? join(tmp, 'store') : undefined) } as EnvService;
+    const env = {
+      get: (key: string) =>
+        key === 'SKILLS_ROOT' ? join(tmp, 'store') : undefined,
+    } as EnvService;
     const git = new LocalGitService({ get: () => undefined } as never);
-    const creds = { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver;
+    const creds = {
+      githubToken: async () => undefined,
+      hostGithubToken: async () => undefined,
+    } as unknown as CredentialResolver;
     repo = new FakeRepo();
-    store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
+    store = new WorkspaceSkillStore(
+      repo as unknown as Repository<WorkspaceSkillEntity>,
+    );
     installer = new SkillInstallerService(env, git, creds, store);
     updater = new SkillUpdaterService(
       repo as unknown as Repository<WorkspaceSkillEntity>,
       installer,
       git,
       creds,
-      { onPromote: () => ({ unsubscribe() {} }), onDemote: () => ({ unsubscribe() {} }) } as unknown as LeaderElectionService,
+      {
+        onPromote: () => ({ unsubscribe() {} }),
+        onDemote: () => ({ unsubscribe() {} }),
+      } as unknown as LeaderElectionService,
       env,
     );
   });
@@ -102,7 +136,12 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
   });
 
   it('leaves installed_sha untouched and no badge when the remote has not moved', async () => {
-    const [before] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl, updatePolicy: 'pinned' });
+    const [before] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+      updatePolicy: 'pinned',
+    });
     await updater.reconcileAll();
     const after = await store.get('org1', '*', 'my-skill');
     expect(after!.installed_sha).toBe(before.installed_sha);
@@ -110,9 +149,17 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
   });
 
   it('track-ref: auto-updates (re-vendors + bumps installed_sha) on remote change', async () => {
-    const [before] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl, updatePolicy: 'track-ref' });
+    const [before] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+      updatePolicy: 'track-ref',
+    });
 
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
+    );
     commitAndBare(tmp, work, sourceUrl);
 
     await updater.reconcileAll();
@@ -123,9 +170,17 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
   });
 
   it('pinned: flags update_available but does NOT re-vendor until applyNow', async () => {
-    const [before] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl, updatePolicy: 'pinned' });
+    const [before] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+      updatePolicy: 'pinned',
+    });
 
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
+    );
     commitAndBare(tmp, work, sourceUrl);
 
     await updater.reconcileAll();
@@ -141,8 +196,16 @@ describe('SkillUpdaterService (real git, local fixture repo)', () => {
   });
 
   it('reconcileOrgAsync fire-and-forget check eventually clears/sets the same as reconcileAll', async () => {
-    await installer.install({ orgId: 'org1', scope: '*', sourceUrl, updatePolicy: 'pinned' });
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
+    await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+      updatePolicy: 'pinned',
+    });
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
+    );
     commitAndBare(tmp, work, sourceUrl);
 
     updater.reconcileOrgAsync('org1');

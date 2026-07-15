@@ -1,8 +1,15 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { SystemMessage } from '@langchain/core/messages';
-import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
-import { RunnableLambda, RunnableSequence, type Runnable } from '@langchain/core/runnables';
+import {
+  ChatPromptTemplate,
+  HumanMessagePromptTemplate,
+} from '@langchain/core/prompts';
+import {
+  RunnableLambda,
+  RunnableSequence,
+  type Runnable,
+} from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
 
@@ -138,14 +145,22 @@ export namespace ClassifyDecisionChain {
  * per key string.
  */
 export class AnthropicClassifierLlm implements ClassifierLlm {
-  private readonly chains = new Map<string, Runnable<ClassifyDecisionChain.Input, ClassifyDecisionChain.Output>>();
+  private readonly chains = new Map<
+    string,
+    Runnable<ClassifyDecisionChain.Input, ClassifyDecisionChain.Output>
+  >();
 
   /** @param apiKey resolves the active Anthropic key for a tenant (e.g. CredentialResolver.anthropicKey). */
-  constructor(private readonly apiKey: (orgId?: string) => Promise<string | undefined>) {}
+  constructor(
+    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
+  ) {}
 
   private async chain(
     orgId?: string,
-  ): Promise<Runnable<ClassifyDecisionChain.Input, ClassifyDecisionChain.Output> | undefined> {
+  ): Promise<
+    | Runnable<ClassifyDecisionChain.Input, ClassifyDecisionChain.Output>
+    | undefined
+  > {
     const key = await this.apiKey(orgId);
     if (!key) return undefined;
     let c = this.chains.get(key);

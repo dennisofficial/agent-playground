@@ -7,7 +7,13 @@
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import { isAtlasRepo, isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
+import {
+  isAtlasRepo,
+  isBuildBrain,
+  isOnboarding,
+  isReview,
+  notOnboarding,
+} from '../conditions';
 import { BRIDGE_SERVER_NAME } from '../../../sandbox/image/bridge-options';
 import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../sandbox/image/workspace-profile-bridge-options';
 import { ATLAS_PROD_BRIDGE_NAME } from '../../../sandbox/image/atlas-prod-bridge-options';
@@ -16,7 +22,11 @@ import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 @FragmentGroup()
 export class HostToolsGroup {
   /** The host tools — qualification + enumeration + ambient capability tools. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1040, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1040,
+    condition: isBuildBrain,
+  })
   hostTools(): string {
     return [
       `You have the host tools listed below. ${TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME)}`,
@@ -81,13 +91,21 @@ export class HostToolsGroup {
    * specific descriptions from mcp-language-server's own tool registration, so — unlike `hostTools()`
    * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
    */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1045, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1045,
+    condition: notOnboarding,
+  })
   lspTools(): string {
     return LSP_TOOLS_NOTE;
   }
 
   /** The flat top-level calling convention. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1050, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1050,
+    condition: notOnboarding,
+  })
   argsWrapper(): string {
     return [
       'ARGUMENTS — call every host tool with its fields DIRECTLY at the top level, exactly as the tool',
@@ -99,7 +117,11 @@ export class HostToolsGroup {
   }
 
   /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1060, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1060,
+    condition: isBuildBrain,
+  })
   createJob(): string {
     return [
       'CREATE_JOB — when the work splits into a separate unit of its own, create a follow-up thread rather',
@@ -118,7 +140,11 @@ export class HostToolsGroup {
   }
 
   /** The onboarding session's curated host tools. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2050, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2050,
+    condition: isOnboarding,
+  })
   onboardingTools(): string {
     return [
       TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),

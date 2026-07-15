@@ -13,13 +13,21 @@ import { LIVE_VALIDATION_NOT_OPTIONAL_NOTE } from '../fragments';
 @FragmentGroup()
 export class PlanningGroup {
   /** Two paths header. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1180, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1180,
+    condition: isBuildBrain,
+  })
   twoPaths(): string {
     return 'TWO PATHS — choose based on size/risk:';
   }
 
   /** FULL PATH (review_plan → propose_plan). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1190, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1190,
+    condition: isBuildBrain,
+  })
   fullPath(): string {
     return [
       'FULL PATH — review_plan then propose_plan (multi-thread build run by the deterministic driver). Use for',
@@ -32,7 +40,11 @@ export class PlanningGroup {
   }
 
   /** PLAN DEPTH. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1200, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1200,
+    condition: isBuildBrain,
+  })
   planDepth(): string {
     return [
       "PLAN DEPTH (applies to each thread's `## Approach`): the work must be buildable to the keystroke by a fresh",
@@ -48,14 +60,18 @@ export class PlanningGroup {
       '    file/path, build or lint cmd); when the change affects RUNTIME behavior (an endpoint, a UI, a CLI, a',
       '    job, a script), the verify MUST also include the LIVE RUN that exercises it as a caller would — the',
       '    exact command AND its expected observation (e.g. "`curl -s localhost:PORT/uptime` → `{\"uptimeSeconds\":<int>}`",',
-      '    a Playwright drive, the repo\'s e2e/smoke). Plus any non-obvious gotcha (must rebuild native, won\'t',
+      "    a Playwright drive, the repo's e2e/smoke). Plus any non-obvious gotcha (must rebuild native, won't",
       '    hot-reload, needs a generated migration). "Unit-test it" is a goal, not verification, and a green',
       '    build is never a substitute for running the thing. Let detail follow difficulty — the hard part gets the depth.',
     ].join('\n');
   }
 
   /** PLAN.MD STRUCTURE. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1210, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1210,
+    condition: isBuildBrain,
+  })
   planMdStructure(): string {
     return [
       'PLAN.MD STRUCTURE — the specs are MULTI-FILE; author them so build + operator read them the same way:',
@@ -96,7 +112,11 @@ export class PlanningGroup {
   }
 
   /** DIAGRAMS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1220, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1220,
+    condition: isBuildBrain,
+  })
   diagrams(): string {
     return [
       'DIAGRAMS — LEAN ON THEM. A plan the operator can SEE beats one they have to decode. Mermaid code fences',
@@ -116,7 +136,11 @@ export class PlanningGroup {
   }
 
   /** The review_plan → propose_plan flow. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1230, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1230,
+    condition: isBuildBrain,
+  })
   submitPlanDetail(): string {
     return [
       'REVIEW THEN PROPOSE. `review_plan` and `propose_plan` are separate: review is mandatory to RUN but its',
@@ -179,7 +203,11 @@ export class PlanningGroup {
   }
 
   /** FAST PATH (start_direct_build). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1240, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1240,
+    condition: isBuildBrain,
+  })
   fastPath(): string {
     return [
       'FAST PATH — start_direct_build (a small, localized change you implement YOURSELF, no threads/steps).',
@@ -195,7 +223,7 @@ export class PlanningGroup {
       'edits each anchored to a `path:line` touch point, and a one-line `## Validation` (the live run / check that',
       'proves it). Keep it PROPORTIONATE — a couple lines for a couple-line change. This is the lightweight',
       'single-file cousin of the FULL PATH plan.md: NO `sections/`, NO threads, NO required diagram, and do not',
-      'duplicate the decision-record. It renders in the operator\'s SPECS panel next to the approval card, and the',
+      "duplicate the decision-record. It renders in the operator's SPECS panel next to the approval card, and the",
       'H1 stays revisable until you approve — keep it in sync if you supersede the card.',
       'AFTER the operator approves, you will be asked (autonomously) to implement it: make the edits in',
       '`/workspace`, then VERIFY AND LIVE-VALIDATE — clear the typecheck/build/test floor AND, if the change has',

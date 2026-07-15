@@ -16,7 +16,11 @@ import type { PromptCtx } from '../prompt-ctx';
 export class AutonomyGroup {
   /** Tell the brain it is running autonomously — the gate(s) this mode covers auto-advance, so it must
    *  self-verify harder there. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1250, condition: hasAutoApprove })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1250,
+    condition: hasAutoApprove,
+  })
   autonomousMode(ctx: PromptCtx): string {
     const mode = ctx.settings?.autoApproveMode ?? 'off';
     const approvesPlan = modeApprovesPlan(mode);
@@ -34,7 +38,7 @@ export class AutonomyGroup {
 
     if (approvesPlan) {
       return [
-        'AUTONOMOUS MODE (plan gate only) — auto-approve is ON for this job\'s plan-approval gate. Your',
+        "AUTONOMOUS MODE (plan gate only) — auto-approve is ON for this job's plan-approval gate. Your",
         '`propose_plan` / `start_direct_build` dispatch the moment you call them WITHOUT a human. No operator will',
         'catch a mistake at that gate — so verify HARDER before you propose: run the real live validation yourself,',
         'and only propose a plan / direct build you have actually exercised. The ship-review gate is UNCHANGED —',
@@ -43,7 +47,7 @@ export class AutonomyGroup {
     }
 
     return [
-      'AUTONOMOUS MODE (ship gate only) — auto-approve is ON for this job\'s ship-review gate. A finished build',
+      "AUTONOMOUS MODE (ship gate only) — auto-approve is ON for this job's ship-review gate. A finished build",
       'ships WITHOUT a "Ship it" click the moment it reaches ship-review. No operator will catch a mistake at that',
       'gate — so verify HARDER before you finalize/ship: run the real live validation yourself, and only finalize',
       'a build you have actually exercised. The plan-approval gate is UNCHANGED — a proposed plan still waits for',

@@ -75,7 +75,9 @@ export class ClaudeCredentialsController {
   /** Kick off consent: mint + stash a fresh PKCE verifier, return the URL the owner opens. */
   @Post('authorize-url')
   @UseGuards(OrgOwnerGuard)
-  async authorizeUrl(@CurrentOrg() org: CurrentOrgCtx): Promise<{ url: string; state: string }> {
+  async authorizeUrl(
+    @CurrentOrg() org: CurrentOrgCtx,
+  ): Promise<{ url: string; state: string }> {
     const config = this.config();
     const { verifier, challenge, state } = generatePkce();
     await this.pkce.stash(org.id, state, verifier);
@@ -154,7 +156,8 @@ export class ClaudeCredentialsController {
     body: CreateCredentialDto,
   ): Promise<string> {
     const label = body.label?.trim();
-    if (!label) throw new BadRequestException('label is required for a setup-token');
+    if (!label)
+      throw new BadRequestException('label is required for a setup-token');
     const setupToken = body.setupToken;
     if (!setupToken)
       throw new BadRequestException('code or setupToken is required');

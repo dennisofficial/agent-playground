@@ -200,7 +200,11 @@ export interface ContainerEngine {
    * Redis tail and the exec runs detached — surviving a backend restart, reparented to init). The stream
    * is drained-and-discarded so it can't backpressure. Returns the engine PID when Docker reports one.
    */
-  execDetached(id: string, argv: string[], opts?: DetachedExecOptions): Promise<{ pid?: number }>;
+  execDetached(
+    id: string,
+    argv: string[],
+    opts?: DetachedExecOptions,
+  ): Promise<{ pid?: number }>;
 
   /** Stop a running container (SIGTERM then SIGKILL after `timeoutSec`). */
   stop(id: string, opts?: { timeoutSec?: number }): Promise<void>;
@@ -217,7 +221,10 @@ export interface ContainerEngine {
   removeVolume(name: string): Promise<void>;
 
   /** List containers, optionally filtered by label(s) (`key` or `key=value`). */
-  list(opts?: { label?: string | string[]; all?: boolean }): Promise<ContainerInfo[]>;
+  list(opts?: {
+    label?: string | string[];
+    all?: boolean;
+  }): Promise<ContainerInfo[]>;
 
   /** Aggregate Docker disk usage (GET /system/df); optional — not part of the sandbox lifecycle. */
   systemDf?(): Promise<{

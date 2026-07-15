@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 
@@ -102,7 +109,10 @@ export type McpSurface = 'brain' | 'build' | 'review';
 export type McpAuthKind = 'static' | 'oauth';
 
 /** The OAuth token-endpoint client-auth method for DCR — `'none'` = public client + PKCE (the default). */
-export type McpOAuthTokenAuthMethod = 'none' | 'client_secret_post' | 'client_secret_basic';
+export type McpOAuthTokenAuthMethod =
+  | 'none'
+  | 'client_secret_post'
+  | 'client_secret_basic';
 
 /**
  * Non-secret OAuth knobs stored in {@link StoredMcpConfig.oauth} (displayable; the tokens themselves live
