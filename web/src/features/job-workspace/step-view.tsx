@@ -125,7 +125,7 @@ export function PhaseView({
   // Subagent sub-pages stream live (a running subagent) and fall back to the durable transcript afterward.
   const liveTurn = useLiveTurn(jobRef.jobId);
   const job = pipelineJob(pipeline);
-  const threads = job?.stages.flatMap((s) => s.threads) ?? [];
+  const threads = job?.threadGroups.flatMap((s) => s.threads) ?? [];
   const thread = threads.find((t) => t.id === selectedNode) ?? null;
   // A review CHILD thread (a `review_agent` / `review_fix` row) — matched by its own bare id. Carries the
   // transcript lane the backend computed for it.
@@ -188,9 +188,9 @@ export function PhaseView({
     subtitle = selectedNode;
     body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
   } else if (selectedNode === "plan") {
-    // The plan's slices — each build/direct_build stage's builder-thread brief(s). Falls back to the
+    // The plan's slices — each build/direct_build thread group's builder-thread brief(s). Falls back to the
     // approval card's own thread list when present.
-    const planThreads = (job?.stages ?? [])
+    const planThreads = (job?.threadGroups ?? [])
       .filter((s) => s.kind === "build" || s.kind === "direct_build")
       .flatMap((s) =>
         s.threads.filter((t) => t.role === "builder").map((t) => t.brief),

@@ -832,23 +832,26 @@ function ThreadRows({
     );
   }
 
-  // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
-  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row —
-  // EXCEPT a committed direct build, which never grows lanes, so its "approve the plan" ghost is just noise.
+  // One renderer for every thread group: running/done/failed threads expand to their live task list;
+  // pre-approval drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the
+  // hero ghost row — EXCEPT a committed direct build, which never grows lanes, so its "approve the plan"
+  // ghost is just noise.
   // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
   // build over already-DONE work can leave the active lanes empty while history persists — show history then.
   const prior = job?.priorRevisions ?? [];
-  // The tree renders every stage EXCEPT planning/plan_review (those are pinned above), so "no lanes yet" is
-  // the absence of any buildable stage — not just an empty stage list.
-  const hasBuildStages =
+  // The tree renders every thread group EXCEPT planning/plan_review (those are pinned above), so "no lanes
+  // yet" is the absence of any buildable thread group — not just an empty thread group list.
+  const hasBuildThreadGroups =
     job != null &&
-    job.stages.some((s) => s.kind !== "planning" && s.kind !== "plan_review");
-  if (!job || (!hasBuildStages && prior.length === 0)) {
+    job.threadGroups.some(
+      (s) => s.kind !== "planning" && s.kind !== "plan_review",
+    );
+  if (!job || (!hasBuildThreadGroups && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
     <>
-      {hasBuildStages ? (
+      {hasBuildThreadGroups ? (
         <PipelineTree
           job={job}
           status={status}
@@ -890,7 +893,11 @@ function PriorRevisionSection({
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const revJob: PipelineJob = { ...job, stages: revision.stages, halt: null };
+  const revJob: PipelineJob = {
+    ...job,
+    threadGroups: revision.threadGroups,
+    halt: null,
+  };
   return (
     <details className="mt-1 opacity-70">
       <summary className="cursor-pointer list-none px-2 py-1.5 text-[10.5px] font-medium uppercase tracking-wide text-dim">
@@ -1325,7 +1332,7 @@ function StateBanner({
   // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
   // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
   // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
-  const stuck = job?.stages
+  const stuck = job?.threadGroups
     .flatMap((s) => s.threads)
     .find(
       (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
