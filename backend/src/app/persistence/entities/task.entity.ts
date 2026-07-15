@@ -8,33 +8,33 @@ import {
 } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
-import { StageEntity } from './stage.entity';
+import { ThreadGroupEntity } from './thread-group.entity';
 
 /**
- * One row of a STAGE's shared task checklist (d6) — replaces BOTH of the old task blobs
+ * One row of a THREAD GROUP's shared task checklist (d6) — replaces BOTH of the old task blobs
  * (`threads.tasks` jsonb, the build-lane checklist; and `jobs.main_tasks` jsonb, the brain checklist).
- * Owned by the stage, not any single thread, so it survives builder-leg rotation (d1): any builder
- * thread in the stage reads/writes `tasks WHERE stage_id = X` and the next leg sees the full list and
- * keeps crediting it — no jsonb read-modify-write races. For a singleton stage (planning, etc.) the task
- * list is simply that one thread's checklist under its stage.
+ * Owned by the thread group, not any single thread, so it survives builder-leg rotation (d1): any builder
+ * thread in the thread group reads/writes `tasks WHERE thread_group_id = X` and the next leg sees the full list and
+ * keeps crediting it — no jsonb read-modify-write races. For a singleton thread group (planning, etc.) the task
+ * list is simply that one thread's checklist under its thread group.
  *
  * The LLM tool surface (`TaskCreate`/`TaskUpdate`) is unchanged (thread 2/3) — handlers write rows keyed
- * to the active stage instead of mutating jsonb.
+ * to the active thread group instead of mutating jsonb.
  */
 @Entity({ name: 'tasks' })
-@Index(['stage_id'])
-@Index(['stage_id', 'ordinal'])
+@Index(['thread_group_id'])
+@Index(['thread_group_id', 'ordinal'])
 export class TaskEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The owning stage (FK → stages.id). */
+  /** The owning thread group (FK → thread_groups.id). */
   @Column({ type: 'uuid' })
-  stage_id!: string;
+  thread_group_id!: string;
 
-  @ManyToOne(() => StageEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'stage_id' })
-  stage?: StageEntity;
+  @ManyToOne(() => ThreadGroupEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_group_id' })
+  threadGroup?: ThreadGroupEntity;
 
   /** The tenant (org id) — denormalized for org-scoped queries (FK → organizations.id). */
   @Column({ type: 'uuid' })
@@ -44,7 +44,7 @@ export class TaskEntity extends TimestampedEntity {
   @JoinColumn({ name: 'org_id' })
   org?: OrganizationEntity;
 
-  /** Display/credit order within the stage, GAP-NUMBERED (10, 20, 30…). */
+  /** Display/credit order within the thread group, GAP-NUMBERED (10, 20, 30…). */
   @Column({ type: 'int' })
   ordinal!: number;
 
@@ -66,7 +66,7 @@ export class TaskEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'pending' })
   status!: string;
 
-  /** Dependency edges — ids of OTHER rows in this same stage's checklist that this task waits on
+  /** Dependency edges — ids of OTHER rows in this same thread group's checklist that this task waits on
    *  (mirrors the old `TaskItem.blockedBy`). A PENDING task with an incomplete blocker renders BLOCKED;
    *  the block clears by derivation when every blocker completes/drops. LITERAL default (a
    *  `() => '[]'::jsonb` function default makes `migration:generate` loop forever). */

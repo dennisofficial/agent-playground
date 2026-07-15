@@ -3,7 +3,7 @@
 - **Status:** Accepted — implementation in progress (Phase 1a + Phase 0 pending-recovery landed; see *Status & rollout*).
 - **Date:** 2026-06-29
 - **Supersedes (in part):** the "one-shot `docker exec`, no daemon, no Redis" transport described in `backend/src/app/ATLAS_V2.md §6` and `docs/archived_plans/001_docker_sandbox_layer.md`.
-- **Updated by ADR 0008** (first-class stages): `steps` is retired. `active_turns` (below) already keyed on
+- **Updated by ADR 0008** (first-class thread groups): `steps` is retired. `active_turns` (below) already keyed on
   `thread_id`, not a step id, so its shape is unaffected; the `kind ∈ brain|step|review|gate|autofix` label is
   now legacy naming for what is really `role`-scoped turn bookkeeping (`planning|builder|review_agent|...`) —
   read "step" there as historical, not a live table reference.

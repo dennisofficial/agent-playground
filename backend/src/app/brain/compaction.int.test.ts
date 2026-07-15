@@ -104,7 +104,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = job.id;
-    await bootstrap.ensurePlanningStage(jobId, TEAM_ID);
+    await bootstrap.ensurePlanningThreadGroup(jobId, TEAM_ID);
     await dataSource.query(
       `INSERT INTO job_sandboxes (org_id, job_id, repo_id, worktree_path, lifecycle, session_id)
          VALUES ($1, $2, $3, '/tmp/compaction-it-worktree', 'attached', $4)`,

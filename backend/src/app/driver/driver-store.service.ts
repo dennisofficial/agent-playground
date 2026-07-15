@@ -21,7 +21,7 @@ import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  StageEntity,
+  ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
   JobEntity,
@@ -102,8 +102,8 @@ export class DriverStoreService {
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StageEntity, DB_CONNECTION)
-    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
+    private readonly threadGroups: Repository<ThreadGroupEntity>,
     @InjectRepository(TaskEntity, DB_CONNECTION)
     private readonly tasks: Repository<TaskEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
@@ -670,11 +670,11 @@ export class DriverStoreService {
   async threadsForJob(jobId: string): Promise<DriverThread[]> {
     const job = await this.jobs.findOne({ where: { id: jobId } });
     const activeRecordId = job?.decision_record_id ?? null;
-    // Plan-revision scoping moved off the thread onto its stage (d7). Join through `stages` and match the
+    // Plan-revision scoping moved off the thread onto its thread group (d7). Join through `thread_groups` and match the
     // job's active revision so a superseded revision's threads (browsable history) are never re-driven.
     const qb = this.threads
       .createQueryBuilder('t')
-      .innerJoin(StageEntity, 's', 's.id = t.stage_id')
+      .innerJoin(ThreadGroupEntity, 's', 's.id = t.thread_group_id')
       .where('t.job_id = :jobId', { jobId })
       .orderBy('t.ordinal', 'ASC');
     if (activeRecordId)
@@ -723,8 +723,8 @@ export class DriverStoreService {
    * means the caller must NOT rotate. This polarity is deliberately INVERTED vs the brain's compaction gate
    * (`latestBrainOccupancy`, which compacts on unknown occupancy): a builder never rotates an unknown turn.
    */
-  // ── Leg rotation (context-rot mitigation: one build stage → many sequential builder-thread legs) ─────
-  // A "Leg" is now a builder-thread row under a build stage (d1): rotation inserts the next builder row
+  // ── Leg rotation (context-rot mitigation: one build thread group → many sequential builder-thread legs) ─────
+  // A "Leg" is now a builder-thread row under a build thread group (d1): rotation inserts the next builder row
   // rather than mutating one step. The `anchorStepId` the driver passes is the CURRENT builder thread's id
   // (steps are gone; the thread is the atomic unit). Leg-scoped params (the pending seed, the peak
   // occupancy) live in `threads.config` — no per-leg satellite table.
@@ -798,11 +798,11 @@ export class DriverStoreService {
   }
 
   /**
-   * ROTATE a builder thread's build session (d1): insert the NEXT builder-thread row under the SAME stage,
+   * ROTATE a builder thread's build session (d1): insert the NEXT builder-thread row under the SAME thread group,
    * carrying the handoff forward as `handoff_in` and the continuation seed as `config.pendingLegSeed`, on a
    * fresh (null) session. `rotationCapped` marks the final safety-valve leg: it receives the seed and remains
    * operator-steerable, but the driver does not expose another `record_leg_handoff` tool. The `anchorStepId` is
-   * the CURRENT builder thread's id. `fromLeg` is that thread's 1-based position among the stage's builder
+   * the CURRENT builder thread's id. `fromLeg` is that thread's 1-based position among the thread group's builder
    * threads (ORDER BY ordinal); the new row is `toLeg = fromLeg+1` at the next gap-numbered ordinal. Returns
    * null (no-op) when there is no live session to rotate.
    */
@@ -825,21 +825,40 @@ export class DriverStoreService {
       if (!current || !current.session_id) return null; // nothing live to rotate
       const abandonedSessionId = current.session_id;
       const siblings = await threads.find({
-        where: { stage_id: current.stage_id, role: 'builder' },
+        where: { thread_group_id: current.thread_group_id, role: 'builder' },
         order: { ordinal: 'ASC' },
       });
       const position = siblings.findIndex((s) => s.id === current.id);
       const fromLeg = position >= 0 ? position + 1 : siblings.length;
       const toLeg = fromLeg + 1;
-      const maxOrdinal = siblings.reduce((mx, s) => Math.max(mx, s.ordinal), 0);
+      // Allocate the new leg's ordinal from the JOB-GLOBAL max for this parent scope — NOT the stage's
+      // sibling max. `uq_threads_job_parent_ordinal` is UNIQUE(job_id, parent_thread_id, ordinal) NULLS NOT
+      // DISTINCT (job-global, not per-stage), so on a multi-stage build a stage-local `max+GAP` (e.g. 30→40)
+      // collides with a SIBLING STAGE's thread already at that ordinal — the INSERT then throws a unique
+      // violation, this txn rolls back to null, and rotation silently fails (the whole "handoff rotation
+      // isn't working" bug). Scoping the max to (job_id, parent_thread_id) guarantees a free ordinal; the
+      // leg still sorts after its predecessor within the stage (its ordinal is strictly greater).
+      const parentThreadId = current.parent_thread_id;
+      const maxOrdinalRow = await threads
+        .createQueryBuilder('t')
+        .select('MAX(t.ordinal)', 'max')
+        .where('t.job_id = :jobId', { jobId: current.job_id })
+        .andWhere(
+          parentThreadId == null
+            ? 't.parent_thread_id IS NULL'
+            : 't.parent_thread_id = :parentThreadId',
+          parentThreadId == null ? {} : { parentThreadId },
+        )
+        .getRawOne<{ max: number | null }>();
+      const nextOrdinal = (maxOrdinalRow?.max ?? 0) + ORDINAL_GAP;
       await threads.save(
         threads.create({
           job_id: current.job_id,
-          stage_id: current.stage_id,
+          thread_group_id: current.thread_group_id,
           org_id: current.org_id,
           parent_thread_id: current.parent_thread_id,
           role: 'builder',
-          ordinal: maxOrdinal + ORDINAL_GAP,
+          ordinal: nextOrdinal,
           brief: current.brief,
           type: current.type,
           handoff_in: input.handoff,
@@ -868,33 +887,33 @@ export class DriverStoreService {
     return typeof seed === 'string' ? seed : null;
   }
 
-  /** A thread's stage-owned task checklist (`tasks WHERE stage_id = X`, d6), mapped to the `TaskItem` shape
+  /** A thread's thread-group-owned task checklist (`tasks WHERE thread_group_id = X`, d6), mapped to the `TaskItem` shape
    *  — read when rotating so the fresh Leg's seed carries the open/in-progress items. */
   async getThreadTasks(threadId: string): Promise<TaskItem[]> {
     const thread = await this.threads.findOne({
       where: { id: threadId },
-      select: { id: true, stage_id: true },
+      select: { id: true, thread_group_id: true },
     });
     if (!thread) return [];
-    const rows = await this.tasksForStage(thread.stage_id);
+    const rows = await this.tasksForThreadGroup(thread.thread_group_id);
     return rows.map(toTaskItem);
   }
 
   /** Host backstop for a thread that reached `done` with an unreconciled checklist: flip every still-open task
-   *  (`pending`/`in_progress`) in its stage to `dropped` — NOT `completed` (the host must not claim work it did
+   *  (`pending`/`in_progress`) in its thread group to `dropped` — NOT `completed` (the host must not claim work it did
    *  not verify; a `dropped` row renders struck-through / drops out of the live navigator checklist).
    *  Returns how many were flipped. */
   async dropOpenThreadTasks(threadId: string): Promise<number> {
     const thread = await this.threads.findOne({
       where: { id: threadId },
-      select: { id: true, stage_id: true },
+      select: { id: true, thread_group_id: true },
     });
     if (!thread) return 0;
     const res = await this.tasks
       .createQueryBuilder()
       .update(TaskEntity)
       .set({ status: 'dropped' })
-      .where('stage_id = :stageId', { stageId: thread.stage_id })
+      .where('thread_group_id = :threadGroupId', { threadGroupId: thread.thread_group_id })
       .andWhere("status IN ('pending', 'in_progress')")
       .execute();
     return res.affected ?? 0;
@@ -1063,10 +1082,32 @@ export class DriverStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
+   *  `cap`. */
+  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .where('id = :jobId', { jobId })
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
+      .execute();
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
   /** Reset the driver's SESSION-scoped retry budgets to 0 on a clean drive. Does NOT touch
    *  `retry_last_attempt_at` nor the brain's own lane columns. */
   async clearDriverRetryCounters(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { auth_retry_attempts: 0, driver_transient_retries: 0 });
+    await this.jobs.update(
+      { id: jobId },
+      {
+        auth_retry_attempts: 0,
+        driver_transient_retries: 0,
+        session_limit_text_misfires: 0,
+      },
+    );
   }
 
   /** Read back the durable driver-transient-retry state (count + last-attempt timestamp) so a boot
@@ -1103,19 +1144,19 @@ export class DriverStoreService {
   ): Promise<ReviewChildThread[]> {
     const existing = await this.reviewChildren(parent.id);
     if (existing.length > 0) return existing;
-    // A review child belongs to the SAME stage as its parent builder (`threads.stage_id` NOT NULL). Derive
+    // A review child belongs to the SAME thread group as its parent builder (`threads.thread_group_id` NOT NULL). Derive
     // it from the parent row rather than requiring the caller to pass it — the caller (thread-driver) supplies
     // only `{id, jobId, orgId}`.
     const parentRow = await this.threads.findOne({
       where: { id: parent.id },
-      select: { id: true, stage_id: true },
+      select: { id: true, thread_group_id: true },
     });
     if (!parentRow) return [];
     const rows = childSpecs.map((c, i) =>
       this.threads.create({
         job_id: parent.jobId,
         org_id: parent.orgId,
-        stage_id: parentRow.stage_id,
+        thread_group_id: parentRow.thread_group_id,
         parent_thread_id: parent.id,
         role: c.kind,
         ordinal: (i + 1) * ORDINAL_GAP,
@@ -1175,7 +1216,7 @@ export class DriverStoreService {
   ): Promise<SessionAnchor | undefined> {
     const thread = await this.threads.findOne({
       where: { id: threadId },
-      select: { id: true, stage_id: true, session_id: true },
+      select: { id: true, thread_group_id: true, session_id: true },
     });
     if (!thread?.session_id) return undefined;
     return {
@@ -1219,14 +1260,14 @@ export class DriverStoreService {
     // Intentionally empty — see the method doc.
   }
 
-  /** The 1-based position of a builder thread among its stage's builder threads (ORDER BY ordinal) — the
+  /** The 1-based position of a builder thread among its thread group's builder threads (ORDER BY ordinal) — the
    *  "Leg N" ordinal. Non-builder threads (or a thread with no siblings) resolve to 1. */
   private async builderLegOrdinal(thread: {
     id: string;
-    stage_id: string;
+    thread_group_id: string;
   }): Promise<number> {
     const siblings = await this.threads.find({
-      where: { stage_id: thread.stage_id, role: 'builder' },
+      where: { thread_group_id: thread.thread_group_id, role: 'builder' },
       order: { ordinal: 'ASC' },
       select: { id: true },
     });
@@ -1271,15 +1312,15 @@ export class DriverStoreService {
     const blockedSeedMessage =
       job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
-    // already be keeping a task list on its (always-present) planning stage, and the navigator's Main row shows
+    // already be keeping a task list on its (always-present) planning thread group, and the navigator's Main row shows
     // it. Ride the no_job payload so the web isn't blind to it before a plan exists.
     if (job.status === 'open') {
-      const planningStage = await this.stages.findOne({
+      const planningThreadGroup = await this.threadGroups.findOne({
         where: { job_id: job.id, kind: 'planning' },
         order: { ordinal: 'ASC' },
       });
-      const mainTasks = planningStage
-        ? (await this.tasksForStage(planningStage.id)).map(toTaskItem)
+      const mainTasks = planningThreadGroup
+        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(toTaskItem)
         : [];
       return {
         status: 'no_job',
@@ -1298,22 +1339,22 @@ export class DriverStoreService {
         blockedSeedMessage,
       };
     }
-    // The pipeline is now the job's ordinal-ordered STAGES; each stage owns its threads (root + review
-    // children) and its task checklist. Batch the threads + tasks in one query each and group by stage.
-    const stages = await this.stagesForJob(job.id);
+    // The pipeline is now the job's ordinal-ordered THREAD GROUPS; each thread group owns its threads (root +
+    // review children) and its task checklist. Batch the threads + tasks in one query each and group by thread group.
+    const threadGroups = await this.threadGroupsForJob(job.id);
     const allThreads = await this.threads.find({
       where: { job_id: job.id },
       order: { ordinal: 'ASC' },
     });
-    const threadsByStage = groupBy(allThreads, (t) => t.stage_id);
-    const stageIds = stages.map((s) => s.id);
-    const allTasks = stageIds.length
+    const threadsByThreadGroup = groupBy(allThreads, (t) => t.thread_group_id);
+    const threadGroupIds = threadGroups.map((s) => s.id);
+    const allTasks = threadGroupIds.length
       ? await this.tasks.find({
-          where: { stage_id: In(stageIds) },
+          where: { thread_group_id: In(threadGroupIds) },
           order: { ordinal: 'ASC' },
         })
       : [];
-    const tasksByStage = groupBy(allTasks, (t) => t.stage_id);
+    const tasksByThreadGroup = groupBy(allTasks, (t) => t.thread_group_id);
 
     const mapThread = (t: ThreadEntity, siblings: ThreadEntity[]) => ({
       id: t.id,
@@ -1338,7 +1379,7 @@ export class DriverStoreService {
       // this static per-kind flag).
       operatorInput: threadKindSpec(t.role).operatorInput,
       isMasterReview: t.role === 'master_review',
-      // A builder's review CHILD threads (review_agent × N + review_fix) live in the SAME stage, related by
+      // A builder's review CHILD threads (review_agent × N + review_fix) live in the SAME thread group, related by
       // `parent_thread_id`. Each is a first-class row with its own status + findings + streaming lane.
       children:
         t.role === 'builder'
@@ -1352,9 +1393,9 @@ export class DriverStoreService {
           : [],
     });
 
-    const mapStage = (s: StageEntity) => {
-      const stageThreads = threadsByStage.get(s.id) ?? [];
-      const roots = stageThreads.filter((t) => t.parent_thread_id == null);
+    const mapThreadGroup = (s: ThreadGroupEntity) => {
+      const threadGroupThreads = threadsByThreadGroup.get(s.id) ?? [];
+      const roots = threadGroupThreads.filter((t) => t.parent_thread_id == null);
       return {
         id: s.id,
         kind: s.kind,
@@ -1364,24 +1405,24 @@ export class DriverStoreService {
         status: s.status,
         condition: s.condition,
         decisionRecordId: s.decision_record_id,
-        threads: roots.map((t) => mapThread(t, stageThreads)),
-        tasks: (tasksByStage.get(s.id) ?? []).map(toTaskItem),
+        threads: roots.map((t) => mapThread(t, threadGroupThreads)),
+        tasks: (tasksByThreadGroup.get(s.id) ?? []).map(toTaskItem),
       };
     };
 
-    // The ACTIVE pipeline is the stages under the job's current revision (plus the revision-agnostic
-    // singletons like planning/plan_review, whose stage carries a null record). Prior revisions' stages are
-    // surfaced separately as browsable history.
+    // The ACTIVE pipeline is the thread groups under the job's current revision (plus the revision-agnostic
+    // singletons like planning/plan_review, whose thread group carries a null record). Prior revisions' thread
+    // groups are surfaced separately as browsable history.
     const activeRecordId = job.decision_record_id;
-    const activeStages = stages.filter(
+    const activeThreadGroups = threadGroups.filter(
       (s) =>
         s.decision_record_id == null || s.decision_record_id === activeRecordId,
     );
     // The PLAN REVIEW as a first-class navigator row (the Codex review dialogue Main communicates with) —
-    // derived from the plan_review stage's single thread's status. Null when no plan_review stage exists.
-    const planReviewStage = stages.find((s) => s.kind === 'plan_review');
-    const planReviewThread = planReviewStage
-      ? (threadsByStage.get(planReviewStage.id) ?? [])[0]
+    // derived from the plan_review thread group's single thread's status. Null when no plan_review thread group exists.
+    const planReviewThreadGroup = threadGroups.find((s) => s.kind === 'plan_review');
+    const planReviewThread = planReviewThreadGroup
+      ? (threadsByThreadGroup.get(planReviewThreadGroup.id) ?? [])[0]
       : undefined;
     const planReview = planReviewThread
       ? {
@@ -1393,7 +1434,7 @@ export class DriverStoreService {
 
     // PRIOR PLAN REVISIONS (browsable, immutable history). Only present once a re-propose over already-DONE
     // work has forged a new revision; the common single-revision job returns `[]`. Revision numbers are
-    // derived by `created_at` order (oldest = v1). Only revisions that actually materialized stages surface.
+    // derived by `created_at` order (oldest = v1). Only revisions that actually materialized thread groups surface.
     const records = await this.records
       .find({ where: { job_id: job.id }, order: { created_at: 'ASC' } })
       .catch(() => [] as DecisionRecordEntity[]);
@@ -1404,11 +1445,11 @@ export class DriverStoreService {
         decisionRecordId: rec.id,
         revision,
         status: rec.status,
-        stages: stages
+        threadGroups: threadGroups
           .filter((s) => s.decision_record_id === rec.id)
-          .map(mapStage),
+          .map(mapThreadGroup),
       }))
-      .filter((r) => r.stages.length > 0);
+      .filter((r) => r.threadGroups.length > 0);
 
     return {
       jobId: job.id,
@@ -1442,9 +1483,9 @@ export class DriverStoreService {
       // The OBSERVED live branch (what the agent's HEAD is actually on) — drives the navigator drift badge.
       currentBranch: job.current_branch,
       baseBranch: job.base_branch,
-      // The whole pipeline as ordinal-ordered stages, each carrying its threads + task checklist.
-      stages: activeStages.map(mapStage),
-      // Prior plan revisions' stages as read-only history (empty for the common single-revision job).
+      // The whole pipeline as ordinal-ordered thread groups, each carrying its threads + task checklist.
+      threadGroups: activeThreadGroups.map(mapThreadGroup),
+      // Prior plan revisions' thread groups as read-only history (empty for the common single-revision job).
       priorRevisions,
     };
   }
@@ -1469,64 +1510,64 @@ export class DriverStoreService {
     };
   }
 
-  // ── stage / thread / task CRUD (d6/d7 — the orchestration write surface) ───────────────────────
+  // ── thread group / thread / task CRUD (d6/d7 — the orchestration write surface) ───────────────────────
 
-  /** Every stage of a job, in pipeline order (ORDER BY ordinal). */
-  async stagesForJob(jobId: string): Promise<StageEntity[]> {
-    return this.stages.find({
+  /** Every thread group of a job, in pipeline order (ORDER BY ordinal). */
+  async threadGroupsForJob(jobId: string): Promise<ThreadGroupEntity[]> {
+    return this.threadGroups.find({
       where: { job_id: jobId },
       order: { ordinal: 'ASC' },
     });
   }
 
-  /** Every thread of a stage, in execution order (ORDER BY ordinal). */
-  async threadsForStage(stageId: string): Promise<ThreadEntity[]> {
+  /** Every thread of a thread group, in execution order (ORDER BY ordinal). */
+  async threadsForThreadGroup(threadGroupId: string): Promise<ThreadEntity[]> {
     return this.threads.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
     });
   }
 
-  /** Every thread of a stage as the driver's {@link DriverThread} domain shape, in execution order — the
-   *  stage-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
-   *  builder row mid-drive, so a start-of-stage snapshot goes stale). */
-  async driverThreadsForStage(stageId: string): Promise<DriverThread[]> {
+  /** Every thread of a thread group as the driver's {@link DriverThread} domain shape, in execution order — the
+   *  thread-group-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
+   *  builder row mid-drive, so a start-of-thread-group snapshot goes stale). */
+  async driverThreadsForThreadGroup(threadGroupId: string): Promise<DriverThread[]> {
     const rows = await this.threads.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toThread);
   }
 
-  /** How many `builder` threads a stage holds (its leg count) — the per-stage rotation cap reads this to
-   *  refuse rotating past {@link MAX_LEGS_PER_STAGE}. Keyed off any thread in the stage (the current
-   *  builder's id), so the caller need not carry the stage id. */
-  async builderLegCountForStage(anchorThreadId: string): Promise<number> {
+  /** How many `builder` threads a thread group holds (its leg count) — the per-thread-group rotation cap reads this to
+   *  refuse rotating past {@link MAX_LEGS_PER_THREAD_GROUP}. Keyed off any thread in the thread group (the current
+   *  builder's id), so the caller need not carry the thread group id. */
+  async builderLegCountForThreadGroup(anchorThreadId: string): Promise<number> {
     const thread = await this.threads.findOne({
       where: { id: anchorThreadId },
-      select: { id: true, stage_id: true },
+      select: { id: true, thread_group_id: true },
     });
     if (!thread) return 0;
     return this.threads.count({
-      where: { stage_id: thread.stage_id, role: 'builder' },
+      where: { thread_group_id: thread.thread_group_id, role: 'builder' },
     });
   }
 
-  /** Every task of a stage's checklist, in display/credit order (ORDER BY ordinal). */
-  async tasksForStage(stageId: string): Promise<TaskEntity[]> {
+  /** Every task of a thread group's checklist, in display/credit order (ORDER BY ordinal). */
+  async tasksForThreadGroup(threadGroupId: string): Promise<TaskEntity[]> {
     return this.tasks.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
     });
   }
 
   /**
-   * Append a STAGE at the END of a job's append-only pipeline (d7) — always the next gap-numbered ordinal
-   * (`MAX(ordinal)+ORDINAL_GAP`, or `ORDINAL_GAP` for the first). Never renumbers earlier stages, so a
-   * re-plan round just adds fresh stages after the prior ones. {@link appendStage} is an alias — the
-   * "append-only" semantics ARE `createStage`'s only behavior (there is no insert-in-the-middle).
+   * Append a THREAD GROUP at the END of a job's append-only pipeline (d7) — always the next gap-numbered ordinal
+   * (`MAX(ordinal)+ORDINAL_GAP`, or `ORDINAL_GAP` for the first). Never renumbers earlier thread groups, so a
+   * re-plan round just adds fresh thread groups after the prior ones. {@link appendThreadGroup} is an alias — the
+   * "append-only" semantics ARE `createThreadGroup`'s only behavior (there is no insert-in-the-middle).
    */
-  async createStage(input: {
+  async createThreadGroup(input: {
     jobId: string;
     orgId: string;
     kind: string;
@@ -1534,10 +1575,10 @@ export class DriverStoreService {
     type?: string | null;
     decisionRecordId?: string | null;
     config?: Record<string, unknown>;
-  }): Promise<StageEntity> {
-    const ordinal = (await this.maxStageOrdinal(input.jobId)) + ORDINAL_GAP;
-    return this.stages.save(
-      this.stages.create({
+  }): Promise<ThreadGroupEntity> {
+    const ordinal = (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
+    return this.threadGroups.save(
+      this.threadGroups.create({
         job_id: input.jobId,
         org_id: input.orgId,
         ordinal,
@@ -1550,16 +1591,16 @@ export class DriverStoreService {
     );
   }
 
-  /** Alias for {@link createStage} — the pipeline is append-only, so "append" and "create" are one op. */
-  async appendStage(
-    input: Parameters<DriverStoreService['createStage']>[0],
-  ): Promise<StageEntity> {
-    return this.createStage(input);
+  /** Alias for {@link createThreadGroup} — the pipeline is append-only, so "append" and "create" are one op. */
+  async appendThreadGroup(
+    input: Parameters<DriverStoreService['createThreadGroup']>[0],
+  ): Promise<ThreadGroupEntity> {
+    return this.createThreadGroup(input);
   }
 
-  /** Insert a THREAD into a stage. Gap-numbers the ordinal within the stage when omitted. */
-  async createThreadInStage(input: {
-    stageId: string;
+  /** Insert a THREAD into a thread group. Gap-numbers the ordinal within the thread group when omitted. */
+  async createThreadInThreadGroup(input: {
+    threadGroupId: string;
     jobId: string;
     orgId: string;
     role: string;
@@ -1571,10 +1612,10 @@ export class DriverStoreService {
   }): Promise<ThreadEntity> {
     const ordinal =
       input.ordinal ??
-      (await this.maxThreadOrdinal(input.stageId)) + ORDINAL_GAP;
+      (await this.maxThreadOrdinal(input.threadGroupId)) + ORDINAL_GAP;
     return this.threads.save(
       this.threads.create({
-        stage_id: input.stageId,
+        thread_group_id: input.threadGroupId,
         job_id: input.jobId,
         org_id: input.orgId,
         role: input.role,
@@ -1588,9 +1629,9 @@ export class DriverStoreService {
   }
 
   /**
-   * Find (or lazily create) the job's `post_build` stage-thread — the isolated, fresh session the ship step
+   * Find (or lazily create) the job's `post_build` thread group — the isolated, fresh session the ship step
    * runs its open-PR turn on, off the planning brain's session (d14/d15). Idempotent/reusable: `ship()` may
-   * run several times when the PR doesn't latch on the first pass, so a matching stage is re-looked-up rather
+   * run several times when the PR doesn't latch on the first pass, so a matching thread group is re-looked-up rather
    * than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM` so the nullable FK matches by value
    * (plain SQL equality drops NULL rows).
    */
@@ -1598,8 +1639,8 @@ export class DriverStoreService {
     jobId: string;
     orgId: string;
     decisionRecordId: string | null;
-  }): Promise<{ stageId: string; threadId: string }> {
-    const stage = await this.stages
+  }): Promise<{ threadGroupId: string; threadId: string }> {
+    const threadGroup = await this.threadGroups
       .createQueryBuilder('s')
       .where('s.job_id = :jobId', { jobId: input.jobId })
       .andWhere('s.kind = :kind', { kind: 'post_build' })
@@ -1608,13 +1649,13 @@ export class DriverStoreService {
       })
       .orderBy('s.ordinal', 'ASC')
       .getOne();
-    if (stage) {
-      const [thread] = await this.threadsForStage(stage.id);
-      if (thread) return { stageId: stage.id, threadId: thread.id };
+    if (threadGroup) {
+      const [thread] = await this.threadsForThreadGroup(threadGroup.id);
+      if (thread) return { threadGroupId: threadGroup.id, threadId: thread.id };
     }
     const created =
-      stage ??
-      (await this.createStage({
+      threadGroup ??
+      (await this.createThreadGroup({
         jobId: input.jobId,
         orgId: input.orgId,
         kind: 'post_build',
@@ -1622,34 +1663,35 @@ export class DriverStoreService {
         title: null,
         type: null,
       }));
-    const thread = await this.createThreadInStage({
-      stageId: created.id,
+    const thread = await this.createThreadInThreadGroup({
+      threadGroupId: created.id,
       jobId: input.jobId,
       orgId: input.orgId,
       role: 'post_build',
       brief: 'Ship — open the PR',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
-    return { stageId: created.id, threadId: thread.id };
+    return { threadGroupId: created.id, threadId: thread.id };
   }
 
   /**
-   * Find (or lazily create) the job's `ci` stage-thread — the post-ship seam (d14). Created once the PR is
-   * recorded (`setPrReady`); starts with `session_id = null` (a fresh session, isolated from planning) and
+   * Find (or lazily create) the job's `ci` thread group — the post-ship seam (d14). Created just before the
+   * PR-ready state is published (`setPrReady`); starts with `session_id = null`
+   * (a fresh session, isolated from planning) and
    * sits idle (`ci` is a render-only, session-backed role — see `thread-kind/registry.ts`) until inbound
    * GitHub/CI events are routed to it. Once this thread exists, `StimulusStoreService.attachEventToJob`
    * (via `JobBootstrapService.ciThreadId`, a read-only lookup) stamps `lane=thread:<ciThreadId>` on the
    * event stimulus so `AgentSessionManager.deliverEventViaFreshTurn` resumes THIS thread's own session
    * instead of planning's (`/context/specs/sections/04-messaging-chat.md` §CI-routing). Idempotent:
    * `setPrReady` may be reached more than once for a job (the driver path, the reconciler, and the GitHub
-   * webhook fast path all call it), so a matching stage is re-looked-up rather than duplicated.
+   * webhook fast path all call it), so a matching thread group is re-looked-up rather than duplicated.
    */
   async ensureCiThread(input: {
     jobId: string;
     orgId: string;
     decisionRecordId: string | null;
-  }): Promise<{ stageId: string; threadId: string }> {
-    const stage = await this.stages
+  }): Promise<{ threadGroupId: string; threadId: string }> {
+    const threadGroup = await this.threadGroups
       .createQueryBuilder('s')
       .where('s.job_id = :jobId', { jobId: input.jobId })
       .andWhere('s.kind = :kind', { kind: 'ci' })
@@ -1658,13 +1700,13 @@ export class DriverStoreService {
       })
       .orderBy('s.ordinal', 'ASC')
       .getOne();
-    if (stage) {
-      const [thread] = await this.threadsForStage(stage.id);
-      if (thread) return { stageId: stage.id, threadId: thread.id };
+    if (threadGroup) {
+      const [thread] = await this.threadsForThreadGroup(threadGroup.id);
+      if (thread) return { threadGroupId: threadGroup.id, threadId: thread.id };
     }
     const created =
-      stage ??
-      (await this.createStage({
+      threadGroup ??
+      (await this.createThreadGroup({
         jobId: input.jobId,
         orgId: input.orgId,
         kind: 'ci',
@@ -1672,15 +1714,15 @@ export class DriverStoreService {
         title: null,
         type: null,
       }));
-    const thread = await this.createThreadInStage({
-      stageId: created.id,
+    const thread = await this.createThreadInThreadGroup({
+      threadGroupId: created.id,
       jobId: input.jobId,
       orgId: input.orgId,
       role: 'ci',
       brief: 'CI — post-ship checks',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
-    return { stageId: created.id, threadId: thread.id };
+    return { threadGroupId: created.id, threadId: thread.id };
   }
 
   /** Read a thread's live engine session id (d5 — `session_id` moved onto the thread row). */
@@ -1697,9 +1739,9 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { session_id: sessionId });
   }
 
-  /** Insert a TASK into a stage's checklist. Gap-numbers the ordinal within the stage when omitted. */
+  /** Insert a TASK into a thread group's checklist. Gap-numbers the ordinal within the thread group when omitted. */
   async createTask(input: {
-    stageId: string;
+    threadGroupId: string;
     orgId: string;
     title: string;
     brief?: string | null;
@@ -1708,10 +1750,10 @@ export class DriverStoreService {
     blockedBy?: string[];
   }): Promise<TaskEntity> {
     const ordinal =
-      input.ordinal ?? (await this.maxTaskOrdinal(input.stageId)) + ORDINAL_GAP;
+      input.ordinal ?? (await this.maxTaskOrdinal(input.threadGroupId)) + ORDINAL_GAP;
     return this.tasks.save(
       this.tasks.create({
-        stage_id: input.stageId,
+        thread_group_id: input.threadGroupId,
         org_id: input.orgId,
         title: input.title,
         brief: input.brief ?? null,
@@ -1728,33 +1770,33 @@ export class DriverStoreService {
   }
 
   /**
-   * The job's planning-stage thread id — the anchor for JOB-LEVEL card messages (question/ship/amend/merge
+   * The job's planning thread group thread id — the anchor for JOB-LEVEL card messages (question/ship/amend/merge
    * cards) that have no build-lane thread of their own. Mirrors d3's backfill fallback ("orphans default to
    * the job's planning thread") now that `messages.thread_id` is NOT NULL. Every job gets exactly one
-   * planning stage with one thread at job start (d7), so this should always resolve for a job already past
+   * planning thread group with one thread at job start (d7), so this should always resolve for a job already past
    * `open`; throws loudly rather than inserting a message with a null/bogus thread_id if it somehow doesn't.
    */
   private async planningThreadId(jobId: string): Promise<string> {
-    const stage = await this.stages.findOne({
+    const threadGroup = await this.threadGroups.findOne({
       where: { job_id: jobId, kind: 'planning' },
       order: { ordinal: 'ASC' },
     });
-    const thread = stage
+    const thread = threadGroup
       ? await this.threads.findOne({
-          where: { stage_id: stage.id },
+          where: { thread_group_id: threadGroup.id },
           order: { ordinal: 'ASC' },
         })
       : null;
     if (!thread) {
       throw new Error(
-        `driver-store: job ${jobId} has no planning-stage thread to anchor a card message`,
+        `driver-store: job ${jobId} has no planning thread group thread to anchor a card message`,
       );
     }
     return thread.id;
   }
 
-  private async maxStageOrdinal(jobId: string): Promise<number> {
-    const row = await this.stages
+  private async maxThreadGroupOrdinal(jobId: string): Promise<number> {
+    const row = await this.threadGroups
       .createQueryBuilder('s')
       .select('MAX(s.ordinal)', 'max')
       .where('s.job_id = :jobId', { jobId })
@@ -1762,20 +1804,20 @@ export class DriverStoreService {
     return row?.max ?? 0;
   }
 
-  private async maxThreadOrdinal(stageId: string): Promise<number> {
+  private async maxThreadOrdinal(threadGroupId: string): Promise<number> {
     const row = await this.threads
       .createQueryBuilder('t')
       .select('MAX(t.ordinal)', 'max')
-      .where('t.stage_id = :stageId', { stageId })
+      .where('t.thread_group_id = :threadGroupId', { threadGroupId })
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
   }
 
   /** The next job-GLOBAL ordinal for a ROOT thread (`parent_thread_id IS NULL`). Root threads share the
    *  job-wide `uq_threads_job_parent_ordinal` (job_id, parent_thread_id, ordinal) NULLS NOT DISTINCT index,
-   *  so a lazily-created stage-thread (post_build/ci) must gap-number off the highest existing root ordinal
-   *  — NOT its own (always-empty) new stage, which would always yield ORDINAL_GAP and collide with the
-   *  planning thread / a sibling post-build stage-thread. Mirrors `persistPlan`'s root-ordinal allocation. */
+   *  so a lazily-created thread group (post_build/ci) must gap-number off the highest existing root ordinal
+   *  — NOT its own (always-empty) new thread group, which would always yield ORDINAL_GAP and collide with the
+   *  planning thread / a sibling post-build thread group. Mirrors `persistPlan`'s root-ordinal allocation. */
   private async nextRootThreadOrdinal(jobId: string): Promise<number> {
     const row = await this.threads
       .createQueryBuilder('t')
@@ -1786,11 +1828,11 @@ export class DriverStoreService {
     return (row?.max ?? 0) + ORDINAL_GAP;
   }
 
-  private async maxTaskOrdinal(stageId: string): Promise<number> {
+  private async maxTaskOrdinal(threadGroupId: string): Promise<number> {
     const row = await this.tasks
       .createQueryBuilder('t')
       .select('MAX(t.ordinal)', 'max')
-      .where('t.stage_id = :stageId', { stageId })
+      .where('t.thread_group_id = :threadGroupId', { threadGroupId })
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
   }
@@ -1817,7 +1859,7 @@ function groupBy<T, K>(list: readonly T[], key: (item: T) => K): Map<K, T[]> {
   return out;
 }
 
-/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape. */
+/** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape. */
 function toTaskItem(row: TaskEntity): TaskItem {
   return {
     id: row.id,

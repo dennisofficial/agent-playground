@@ -25,7 +25,7 @@ import { structuredPatch as diffStructuredPatch } from 'diff';
 import {
   detectSessionLimitText,
   limitFromRateEvent,
-  parseResetAt,
+  textSessionLimitHit,
   type SessionLimitHit,
 } from './session-limit';
 import {
@@ -197,7 +197,7 @@ function steerUserMessage(
     message: { role: 'user', content },
     parent_tool_use_id: null,
     ...(priority ? { priority } : {}),
-  } as SDKUserMessage;
+  };
 }
 
 /**
@@ -380,11 +380,6 @@ export function claudeSessionExists(
 // pull current docs / latest versions. This is a personal, trusted deployment — see `agents/web` notes.
 const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 // `Task` spawns a subagent — see SUBAGENTS below (read-only, Sonnet-pinned) for token-cheap exploration.
-// The task tools (TaskCreate/TaskUpdate/TaskList/TaskGet — the SDK 0.3.x successors to the legacy
-// TodoWrite) let the orchestrator maintain a LIVE task list as its visible decomposition; the navigator
-// derives the per-thread checklist from these calls (see web `thread-todos.ts`). `tools` is an allowlist, so
-// they must be named even though task-mode is default-on. They have no FS/git side effects.
-const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'];
 // Subagent-management tools (SDK 0.3.x). Once a subagent is spawned with a `name` it stays ADDRESSABLE, so
 // the orchestrator's only recovery from a stall/failure is no longer a fresh `Task` that starts from zero:
 //   • SendMessage({to}) — nudge/continue an existing agent WITH ITS ACCUMULATED CONTEXT INTACT (the whole
@@ -410,7 +405,6 @@ const WORKER_TOOLS = [
   'Task',
   'Skill',
   ...SUBAGENT_MGMT_TOOLS,
-  ...TASK_TOOLS,
   ...WEB_TOOLS,
 ];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
@@ -428,7 +422,6 @@ const AUTO_APPROVE = [
   'Grep',
   'Task',
   ...SUBAGENT_MGMT_TOOLS,
-  ...TASK_TOOLS,
   ...WEB_TOOLS,
 ];
 
@@ -1100,7 +1093,7 @@ export class EngineCore {
       else clearHold();
     };
     const steerIter = streaming
-      ? steerInput![Symbol.asyncIterator]()
+      ? steerInput[Symbol.asyncIterator]()
       : undefined;
     // A priority:'now' steer pushed BEFORE the model commits its first assistant message makes the SDK
     // abort the whole turn (result_type=user, terminal_reason=aborted_streaming, subtype=error_during_
@@ -1286,7 +1279,7 @@ export class EngineCore {
         if (!detectInstallCommand(cmd)) return {};
         try {
           const text = await Promise.race([
-            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, {
+            bridgeCall(INTERNAL_PROFILE_AWARENESS_TOOL, {
               command: cmd,
               sessionType: sandboxKey.type,
             }),
@@ -1445,7 +1438,7 @@ export class EngineCore {
         : {}),
       // R1 tool-bridge: optional extra options (e.g. mcpServers) from the in-container entrypoint.
       ...(extraClaudeOptions ?? {}),
-    } as Options;
+    };
 
     let result = '';
     let resolvedSession = sessionId;
@@ -1698,7 +1691,7 @@ export class EngineCore {
               const isLimitLine = detectSessionLimitText(block.text);
               if (isLimitLine) {
                 if (!sessionLimit)
-                  sessionLimit = { resetAt: parseResetAt(block.text) };
+                  sessionLimit = textSessionLimitHit(block.text);
               } else {
                 onEvent?.({ kind: 'text', text: block.text, ...sub });
               }
@@ -1778,7 +1771,7 @@ export class EngineCore {
             errResult.result &&
             detectSessionLimitText(errResult.result)
           ) {
-            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            sessionLimit ??= textSessionLimitHit(errResult.result);
             break;
           }
           if (message.subtype === 'success') {
@@ -1794,10 +1787,7 @@ export class EngineCore {
             // auto-continuation after the task settles). SUM the billing tokens across results; the
             // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
             // occupancy). The `result` string keeps the last result too — the final answer.
-            const u = extractClaudeUsage(
-              message as Record<string, unknown>,
-              model,
-            );
+            const u = extractClaudeUsage(message, model);
             usage = usage ? addClaudeUsage(usage, u) : u;
             // Attach the per-call context occupancy (+ its model) onto the billing usage. The cumulative
             // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy. Runs for
@@ -1813,14 +1803,7 @@ export class EngineCore {
                 // grace, unless a background subagent is now live and must remain uncapped.
                 if (liveSubagentTasks.size > 0) cancelEnd();
                 else scheduleEnd();
-              } else if (
-                !isTurnGenuinelyDone(
-                  message as {
-                    terminal_reason?: string;
-                    stop_reason?: string | null;
-                  },
-                )
-              ) {
+              } else if (!isTurnGenuinelyDone(message)) {
                 // A paused/interrupted success result (rate-limit / retry / budget) is NOT the end of the
                 // turn — keep input OPEN so the CLI can resume and may still call host tools (closing stdin
                 // under an in-flight call orphans it → "Stream closed"). See #65. EXCEPT when we've hit a
@@ -1863,7 +1846,7 @@ export class EngineCore {
             // engine error — it is a clean park, not a failure. Latch it (from the text if the structured
             // frame didn't already) and break so the normal return path carries `sessionLimit` back.
             if (sessionLimit || detectSessionLimitText(errorMessage)) {
-              sessionLimit ??= { resetAt: parseResetAt(errorMessage) };
+              sessionLimit ??= textSessionLimitHit(errorMessage);
               break;
             }
             throw new Error(errorMessage);
@@ -1882,7 +1865,7 @@ export class EngineCore {
       // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
       // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
       if (detectSessionLimitText(msg)) {
-        sessionLimit ??= { resetAt: parseResetAt(msg) };
+        sessionLimit ??= textSessionLimitHit(msg);
       } else if (!(streaming && abortController.signal.aborted)) {
         // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
         // graceful end — fall through to the normal post-loop return with the partial result + live session,

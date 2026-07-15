@@ -1,22 +1,22 @@
 /**
- * Task 6 — the stage-driven pipeline PROOF (live Postgres, stubbed engine).
+ * Task 6 — the thread-group-driven pipeline PROOF (live Postgres, stubbed engine).
  *
  * Boots the REAL {@link ThreadDriver} + REAL {@link DriverStoreService} + REAL {@link BuildShipService}
  * against LIVE Postgres, with a FAKE {@link TurnRunnerService} standing in for the whole engine seam (NO
  * real Claude/Codex SDK traffic — the fake scripts every outcome by calling the host tool bridge:
  * `complete_thread` / `record_leg_handoff` / `block_thread`). Mirrors the construction of
  * `driver/host-retry-backstop.int.test.ts` (same canned collaborators, same real store), and seeds the
- * fixture plan through the store's OWN stage/thread CRUD (`createStage` / `createThreadInStage`) exactly
- * like `driver/driver-store.int.test.ts` — the driver now iterates STAGES, so a bare-thread seed no longer
+ * fixture plan through the store's OWN thread-group/thread CRUD (`createThreadGroup` / `createThreadInThreadGroup`) exactly
+ * like `driver/driver-store.int.test.ts` — the driver now iterates THREAD GROUPS, so a bare-thread seed no longer
  * drives.
  *
  * Two drives under one describe:
- *  - HAPPY PATH (one continuous drive): asserts the fixture stages exist in the right kind/order
+ *  - HAPPY PATH (one continuous drive): asserts the fixture thread groups exist in the right kind/order
  *    (planning / plan_review / build×2 / master_review), that a builder `record_leg_handoff` inserts a
- *    SECOND builder into the SAME stage sharing the stage's `tasks` checklist (2a), that review_agent +
- *    review_fix threads are stage-scoped children of the LAST builder run ONCE over the stage diff (2b),
- *    that ship approval spawns a `post_build` stage-thread and `BrainGateway.openPrAtShip` fires with THAT
- *    thread's id (2d), and that recording the PR spawns a `ci` stage-thread (2e).
+ *    SECOND builder into the SAME thread group sharing the thread group's `tasks` checklist (2a), that review_agent +
+ *    review_fix threads are thread-group-scoped children of the LAST builder run ONCE over the thread group diff (2b),
+ *    that ship approval spawns a `post_build` thread group and `BrainGateway.openPrAtShip` fires with THAT
+ *    thread's id (2d), and that recording the PR spawns a `ci` thread group (2e).
  *  - HALT PATH (separate drive): a `block_thread` halt leaves the thread `blocked`/paused, stops the job
  *    driving (no ship, no PR), and NEVER calls `BrainGateway` — proving the headless driver property (2c).
  */
@@ -224,7 +224,7 @@ function makeBrainGatewaySpy(): BrainGateway {
   } as unknown as BrainGateway;
 }
 
-describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine', () => {
+describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed engine', () => {
   let mod: TestingModule;
   let store: DriverStoreService;
   let ds: DataSource;
@@ -280,7 +280,7 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
   beforeEach(async () => {
     await ds.query(
-      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -304,23 +304,20 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       appendBlockOnce: vi.fn(async () => undefined),
     } as unknown as BlockSink;
     const taskSink = {
-      applyTaskEvent: vi.fn(async () => undefined),
+      createTask: vi.fn(async () => ({ id: 'noop' })),
+      updateTask: vi.fn(async () => ({ ok: true })),
+      readTasks: vi.fn(async () => []),
     } as unknown as TaskEventSink;
     const usage = {
       getResetAt: () => undefined,
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
-    const turnHarness = new TurnHarnessFactory(
-      liveTurns,
-      blockSink,
-      taskSink,
-      usage,
-    );
+    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
     const electionState = { draining: false, leader: true };
 
     return new ThreadDriver(
       store,
-      { resolve: async () => RESOLVED } as unknown as DriverRepoResolver,
+      { resolve: async () => RESOLVED },
       makeGit(),
       makePr(),
       turn,
@@ -361,7 +358,7 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         bridgeCaddyToSandbox: async () => undefined,
         unbridgeCaddyFromSandbox: async () => undefined,
         listLiveThreadJobIds: async () => [],
-      } as never,
+      },
       {
         anthropicKey: async () => undefined,
         openaiKey: async () => undefined,
@@ -434,14 +431,14 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
   }
 
   /** Seed a real job (feature, auto-approve ship inline) whose pipeline is the full ordinal-ordered plan:
-   *  planning / plan_review / build "Backend" (+ a stage task) / build "Frontend" / master_review. Root
+   *  planning / plan_review / build "Backend" (+ a thread group task) / build "Frontend" / master_review. Root
    *  threads carry job-unique ordinals (the `(job_id, parent_thread_id, ordinal)` index is NULLS NOT
-   *  DISTINCT, so two null-parent roots can't share an ordinal even across stages). */
+   *  DISTINCT, so two null-parent roots can't share an ordinal even across thread groups). */
   async function seedPlan(): Promise<{
     jobId: string;
-    backendStageId: string;
-    frontendStageId: string;
-    masterStageId: string;
+    backendThreadGroupId: string;
+    frontendThreadGroupId: string;
+    masterThreadGroupId: string;
     backendBuilderId: string;
     frontendBuilderId: string;
     taskId: string;
@@ -462,27 +459,27 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       }),
     );
 
-    const planning = await store.createStage({
+    const planning = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'planning',
       title: 'Plan',
     });
-    await store.createThreadInStage({
-      stageId: planning.id,
+    await store.createThreadInThreadGroup({
+      threadGroupId: planning.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'planning',
       brief: 'Main',
       ordinal: 100,
     });
-    const planReview = await store.createStage({
+    const planReview = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'plan_review',
     });
-    await store.createThreadInStage({
-      stageId: planReview.id,
+    await store.createThreadInThreadGroup({
+      threadGroupId: planReview.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'plan_review',
@@ -490,14 +487,14 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       ordinal: 200,
     });
 
-    const backend = await store.createStage({
+    const backend = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const backendBuilder = await store.createThreadInStage({
-      stageId: backend.id,
+    const backendBuilder = await store.createThreadInThreadGroup({
+      threadGroupId: backend.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -505,19 +502,19 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       ordinal: 300,
     });
     const task = await store.createTask({
-      stageId: backend.id,
+      threadGroupId: backend.id,
       orgId: ORG_ID,
       title: 'Write the migration',
     });
 
-    const frontend = await store.createStage({
+    const frontend = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Frontend',
     });
-    const frontendBuilder = await store.createThreadInStage({
-      stageId: frontend.id,
+    const frontendBuilder = await store.createThreadInThreadGroup({
+      threadGroupId: frontend.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -525,13 +522,13 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       ordinal: 400,
     });
 
-    const master = await store.createStage({
+    const master = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'master_review',
     });
-    await store.createThreadInStage({
-      stageId: master.id,
+    await store.createThreadInThreadGroup({
+      threadGroupId: master.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'master_review',
@@ -541,9 +538,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
     return {
       jobId: job.id,
-      backendStageId: backend.id,
-      frontendStageId: frontend.id,
-      masterStageId: master.id,
+      backendThreadGroupId: backend.id,
+      frontendThreadGroupId: frontend.id,
+      masterThreadGroupId: master.id,
       backendBuilderId: backendBuilder.id,
       frontendBuilderId: frontendBuilder.id,
       taskId: task.id,
@@ -576,8 +573,8 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
   it(
     'drives planning→build×2→master_review→post_build→ci: a builder handoff rotates a 2nd builder into the ' +
-      'SAME stage sharing tasks (2a); review children are stage-scoped + run once (2b); ship spawns post_build ' +
-      'and openPrAtShip fires with its thread id (2d); the recorded PR spawns a ci stage-thread (2e)',
+      'SAME thread group sharing tasks (2a); review children are thread-group-scoped + run once (2b); ship spawns post_build ' +
+      'and openPrAtShip fires with its thread id (2d); the recorded PR spawns a ci thread group (2e)',
     async () => {
       const seed = await seedPlan();
 
@@ -594,9 +591,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       });
       const driver = makeDriver(turn, brainGateway);
 
-      // ── #1: the fixture plan's stages exist in the right kind/order ────────────────────────────────
-      const stagesBefore = await store.stagesForJob(seed.jobId);
-      expect(stagesBefore.map((s) => s.kind)).toEqual([
+      // ── #1: the fixture plan's thread groups exist in the right kind/order ────────────────────────────────
+      const threadGroupsBefore = await store.threadGroupsForJob(seed.jobId);
+      expect(threadGroupsBefore.map((s) => s.kind)).toEqual([
         'planning',
         'plan_review',
         'build',
@@ -612,36 +609,36 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       );
       expect(finalStatus).toBe('done');
 
-      // ── 2a: `record_leg_handoff` inserted a 2nd builder into the SAME stage, sharing the stage tasks ──
-      const backendThreads = await store.threadsForStage(seed.backendStageId);
+      // ── 2a: `record_leg_handoff` inserted a 2nd builder into the SAME thread group, sharing the thread group tasks ──
+      const backendThreads = await store.threadsForThreadGroup(seed.backendThreadGroupId);
       const backendBuilders = backendThreads.filter(
         (t) => t.role === 'builder',
       );
       expect(backendBuilders).toHaveLength(2);
       const [leg1, leg2] = backendBuilders;
       expect(leg1.id).toBe(seed.backendBuilderId);
-      expect(leg1.stage_id).toBe(seed.backendStageId);
-      expect(leg2.stage_id).toBe(seed.backendStageId); // same stage — the rotation appended, not re-staged
+      expect(leg1.thread_group_id).toBe(seed.backendThreadGroupId);
+      expect(leg2.thread_group_id).toBe(seed.backendThreadGroupId); // same thread group — the rotation appended, not re-grouped
       expect(leg2.handoff_in).toContain('finish the return type'); // the leg-1 handoff carried forward
-      // The stage's task checklist is stage-owned, so BOTH legs read the SAME list across the rotation.
-      const stageTasks = await store.tasksForStage(seed.backendStageId);
-      expect(stageTasks.map((t) => t.id)).toEqual([seed.taskId]);
+      // The thread group's task checklist is thread-group-owned, so BOTH legs read the SAME list across the rotation.
+      const threadGroupTasks = await store.tasksForThreadGroup(seed.backendThreadGroupId);
+      expect(threadGroupTasks.map((t) => t.id)).toEqual([seed.taskId]);
       const leg1Tasks = await store.getThreadTasks(leg1.id);
       const leg2Tasks = await store.getThreadTasks(leg2.id);
       expect(leg2Tasks.map((t) => t.id)).toEqual([seed.taskId]);
-      expect(leg2Tasks).toEqual(leg1Tasks); // identical checklist — the same stage_id, not per-leg
+      expect(leg2Tasks).toEqual(leg1Tasks); // identical checklist — the same thread_group_id, not per-leg
 
-      // ── 2b: review_agent + review_fix are stage children of the LAST builder, run ONCE over the diff ──
+      // ── 2b: review_agent + review_fix are thread group children of the LAST builder, run ONCE over the diff ──
       const backendReviewers = backendThreads.filter(
         (t) => t.role === 'review_agent' || t.role === 'review_fix',
       );
-      // Tree-parented off the LAST builder (leg 2), NOT leg 1 — review runs once, after the whole stage.
+      // Tree-parented off the LAST builder (leg 2), NOT leg 1 — review runs once, after the whole thread group.
       expect(
         backendReviewers.every((t) => t.parent_thread_id === leg2.id),
       ).toBe(true);
-      // …but stage-scoped: every review child carries the build stage's id.
+      // …but thread-group-scoped: every review child carries the build thread group's id.
       expect(
-        backendReviewers.every((t) => t.stage_id === seed.backendStageId),
+        backendReviewers.every((t) => t.thread_group_id === seed.backendThreadGroupId),
       ).toBe(true);
       expect(
         backendReviewers.filter((t) => t.role === 'review_agent').length,
@@ -655,7 +652,7 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       );
       expect(leg1Children).toEqual([]);
 
-      // Both build stages' builders + the master review all completed via the stubbed engine.
+      // Both build thread groups' builders + the master review all completed via the stubbed engine.
       const executeStepIds = calls
         .filter((c) => c.mode === 'execute')
         .map((c) => c.stepId);
@@ -663,11 +660,11 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       expect(executeStepIds).toContain(leg2.id); // the fresh rotated leg drove its own turn
       expect(executeStepIds).toContain(seed.frontendBuilderId);
 
-      // ── 2d: ship approval spawned a post_build stage-thread; openPrAtShip fired with ITS thread id ────
-      const stagesAfter = await store.stagesForJob(seed.jobId);
-      const postBuildStage = stagesAfter.find((s) => s.kind === 'post_build');
-      expect(postBuildStage).toBeTruthy();
-      const [postBuildThread] = await store.threadsForStage(postBuildStage!.id);
+      // ── 2d: ship approval spawned a post_build thread group; openPrAtShip fired with ITS thread id ────
+      const threadGroupsAfter = await store.threadGroupsForJob(seed.jobId);
+      const postBuildThreadGroup = threadGroupsAfter.find((s) => s.kind === 'post_build');
+      expect(postBuildThreadGroup).toBeTruthy();
+      const [postBuildThread] = await store.threadsForThreadGroup(postBuildThreadGroup!.id);
       expect(postBuildThread.role).toBe('post_build');
       expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
       expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
@@ -677,10 +674,10 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         }),
       );
 
-      // ── 2e: the recorded PR (setPrReady) spawned a ci stage-thread ───────────────────────────────────
-      const ciStage = stagesAfter.find((s) => s.kind === 'ci');
-      expect(ciStage).toBeTruthy();
-      const [ciThread] = await store.threadsForStage(ciStage!.id);
+      // ── 2e: the recorded PR (setPrReady) spawned a ci thread group ───────────────────────────────────
+      const ciThreadGroup = threadGroupsAfter.find((s) => s.kind === 'ci');
+      expect(ciThreadGroup).toBeTruthy();
+      const [ciThread] = await store.threadsForThreadGroup(ciThreadGroup!.id);
       expect(ciThread.role).toBe('ci');
 
       const finalJob = await jobs.findOneOrFail({ where: { id: seed.jobId } });
@@ -689,10 +686,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         'https://github.com/acme/pipeline-int/pull/7',
       );
 
-      // eslint-disable-next-line no-console
       console.log(
-        'OBSERVED stage kinds (after ship):',
-        stagesAfter.map((s) => s.kind),
+        'OBSERVED thread group kinds (after ship):',
+        threadGroupsAfter.map((s) => s.kind),
       );
     },
     90_000,
@@ -729,13 +725,13 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       const term = await store.getTerminalRecord(seed.backendBuilderId);
       expect(term).toBeNull();
 
-      // The job driving STOPPED for it: no ship, no PR, and the downstream stages never ran.
+      // The job driving STOPPED for it: no ship, no PR, and the downstream thread groups never ran.
       const jobRow = await jobs.findOneOrFail({ where: { id: seed.jobId } });
       expect(jobRow.status).not.toBe('done');
       expect(jobRow.pr_url).toBeNull();
-      const stages = await store.stagesForJob(seed.jobId);
-      expect(stages.some((s) => s.kind === 'post_build')).toBe(false);
-      expect(stages.some((s) => s.kind === 'ci')).toBe(false);
+      const threadGroups = await store.threadGroupsForJob(seed.jobId);
+      expect(threadGroups.some((s) => s.kind === 'post_build')).toBe(false);
+      expect(threadGroups.some((s) => s.kind === 'ci')).toBe(false);
       // The frontend builder + master review never drove.
       const frontendBuilder = await threads.findOneOrFail({
         where: { id: seed.frontendBuilderId },

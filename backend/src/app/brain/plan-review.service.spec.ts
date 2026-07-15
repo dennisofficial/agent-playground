@@ -17,7 +17,7 @@ import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
 import type {
   JobEntity,
-  StageEntity,
+  ThreadGroupEntity,
   ThreadEntity,
 } from '../persistence/entities';
 import type { BlockSink, TurnHarnessFactory } from '../surface';
@@ -119,7 +119,7 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
     id: r.id ?? `thread-${i}`,
     job_id: r.job_id,
     org_id: r.org_id,
-    stage_id: 'stage-1',
+    thread_group_id: 'thread-group-1',
     role: 'plan_review',
     parent_thread_id: null,
     ordinal: 10,
@@ -217,22 +217,22 @@ function fakePlanReviewThreadsRepo(seed: PlanReviewThreadSeed[] = []) {
   } as unknown as Repository<ThreadEntity>;
 }
 
-/** A minimal in-memory fake of `this.stages` — auto-vivifies the job's single `plan_review` stage.
- *  No test asserts on the stage row itself; it just needs to resolve consistently. */
-function fakeStagesRepo() {
-  const rows: StageEntity[] = [];
+/** A minimal in-memory fake of `this.threadGroups` — auto-vivifies the job's single `plan_review` thread group.
+ *  No test asserts on the thread group row itself; it just needs to resolve consistently. */
+function fakeThreadGroupsRepo() {
+  const rows: ThreadGroupEntity[] = [];
   return {
     findOne: vi.fn(
       async ({ where }: { where: { job_id: string; kind: string } }) =>
         rows.find((s) => s.job_id === where.job_id && s.kind === where.kind) ??
         null,
     ),
-    create: (r: Partial<StageEntity>) => ({ ...r }) as StageEntity,
-    save: vi.fn(async (r: StageEntity) => {
+    create: (r: Partial<ThreadGroupEntity>) => ({ ...r }) as ThreadGroupEntity,
+    save: vi.fn(async (r: ThreadGroupEntity) => {
       const saved = {
         ...r,
-        id: r.id ?? `stage-${rows.length + 1}`,
-      } as StageEntity;
+        id: r.id ?? `thread-group-${rows.length + 1}`,
+      } as ThreadGroupEntity;
       rows.push(saved);
       return saved;
     }),
@@ -256,7 +256,7 @@ function fakeStagesRepo() {
       };
       return qb;
     },
-  } as unknown as Repository<StageEntity>;
+  } as unknown as Repository<ThreadGroupEntity>;
 }
 
 function makeService(opts: {
@@ -292,7 +292,7 @@ function makeService(opts: {
       // accept the update (the live sync is asserted end-to-end in web-surface.halt.int.test.ts).
       update: vi.fn(async () => ({ affected: 1 })),
     } as unknown as Repository<JobEntity>);
-  const stages = fakeStagesRepo();
+  const threadGroups = fakeThreadGroupsRepo();
   const harness = {
     create: () => ({
       onEvent: () => undefined,
@@ -313,7 +313,7 @@ function makeService(opts: {
     lifecycle,
     jobs,
     opts.threads,
-    stages,
+    threadGroups,
     harness,
     fakeElection,
     blockSink,
@@ -626,7 +626,7 @@ function makeBrainStore(opts: {
     stub, // messages
     stub, // records
     threads,
-    stub, // stages
+    stub, // threadGroups
     stub, // stimuli
     stub, // dataSource
     stub, // titler

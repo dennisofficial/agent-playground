@@ -96,10 +96,10 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
-    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning stage + thread so the
+    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so the
     // harness blocks below anchor onto a real thread.
     const bootstrap = app.get(JobBootstrapService);
-    await bootstrap.ensurePlanningStage(jobA, TEAM_ID);
+    await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
     threadA = await bootstrap.planningThreadId(jobA);
   }, 60_000);
 

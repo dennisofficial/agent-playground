@@ -19,7 +19,7 @@ import { UserEntity } from './user.entity';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
- * idempotency key — a build stage emits the same id repeatedly (the driver fires many events per step),
+ * idempotency key — a build thread group emits the same id repeatedly (the driver fires many events per step),
  * the buffer keeps exactly one. `text` is the passive line shown to the brain; `at` orders the prefix.
  */
 export interface PipelineMarker {
@@ -231,7 +231,7 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   port_state!: 'exposed' | 'internal' | null;
 
-  /** The opened PR url; null until the PR-tail stage opens one. */
+  /** The opened PR url; null until the PR-tail thread group opens one. */
   @Column({ type: 'text', nullable: true })
   pr_url!: string | null;
 
@@ -320,6 +320,12 @@ export class JobEntity extends TimestampedEntity {
    *  re-slam cooldown (thread 2). Null = never retried. */
   @Column({ type: 'timestamptz', nullable: true })
   retry_last_attempt_at!: Date | null;
+
+  /** Consecutive UNCORROBORATED text-fallback session-limit misfires for this job. Reset on any clean turn
+   *  or durable park; escalates the lane to a durable park once it hits
+   *  `SESSION_LIMIT_TEXT_MISFIRE_MAX`. */
+  @Column({ type: 'int', default: 0 })
+  session_limit_text_misfires!: number;
 
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the

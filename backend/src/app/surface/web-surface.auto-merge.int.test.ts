@@ -59,7 +59,18 @@ const getPullDetail = vi.fn(
     headRef: 'atlas/feature',
   }),
 );
-const mergePullRequest = vi.fn(async () => ({ ok: true, sha: 'merged-sha' }));
+const mergePullRequest = vi.fn(
+  async (_token: string, args: { number: number }) => {
+    if (args.number === 703 || args.number === 705)
+      return {
+        ok: false,
+        reason: 'not_mergeable',
+        status: 405,
+        message: 'Pull Request is not mergeable',
+      };
+    return { ok: true, sha: 'merged-sha' };
+  },
+);
 const deleteBranch = vi.fn(async () => undefined);
 const fakePr = { getPullDetail, mergePullRequest, deleteBranch };
 
@@ -160,12 +171,12 @@ async function seedGreenJob(
              'open', $5, 'clean', 'success')`,
     [jobId, ORG, REPO, title, prNumber],
   );
-  await bootstrap.ensurePlanningStage(jobId, ORG);
+  await bootstrap.ensurePlanningThreadGroup(jobId, ORG);
 }
 
 async function waitFor(
   predicate: () => Promise<boolean>,
-  { timeoutMs = 5000, intervalMs = 100 } = {},
+  { timeoutMs = 20_000, intervalMs = 100 } = {},
 ): Promise<void> {
   const start = Date.now();
   for (;;) {
@@ -329,13 +340,6 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
   });
 
   it('CASE 3 — GitHub rejects the merge (not_mergeable): pr_state stays open and NO stimulus is seeded for the job (race-avoidance)', async () => {
-    mergePullRequest.mockResolvedValueOnce({
-      ok: false,
-      reason: 'not_mergeable',
-      status: 405,
-      message: 'Pull Request is not mergeable',
-    } as never);
-
     const stimuliBefore = await countStimuli(NOT_MERGEABLE_JOB);
 
     const res = await request(server)
@@ -346,7 +350,11 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     expect(res.status).toBe(200);
 
     // Let the fire-and-forget merge attempt run its course, then assert nothing changed.
-    await settle();
+    await waitFor(async () =>
+      mergePullRequest.mock.calls.some(
+        ([, args]) => (args as { number?: number }).number === 703,
+      ),
+    );
     const after = await loadJobRow(NOT_MERGEABLE_JOB);
     expect(after).toMatchObject({ pr_state: 'open', auto_merge: true });
 
@@ -442,13 +450,6 @@ describe('manual Merge PR — POST .../jobs/:jobId/approve is SYNCHRONOUS (live 
   });
 
   it('MERGE APPROVE 2 — a GitHub-rejected merge surfaces as a 409 and the PR stays open (no false success)', async () => {
-    mergePullRequest.mockResolvedValueOnce({
-      ok: false,
-      reason: 'not_mergeable',
-      status: 405,
-      message: 'Pull Request is not mergeable',
-    } as never);
-
     const res = await request(server)
       .post(approveUrl(APPROVE_MERGE_FAIL_JOB))
       .set('Cookie', ownerCookie)

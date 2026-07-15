@@ -6,7 +6,7 @@ import {
   JobEntity,
   MessageEntity,
   RepoEntity,
-  StageEntity,
+  ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
 } from '../src/app/persistence/entities';
@@ -39,7 +39,7 @@ const taskId = (n: number): string =>
   `da700000-0000-4000-8000-000000003${String(n).padStart(3, '0')}`;
 const messageId = (n: number): string =>
   `da700000-0000-4000-8000-000000004${String(n).padStart(3, '0')}`;
-const stageId = (n: number): string =>
+const threadGroupId = (n: number): string =>
   `da700000-0000-4000-8000-000000005${String(n).padStart(3, '0')}`;
 
 type DemoJob = {
@@ -190,24 +190,29 @@ const DEMO_JOBS: DemoJob[] = [
   },
 ];
 
-type DemoStage = {
+type DemoThreadGroup = {
   id: string;
   ordinal: number;
   kind: 'planning' | 'build' | 'master_review';
   title: string | null;
 };
 
-/** The rich job's pipeline: a planning stage, one build stage (two sequential builder legs), and a
- *  master_review stage — mirrors the job -> stages -> threads shape the migration collapsed onto. */
-const RICH_STAGES: DemoStage[] = [
-  { id: stageId(1), ordinal: 100, kind: 'planning', title: null },
-  { id: stageId(2), ordinal: 200, kind: 'build', title: 'Presence + remote cursors' },
-  { id: stageId(3), ordinal: 300, kind: 'master_review', title: null },
+/** The rich job's pipeline: a planning thread group, one build thread group (two sequential builder legs), and a
+ *  master_review thread group — mirrors the job -> thread groups -> threads shape the migration collapsed onto. */
+const RICH_THREAD_GROUPS: DemoThreadGroup[] = [
+  { id: threadGroupId(1), ordinal: 100, kind: 'planning', title: null },
+  {
+    id: threadGroupId(2),
+    ordinal: 200,
+    kind: 'build',
+    title: 'Presence + remote cursors',
+  },
+  { id: threadGroupId(3), ordinal: 300, kind: 'master_review', title: null },
 ];
 
 type DemoThread = {
   id: string;
-  stage_id: string;
+  thread_group_id: string;
   ordinal: number;
   role: 'planning' | 'builder' | 'master_review';
   brief: string;
@@ -216,29 +221,29 @@ type DemoThread = {
 const RICH_THREADS: DemoThread[] = [
   {
     id: threadId(1),
-    stage_id: stageId(1),
+    thread_group_id: threadGroupId(1),
     ordinal: 100,
     role: 'planning',
     brief: 'Main conversation',
   },
   {
     id: threadId(2),
-    stage_id: stageId(2),
-    ordinal: 100,
+    thread_group_id: threadGroupId(2),
+    ordinal: 200,
     role: 'builder',
     brief: 'Wire up presence websocket channel',
   },
   {
     id: threadId(3),
-    stage_id: stageId(2),
-    ordinal: 200,
+    thread_group_id: threadGroupId(2),
+    ordinal: 300,
     role: 'builder',
     brief: 'Render remote cursors in the editor',
   },
   {
     id: threadId(4),
-    stage_id: stageId(3),
-    ordinal: 100,
+    thread_group_id: threadGroupId(3),
+    ordinal: 400,
     role: 'master_review',
     brief: 'Master review of the full diff',
   },
@@ -246,34 +251,34 @@ const RICH_THREADS: DemoThread[] = [
 
 type DemoTask = {
   id: string;
-  stage_id: string;
+  thread_group_id: string;
   ordinal: number;
   title: string;
 };
 
-/** The build stage's shared checklist (d6) — stage-owned, not per-leg, so it survives leg rotation. */
+/** The build thread group's shared checklist (d6) — thread-group-owned, not per-leg, so it survives leg rotation. */
 const RICH_TASKS: DemoTask[] = [
   {
     id: taskId(1),
-    stage_id: stageId(2),
+    thread_group_id: threadGroupId(2),
     ordinal: 100,
     title: 'Add presence channel to the realtime gateway',
   },
   {
     id: taskId(2),
-    stage_id: stageId(2),
+    thread_group_id: threadGroupId(2),
     ordinal: 200,
     title: 'Broadcast cursor position on pointermove',
   },
   {
     id: taskId(3),
-    stage_id: stageId(2),
+    thread_group_id: threadGroupId(2),
     ordinal: 300,
     title: 'Subscribe to peer cursor events client-side',
   },
   {
     id: taskId(4),
-    stage_id: stageId(2),
+    thread_group_id: threadGroupId(2),
     ordinal: 400,
     title: 'Paint remote cursors with author color + label',
   },
@@ -382,12 +387,12 @@ const RICH_MESSAGES: DemoMessage[] = [
         'An AUTONOMOUS wake — no human sent this; the build driver woke you.',
         'You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and' +
           ' retry_thread within budget — but you may NOT edit/push code or ship without the operator.',
-        'Use `atlas-tx` to inspect any lane\'s raw transcript.',
+        "Use `atlas-tx` to inspect any lane's raw transcript.",
         '',
         'The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the',
-        'integrated result (the diff; any lane\'s transcript via `atlas-tx`), then post the operator a crisp',
+        "integrated result (the diff; any lane's transcript via `atlas-tx`), then post the operator a crisp",
         'summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you',
-        'may NOT ship — the **Ship it** gate is the operator\'s.',
+        "may NOT ship — the **Ship it** gate is the operator's.",
         'master review outcome: all three threads merged clean; typecheck + vitest green.',
       ].join('\n'),
     },
@@ -435,31 +440,32 @@ async function upsertJob(ds: DataSource, demo: DemoJob): Promise<void> {
   );
 }
 
-async function upsertRichStages(ds: DataSource): Promise<void> {
-  const stages = ds.getRepository(StageEntity);
-  for (const s of RICH_STAGES) {
+async function upsertRichThreadGroups(ds: DataSource): Promise<void> {
+  const threadGroups = ds.getRepository(ThreadGroupEntity);
+  for (const s of RICH_THREAD_GROUPS) {
     const row =
-      (await stages.findOne({ where: { id: s.id } })) ??
-      stages.create({ id: s.id });
+      (await threadGroups.findOne({ where: { id: s.id } })) ??
+      threadGroups.create({ id: s.id });
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
     row.ordinal = s.ordinal;
     row.kind = s.kind;
     row.title = s.title;
-    await stages.save(row);
+    await threadGroups.save(row);
   }
-  console.log(`  seeded ${RICH_STAGES.length} stages on rich job`);
+  console.log(
+    `  seeded ${RICH_THREAD_GROUPS.length} thread groups on rich job`,
+  );
 }
 
 async function upsertRichThreads(ds: DataSource): Promise<void> {
   const threads = ds.getRepository(ThreadEntity);
+  await threads.delete({ job_id: RICH_JOB_ID });
   for (const t of RICH_THREADS) {
-    const row =
-      (await threads.findOne({ where: { id: t.id } })) ??
-      threads.create({ id: t.id });
+    const row = threads.create({ id: t.id });
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
-    row.stage_id = t.stage_id;
+    row.thread_group_id = t.thread_group_id;
     row.ordinal = t.ordinal;
     row.brief = t.brief;
     row.role = t.role;
@@ -475,13 +481,15 @@ async function upsertRichTasks(ds: DataSource): Promise<void> {
     const row =
       (await tasks.findOne({ where: { id: t.id } })) ??
       tasks.create({ id: t.id });
-    row.stage_id = t.stage_id;
+    row.thread_group_id = t.thread_group_id;
     row.org_id = ORG_ID;
     row.ordinal = t.ordinal;
     row.title = t.title;
     await tasks.save(row);
   }
-  console.log(`  seeded ${RICH_TASKS.length} tasks on rich job's build stage`);
+  console.log(
+    `  seeded ${RICH_TASKS.length} tasks on rich job's build thread group`,
+  );
 }
 
 async function upsertRichMessages(ds: DataSource): Promise<void> {
@@ -518,7 +526,7 @@ async function main(): Promise<void> {
     for (const demo of DEMO_JOBS) {
       await upsertJob(ds, demo);
     }
-    await upsertRichStages(ds);
+    await upsertRichThreadGroups(ds);
     await upsertRichThreads(ds);
     await upsertRichTasks(ds);
     await upsertRichMessages(ds);

@@ -2,7 +2,7 @@
  * deleteOrg cascade GATE — deleting an org must leave ZERO org-scoped rows behind.
  *
  * The schema now carries real FK constraints (the `RestoreReferentialIntegrity` migration): deleting the
- * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/stages/
+ * `organizations` row cascades `ON DELETE CASCADE` down repos/jobs/messages/threads/thread_groups/
  * decision_records/stimuli/job_sandboxes plus the org-direct org_credentials/org_invites/
  * organization_members/memory. `deleteOrg` runs the physical per-thread teardown (container + worktree)
  * then deletes the org row; this proves the combination removes every one of those rows — and ONLY this
@@ -180,7 +180,7 @@ async function purge(): Promise<void> {
     }
     for (const table of [
       'threads',
-      'stages',
+      'thread_groups',
       'decision_records',
       'stimuli',
       'job_sandboxes',
@@ -217,13 +217,13 @@ async function seedThreadChildren(
   repoIdArg: string,
   jobId: string,
 ): Promise<void> {
-  const [stage] = await ds.query(
-    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+  const [threadGroup] = await ds.query(
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [jobId, orgId],
   );
   const [thread] = await ds.query(
-    `INSERT INTO threads (job_id, org_id, stage_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
-    [jobId, orgId, stage.id],
+    `INSERT INTO threads (job_id, org_id, thread_group_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
+    [jobId, orgId, threadGroup.id],
   );
   await ds.query(
     `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
@@ -436,7 +436,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('repos', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('stages', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('thread_groups', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('decision_records', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
@@ -470,7 +470,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('repos', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('stages', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('thread_groups', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(
       1,
     );

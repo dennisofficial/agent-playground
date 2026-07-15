@@ -114,30 +114,40 @@ function makeStore(state: StoreState): {
   // `state.job` since the domain `Job` shape doesn't expose these columns (store-internal only).
   const retryCounters = new Map<
     string,
-    { auth: number; driverTransient: number; lastAttemptAt: Date | null }
+    {
+      auth: number;
+      driverTransient: number;
+      sessionLimitTextMisfires: number;
+      lastAttemptAt: Date | null;
+    }
   >();
   const retryCounterFor = (jobId: string) => {
     let c = retryCounters.get(jobId);
     if (!c) {
-      c = { auth: 0, driverTransient: 0, lastAttemptAt: null };
+      c = {
+        auth: 0,
+        driverTransient: 0,
+        sessionLimitTextMisfires: 0,
+        lastAttemptAt: null,
+      };
       retryCounters.set(jobId, c);
     }
     return c;
   };
   const threadIdForAnchor = (anchorId: string): string =>
     state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
-  const stageIdForThread = (thread: StoreDriverThread): string =>
-    (thread.config?.stageId as string | undefined) ?? `stage-${thread.id}`;
-  const stageKindForThread = (thread: StoreDriverThread): string =>
+  const threadGroupIdForThread = (thread: StoreDriverThread): string =>
+    (thread.config?.threadGroupId as string | undefined) ?? `thread-group-${thread.id}`;
+  const threadGroupKindForThread = (thread: StoreDriverThread): string =>
     thread.kind === 'master_review'
       ? 'master_review'
       : thread.kind === 'post_build' || thread.kind === 'ci'
         ? thread.kind
-        : ((thread.config?.stageKind as string | undefined) ?? 'build');
+        : ((thread.config?.threadGroupKind as string | undefined) ?? 'build');
   const ensureSingletonThread = (input: {
     kind: 'post_build' | 'ci';
     brief: string;
-  }): { stageId: string; threadId: string } => {
+  }): { threadGroupId: string; threadId: string } => {
     const existing = state.threads.find(
       (thread) =>
         thread.jobId === state.job.id &&
@@ -145,7 +155,7 @@ function makeStore(state: StoreState): {
         thread.kind === input.kind,
     );
     if (existing) {
-      return { stageId: stageIdForThread(existing), threadId: existing.id };
+      return { threadGroupId: threadGroupIdForThread(existing), threadId: existing.id };
     }
     const ordinal =
       Math.max(
@@ -155,7 +165,7 @@ function makeStore(state: StoreState): {
           .map((thread) => thread.ordinal),
       ) + 10;
     const threadId = `${input.kind}-${state.job.id}`;
-    const stageId = `stage-${threadId}`;
+    const threadGroupId = `thread-group-${threadId}`;
     state.threads.push({
       id: threadId,
       jobId: state.job.id,
@@ -172,11 +182,11 @@ function makeStore(state: StoreState): {
       type: 'general',
       parentThreadId: null,
       startSha: null,
-      config: { stageId, stageKind: input.kind },
-    } as StoreDriverThread);
-    return { stageId, threadId };
+      config: { threadGroupId, threadGroupKind: input.kind },
+    });
+    return { threadGroupId, threadId };
   };
-  const stagesForJob = (jobId: string) =>
+  const threadGroupsForJob = (jobId: string) =>
     state.threads
       .filter(
         (thread) =>
@@ -187,11 +197,11 @@ function makeStore(state: StoreState): {
           ),
       )
       .map((thread) => ({
-        id: stageIdForThread(thread),
+        id: threadGroupIdForThread(thread),
         job_id: thread.jobId,
         org_id: thread.orgId,
         ordinal: thread.ordinal,
-        kind: stageKindForThread(thread),
+        kind: threadGroupKindForThread(thread),
         title: thread.kind === 'builder' ? thread.brief : null,
         type: thread.type,
         status: 'pending',
@@ -199,9 +209,9 @@ function makeStore(state: StoreState): {
         decision_record_id: state.job.decisionRecordId ?? null,
         config: {},
       }));
-  const driverThreadsForStage = (stageId: string) => {
+  const driverThreadsForThreadGroup = (threadGroupId: string) => {
     const parent = state.threads.find(
-      (thread) => stageIdForThread(thread) === stageId,
+      (thread) => threadGroupIdForThread(thread) === threadGroupId,
     );
     if (!parent) return [];
     if (parent.kind === 'builder') {
@@ -278,9 +288,9 @@ function makeStore(state: StoreState): {
       }),
     ),
     decisionRecord: vi.fn(async () => state.record),
-    stagesForJob: vi.fn(async (jobId: string) => stagesForJob(jobId)),
-    driverThreadsForStage: vi.fn(async (stageId: string) =>
-      driverThreadsForStage(stageId),
+    threadGroupsForJob: vi.fn(async (jobId: string) => threadGroupsForJob(jobId)),
+    driverThreadsForThreadGroup: vi.fn(async (threadGroupId: string) =>
+      driverThreadsForThreadGroup(threadGroupId),
     ),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     getThread: vi.fn(async (id: string) => {
@@ -481,7 +491,7 @@ function makeStore(state: StoreState): {
       return typeof seed === 'string' ? seed : null;
     }),
     completeLegRotation: vi.fn(async () => null),
-    builderLegCountForStage: vi.fn(async (anchorThreadId: string) => {
+    builderLegCountForThreadGroup: vi.fn(async (anchorThreadId: string) => {
       const current = state.threads.find(
         (x) => x.id === threadIdForAnchor(anchorThreadId),
       );
@@ -542,10 +552,17 @@ function makeStore(state: StoreState): {
       c.lastAttemptAt = new Date();
       return { ok: true, used: c.driverTransient };
     }),
+    claimSessionLimitTextMisfire: vi.fn(async (jobId: string, cap: number) => {
+      const c = retryCounterFor(jobId);
+      if (c.sessionLimitTextMisfires >= cap) return { ok: false, used: cap };
+      c.sessionLimitTextMisfires += 1;
+      return { ok: true, used: c.sessionLimitTextMisfires };
+    }),
     clearDriverRetryCounters: vi.fn(async (jobId: string) => {
       const c = retryCounterFor(jobId);
       c.auth = 0;
       c.driverTransient = 0;
+      c.sessionLimitTextMisfires = 0;
     }),
     driverTransientRetryState: vi.fn(async (jobId: string) => {
       const c = retryCounterFor(jobId);
@@ -959,6 +976,9 @@ function assemble(
       import('./auto-merge.service').AutoMergeService,
       'mergeNow'
     >;
+    /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
+     *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
+    usageUtilization?: number;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1040,36 +1060,43 @@ function assemble(
       },
     ),
   } as unknown as BlockSink;
-  // Captures task-event folds — the master-review bridge's `task_create`/`task_update` (parity with the
-  // Claude lanes' SDK task tools) — so the task-bridge tests can assert the checklist writes; also backs the
-  // TurnHarnessFactory below (harness-driven folds aren't asserted here — see turn-harness.service.spec.ts).
+  // Captures the direct-CRUD task-sink calls the `task_*` host-bridge handlers make, so the task-bridge
+  // tests can assert the checklist writes. The sink is injected into the ThreadDriver (its TASK_EVENT_SINK);
+  // the TurnHarnessFactory no longer touches it.
   const taskEvents: Array<{
+    method: 'createTask' | 'updateTask' | 'readTasks';
     scope: { kind: string; id: string };
-    toolName: string;
-    input: Record<string, unknown>;
-    result: unknown;
+    input?: Record<string, unknown>;
   }> = [];
+  let taskSeq = 0;
   const taskSink = {
-    applyTaskEvent: vi.fn(
+    createTask: vi.fn(
       async (
         scope: { kind: string; id: string },
-        toolName: string,
         input: Record<string, unknown>,
-        result: unknown,
       ) => {
-        taskEvents.push({ scope, toolName, input, result });
+        taskEvents.push({ method: 'createTask', scope, input });
+        return { id: String(++taskSeq) };
       },
     ),
+    updateTask: vi.fn(
+      async (
+        scope: { kind: string; id: string },
+        input: Record<string, unknown>,
+      ) => {
+        taskEvents.push({ method: 'updateTask', scope, input });
+        return { ok: true };
+      },
+    ),
+    readTasks: vi.fn(async (scope: { kind: string; id: string }) => {
+      taskEvents.push({ method: 'readTasks', scope });
+      return [];
+    }),
   } as unknown as TaskEventSink;
   const usage = {
     applyHarvest: vi.fn().mockResolvedValue(undefined),
   } as unknown as OauthUsageService;
-  const turnHarness = new TurnHarnessFactory(
-    liveTurns,
-    blockSink,
-    taskSink,
-    usage,
-  );
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
   // execute turn doesn't inflate the per-thread `execTurns` count.
@@ -1145,9 +1172,12 @@ function assemble(
       githubWriteIdentity: async () => ({}),
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
-    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.
+    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window. A
+    // TEXT-fallback session-limit hit's corroboration check reads getUtilization — defaults to undefined
+    // (uncorroborated); opts.usageUtilization lets a test drive it deterministically.
     {
       getResetAt: () => undefined,
+      getUtilization: vi.fn(async () => opts.usageUtilization),
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService,
     // McpResolver: no user-defined MCP servers in tests.
@@ -2537,6 +2567,133 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     ).toHaveLength(1);
   });
 
+  it('a text-fallback session limit uncorroborated by the usage window quiet-retries instead of parking', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { usageUtilization: 40 });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() =>
+      (h.store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls.some(
+        (args) => (args[2] as { kind?: string })?.kind === 'retry',
+      ),
+    );
+
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      expect.any(String),
+      expect.objectContaining({ lane: 'build', kind: 'retry' }),
+    );
+    expect(
+      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.some(
+        (args) => (args[1] as { kind?: string })?.kind === 'session_limit',
+      ),
+    ).toBe(false);
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(0);
+    expect(h.store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(1);
+  });
+
+  it('a text-fallback session limit corroborated by a near-capped usage window durably parks like a structured hit', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { usageUtilization: 98 });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt?.kind).toBe('session_limit');
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(1);
+    const resumeCall = (
+      h.store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.find((args) => args[0] === state.job.id);
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
+  });
+
+  it('a text-fallback session limit durably parks once the misfire budget is exhausted (backstop escalation)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here.
+    const h = assemble(state);
+    // Preload two prior misses so this drive's third consecutive miss reaches
+    // SESSION_LIMIT_TEXT_MISFIRE_MAX and parks immediately.
+    await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
+    await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt?.kind).toBe('session_limit');
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(1);
+    const resumeCall = (
+      h.store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.find((args) => args[0] === state.job.id);
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
+  });
+
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
     // no-op path: a non-paused job is left alone.
     const running: StoreState = {
@@ -2951,7 +3108,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     expect(h.store.setThreadCondition).toHaveBeenCalledWith('sec-be', 'none');
   });
 
-  it('bounces the FIRST complete_thread when the checklist has an open task; the retry latches done once the model closes it', async () => {
+  it('does NOT block complete_thread on an open checklist — the FIRST assertion latches done and the host drops the leftovers (advisory-only, decision d1)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2962,6 +3119,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     };
     (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
       { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+      { id: 'x2', subject: 'Update docs', status: 'pending' },
     ];
     const returns: Array<Record<string, unknown>> = [];
     const turn = {
@@ -2974,17 +3132,9 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
         }) => {
           const ct = input.toolBridge?.tools?.['complete_thread'];
           if (ct) {
-            returns.push(
-              (await ct({ summary: 'built the backend' })) as Record<
-                string,
-                unknown
-              >,
-            );
-            // The model heeds the one reminder and closes its task (its TaskUpdate folds onto threads.tasks)…
-            (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
-              { id: 'x1', subject: 'Add tests', status: 'completed' },
-            ];
-            // …then re-asserts done — must reach the gate this time, not be nudged again.
+            // A SINGLE assertion with the checklist STILL open — the regression: this used to bounce (and,
+            // because the one-shot was per-turn, re-bounce on every re-delivery → permanent `incomplete`).
+            // It must now latch on the first call and never wedge.
             returns.push(
               (await ct({ summary: 'built the backend' })) as Record<
                 string,
@@ -3014,16 +3164,17 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item'); // 1st: reminder, not latched
-    expect(returns[1]?.['warning']).toBeUndefined(); // 2nd: no second nudge — proceeded to the gate
+    // Latched on the FIRST call (not bounced); the open items came back only as an advisory NOTE.
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
     const term = (
       state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
     ).terminal_record;
     expect(term?.status).toBe('done');
     expect(state.job.status).toBe('done');
-    // The model closed its own task, so the host had nothing to drop — it stays `completed`, not `dropped`.
+    // The host force-closes the unreconciled leftovers to `dropped` on the done transition.
+    expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
     const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
-    expect(tasks.map((t) => t.status)).toEqual(['completed']);
+    expect(tasks.map((t) => t.status)).toEqual(['dropped', 'dropped']);
   });
 
   it('accepts a re-asserted done with tasks STILL open, and the host flips the leftovers to `dropped` (not completed)', async () => {
@@ -3050,7 +3201,8 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
         }) => {
           const ct = input.toolBridge?.tools?.['complete_thread'];
           if (ct) {
-            // First → nudged; second → still open, but accepted (never wedge a validated thread).
+            // Both calls assert done with the checklist STILL open: the first latches (advisory note, never
+            // a block); the second is idempotent (`afterTerminal`). Neither is bounced.
             returns.push(
               (await ct({ summary: 'built the backend' })) as Record<
                 string,
@@ -3880,18 +4032,18 @@ describe('ThreadDriver — master-review bridged task list', () => {
     );
   }
 
-  it('exposes task_create/task_update ONLY for the master-review thread', () => {
+  it('exposes the task_* tool set for EVERY thread (builder + master-review) — Claude native is disabled', () => {
     const h = assemble(baseState());
-    const mrTools = bridgeFor(
-      h,
+    for (const t of [
       thread('mr', 90, 'Master review', 'executing', true),
-    ).tools;
-    expect(typeof mrTools.task_create).toBe('function');
-    expect(typeof mrTools.task_update).toBe('function');
-    // A Claude builder keeps its native SDK task tools — the bridge must NOT double them here.
-    const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
-    expect(builderTools.task_create).toBeUndefined();
-    expect(builderTools.task_update).toBeUndefined();
+      thread('be', 10, 'Backend'),
+    ]) {
+      const tools = bridgeFor(h, t).tools;
+      expect(typeof tools.task_create).toBe('function');
+      expect(typeof tools.task_update).toBe('function');
+      expect(typeof tools.task_list).toBe('function');
+      expect(typeof tools.task_get).toBe('function');
+    }
   });
 
   // Drift guard: every tool a turn bridge actually registers MUST have a TOOL_SHAPES entry, or the
@@ -3918,7 +4070,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     }
   });
 
-  it('folds task_create into the thread scope with sequential ids, and returns the id to the model', async () => {
+  it('task_create writes the row through the sink and returns the durable id string to the model', async () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
@@ -3932,28 +4084,26 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const r2 = await tools.task_create({ subject: 'Apply fixes' });
     await tools.task_update({ taskId: '1', status: 'in_progress' });
 
-    // The create result carries the id (so the model can pass it back to task_update) — matching the
-    // Claude SDK task tools' "Task #N created…" contract that `createdTaskId` parses.
+    // The create result echoes the sink's returned id in the `Task #<id> created: <subject>` contract the
+    // web's `createdTaskId` regex parses (the fake sink hands back sequential ids "1", "2").
     expect(r1).toBe('Task #1 created: Review the merged diff');
     expect(r2).toBe('Task #2 created: Apply fixes');
 
-    // All folds landed on the master-review THREAD scope, via the same sink the Claude lanes use.
+    // All writes landed on the master-review THREAD scope, via the same sink every thread lane uses.
     expect(
-      h.taskEvents.map((e) => [e.toolName, e.scope.kind, e.scope.id]),
+      h.taskEvents.map((e) => [e.method, e.scope.kind, e.scope.id]),
     ).toEqual([
-      ['taskcreate', 'thread', 'mr'],
-      ['taskcreate', 'thread', 'mr'],
-      ['taskupdate', 'thread', 'mr'],
+      ['createTask', 'thread', 'mr'],
+      ['createTask', 'thread', 'mr'],
+      ['updateTask', 'thread', 'mr'],
     ]);
-    // The create fold gets the id-bearing result string; the update fold carries the model's status change.
-    expect(h.taskEvents[0].result).toBe('Task #1 created');
     expect(h.taskEvents[2].input).toMatchObject({
       taskId: '1',
       status: 'in_progress',
     });
   });
 
-  it('rejects a task_create with no subject and a task_update with no taskId (no fold)', async () => {
+  it('rejects a task_create with no subject and a task_update with no taskId (no sink write)', async () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
@@ -3989,8 +4139,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         const current = h.state.threads.find((t) => t.id === anchorThreadId);
         if (!current) return null;
         const rootId = current.parentThreadId ?? current.id;
-        const stageId =
-          (current.config?.stageId as string | undefined) ?? `stage-${rootId}`;
+        const threadGroupId =
+          (current.config?.threadGroupId as string | undefined) ?? `thread-group-${rootId}`;
         const siblings = h.state.threads
           .filter(
             (thread) =>
@@ -4009,8 +4159,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         );
         current.config = {
           ...(current.config ?? {}),
-          stageId,
-          stageKind: 'build',
+          threadGroupId,
+          threadGroupKind: 'build',
         };
         h.state.threads.push({
           ...current,
@@ -4025,8 +4175,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           orientation: null,
           config: {
             ...(current.config ?? {}),
-            stageId,
-            stageKind: 'build',
+            threadGroupId,
+            threadGroupKind: 'build',
             pendingLegSeed: inp.seed,
             ...(inp.rotationCapped ? { rotationCapped: true } : {}),
           },
@@ -4259,7 +4409,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
             contextTokens: 210_000,
             contextLimit: 1_000_000,
           });
-          await input.toolBridge!.tools!['record_leg_handoff']!({
+          await input.toolBridge!.tools['record_leg_handoff']({
             handoff: `Leg ${buildLeg}: WIP.\nNext: keep going.`,
           });
           return mkResult(input, `leg ${buildLeg} handed off`);

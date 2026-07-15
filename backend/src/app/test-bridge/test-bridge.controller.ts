@@ -101,7 +101,7 @@ export class TestBridgeController {
     private readonly turns: Repository<ActiveTurnEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
-    // Bootstraps a freshly-created job's ONE planning stage + thread (d7: `stage_id` is never null). From
+    // Bootstraps a freshly-created job's ONE planning thread group + thread (d7: `thread_group_id` is never null). From
     // the @Global JobBootstrapModule. @Optional (trailing), same reason as the other ambient deps here.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
@@ -187,9 +187,9 @@ export class TestBridgeController {
         }),
       );
       jobId = thread.id;
-      // Bootstrap the new job's ONE planning stage + thread — d7: `stage_id` is never null, even for a
+      // Bootstrap the new job's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for a
       // job that never gets a plan proposed (mirrors every other job-creation seam).
-      await this.jobBootstrap?.ensurePlanningStage(thread.id, repo.org_id);
+      await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, repo.org_id);
     }
 
     // Snapshot the outbox cursor BEFORE sending so we only collect posts triggered by this message.

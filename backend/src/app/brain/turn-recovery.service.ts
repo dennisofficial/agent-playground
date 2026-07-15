@@ -68,7 +68,7 @@ export class TurnRecoveryService implements OnModuleDestroy {
     private readonly sandboxRows: Repository<JobSandboxEntity>,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly turnRegistry: TurnRegistry,
-    // Resolves the job's planning-stage thread id — the anchor recovered brain-lane blocks are stamped
+    // Resolves the job's planning thread group thread id — the anchor recovered brain-lane blocks are stamped
     // onto (`messages.thread_id` is NOT NULL). The @Global JobBootstrapModule supplies it live.
     private readonly jobBootstrap: JobBootstrapService,
   ) {}

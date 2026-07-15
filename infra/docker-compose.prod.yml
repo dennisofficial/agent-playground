@@ -86,21 +86,21 @@ x-backend-common: &backend-common
     #
     # MUST be a DEDICATED subtree, NOT under the prod hosts. A preview app scopes its session cookie to
     # `.<PREVIEW_BASE_DOMAIN>` (so its `-web`/`-api` subdomains share a login) but signs it with the
-    # PREVIEW's JWT secret. If this shared the prod parent (`atlas.dltechnologies.co`), the browser sent
-    # that cookie to `api.atlas.dltechnologies.co` too, where prod couldn't verify it — and being
+    # PREVIEW's JWT secret. If this shared the prod parent (`byatlas.io`), the browser sent
+    # that cookie to `api.byatlas.io` too, where prod couldn't verify it — and being
     # domain-scoped it shadowed prod's own host-only cookie and wedged the operator out. `preview.…`
-    # keeps preview cookies (`.preview.dltechnologies.co`) off the prod hosts entirely. Its wildcard
-    # cert + catch-all live in infra/Caddyfile; needs a matching `*.preview.dltechnologies.co` DNS record.
-    PREVIEW_BASE_DOMAIN: preview.dltechnologies.co
+    # keeps preview cookies (`.preview.byatlas.io`) off the prod hosts entirely. Its wildcard
+    # cert + catch-all live in infra/Caddyfile; needs a matching `*.preview.byatlas.io` DNS record.
+    PREVIEW_BASE_DOMAIN: preview.byatlas.io
     CADDY_ADMIN_SOCKET: /srv/atlas/caddy/admin/admin.sock
     CADDY_CONTAINER_NAME: atlas-caddy
     # CORS origin for the Atlas web console
-    FRONTEND_HOST: https://atlas.dltechnologies.co
+    FRONTEND_HOST: https://app.byatlas.io
     # This backend's own public origin — used to build self-referential URLs, notably the MCP OAuth
     # redirect_uri (${BACKEND_HOST}/web/mcp/oauth/callback). MUST be the https backend host (Caddy routes it),
     # NOT the web origin. Without it, BACKEND_HOST defaults to http://localhost:4000 and OAuth consent registers
     # a dead redirect.
-    BACKEND_HOST: https://api.atlas.dltechnologies.co
+    BACKEND_HOST: https://api.byatlas.io
     # NOTE: the clustering/rolling-update timings (leader poll 2s, drain grace 120s, realtime slot prefix)
     # are code constants, not env vars — see backend src (leader-election / drain / realtime services).
     NODE_ENV: production
@@ -215,7 +215,7 @@ services:
   # ── Caddy (reverse proxy + auto-TLS) ───────────────────────────────────────────
   caddy:
     # Custom image = stock caddy:2 + the caddy-dns/cloudflare module (infra/caddy.Dockerfile),
-    # required for the `*.atlas.dltechnologies.co` wildcard cert via DNS-01. Built + pushed in CI
+    # required for the `*.preview.byatlas.io` wildcard cert via DNS-01. Built + pushed in CI
     # like the backend/web images.
     #
     # Pinned to the stable `:latest` tag, NOT the per-deploy ${ATLAS_IMAGE_TAG}: preview routes are
@@ -231,7 +231,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    # CLOUDFLARE_API_TOKEN (scoped Zone:Read + DNS:Edit on dltechnologies.co) lives in the box
+    # CLOUDFLARE_API_TOKEN (scoped Zone:Read + DNS:Edit on byatlas.io) lives in the box
     # secrets file; Caddy reads it as {env.CLOUDFLARE_API_TOKEN} for the DNS-01 challenge.
     env_file:
       - /srv/atlas/secrets/atlas.env

@@ -43,6 +43,9 @@ import {
   type ChatSurface,
   type DecisionApprovalCard,
   TurnHarnessFactory,
+  TASK_EVENT_SINK,
+  type TaskEventSink,
+  makeTaskTools,
   ThreadInputService,
   laneFor,
   SYSTEM_SEED_AUTHOR,
@@ -150,7 +153,11 @@ import {
   WorkspaceSecretFileStore,
 } from '../onboarding';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
-import { defaultResumeAt } from '../engine/session-limit';
+import {
+  defaultResumeAt,
+  isCorroboratedSessionLimit,
+  SESSION_LIMIT_TEXT_MISFIRE_MAX,
+} from '../engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import {
@@ -243,6 +250,15 @@ type InjectedMemoryDedupState = {
  *   - On approve → `JOB_DISPATCHER.dispatch`; on deny/request_changes → keep talking.
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
+/** A no-op {@link TaskEventSink} — the constructor default for a test that builds this manager directly
+ *  (bypassing Nest DI) without wiring a real sink. In prod the @Global LiveTurnModule always supplies the
+ *  real {@link EntityTaskEventSink}; a call through this default degrades gracefully instead of throwing. */
+const NOOP_TASK_EVENT_SINK: TaskEventSink = {
+  createTask: async () => ({ id: 'noop' }),
+  updateTask: async () => ({ ok: false, error: 'task sink not wired' }),
+  readTasks: async () => [],
+};
+
 @Injectable()
 export class AgentSessionManager
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -479,16 +495,21 @@ export class AgentSessionManager
     // Live-turn fan-out for the mid-turn "Reconnecting…" indicator during a host-backstop retry. @Optional
     // so unit tests construct the manager without it; DI (@Global LiveTurnModule) supplies it live.
     @Optional() private readonly liveTurns?: LiveTurnStore,
-    // Resolves the job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are
+    // Resolves the job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are
     // stamped onto (`messages.thread_id` is NOT NULL). @Optional matching this constructor's convention;
     // the @Global JobBootstrapModule supplies it live.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
     // @Optional so unit tests can construct the manager without it (undefined → the `__profile_awareness`
     // tool is a silent no-op); DI (the @Global WorkspaceProfileModule) supplies it live.
     @Optional() private readonly profileAwareness?: ProfileAwarenessService,
+    // The durable task store behind `task_create`/`task_update`/`task_list`/`task_get`. A default (not
+    // @Optional) lets the many positional `new AgentSessionManager(...)` test call sites keep compiling
+    // without reaching this param; DI (@Global LiveTurnModule) supplies the real EntityTaskEventSink live.
+    @Inject(TASK_EVENT_SINK)
+    private readonly taskSink: TaskEventSink = NOOP_TASK_EVENT_SINK,
   ) {}
 
-  /** The job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are stamped
+  /** The job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are stamped
    *  onto. Wired in prod via DI; throws loudly if the @Optional dependency is somehow absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
     if (!this.jobBootstrap)
@@ -2699,6 +2720,8 @@ export class AgentSessionManager
       ...(gitTarget
         ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` }
         : {}),
+      // The current sidebar label — so the brain can judge whether a propose_plan should re-title the job.
+      ...(brainJob?.title ? { title: brainJob.title } : {}),
       ...(branch ? { branch } : {}),
       ...(baseBranch ? { baseBranch } : {}),
       ...(this.env && isAtlasRepo(repoSlug ?? '', this.env)
@@ -3062,8 +3085,15 @@ export class AgentSessionManager
       }
       return;
     }
-    // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
-    await this.store.clearBrainRetryCounters(stimulus.jobId);
+    // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread. Gated on
+    // `!result.sessionLimit`: a session-limit turn is handled by the dedicated branch below, which owns its
+    // own `session_limit_text_misfires` bookkeeping (increment-on-quiet-retry, reset-on-park) — clearing it
+    // here unconditionally would wipe the consecutive-misfire streak on EVERY text-fallback hit (this same
+    // "clean turn" path runs for a session-limit result too, since it doesn't throw), so the N=3 backstop
+    // could never accumulate past 1 across re-drives.
+    if (!result.sessionLimit) {
+      await this.store.clearBrainRetryCounters(stimulus.jobId);
+    }
     // …and cancel any still-pending host-retry backstop (timer + durable retry clock): this clean turn IS the
     // recovery, so a stale 10s timer must not fire a spurious 'Please continue' nudge on the now-healthy job.
     await this.clearPendingHostRetry(stimulus.jobId);
@@ -3111,74 +3141,133 @@ export class AgentSessionManager
         return;
       }
       const rlType = result.sessionLimit.rateLimitType;
-      const resumeAt =
-        result.sessionLimit.resetAt ??
-        (await this.usage.getResetAt(stimulus.orgId, rlType));
-      // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
-      // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
-      // still has something to resume — a null clock would strand the lane on manual Force-resume only.
-      const resumeClock = resumeAt ?? defaultResumeAt();
-      // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
-      // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
-      void this.usage
-        .applyHarvest(stimulus.orgId, {
-          status: 'rejected',
-          rateLimitType: rlType,
-          resetsAt: new Date(resumeClock).getTime(),
-          utilization: 100,
-          credentialId: auth?.refreshBack?.credentialId,
-        })
-        .catch(() => undefined);
-      const resetSource: 'usage_api' | 'parsed_string' = rlType
-        ? 'usage_api'
-        : 'parsed_string';
-      const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
-      await this.store
-        .setSessionResume(stimulus.jobId, resumeClock, {
-          lane: 'main',
-          reason,
-          resetSource,
-        })
-        .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
-      // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
-      // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
-      // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
-      // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
-      await streamer.finish(
-        undefined,
-        result.usage
-          ? {
-              usage: result.usage,
-              contextTokens: result.usage.contextTokens ?? null,
-              contextLimit: resolveContextLimit(
-                result.usage.contextModel ?? result.usage.model,
-              ),
+      const source = result.sessionLimit.source;
+      const util =
+        source === 'text'
+          ? await this.usage
+              .getUtilization(stimulus.orgId, rlType)
+              .catch(() => undefined)
+          : undefined;
+
+      const durablePark = async (): Promise<void> => {
+        const resumeAt =
+          result.sessionLimit?.resetAt ??
+          (await this.usage.getResetAt(stimulus.orgId, rlType));
+        // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
+        // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
+        // still has something to resume — a null clock would strand the lane on manual Force-resume only.
+        const resumeClock = resumeAt ?? defaultResumeAt();
+        // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+        // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
+        void this.usage
+          .applyHarvest(stimulus.orgId, {
+            status: 'rejected',
+            rateLimitType: rlType,
+            resetsAt: new Date(resumeClock).getTime(),
+            utilization: 100,
+            credentialId: auth?.refreshBack?.credentialId,
+          })
+          .catch(() => undefined);
+        const resetSource: 'usage_api' | 'parsed_string' = rlType
+          ? 'usage_api'
+          : 'parsed_string';
+        const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
+        await this.store
+          .setSessionResume(stimulus.jobId, resumeClock, {
+            lane: 'main',
+            reason,
+            resetSource,
+          })
+          .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
+        // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
+        // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
+        // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
+        // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
+        await streamer.finish(
+          undefined,
+          result.usage
+            ? {
+                usage: result.usage,
+                contextTokens: result.usage.contextTokens ?? null,
+                contextLimit: resolveContextLimit(
+                  result.usage.contextModel ?? result.usage.model,
+                ),
+                credentialId: result.credentialId ?? null,
+              }
+            : undefined,
+        );
+        void this.usageProjector?.record(
+          {
+            jobId: stimulus.jobId,
+            orgId: stimulus.orgId,
+            lane: 'main',
+            kind: 'brain',
+            engine: 'claude',
+            credentialId: result.credentialId ?? null,
+          },
+          result.usage,
+        );
+        await this.saySystemOperator(
+          stimulus,
+          `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
+          {
+            retryable: false,
+            sessionLimit: true,
+            category: 'session_limit',
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        );
+        await this.store.clearBrainRetryCounters(stimulus.jobId);
+      };
+
+      if (isCorroboratedSessionLimit(source, util)) {
+        await durablePark();
+      } else {
+        const { ok, used } = await this.store.claimSessionLimitTextMisfire(
+          stimulus.jobId,
+          SESSION_LIMIT_TEXT_MISFIRE_MAX,
+        );
+        if (!ok || used >= SESSION_LIMIT_TEXT_MISFIRE_MAX) {
+          this.logger.warn(
+            `job=${stimulus.jobId} text-only session limit unconfirmed x${SESSION_LIMIT_TEXT_MISFIRE_MAX} — parking`,
+          );
+          await durablePark(); // backstop escalation
+        } else {
+          this.logger.warn(
+            `job=${stimulus.jobId} unconfirmed text-only session limit (util=${util ?? 'unknown'}) — quiet host-retry`,
+          );
+          await streamer.finish(
+            undefined,
+            result.usage
+              ? {
+                  usage: result.usage,
+                  contextTokens: result.usage.contextTokens ?? null,
+                  contextLimit: resolveContextLimit(
+                    result.usage.contextModel ?? result.usage.model,
+                  ),
+                  credentialId: result.credentialId ?? null,
+                }
+              : undefined,
+          );
+          void this.usageProjector?.record(
+            {
+              jobId: stimulus.jobId,
+              orgId: stimulus.orgId,
+              lane: 'main',
+              kind: 'brain',
+              engine: 'claude',
               credentialId: result.credentialId ?? null,
-            }
-          : undefined,
-      );
-      void this.usageProjector?.record(
-        {
-          jobId: stimulus.jobId,
-          orgId: stimulus.orgId,
-          lane: 'main',
-          kind: 'brain',
-          engine: 'claude',
-          credentialId: result.credentialId ?? null,
-        },
-        result.usage,
-      );
-      await this.saySystemOperator(
-        stimulus,
-        `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
-        {
-          retryable: false,
-          sessionLimit: true,
-          category: 'session_limit',
-          summary: "You've hit your Claude session limit — it auto-resumes at reset.",
-          ...(resumeAt ? { resumeAt } : {}),
-        },
-      );
+            },
+            result.usage,
+          );
+          await this.scheduleHostRetry(
+            stimulus,
+            'unconfirmed session limit (text fallback)',
+          );
+        }
+      }
       return;
     }
 
@@ -3327,6 +3416,13 @@ export class AgentSessionManager
   ): Record<string, ToolImpl> {
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
+    // The brain's own live checklist — the SAME `task_*` host-bridge tools the build threads register,
+    // scoped to the job's planning stage. Carried by all three branches (normal/review/onboarding) since
+    // every persona prompt teaches the task-list discipline.
+    const taskTools = makeTaskTools(this.taskSink, {
+      kind: 'main',
+      id: stimulus.jobId,
+    });
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -3888,6 +3984,9 @@ export class AgentSessionManager
         const kind: JobKind =
           (await this.store.jobKind(stimulus.jobId)) ??
           (args['kind'] === 'bugfix' ? 'bugfix' : 'feature');
+        // Whether to re-title the job from `goal`. Default FALSE (keep the current title) — the brain opts
+        // IN only when the plan's subject drifted from, or is meaningfully crisper than, the current name.
+        const rename = args['rename'] === true;
         // Decisions are LOCKED incrementally during grilling (create_decision → pending_decisions). Source
         // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
         const decisions =
@@ -3953,6 +4052,7 @@ export class AgentSessionManager
           threadTitles,
           threadTypes,
           stepsByThread,
+          rename,
           status: 'awaiting_approval',
         });
 
@@ -4588,6 +4688,7 @@ export class AgentSessionManager
         create_job: tools.create_job,
         link_job_dependency: tools.link_job_dependency,
         ...intake,
+        ...taskTools,
         ...atlasProd,
       };
     }
@@ -4595,7 +4696,7 @@ export class AgentSessionManager
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
     // ceremony-only: it stamps `onboarded_at` and opens the ceremony's OWN dedicated config PR, which only
     // makes sense when there is no other in-flight build PR to fold the config change into.
-    if (!onboarding) return { ...tools, ...intake, ...atlasProd };
+    if (!onboarding) return { ...tools, ...intake, ...taskTools, ...atlasProd };
     return {
       [INTERNAL_PROFILE_AWARENESS_TOOL]: tools[INTERNAL_PROFILE_AWARENESS_TOOL],
       ask_question: tools.ask_question,
@@ -4612,6 +4713,7 @@ export class AgentSessionManager
       propose_convention_profile_change:
         this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
+      ...taskTools,
       ...atlasProd,
     };
   }
@@ -7791,7 +7893,7 @@ function eventDeliveryStimulus(input: {
   repoId: string;
   body: AgentMessage;
   seedRow?: SeedRow;
-  /** SESSION RE-HOME (§CI-routing): resume the `ci` stage-thread's own session instead of planning — see
+  /** SESSION RE-HOME (§CI-routing): resume the `ci` thread group's own session instead of planning — see
    *  {@link ChatStimulus.resumeThreadId} / {@link EventStimulus.resumeThreadId}. */
   resumeThreadId?: string;
 }): ChatStimulus {

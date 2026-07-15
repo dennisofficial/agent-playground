@@ -9,28 +9,28 @@ import {
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
-import { StageEntity } from './stage.entity';
+import { ThreadGroupEntity } from './thread-group.entity';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
  * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planning | builder |
  * master_review | review_agent | review_fix | plan_review | post_build | ci`) and related by
  * `parent_thread_id` (a builder is the parent of its `review_agent`/`review_fix` siblings, now grouped
- * primarily via `stage_id` per d2). Builders stack on the job's one feature branch and run sequentially
- * (ORDER BY ordinal) as the stage's rotating legs (d1); non-build roles are singletons. `status` is the
+ * primarily via `thread_group_id` per d2). Builders stack on the job's one feature branch and run sequentially
+ * (ORDER BY ordinal) as the thread group's rotating legs (d1); non-build roles are singletons. `status` is the
  * explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
  *
  * Which roles the driver actually EXECUTES vs merely renders is owned by the `thread-kind`/role registry
  * (thread 2), not this row — the row is just typed state + tree structure. Every thread belongs to
- * exactly one stage (`stage_id` NOT NULL, d7) — stages are the pipeline unit; threads are its rows.
+ * exactly one thread group (`thread_group_id` NOT NULL, d7) — thread groups are the pipeline unit; threads are its rows.
  */
 @Entity({ name: 'threads' })
 @Index(['job_id'])
-@Index(['stage_id'])
+@Index(['thread_group_id'])
 @Index(['parent_thread_id'])
 // Hands-off: uq_threads_job_parent_ordinal is UNIQUE(job_id, decision_record_id, parent_thread_id, ordinal)
 // … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The DDL lives in the migrations; this only
-// tells migration:generate never to DROP it. `decision_record_id` moved to `stages` (d7); this legacy
+// tells migration:generate never to DROP it. `decision_record_id` moved to `thread_groups` (d7); this legacy
 // index name is kept as-is (renaming it is cosmetic, not load-bearing) but now only covers
 // (job_id, parent_thread_id, ordinal).
 @Index('uq_threads_job_parent_ordinal', { synchronize: false })
@@ -46,22 +46,22 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
-  /** The owning stage (FK → stages.id) — every thread belongs to exactly one stage (d2/d7). NOT NULL:
+  /** The owning thread group (FK → thread_groups.id) — every thread belongs to exactly one thread group (d2/d7). NOT NULL:
    *  there is no job-level ungrouped thread. */
   @Column({ type: 'uuid' })
-  stage_id!: string;
+  thread_group_id!: string;
 
-  @ManyToOne(() => StageEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'stage_id' })
-  stage?: StageEntity;
+  @ManyToOne(() => ThreadGroupEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_group_id' })
+  threadGroup?: ThreadGroupEntity;
 
   /**
    * The thread ROLE — `planning | builder | master_review | review_agent | review_fix | plan_review |
    * post_build | ci`. The single differentiator across all thread-like concepts (subsumes
-   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `stage.kind`). The role
+   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `threadGroup.kind`). The role
    * registry (thread 2) binds each role to a prompt-kit `Agent`, an engine, a driver mode, and the
    * operator-chat toggle (d12). Executable roles (`builder`, `master_review`) are driven as top-level
-   * stage members; `review_agent`/`review_fix` are driven as stage-scoped children; `planning`/
+   * thread group members; `review_agent`/`review_fix` are driven as thread-group-scoped children; `planning`/
    * `plan_review`/`post_build`/`ci` reuse the brain's prompting (d14). No column default — every write
    * site sets it explicitly (persistPlan / the child-thread materializer). Stays `text` (no DB enum); the
    * union type lives in code (thread 2).
@@ -163,8 +163,8 @@ export class ThreadEntity extends TimestampedEntity {
 
   /**
    * Set on commit, mirroring the old `steps.commit_sha` batch-anchor marker (relocated by d5). Per d13
-   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build stage reviewers
-   * receive the range `start_sha..commit_sha` (the stage's cumulative diff). Sentinel `(nothing)` =
+   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build thread group reviewers
+   * receive the range `start_sha..commit_sha` (the thread group's cumulative diff). Sentinel `(nothing)` =
    * "committed, empty diff". Null on non-build roles and before the thread's first commit.
    */
   @Column({ type: 'text', nullable: true })
@@ -262,7 +262,8 @@ export interface ReviewAgentState {
   findings?: number;
 }
 
-/** One LLM-authored task, folded from `TaskCreate`/`TaskUpdate` tool calls (see `ThreadEntity.tasks`). */
+/** One LLM-authored task, written via the `task_create`/`task_update` host-bridge tools directly into a
+ *  stage-owned `TaskEntity` row (mirrored here as the read/wire shape). */
 export interface TaskItem {
   id: string;
   subject: string;

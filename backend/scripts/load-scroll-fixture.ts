@@ -26,6 +26,7 @@ import { AppDataSource } from '../cli/data-source';
  */
 
 const RICH_JOB_ID = 'da700000-0000-4000-8000-000000000104';
+const RICH_THREAD_ID = 'da700000-0000-4000-8000-000000002001';
 const FIXTURE = join(__dirname, 'fixtures', 'scroll-transcript.jsonl.gz');
 
 type FixtureRow = {
@@ -46,6 +47,7 @@ type FixtureRow = {
 const COLS = [
   'id',
   'job_id',
+  'thread_id',
   'author',
   'author_id',
   'author_bot_id',
@@ -88,6 +90,7 @@ async function main(): Promise<void> {
           values.push(
             r.id,
             RICH_JOB_ID,
+            RICH_THREAD_ID,
             r.author,
             r.author_id,
             r.author_bot_id,

@@ -279,31 +279,31 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      // Every job carries one planning stage-thread at job start — the anchor job-level operator notices are
+      // Every job carries one planning thread group at job start — the anchor job-level operator notices are
       // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
-      const planningStage = await store.createStage({
+      const planningThreadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
         kind: 'planning',
         title: 'Planning',
       });
-      await store.createThreadInStage({
-        stageId: planningStage.id,
+      await store.createThreadInThreadGroup({
+        threadGroupId: planningThreadGroup.id,
         jobId: job.id,
         orgId: ORG_ID,
         role: 'planning',
         ordinal: 0,
         brief: 'Main',
       });
-      const stage = await store.createStage({
+      const threadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
         kind: 'build',
         title: 'Backend',
         decisionRecordId: record.id,
       });
-      await store.createThreadInStage({
-        stageId: stage.id,
+      await store.createThreadInThreadGroup({
+        threadGroupId: threadGroup.id,
         jobId: job.id,
         orgId: ORG_ID,
         role: 'builder',
@@ -330,18 +330,15 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         appendBlockOnce: vi.fn(async () => undefined),
       } as unknown as BlockSink;
       const taskSink = {
-        applyTaskEvent: vi.fn(async () => undefined),
+        createTask: vi.fn(async () => ({ id: 'noop' })),
+        updateTask: vi.fn(async () => ({ ok: true })),
+        readTasks: vi.fn(async () => []),
       } as unknown as TaskEventSink;
       const usage = {
         getResetAt: () => undefined,
         applyHarvest: vi.fn().mockResolvedValue(undefined),
       } as unknown as OauthUsageService;
-      const turnHarness = new TurnHarnessFactory(
-        liveTurns,
-        blockSink,
-        taskSink,
-        usage,
-      );
+      const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
       const brainGateway = {
         openPrAtShip: vi.fn(async () => undefined),
         notifyThreadHalted: vi.fn(async () => undefined),
@@ -351,7 +348,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
 
       const driver = new ThreadDriver(
         store,
-        { resolve: async () => RESOLVED } as unknown as DriverRepoResolver,
+        { resolve: async () => RESOLVED },
         git,
         pr,
         turn,
@@ -392,7 +389,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           bridgeCaddyToSandbox: async () => undefined,
           unbridgeCaddyFromSandbox: async () => undefined,
           listLiveThreadJobIds: async () => [],
-        } as never,
+        },
         {
           anthropicKey: async () => undefined,
           openaiKey: async () => undefined,

@@ -115,16 +115,16 @@ importers:
         version: link:../packages/agent-engine
       '@workspace/auth':
         specifier: workspace:*
-        version: file:submodules/jwt-auth(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)
+        version: file:packages/jwt-auth(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)
       '@workspace/codex-sdk':
         specifier: workspace:*
         version: link:../packages/codex-sdk
       '@workspace/langfuse':
         specifier: workspace:*
-        version: link:../submodules/nestjs-ai-essentials/langfuse
+        version: link:../packages/nestjs-ai-essentials/langfuse
       '@workspace/nestjs-core':
         specifier: workspace:^
-        version: file:submodules/nestjs-core-essentials(bd6281990f2a73bd57d6ec91433cb737)
+        version: file:packages/nestjs-core-essentials(bd6281990f2a73bd57d6ec91433cb737)
       '@workspace/pg-realtime':
         specifier: workspace:*
         version: link:../packages/pg-realtime
@@ -233,7 +233,7 @@ importers:
         version: 3.2.6(supports-color@5.5.0)(vitest@3.2.6(@types/debug@4.1.13)(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@5.5.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0))
       '@workspace/ai-testing':
         specifier: workspace:*
-        version: link:../submodules/ai-testing
+        version: link:../packages/ai-testing
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
@@ -311,96 +311,7 @@ importers:
         specifier: ^3.0.0
         version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  packages/codex-sdk:
-    devDependencies:
-      '@swc/core':
-        specifier: ^1.15.32
-        version: 1.15.40
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.2
-      nodemon:
-        specifier: ^3.1.14
-        version: 3.1.14
-      prettier:
-        specifier: ^3.8.3
-        version: 3.8.3
-      prettier-plugin-organize-imports:
-        specifier: ^4.3.0
-        version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  packages/pg-realtime:
-    dependencies:
-      mingo:
-        specifier: ^6.4.15
-        version: 6.7.2
-      pg:
-        specifier: ^8.13.1
-        version: 8.21.0
-      pg-logical-replication:
-        specifier: ^2.0.5
-        version: 2.5.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.2
-        version: 22.19.20
-      '@types/pg':
-        specifier: ^8.11.10
-        version: 8.20.0
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@5.5.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  shared:
-    dependencies:
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@swc/core':
-        specifier: ^1.15.32
-        version: 1.15.40
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.2
-      nodemon:
-        specifier: ^3.1.14
-        version: 3.1.14
-      prettier:
-        specifier: ^3.8.3
-        version: 3.8.3
-      prettier-plugin-organize-imports:
-        specifier: ^4.3.0
-        version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
-      reflect-metadata:
-        specifier: ^0.2.2
-        version: 0.2.2
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
-      typeorm:
-        specifier: ^0.3.30
-        version: 0.3.30(ioredis@5.11.1)(mongodb@6.21.0)(pg@8.21.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@25.9.2)(typescript@6.0.3))
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
-  submodules/ai-testing:
+  packages/ai-testing:
     dependencies:
       agentevals:
         specifier: ^0.0.7
@@ -455,7 +366,34 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  submodules/jwt-auth:
+  packages/codex-sdk:
+    devDependencies:
+      '@swc/core':
+        specifier: ^1.15.32
+        version: 1.15.40
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.9.2
+      nodemon:
+        specifier: ^3.1.14
+        version: 3.1.14
+      prettier:
+        specifier: ^3.8.3
+        version: 3.8.3
+      prettier-plugin-organize-imports:
+        specifier: ^4.3.0
+        version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/jwt-auth:
     dependencies:
       axios:
         specifier: ^1.15.2
@@ -501,7 +439,7 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  submodules/nestjs-ai-essentials/langchain:
+  packages/nestjs-ai-essentials/langchain:
     dependencies:
       fluent-json-schema:
         specifier: ^6.0.0
@@ -550,7 +488,7 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
-  submodules/nestjs-ai-essentials/langfuse:
+  packages/nestjs-ai-essentials/langfuse:
     devDependencies:
       '@langchain/core':
         specifier: 1.1.48
@@ -583,7 +521,7 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  submodules/nestjs-core-essentials:
+  packages/nestjs-core-essentials:
     dependencies:
       '@nestjs/bullmq':
         specifier: '>=11.0.0'
@@ -647,6 +585,68 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/pg-realtime:
+    dependencies:
+      mingo:
+        specifier: ^6.4.15
+        version: 6.7.2
+      pg:
+        specifier: ^8.13.1
+        version: 8.21.0
+      pg-logical-replication:
+        specifier: ^2.0.5
+        version: 2.5.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.20
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(supports-color@5.5.0)(terser@5.48.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  shared:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@swc/core':
+        specifier: ^1.15.32
+        version: 1.15.40
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.9.2
+      nodemon:
+        specifier: ^3.1.14
+        version: 3.1.14
+      prettier:
+        specifier: ^3.8.3
+        version: 3.8.3
+      prettier-plugin-organize-imports:
+        specifier: ^4.3.0
+        version: 4.3.0(prettier@3.8.3)(typescript@6.0.3)
+      reflect-metadata:
+        specifier: ^0.2.2
+        version: 0.2.2
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(@swc/core@1.15.40)(jiti@2.7.0)(postcss@8.5.15)(supports-color@5.5.0)(tsx@4.22.4)(typescript@6.0.3)(yaml@2.9.0)
+      typeorm:
+        specifier: ^0.3.30
+        version: 0.3.30(ioredis@5.11.1)(mongodb@6.21.0)(pg@8.21.0)(ts-node@10.9.2(@swc/core@1.15.40)(@types/node@25.9.2)(typescript@6.0.3))
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   web:
     dependencies:
       '@shikijs/langs':
@@ -663,7 +663,7 @@ importers:
         version: 3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@workspace/auth':
         specifier: workspace:*
-        version: link:../submodules/jwt-auth
+        version: link:../packages/jwt-auth
       '@workspace/shared':
         specifier: workspace:*
         version: link:../shared
@@ -3241,14 +3241,14 @@ packages:
   '@webassemblyjs/wast-printer@1.14.1':
     resolution: {integrity: sha512-kPSSXE6De1XOR820C90RIo2ogvZG+c3KiHzqUoO/F34Y2shGzesfqv7o57xrxovZJH/MetF5UjroJ/R/3isoiw==}
 
-  '@workspace/auth@file:submodules/jwt-auth':
-    resolution: {directory: submodules/jwt-auth, type: directory}
+  '@workspace/auth@file:packages/jwt-auth':
+    resolution: {directory: packages/jwt-auth, type: directory}
     peerDependencies:
       '@nestjs/common': ^11.1.19
       '@nestjs/core': ^11.1.19
 
-  '@workspace/nestjs-core@file:submodules/nestjs-core-essentials':
-    resolution: {directory: submodules/nestjs-core-essentials, type: directory}
+  '@workspace/nestjs-core@file:packages/nestjs-core-essentials':
+    resolution: {directory: packages/nestjs-core-essentials, type: directory}
     peerDependencies:
       '@nestjs/bullmq': '>=11.0.0'
       '@nestjs/common': '>=11.0.0'
@@ -9369,7 +9369,7 @@ snapshots:
       '@webassemblyjs/ast': 1.14.1
       '@xtuc/long': 4.2.2
 
-  '@workspace/auth@file:submodules/jwt-auth(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)':
+  '@workspace/auth@file:packages/jwt-auth(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/core@11.1.26)':
     dependencies:
       '@nestjs/common': 11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0)
       '@nestjs/core': 11.1.26(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/platform-express@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -9381,7 +9381,7 @@ snapshots:
       - debug
       - supports-color
 
-  '@workspace/nestjs-core@file:submodules/nestjs-core-essentials(bd6281990f2a73bd57d6ec91433cb737)':
+  '@workspace/nestjs-core@file:packages/nestjs-core-essentials(bd6281990f2a73bd57d6ec91433cb737)':
     dependencies:
       '@nestjs/common': 11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0)
       '@nestjs/core': 11.1.26(@nestjs/common@11.1.26(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@5.5.0))(@nestjs/platform-express@11.1.26)(reflect-metadata@0.2.2)(rxjs@7.8.2)

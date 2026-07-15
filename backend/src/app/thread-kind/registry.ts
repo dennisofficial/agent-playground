@@ -132,8 +132,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'execute-turn',
   },
   {
-    // The ship/amend stage-thread (d11/d14): takes over `openPrAtShip` from Main once all build stages +
-    // master_review complete. Reuses the brain's prompting + a minimal "ship now" seed — no new per-stage
+    // The ship/amend thread group (d11/d14): takes over `openPrAtShip` from Main once all build thread groups +
+    // master_review complete. Reuses the brain's prompting + a minimal "ship now" seed — no new per-thread-group
     // prompt engineering in this job (d14).
     kind: 'post_build',
     agent: Agent.ATLAS_MAIN,
@@ -148,8 +148,8 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'session-backed',
   },
   {
-    // The post-ship CI stage-thread (d14): takes over CI handling from Main, reusing the existing CI prompt
-    // surface (d14) — no new per-stage prompt engineering in this job.
+    // The post-ship CI thread group (d14): takes over CI handling from Main, reusing the existing CI prompt
+    // surface (d14) — no new per-thread-group prompt engineering in this job.
     kind: 'ci',
     agent: Agent.ATLAS_MAIN,
     engine: 'claude',
@@ -170,7 +170,7 @@ const BY_KIND = new Map<string, ThreadKindSpec>(
 
 const THREAD_ROLE_SET = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
 
-/** Coerce any raw value to a valid ThreadRole, or throw — mirrors `coerceStageKind`'s strict shape: a
+/** Coerce any raw value to a valid ThreadRole, or throw — mirrors `coerceThreadGroupKind`'s strict shape: a
  *  role is a closed, code-controlled vocabulary (registry-backed), never open user data like `ThreadType`. */
 export function coerceThreadRole(raw: unknown): ThreadRole {
   const value = String(raw ?? '').trim();

@@ -149,7 +149,7 @@ async function seedAwaitingApproval(
      VALUES ($1, $2, $3, 'control', 'Add rate limiting', 'feature', 'awaiting_approval', 'idle', 'main')`,
     [jobId, ORG, REPO],
   );
-  await bootstrap.ensurePlanningStage(jobId, ORG);
+  await bootstrap.ensurePlanningThreadGroup(jobId, ORG);
   await ds.query(
     `INSERT INTO decision_records (id, org_id, repo_id, job_id, overview, status, thread_titles)
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,

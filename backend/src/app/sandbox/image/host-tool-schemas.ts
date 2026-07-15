@@ -93,6 +93,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     addBlocks: z.array(z.string()).optional(),
     removeBlocks: z.array(z.string()).optional(),
   },
+  task_list: {},
+  task_get: { taskId: z.string() },
   // Superset serving BOTH the driver gate and the brain — all fields optional.
   report_verification: {
     passed: z.boolean().optional(),
@@ -176,6 +178,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     overview: z.string(),
     goal: z.string(),
     kind: z.string().optional(),
+    // When true, re-title the job from `goal` via the titler; when omitted/false, keep the current title.
+    rename: z.boolean().optional(),
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
   },
@@ -402,6 +406,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   task_update:
     'Update one task in your live task list — mark it in_progress when you start it and completed when it ' +
     'is done (exactly one task should be in_progress at a time). Use status "deleted" to remove a task.',
+  task_list:
+    'List your current live task list (every task in this thread, with its status and any blockers).',
+  task_get:
+    'Get the full detail (description, activeForm, blockedBy) of one task in your live list by its id.',
   report_verification:
     'Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once ' +
     'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
@@ -536,6 +544,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 export function toolJsonSchema(name: string): Record<string, unknown> {
   const shape = TOOL_SHAPES[name];
   return shape
-    ? (z.toJSONSchema(z.object(shape)) as Record<string, unknown>)
+    ? z.toJSONSchema(z.object(shape))
     : { type: 'object', additionalProperties: true };
 }

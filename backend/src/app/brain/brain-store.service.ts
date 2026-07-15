@@ -36,7 +36,7 @@ import { JobBootstrapService } from '../job-bootstrap';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  StageEntity,
+  ThreadGroupEntity,
   ThreadEntity,
   StimulusEntity,
   JobEntity,
@@ -102,22 +102,22 @@ export class BrainStoreService {
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StageEntity, DB_CONNECTION)
-    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
+    private readonly threadGroups: Repository<ThreadGroupEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
     private readonly jobDeps: JobDependencyService,
-    // The planning-stage bootstrap now lives in `JobBootstrapService` (every job-creation seam, not just
-    // this brain-module one, needs it — see its module doc for the cycle it avoids). `ensurePlanningStage`
+    // The planning thread group bootstrap now lives in `JobBootstrapService` (every job-creation seam, not just
+    // this brain-module one, needs it — see its module doc for the cycle it avoids). `ensurePlanningThreadGroup`
     // below thin-delegates to it. @Optional (trailing) so the existing direct-construction unit tests
     // (positional args) keep compiling without a trailing argument.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
-  /** The job's planning-stage thread id — the anchor every main-lane message row is stamped onto
+  /** The job's planning thread group thread id — the anchor every main-lane message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
     if (!this.jobBootstrap)
@@ -1707,11 +1707,33 @@ export class BrainStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
+   *  `cap`. Same shape as {@link claimTransientRetryRedrive}. */
+  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .where('id = :jobId', { jobId })
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
+      .execute();
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
   /** Reset the brain's SESSION-scoped retry budgets to 0 on a clean turn (unlike the LIFETIME
    *  `halt_fix_attempts`, these reset every clean turn). Does NOT touch `retry_last_attempt_at` (an
    *  age-only cooldown backstop, never reset) nor the driver's own lane columns. */
   async clearBrainRetryCounters(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { benign_abort_redrives: 0, transient_retry_redrives: 0 });
+    await this.jobs.update(
+      { id: jobId },
+      {
+        benign_abort_redrives: 0,
+        transient_retry_redrives: 0,
+        session_limit_text_misfires: 0,
+      },
+    );
   }
 
   /**
@@ -1874,38 +1896,51 @@ export class BrainStoreService {
      * is posted immediately). `finalize_plan` is what later flips a reviewed plan to `awaiting_approval`.
      */
     status?: JobStatus;
+    /**
+     * OPTIONAL — whether to (re)title the job from `input.title`. Defaults to `true` so every existing
+     * caller (direct-build / bugfix dispatch / re-propose) keeps renaming exactly as before. `propose_plan`
+     * passes the brain's explicit choice: `false` means "the plan didn't change direction — keep the
+     * current sidebar label". A job that has NO title yet is always titled regardless (a fresh job needs a
+     * label).
+     */
+    rename?: boolean;
   }): Promise<PersistedPlan> {
-    // Route the incoming title (the plan `goal` / build summary) through the shared titler so the
-    // thread's sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before
-    // the transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast.
-    const title = await this.titler.titleFor(input.title, input.orgId);
+    // Route the incoming title (the plan `goal` / build summary) through the shared titler so the thread's
+    // sidebar label is a short, scannable title — NOT the raw full-sentence goal. Done before the
+    // transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast. Skip the
+    // rename when the caller opted out AND the job already has a title — then we keep the existing label.
+    const existingTitle = (await this.jobTitle(input.jobId))?.trim() || null;
+    const title =
+      (input.rename ?? true) || !existingTitle
+        ? await this.titler.titleFor(input.title, input.orgId)
+        : existingTitle;
 
-    // The job's ONE planning stage + thread exists from bootstrap (create-if-absent) — cards posted during
+    // The job's ONE planning thread group + thread exists from bootstrap (create-if-absent) — cards posted during
     // planning anchor to it, and it is NOT (re)created here. Idempotent; its own find-or-create, so it runs
     // outside the plan transaction.
-    await this.ensurePlanningStage(input.jobId, input.orgId);
+    await this.ensurePlanningThreadGroup(input.jobId, input.orgId);
 
-    // The whole persist runs in ONE transaction: clear the current revision's build pipeline stages (their
+    // The whole persist runs in ONE transaction: clear the current revision's build pipeline thread groups (their
     // threads cascade), supersede the prior draft record, write the new record + `build`/`master_review`
-    // stages (each owning its threads), and flip the job status — so a crash mid-write can never leave a
+    // thread groups (each owning its threads), and flip the job status — so a crash mid-write can never leave a
     // half-proposed plan. A re-propose (request_changes → reopenPlanning → propose again) reuses the SAME
-    // job, so the prior DRAFT revision's build stages are cleared first; idempotent on the first proposal.
+    // job, so the prior DRAFT revision's build thread groups are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
       const jobs = m.getRepository(JobEntity);
       const records = m.getRepository(DecisionRecordEntity);
       const threads = m.getRepository(ThreadEntity);
-      const stages = m.getRepository(StageEntity);
+      const threadGroups = m.getRepository(ThreadGroupEntity);
 
       // PLAN VERSIONING — decide whether this re-propose forms a NEW immutable revision or overwrites the
       // current (never-built) one. The rule is unchanged: a revision becomes browsable history ONLY if it
-      // has at least one `done` builder. Plan-revision scoping moved off the thread onto its STAGE (d7), so
-      // a `done` builder is now found under a build stage carrying the prior revision's `decision_record_id`.
+      // has at least one `done` builder. Plan-revision scoping moved off the thread onto its THREAD GROUP (d7), so
+      // a `done` builder is now found under a build thread group carrying the prior revision's `decision_record_id`.
       const currentJob = await jobs.findOne({ where: { id: input.jobId } });
       const priorRecordId = currentJob?.decision_record_id ?? null;
       const priorHasDone = priorRecordId
         ? await threads
             .createQueryBuilder('t')
-            .innerJoin(StageEntity, 's', 's.id = t.stage_id')
+            .innerJoin(ThreadGroupEntity, 's', 's.id = t.thread_group_id')
             .where('t.job_id = :jobId', { jobId: input.jobId })
             .andWhere('s.decision_record_id = :priorRecordId', {
               priorRecordId,
@@ -1916,16 +1951,16 @@ export class BrainStoreService {
         : false;
 
       if (!priorHasDone) {
-        // Common case: no completed work to preserve. Clear the current revision's build pipeline STAGES —
-        // their threads cascade via `fk_threads_stage_id_stages ON DELETE CASCADE` — so the fresh stages
-        // append cleanly. Mirrors the old thread-level `In(['builder','master_review'])` delete at the stage
+        // Common case: no completed work to preserve. Clear the current revision's build pipeline THREAD GROUPS —
+        // their threads cascade via `fk_threads_thread_group_id_thread_groups ON DELETE CASCADE` — so the fresh thread groups
+        // append cleanly. Mirrors the old thread-level `In(['builder','master_review'])` delete at the thread group
         // level; the `planning`/`plan_review` singletons survive (only build-lifecycle kinds are cut).
-        await stages.delete({
+        await threadGroups.delete({
           job_id: input.jobId,
           kind: In(['build', 'direct_build', 'master_review']),
         });
       }
-      // else (priorHasDone): DELETE NOTHING. The prior revision's stages/threads keep their
+      // else (priorHasDone): DELETE NOTHING. The prior revision's thread groups/threads keep their
       // `decision_record_id` and become immutable history the moment `jobs.decision_record_id` is repointed
       // at the new record below (`threadsForJob` scopes to the active revision, so history is never re-driven).
 
@@ -1949,15 +1984,15 @@ export class BrainStoreService {
       );
 
       // Build path only (`threadTitles.length > 0`; direct build passes `[]` and onboarding/event never
-      // persist a plan). One `build` STAGE per plan section — each owning its FIRST builder thread carrying
-      // the authored plan — then ONE `master_review` stage after them. Direct build gets its own
-      // `direct_build` stage at dispatch time (a separate seam), so persistPlan skips stage creation for it.
+      // persist a plan). One `build` THREAD GROUP per plan section — each owning its FIRST builder thread carrying
+      // the authored plan — then ONE `master_review` thread group after them. Direct build gets its own
+      // `direct_build` thread group at dispatch time (a separate seam), so persistPlan skips thread group creation for it.
       if (input.threadTitles.length > 0) {
-        let stageOrdinal =
-          (await maxOrdinal(stages, input.jobId)) + ORDINAL_GAP;
+        let threadGroupOrdinal =
+          (await maxOrdinal(threadGroups, input.jobId)) + ORDINAL_GAP;
         // Top-level threads (parent null) share a job-wide UNIQUE(job_id, parent_thread_id, ordinal) index
         // (d7 dropped decision_record_id from it), so their ordinals must be job-GLOBAL-unique — not
-        // stage-local. Start after the highest existing top-level ordinal (planning/plan_review, and any
+        // thread-group-local. Start after the highest existing top-level ordinal (planning/plan_review, and any
         // preserved prior-revision history) and gap-number from there.
         let threadOrdinal =
           (await maxOrdinal(
@@ -1969,23 +2004,23 @@ export class BrainStoreService {
         for (let i = 0; i < input.threadTitles.length; i++) {
           const brief = input.threadTitles[i];
           const authored = input.stepsByThread?.[i];
-          const stage = await stages.save(
-            stages.create({
+          const threadGroup = await threadGroups.save(
+            threadGroups.create({
               job_id: input.jobId,
               org_id: input.orgId,
-              ordinal: stageOrdinal,
+              ordinal: threadGroupOrdinal,
               kind: 'build',
-              // The slice name labels the stage (titleRequired:true); its review-selection type moves here.
+              // The slice name labels the thread group (titleRequired:true); its review-selection type moves here.
               title: brief,
               type: input.threadTypes?.[i] ?? null,
               decision_record_id: record.id,
               config: {},
             }),
           );
-          stageOrdinal += ORDINAL_GAP;
+          threadGroupOrdinal += ORDINAL_GAP;
           await threads.save(
             threads.create({
-              stage_id: stage.id,
+              thread_group_id: threadGroup.id,
               job_id: input.jobId,
               org_id: input.orgId,
               role: 'builder',
@@ -2004,13 +2039,13 @@ export class BrainStoreService {
           threadOrdinal += ORDINAL_GAP;
         }
 
-        // The ONE whole-diff master review — a Codex execute stage that reviews AND fixes the merged diff,
+        // The ONE whole-diff master review — a Codex execute thread group that reviews AND fixes the merged diff,
         // running LAST (before ship/PR). No title (titleRequired:false); the driver plans its single turn.
-        const masterStage = await stages.save(
-          stages.create({
+        const masterThreadGroup = await threadGroups.save(
+          threadGroups.create({
             job_id: input.jobId,
             org_id: input.orgId,
-            ordinal: stageOrdinal,
+            ordinal: threadGroupOrdinal,
             kind: 'master_review',
             title: null,
             type: null,
@@ -2020,7 +2055,7 @@ export class BrainStoreService {
         );
         await threads.save(
           threads.create({
-            stage_id: masterStage.id,
+            thread_group_id: masterThreadGroup.id,
             job_id: input.jobId,
             org_id: input.orgId,
             role: 'master_review',
@@ -2053,17 +2088,17 @@ export class BrainStoreService {
   }
 
   /**
-   * Ensure the job's ONE `planning` stage + `planning`-role thread exist (idempotent create-if-absent).
-   * Every job owns exactly one planning stage from bootstrap (d7): the brain's conversation session IS this
+   * Ensure the job's ONE `planning` thread group + `planning`-role thread exist (idempotent create-if-absent).
+   * Every job owns exactly one planning thread group from bootstrap (d7): the brain's conversation session IS this
    * thread's session, and it anchors the job-level card messages (question/ship/amend/merge) that have no
    * build-lane thread of their own (see {@link DriverStoreService.planningThreadId}). Safe to call
-   * repeatedly — a second call with the stage already present is a no-op. Thin delegate over
+   * repeatedly — a second call with the thread group already present is a no-op. Thin delegate over
    * `JobBootstrapService` (the shared owner of this logic — see its module doc) so `persistPlan` and
-   * `createFollowUpJob` keep calling it as `this.ensurePlanningStage(...)`; every OTHER job-creation seam
+   * `createFollowUpJob` keep calling it as `this.ensurePlanningThreadGroup(...)`; every OTHER job-creation seam
    * calls `JobBootstrapService` directly (a `BrainModule` import would cycle back through `StimulusModule`).
    */
-  async ensurePlanningStage(jobId: string, orgId: string): Promise<void> {
-    await this.jobBootstrap?.ensurePlanningStage(jobId, orgId);
+  async ensurePlanningThreadGroup(jobId: string, orgId: string): Promise<void> {
+    await this.jobBootstrap?.ensurePlanningThreadGroup(jobId, orgId);
   }
 
   /** Load a draft/approved decision record (overview + decisions + thread titles) for the approval card. */
@@ -2240,9 +2275,9 @@ export class BrainStoreService {
           : null,
       }),
     );
-    // Bootstrap the job's one planning stage + thread up front (d7) so its card/message anchor resolves from
+    // Bootstrap the job's one planning thread group + thread up front (d7) so its card/message anchor resolves from
     // the first turn — idempotent, so a later persistPlan is a no-op on it.
-    await this.ensurePlanningStage(row.id, input.orgId);
+    await this.ensurePlanningThreadGroup(row.id, input.orgId);
     return row.id;
   }
 }

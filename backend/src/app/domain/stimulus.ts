@@ -193,7 +193,7 @@ export interface EventStimulus extends BaseStimulus {
   correlation?: { branch?: string | null; prNumber?: number | null };
   /**
    * SESSION RE-HOME (mirrors {@link ChatStimulus.resumeThreadId}): when the owning job already has a live
-   * `ci` stage-thread, this event resumes/persists THAT thread's session instead of the job's planning
+   * `ci` thread group, this event resumes/persists THAT thread's session instead of the job's planning
    * thread — so a GitHub/CI webhook wakes the `ci` thread post-ship rather than dragging planning back in.
    * Derived at read time from the persisted `stimuli.lane` (`thread:<ciThreadId>`), same durable coordinate
    * `recordChatStimulus` already uses for chat — so a sweep re-drive resolves it identically to the first
