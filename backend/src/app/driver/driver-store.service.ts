@@ -34,10 +34,12 @@ import type {
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import {
+  coerceThreadRole,
   coerceThreadType,
   laneDefaultFooter,
   threadKindSpec,
 } from '../thread-kind';
+import type { ThreadRole } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import {
@@ -1959,6 +1961,16 @@ export class DriverStoreService {
   /** Persist a thread's live engine session id (d5). */
   async setThreadSessionId(threadId: string, sessionId: string): Promise<void> {
     await this.threads.update({ id: threadId }, { session_id: sessionId });
+  }
+
+  /** The thread's role (registry-backed `ThreadRole`), or null if the thread is gone. The turn seam uses
+   *  this to resolve WHICH stage persona (`threadKindSpec(role).agent`) a re-homed turn runs as. */
+  async threadRole(threadId: string): Promise<ThreadRole | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, role: true },
+    });
+    return row ? coerceThreadRole(row.role) : null;
   }
 
   /** Insert a TASK into a stage's checklist. Gap-numbers the ordinal within the stage when omitted. */
