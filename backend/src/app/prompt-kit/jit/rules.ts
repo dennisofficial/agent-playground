@@ -14,6 +14,7 @@ import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-
 import { composePreviewPrepSeed } from '../system/fragments';
 import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
+import { detectGithubHtmlUrl, renderGithubFetchNudge, FETCH_TOOL_MATCHER } from './github-fetch-guard';
 import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import { planApprovedRule } from './plan-approved';
@@ -40,6 +41,21 @@ export const svcNudgeRule: JitRule = {
   delivery: 'postToolUse-additionalContext',
   throttle: { deltaTokens: SVC_NUDGE_DELTA_TOKENS },
   render: (ctx) => agentMessage(renderSvcNudge(ctx.command ?? '')),
+};
+
+/**
+ * GitHub-fetch guard — when Atlas fetches a github.com/gist.github.com HTML page (native `WebFetch` or a `fetch`
+ * MCP tool), append a reminder that GitHub's web UI is client-rendered so the fetch returns chrome, not content,
+ * and point it at the authenticated `gh api`/`git`/`raw.githubusercontent.com` tooling instead. Engine-local
+ * `PostToolUse` hook on the fetch-tool matcher. NO throttle: each github fetch is a distinct mis-step worth
+ * correcting (mirrors install-awareness), and the correction itself is what stops a repeat.
+ */
+export const githubFetchGuardRule: JitRule = {
+  id: 'github-fetch-guard',
+  enabled: true,
+  trigger: { kind: 'url-match', toolMatcher: FETCH_TOOL_MATCHER, match: detectGithubHtmlUrl },
+  delivery: 'postToolUse-additionalContext',
+  render: (ctx) => agentMessage(renderGithubFetchNudge(ctx.url ?? '')),
 };
 
 /**
@@ -122,6 +138,7 @@ export const memoryPrependRule: JitRule = {
 /** The declarative catalog every executor reads. */
 export const JIT_RULES: JitRule[] = [
   svcNudgeRule,
+  githubFetchGuardRule,
   installAwarenessRule,
   legRotationRule,
   bgTaskCapRule,

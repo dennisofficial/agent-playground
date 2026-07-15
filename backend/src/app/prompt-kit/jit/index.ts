@@ -7,6 +7,7 @@
 export * from './rule';
 export * from './rules';
 export * from './svc-nudge';
+export * from './github-fetch-guard';
 export * from './install-awareness';
 export * from './bg-task-cap';
 export * from './plan-approved';
