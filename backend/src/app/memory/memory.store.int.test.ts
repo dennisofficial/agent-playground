@@ -42,6 +42,13 @@ class FakeEmbedder implements EmbeddingProvider {
   }
 }
 
+class ThrowingEmbedder implements EmbeddingProvider {
+  readonly model = EMBED_MODEL;
+  async embed(): Promise<number[]> {
+    throw new Error('embedding should not be called for a non-matching row');
+  }
+}
+
 function dbOpts() {
   return {
     name: DB_CONNECTION,
@@ -229,5 +236,34 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
       ORG_C,
     );
     expect(forgottenAttempt).toEqual({ updated: false });
+  });
+
+  it('updateFact does not embed when the id is unknown, foreign, or already forgotten', async () => {
+    const guarded = new MemoryStore(
+      ds.getRepository(MemoryEntity),
+      new ThrowingEmbedder(),
+    );
+    const { id } = await store.remember({
+      fact: 'The incident channel is #ops-incidents.',
+      scope: MUTATION_SCOPE,
+      orgId: ORG_C,
+    });
+
+    await expect(
+      guarded.updateFact(
+        '2b999999-9999-4999-8999-999999999999',
+        'This should never embed.',
+        ORG_C,
+      ),
+    ).resolves.toEqual({ updated: false });
+
+    await expect(
+      guarded.updateFact(id, 'This should never embed.', ORG_D),
+    ).resolves.toEqual({ updated: false });
+
+    await store.forget(id, ORG_C);
+    await expect(
+      guarded.updateFact(id, 'This should never embed.', ORG_C),
+    ).resolves.toEqual({ updated: false });
   });
 });

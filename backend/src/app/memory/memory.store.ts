@@ -179,6 +179,15 @@ export class MemoryStore {
     fact: string,
     orgId: string,
   ): Promise<{ updated: boolean }> {
+    const existing = await this.facts
+      .createQueryBuilder('f')
+      .select('f.id', 'id')
+      .where('f.id = :id', { id })
+      .andWhere('f.org_id = :org', { org: orgId })
+      .andWhere('f.deleted_at IS NULL')
+      .getRawOne<{ id: string }>();
+    if (!existing) return { updated: false };
+
     const qv = vecSql(await this.embedder.embed(fact, orgId));
     const res = await this.facts
       .createQueryBuilder()
