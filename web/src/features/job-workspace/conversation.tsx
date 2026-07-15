@@ -44,6 +44,7 @@ import { extractMermaidSources, mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { useComposerStagedAnswers } from "@/lib/api/composer-store";
 import { useAllJobs } from "@/lib/api/inbox";
 
 /**
@@ -322,13 +323,24 @@ export function TranscriptView({
 
   // Unanswered question cards on the Main lane (each card's message `ts` IS its LogItem key). The operator
   // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
+  // A card whose answer is already staged into the send-together tray is no longer awaiting the operator, so
+  // it's excluded here — the pill counts only questions that still need a pick.
+  const stagedAnswers = useComposerStagedAnswers(jobRef);
   const openQuestions = useMemo(() => {
     if (!composer || readOnly) return [] as JobMessage[];
+    const stagedQuestionIds = new Set(
+      stagedAnswers.filter((a) => a.kind === "question").map((a) => a.cardId),
+    );
     return scoped.filter((m) => {
       const c = m.card;
-      return c?.type === "question_card" && !c.answer && !c.withdrawnAt;
+      return (
+        c?.type === "question_card" &&
+        !c.answer &&
+        !c.withdrawnAt &&
+        !stagedQuestionIds.has(c.questionId)
+      );
     });
-  }, [scoped, composer, readOnly]);
+  }, [scoped, composer, readOnly, stagedAnswers]);
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
