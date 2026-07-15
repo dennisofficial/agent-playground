@@ -8,7 +8,18 @@
 
 import { inspect } from 'node:util';
 
+import { ATLAS_PROD_TOOL_NAMES } from '../sandbox/image/atlas-prod-bridge-options';
 import type { HostFrame, ToolBridgeOptions, ToolRequestFrame } from './engine.types';
+
+/**
+ * Tools that LEGITIMATELY carry a foreign `jobId` and are therefore EXEMPT from the per-thread scope
+ * guard below. The `atlas-prod` diagnostics connector is repo-level by design: every read tool takes an
+ * explicit `jobId` to inspect ANY job in the repo, and the whole bridge is only ever registered for the
+ * Atlas repo (see atlas-prod-bridge-options.ts). It already grants full prod-read via `atlas_query`, so
+ * exempting it crosses no new data boundary — it just stops the guard from clobbering the connector's
+ * entire purpose. Every OTHER (thread-scoped) tool still has its foreign `jobId` denied.
+ */
+const CROSS_JOB_TOOL_NAMES: ReadonlySet<string> = new Set(ATLAS_PROD_TOOL_NAMES);
 
 /**
  * Never-empty, BOUNDED error text for a thrown tool value — safe to send back through the sandbox
@@ -39,10 +50,15 @@ export async function dispatchToolRequest(
 ): Promise<HostFrame> {
   const { id, name } = req;
   const args = (req.args ?? {}) as Record<string, unknown>;
-  // DEFENSIVE: both engines now send flat, strict-validated payloads and no tool schema declares `jobId`,
-  // so the model can no longer smuggle a foreign jobId (it is stripped client-side before it reaches us).
-  // This host-side guard remains as defense-in-depth for any permissive path (covered by r6-invariants.spec.ts).
-  if (typeof args['jobId'] === 'string' && args['jobId'] !== bridge.jobId) {
+  // DEFENSIVE per-thread scope guard: a thread-scoped tool must never act on a DIFFERENT thread, so a
+  // foreign `jobId` in its args is denied. The repo-level `atlas-prod` diagnostics tools are the exception
+  // (CROSS_JOB_TOOL_NAMES) — they take an explicit `jobId` by design to inspect any job in the repo, so the
+  // guard must skip them or it clobbers their whole purpose. Covered by r6-invariants.spec.ts.
+  if (
+    !CROSS_JOB_TOOL_NAMES.has(name) &&
+    typeof args['jobId'] === 'string' &&
+    args['jobId'] !== bridge.jobId
+  ) {
     return {
       t: 'tool_error',
       id,
