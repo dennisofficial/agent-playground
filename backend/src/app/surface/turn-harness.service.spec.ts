@@ -654,4 +654,40 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
     // "this task blocks #1" → #1 now waits on the new row.
     expect(tasks.rows.get('1')?.blocked_by).toEqual([id]);
   });
+
+  it('createTask/updateTask drop blockedBy ids that are not rows in this stage', async () => {
+    const tasks = fakeTasksRepo([{ id: '1', title: 'a', status: 'pending' }]);
+    const sink = threadSink(tasks);
+
+    const { id } = await sink.createTask(scope, {
+      subject: 'blocked',
+      blockedBy: ['1', 'missing'],
+    });
+    expect(tasks.rows.get(id)?.blocked_by).toEqual(['1']);
+
+    await sink.updateTask(scope, {
+      taskId: id,
+      addBlockedBy: ['missing-2'],
+      removeBlockedBy: ['1'],
+    });
+    expect(tasks.rows.get(id)?.blocked_by).toEqual([]);
+  });
+
+  it('delete removes the deleted task id from sibling blockedBy edges', async () => {
+    const tasks = fakeTasksRepo([
+      { id: '1', title: 'blocker', status: 'pending' },
+      {
+        id: '2',
+        title: 'blocked',
+        status: 'pending',
+        blocked_by: ['1'],
+      },
+    ]);
+    const sink = threadSink(tasks);
+
+    expect(
+      await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
+    ).toEqual({ ok: true });
+    expect(tasks.rows.get('2')?.blocked_by).toEqual([]);
+  });
 });

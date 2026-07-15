@@ -250,16 +250,20 @@ export class EntityTaskEventSink implements TaskEventSink {
         throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
       const { stageId, orgId } = resolved;
       const ordinal = (await this.maxTaskOrdinal(stageId)) + 10;
+      const blockedBy = await this.validBlockedBy(
+        stageId,
+        mergeBlockedBy([], input),
+      );
       const created = await this.tasks.save(
         this.tasks.create({
           stage_id: stageId,
           org_id: orgId,
           ordinal,
-          title: String(input.subject),
+          title: String(input.subject ?? '').trim(),
           brief: isStr(input.description) ? input.description : null,
           active_form: isStr(input.activeForm) ? input.activeForm : null,
           status: 'pending',
-          blocked_by: mergeBlockedBy([], input),
+          blocked_by: blockedBy,
         }),
       );
       await this.applyInverseEdges(stageId, created.id, input);
@@ -275,16 +279,18 @@ export class EntityTaskEventSink implements TaskEventSink {
       const resolved = await this.resolveStageId(scope);
       if (!resolved) return { ok: false, error: 'scope not found' };
       const { stageId } = resolved;
-      const taskId = String(input.taskId ?? '');
+      const taskId = String(input.taskId ?? '').trim();
       const row = await this.tasks.findOne({
         where: { id: taskId, stage_id: stageId },
       });
       if (!row) return { ok: false, error: `task ${taskId} not found` };
 
-      // A deletion REMOVES the row — mirrors the old fold: it does NOT scrub this id from OTHER rows'
-      // blocked_by edges (the block simply clears by derivation once its blocker is gone).
+      // A deletion REMOVES the row. Keep sibling edges in the same durable id space too: old fold/reconcile
+      // dropped references to rows that no longer existed, and `task_list` should not report a deleted id as
+      // a blocker.
       if (input.status === 'deleted') {
         await this.tasks.delete({ id: row.id });
+        await this.removeBlockedByReference(stageId, row.id);
         return { ok: true };
       }
 
@@ -295,7 +301,11 @@ export class EntityTaskEventSink implements TaskEventSink {
       const status = mapTaskStatus(input.status);
       if (status) patch.status = status;
       if (hasBlockedByInput(input))
-        patch.blocked_by = mergeBlockedBy(row.blocked_by ?? [], input);
+        patch.blocked_by = await this.validBlockedBy(
+          stageId,
+          mergeBlockedBy(row.blocked_by ?? [], input),
+          row.id,
+        );
       if (Object.keys(patch).length)
         await this.tasks.update({ id: row.id }, patch);
 
@@ -352,6 +362,38 @@ export class EntityTaskEventSink implements TaskEventSink {
         { id: target.id },
         { blocked_by: applyEdge(target.blocked_by ?? [], sourceId, op) },
       );
+    }
+  }
+
+  /** Keep `blocked_by` in the same stage-owned uuid id space as the rows themselves. Unknown ids are
+   *  dropped instead of being persisted as dangling blockers. */
+  private async validBlockedBy(
+    stageId: string,
+    ids: string[],
+    selfId?: string,
+  ): Promise<string[]> {
+    const unique = [...new Set(ids.filter((id) => id !== selfId))];
+    if (unique.length === 0) return [];
+    const rows = await this.tasks.find({
+      where: { stage_id: stageId },
+      select: { id: true },
+    });
+    const valid = new Set(rows.map((row) => row.id));
+    return unique.filter((id) => valid.has(id));
+  }
+
+  private async removeBlockedByReference(
+    stageId: string,
+    sourceId: string,
+  ): Promise<void> {
+    const rows = await this.tasks.find({
+      where: { stage_id: stageId },
+      select: { id: true, blocked_by: true },
+    });
+    for (const row of rows) {
+      const next = (row.blocked_by ?? []).filter((id) => id !== sourceId);
+      if (next.length !== (row.blocked_by ?? []).length)
+        await this.tasks.update({ id: row.id }, { blocked_by: next });
     }
   }
 

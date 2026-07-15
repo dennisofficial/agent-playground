@@ -39,10 +39,10 @@ export function hasBlockedByInput(input: Record<string, unknown>): boolean {
 
 /** One INVERSE edge to apply: "this task blocks `targetId`" → add/remove the source id on the target's
  *  `blocked_by`. `addBlocks` yields `add` ops, `removeBlocks` yields `remove` ops. */
-export interface InverseEdgeOp {
+export type InverseEdgeOp = {
   targetId: string;
   op: 'add' | 'remove';
-}
+};
 
 /** The inverse edge operations a `task_create`/`task_update` input requests (`addBlocks`/`removeBlocks`). */
 export function inverseEdgeOps(
