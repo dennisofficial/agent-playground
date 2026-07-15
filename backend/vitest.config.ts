@@ -66,6 +66,25 @@ export default defineConfig((env) => {
     };
   }
 
+  // Integration tests only — real local services (db/queue), no LLM calls, no e2e app boot.
+  // Run with: pnpm test:int
+  if (env.mode === 'int') {
+    return {
+      ...base,
+      test: {
+        globals: true,
+        environment: 'node',
+        setupFiles,
+        globalSetup,
+        include: ['**/*.int.test.ts'],
+        exclude: ['**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+        pool: 'threads',
+        poolOptions: { threads: { singleThread: true } },
+        testTimeout: 30_000,
+      },
+    };
+  }
+
   // Fast unit tests only. Run with: pnpm test:unit
   // No setupFiles: unit specs need zero credentials or DB — confirmed by grep (no process.env.*
   // reads and no DB imports across all *.spec.ts files). Omitting setupFiles means the encrypted
@@ -76,7 +95,7 @@ export default defineConfig((env) => {
       test: {
         globals: true,
         environment: 'node',
-        include: ['src/**/*.spec.ts'],
+        include: ['src/**/*.spec.ts', 'cli/**/*.spec.ts'],
         exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
         testTimeout: 30_000,
       },
@@ -99,7 +118,7 @@ export default defineConfig((env) => {
             globals: true,
             environment: 'node',
             setupFiles,
-            include: ['src/**/*.spec.ts'],
+            include: ['src/**/*.spec.ts', 'cli/**/*.spec.ts'],
             exclude: ['**/*.int.test.ts', '**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
             testTimeout: 30_000,
           },
