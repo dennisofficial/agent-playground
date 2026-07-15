@@ -30,6 +30,9 @@ import {
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
+  githubFetchGuardRule,
+  detectGithubHtmlUrl,
+  renderGithubFetchNudge,
   detectInstallCommand,
   installAwarenessRule,
 } from '../prompt-kit/jit';
@@ -140,6 +143,9 @@ function steerUserMessage(content: AgentMessage, priority?: 'now' | 'next' | 'la
  * module's own callers/specs keep working unchanged.
  */
 export { detectLongRunningCommand, svcNudgeShouldFire, SVC_NUDGE_TEXT };
+// `detectGithubHtmlUrl`/`renderGithubFetchNudge` back the `github-fetch-guard` JIT rule (its PostToolUse hook is
+// wired below). Re-exported here so this module's own spec exercises the same helpers, mirroring svc-nudge.
+export { detectGithubHtmlUrl, renderGithubFetchNudge };
 
 /**
  * A hand-driven async-iterable the engine feeds the SDK in STREAMING-INPUT mode: `push` a message to
@@ -1079,6 +1085,27 @@ export class EngineCore {
       });
     }
 
+    // PostToolUse fetch hooks: the github-fetch guard, registered under its OWN matcher group so ONLY fetch
+    // tools (native `WebFetch` + the `fetch` MCP) invoke it. When the fetched URL is a github.com HTML page,
+    // append a reminder to use `gh api`/git instead — GitHub's web UI is client-rendered, so the fetch returns
+    // chrome, not content. Pure/local (no host round-trip), so no timeout guard is needed.
+    const fetchPostToolUseHooks: HookCallback[] = [];
+    const githubGuard = githubFetchGuardRule.trigger;
+    const fetchToolMatcher = githubGuard.kind === 'url-match' ? githubGuard.toolMatcher : '';
+    if (githubFetchGuardRule.enabled && githubGuard.kind === 'url-match') {
+      fetchPostToolUseHooks.push(async (input) => {
+        const url = (input as { tool_input?: { url?: unknown } }).tool_input?.url;
+        const fetched = typeof url === 'string' ? url : '';
+        if (!githubGuard.match(fetched)) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse' as const,
+            additionalContext: githubFetchGuardRule.render({ url: fetched }),
+          },
+        };
+      });
+    }
+
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
     const options: Options = {
@@ -1142,14 +1169,25 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
-      // PostToolUse Bash hooks: the atlas-svc nudge (via the engine-local `postToolUseContext` hook, shared
-      // with the Codex adapter) plus install-awareness — both assembled into `bashPostToolUseHooks` above and
-      // spread here under a single `Bash` matcher. Each callback only ATTACHES `additionalContext` to a Bash
-      // tool result (a free-form string yielded to the model after the tool result — verified against the
-      // shipped CLI; `updatedToolOutput` is shape-validated against Bash's output and would error), never
-      // altering the command or its output.
-      ...(bashPostToolUseHooks.length > 0
-        ? { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: bashPostToolUseHooks }] } }
+      // PostToolUse hooks, split by matcher group. `Bash`: the atlas-svc nudge (via the engine-local
+      // `postToolUseContext` hook, shared with the Codex adapter) plus install-awareness. Fetch tools
+      // (`WebFetch|mcp__fetch__.*`): the github-fetch guard. Each callback only ATTACHES `additionalContext` to
+      // the tool result (a free-form string yielded to the model after the tool result — verified against the
+      // shipped CLI; `updatedToolOutput` is shape-validated against the tool's output and would error), never
+      // altering the tool input or its output.
+      ...(bashPostToolUseHooks.length > 0 || fetchPostToolUseHooks.length > 0
+        ? {
+            hooks: {
+              PostToolUse: [
+                ...(bashPostToolUseHooks.length > 0
+                  ? [{ matcher: 'Bash', hooks: bashPostToolUseHooks }]
+                  : []),
+                ...(fetchPostToolUseHooks.length > 0
+                  ? [{ matcher: fetchToolMatcher, hooks: fetchPostToolUseHooks }]
+                  : []),
+              ],
+            },
+          }
         : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.

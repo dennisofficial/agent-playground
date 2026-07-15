@@ -15,7 +15,11 @@ import type { AgentMessage } from '../message';
 
 /**
  * What makes a rule fire. A tagged union so each trigger carries exactly its own matching data (d5):
- *  - `tool-match` — a tool result whose input matches `match` (returns a label for a hit, null to skip).
+ *  - `tool-match` — a Bash tool result whose `command` matches `match` (returns a label for a hit, null to skip).
+ *  - `url-match` — a URL-fetch tool result (native `WebFetch` or an MCP fetch tool, selected by `toolMatcher`)
+ *    whose `url` matches `match`. `toolMatcher` is the SDK `PostToolUse` matcher string (an unanchored JS regex
+ *    once it contains regex chars), e.g. `WebFetch|mcp__fetch__.*`; the engine registers it as its own matcher
+ *    group so only fetch tools invoke the hook.
  *  - `token-threshold` — live context occupancy crosses `softTokens`, then each further +`reminderDeltaTokens`.
  *  - `hold-timer` — a background-task hold outlives `holdMs`.
  *  - `lifecycle` — a job-lifecycle event (operator tap / approval); driven by the host-side executor.
@@ -23,6 +27,7 @@ import type { AgentMessage } from '../message';
  */
 export type JitTrigger =
   | { kind: 'tool-match'; tool: 'Bash'; match: (command: string) => string | null }
+  | { kind: 'url-match'; toolMatcher: string; match: (url: string) => string | null }
   | { kind: 'token-threshold'; softTokens: number; reminderDeltaTokens: number }
   | { kind: 'hold-timer'; holdMs: number }
   | { kind: 'lifecycle'; event: 'preview-requested' | 'plan-approved' }
@@ -49,6 +54,8 @@ export type JitDelivery =
 export type JitFireCtx = {
   /** The Bash command that matched (tool-match rules). */
   command?: string;
+  /** The URL that matched (url-match rules) — the fetched github.com/gist page. */
+  url?: string;
   /** The host-produced install-awareness checklist text (tool-match rules) — see `installAwarenessRule`. */
   installAwarenessText?: string;
   /** Which context-pressure band fired (token-threshold rules): `soft` on the first crossing, else `reminder`. */
@@ -121,6 +128,8 @@ export function validateJitRules(rules: readonly JitRule[]): void {
       positive(`${rule.id}.trigger.reminderDeltaTokens`, t.reminderDeltaTokens);
     } else if (t.kind === 'hold-timer') {
       positive(`${rule.id}.trigger.holdMs`, t.holdMs);
+    } else if (t.kind === 'url-match' && !t.toolMatcher) {
+      throw new Error(`JIT rule ${rule.id} uses a url-match trigger but declares an empty toolMatcher`);
     }
     if (rule.throttle) positive(`${rule.id}.throttle.deltaTokens`, rule.throttle.deltaTokens);
     if (rule.delivery === 'host-seed-notice' && !rule.seed) {

@@ -10,6 +10,7 @@ import {
   JIT_RULES,
   bgTaskCapRule,
   findLifecycleRule,
+  githubFetchGuardRule,
   installAwarenessRule,
   legRotationRule,
   memoryPrependRule,
@@ -19,6 +20,7 @@ import {
 } from './rules';
 import { validateJitRules } from './rule';
 import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
+import { detectGithubHtmlUrl, renderGithubFetchNudge } from './github-fetch-guard';
 import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 
@@ -52,6 +54,42 @@ describe('svcNudgeRule', () => {
     expect(svcNudgeShouldFire(null, 0, 40_000)).toBe(true);
     expect(svcNudgeShouldFire(0, 39_999, 40_000)).toBe(false);
     expect(svcNudgeShouldFire(0, 40_000, 40_000)).toBe(true);
+  });
+});
+
+describe('githubFetchGuardRule', () => {
+  it.each([
+    'https://github.com/owner/repo/tree/main',
+    'https://github.com/owner/repo/issues/1',
+    'https://gist.github.com/someone/abc',
+  ])('trigger.match fires on %j (parity with detectGithubHtmlUrl)', (url) => {
+    if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
+    expect(githubFetchGuardRule.trigger.match(url)).toBe(detectGithubHtmlUrl(url));
+    expect(githubFetchGuardRule.trigger.match(url)).not.toBeNull();
+  });
+
+  it.each(['https://raw.githubusercontent.com/o/r/main/f', 'https://api.github.com/repos/o/r', 'not a url'])(
+    'trigger.match does NOT fire on %j',
+    (url) => {
+      if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
+      expect(githubFetchGuardRule.trigger.match(url)).toBeNull();
+    },
+  );
+
+  it('watches the fetch tools and delivers as PostToolUse additionalContext', () => {
+    if (githubFetchGuardRule.trigger.kind !== 'url-match') throw new Error('expected url-match trigger');
+    expect(githubFetchGuardRule.trigger.toolMatcher).toBe('WebFetch|mcp__fetch__.*');
+    expect(githubFetchGuardRule.delivery).toBe('postToolUse-additionalContext');
+  });
+
+  it('render is byte-identical to renderGithubFetchNudge, empty when absent', () => {
+    const url = 'https://github.com/owner/repo/tree/main';
+    expect(githubFetchGuardRule.render({ url })).toBe(renderGithubFetchNudge(url));
+    expect(githubFetchGuardRule.render({})).toBe(renderGithubFetchNudge(''));
+  });
+
+  it('declares no throttle (each github fetch is a distinct mis-step worth correcting)', () => {
+    expect(githubFetchGuardRule.throttle).toBeUndefined();
   });
 });
 
@@ -154,6 +192,10 @@ describe('JIT_RULES catalog', () => {
   it('has unique ids', () => {
     const ids = JIT_RULES.map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('includes the github-fetch guard', () => {
+    expect(JIT_RULES).toContain(githubFetchGuardRule);
   });
 
   it('findLifecycleRule resolves preview-requested to previewPrepRule', () => {
