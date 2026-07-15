@@ -39,3 +39,12 @@ ds-bundle/
 
 # design-sync staged scripts + isolated deps (never commit)
 .ds-sync/
+
+# Stale pre-rename submodule checkouts left on disk at their OLD path (submodules now live under
+# submodules/, tracked as real gitlinks — see .gitmodules). These are untracked local leftovers from
+# before that move, never real repo content; ignore rather than risk committing them as broken
+# embedded git repos with no .gitmodules entry.
+/packages/ai-testing/
+/packages/jwt-auth/
+/packages/nestjs-ai-essentials/
+/packages/nestjs-core-essentials/
