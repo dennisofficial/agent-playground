@@ -8,6 +8,7 @@ import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
+import { JobBootstrapService } from '../job-bootstrap';
 import { WorkspaceSecretFileStore } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { SANDBOX_PROVIDER } from '../sandbox';
@@ -120,6 +121,9 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       [ORG_ID, repoId],
     );
     jobId = thread.id;
+
+    const bootstrap = app.get(JobBootstrapService);
+    await bootstrap.ensurePlanningStage(jobId, ORG_ID);
   });
 
   afterAll(async () => {
