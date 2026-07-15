@@ -209,7 +209,7 @@ jobs:
           file: infra/web.Dockerfile
           push: true
           build-args: |
-            NEXT_PUBLIC_HTTP_URL=https://api.atlas.dltechnologies.co
+            NEXT_PUBLIC_HTTP_URL=https://api.byatlas.io
             NEXT_PUBLIC_GIT_SHA=${{ steps.meta.outputs.sha_tag }}
           tags: |
             ${{ steps.meta.outputs.web_image }}:${{ steps.meta.outputs.sha_tag }}

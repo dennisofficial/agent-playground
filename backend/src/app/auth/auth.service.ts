@@ -145,7 +145,7 @@ export class AuthService implements OnApplicationBootstrap {
   /**
    * Clear the auth cookies across EVERY scope a browser might hold them under: this host's own
    * (host-only, or `COOKIE_DOMAIN` when set) AND the immediate parent domain
-   * (`api.atlas.dltechnologies.co` → `.atlas.dltechnologies.co`). A sibling preview app under that
+   * (`api.byatlas.io` → `.byatlas.io`). A sibling preview app under that
    * parent can leave a domain-scoped cookie that shadows prod's own; a plain `clearTokens` only
    * matches prod's scope and leaves the poison in place. Best-effort — the parent sweep is skipped
    * for a bare host / IP / localhost (fewer than 3 labels), where a Domain attribute is meaningless.
