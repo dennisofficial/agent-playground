@@ -7,10 +7,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * Pure rename — no columns added/dropped, no data moved — so a future `migration:generate` stays clean
  * against the renamed entities. RENAME in place everywhere Postgres supports it (cheap, no rebuild).
  */
-export class RenameStagesToThreadGroups1784090000000
+export class RenameStagesToThreadGroups1784091234567
   implements MigrationInterface
 {
-  name = 'RenameStagesToThreadGroups1784090000000';
+  name = 'RenameStagesToThreadGroups1784091234567';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Table
