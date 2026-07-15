@@ -1,7 +1,7 @@
 # Atlas v2 — detail & build history (NOT the canonical model)
 
 > **⚠️ The canonical model lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) + [`../../../CLAUDE.md`](../../../CLAUDE.md) — read those first.**
-> The `jobs → threads → steps` shape described below was replaced by `jobs → stages → threads → messages`
+> The `jobs → threads → steps` shape described below was replaced by `jobs → thread_groups → threads → messages`
 > (`steps`/`build_legs`/`codex_reviews` retired) — see
 > [`../../../docs/adr/0008-first-class-thread-groups.md`](../../../docs/adr/0008-first-class-thread-groups.md) for the
 > current model and why it changed.
