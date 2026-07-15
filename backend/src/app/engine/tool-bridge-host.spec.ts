@@ -28,6 +28,20 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
     expect(impl).not.toHaveBeenCalled();
     expect(reply).toMatchObject({ t: 'tool_error' });
   });
+
+  it('EXEMPTS the repo-level atlas-prod tools from the scope guard (a foreign jobId is dispatched, not denied)', async () => {
+    const impl = vi.fn(async () => ({ ok: true }));
+    const bridge: ToolBridgeOptions = { jobId: 'j1', tools: { atlas_job_overview: impl } };
+    const foreign: ToolRequestFrame = {
+      t: 'tool_request',
+      id: 'x',
+      name: 'atlas_job_overview',
+      args: { jobId: 'another-job-in-the-repo' },
+    } as unknown as ToolRequestFrame;
+    const reply = await dispatchToolRequest(bridge, foreign);
+    expect(impl).toHaveBeenCalledWith({ jobId: 'another-job-in-the-repo' });
+    expect(reply).toMatchObject({ t: 'tool_response', result: { ok: true } });
+  });
 });
 
 describe('dispatchToolRequest — a thrown error is NEVER serialised as an empty message', () => {

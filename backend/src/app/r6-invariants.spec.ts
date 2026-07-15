@@ -157,9 +157,13 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
    */
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
     const src = readFileSync(join(SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
-    // The guard: if args includes a jobId field it must match the owning thread.
+    // The guard: for a THREAD-SCOPED tool, if args includes a jobId field it must match the owning thread.
     expect(src).toContain('Thread scope violation');
     expect(src).toContain("args['jobId'] !== bridge.jobId");
+    // The repo-level atlas-prod diagnostics tools are EXEMPT (they take an explicit jobId by design to
+    // inspect any job in the repo), so the guard must skip them — assert the exemption stays wired.
+    expect(src).toContain('CROSS_JOB_TOOL_NAMES');
+    expect(src).toContain('!CROSS_JOB_TOOL_NAMES.has(name)');
   });
 
   it('RedisEngineRunner dispatches host tools through dispatchToolRequest (scope-enforced path)', () => {
