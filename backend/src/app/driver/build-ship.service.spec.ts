@@ -67,14 +67,14 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
-      // The ship path ensures a fresh `post_build` stage-thread and runs the open-PR turn on its session.
+      // The ship path ensures a fresh `post_build` thread group thread and runs the open-PR turn on its session.
       ensurePostBuildThread: vi.fn(async () => ({
-        stageId: 'stage1',
+        threadGroupId: 'tg1',
         threadId: 'pb1',
       })),
-      // latchPr ensures the `ci` stage-thread exists once the PR is recorded (post-ship seam, d14).
+      // latchPr ensures the `ci` thread group thread exists once the PR is recorded (post-ship seam, d14).
       ensureCiThread: vi.fn(async () => ({
-        stageId: 'stage2',
+        threadGroupId: 'tg2',
         threadId: 'ci1',
       })),
       ...over,

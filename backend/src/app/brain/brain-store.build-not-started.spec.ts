@@ -35,7 +35,7 @@ function makeStore(opts: {
     stub, // messages
     stub, // records
     opts.threads,
-    stub, // stages
+    stub, // threadGroups
     stub, // stimuli
     stub, // dataSource
     stub, // titler

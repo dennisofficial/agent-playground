@@ -70,7 +70,7 @@ export class GithubPrStateSync {
     if (job.pr_number == null) {
       await this.driverStore.setPrReady(job.id, url, number);
       // Post-ship seam (d14): mirror build-ship's ensureCiThread — the webhook fast path is a second route
-      // to "PR recorded", so it must ensure the ci stage-thread exists too, not just the driver's own latchPr.
+      // to "PR recorded", so it must ensure the ci thread group thread exists too, not just the driver's own latchPr.
       await this.driverStore.ensureCiThread({
         jobId: job.id,
         orgId: job.org_id,

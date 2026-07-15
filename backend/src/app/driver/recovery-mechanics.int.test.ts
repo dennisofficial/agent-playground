@@ -135,7 +135,7 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
   beforeEach(async () => {
     await ds.query(
-      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -154,7 +154,7 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
   }
 
   /**
-   * Seeds a single stage-owned thread (every thread now requires a non-null `stage_id`). Columns the store's
+   * Seeds a single thread-group-owned thread (every thread now requires a non-null `thread_group_id`). Columns the store's
    * create surface doesn't take (status/condition/terminal_record/halt_fix_attempts) are stamped directly so
    * the tests can reproduce the exact wedged-row shapes.
    */
@@ -171,13 +171,13 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
       haltFixAttempts?: number;
     },
   ): Promise<ThreadEntity> {
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId,
       orgId: ORG_ID,
       kind: 'build',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId,
       orgId: ORG_ID,
       role: opts.role ?? 'builder',
@@ -228,7 +228,7 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      stages: Array<{
+      threadGroups: Array<{
         threads: Array<{
           id: string;
           blockReason: string | null;
@@ -238,7 +238,7 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     };
 
     const byId = new Map(
-      state.stages.flatMap((s) => s.threads).map((t) => [t.id, t]),
+      state.threadGroups.flatMap((s) => s.threads).map((t) => [t.id, t]),
     );
     const a = byId.get(acceptable.id);
     const b = byId.get(notAcceptable.id);

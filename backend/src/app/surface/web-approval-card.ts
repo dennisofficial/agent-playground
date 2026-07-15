@@ -41,7 +41,8 @@ export interface WebApprovalCard {
   decisionRecordId?: string;
   /**
    * Which gate the card is for:
-   * - `plan` (full ceremony) / `direct` (fast path) — the plan-stage approval (Approve/Deny buttons).
+   * - `plan` (full ceremony) / `direct` (fast path) — the planning thread group's approval (Approve/Deny
+   *   buttons).
    * - `ship` — the ship-review gate (`Ship it` + `Amend build`; `threads`/`decisions` empty).
    * - `amend` — the brain's "Amend build?" PROPOSAL at the ship gate (`Approve amend` + `Dismiss`); the
    *   gate stays parked until the operator approves. `threads`/`decisions` empty.

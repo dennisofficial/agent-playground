@@ -19,9 +19,9 @@ function makeSync() {
   } as unknown as JobLifecycleService;
   const driverStore = {
     setPrReady: vi.fn(),
-    // The post-ship seam (d14): onPrOpened ensures the `ci` stage-thread exists once the PR is recorded.
+    // The post-ship seam (d14): onPrOpened ensures the `ci` thread group thread exists once the PR is recorded.
     ensureCiThread: vi.fn(async () => ({
-      stageId: 'stage-ci',
+      threadGroupId: 'tg-ci',
       threadId: 'ci-1',
     })),
   } as unknown as DriverStoreService;

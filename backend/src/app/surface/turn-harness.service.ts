@@ -12,7 +12,7 @@ import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
-  StageEntity,
+  ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
   type TaskItem,
@@ -192,7 +192,7 @@ export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
  * became. The SDK's own task-tool id space is only unique WITHIN a session — reconciling it against a
  * real table (whose PK is a DB-generated uuid, see `TaskEntity.id`) needs this side-map so a later
  * `TaskUpdate({taskId: "8"})` in the SAME session finds the row `TaskCreate` produced. Rows preloaded
- * from the DB (the stage's tasks from an earlier session, e.g. after rotation or a process restart) are
+ * from the DB (the thread group's tasks from an earlier session, e.g. after rotation or a process restart) are
  * seeded with an identity mapping (their own row id doubles as its "sdk id") — a genuine SDK id never
  * collides with a uuid, so this is a safe, allocation-free default.
  */
@@ -204,7 +204,7 @@ interface TaskFoldCache {
 /**
  * The default {@link TaskEventSink} — folds `TaskCreate`/`TaskUpdate` tool events (via the existing
  * `foldTaskEvent`, unchanged) into an in-memory per-scope snapshot, then reconciles that snapshot against
- * the stage's durable `tasks` rows (d6) — replacing the old direct read-modify-write of the
+ * the thread group's durable `tasks` rows (d6) — replacing the old direct read-modify-write of the
  * `threads.tasks` / `jobs.main_tasks` jsonb blobs those columns used to hold.
  */
 @Injectable()
@@ -212,8 +212,8 @@ export class EntityTaskEventSink implements TaskEventSink {
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StageEntity, DB_CONNECTION)
-    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
+    private readonly threadGroups: Repository<ThreadGroupEntity>,
     @InjectRepository(TaskEntity, DB_CONNECTION)
     private readonly tasks: Repository<TaskEntity>,
   ) {}
@@ -228,7 +228,7 @@ export class EntityTaskEventSink implements TaskEventSink {
   private readonly chains = new Map<string, Promise<void>>();
 
   /** The in-memory fold snapshot per scope key (see {@link TaskFoldCache}) — lazily seeded from the
-   *  stage's current `tasks` rows on this scope's first event since process start. */
+   *  thread group's current `tasks` rows on this scope's first event since process start. */
   private readonly cache = new Map<string, TaskFoldCache>();
 
   applyTaskEvent(
@@ -251,35 +251,35 @@ export class EntityTaskEventSink implements TaskEventSink {
     return run;
   }
 
-  /** Resolve the stage that owns this scope's shared checklist: a `thread` scope's own `stage_id`, or a
-   *  `main` scope's job's `planning` stage (mirrors `DriverStoreService.planningThreadId`'s lookup). */
-  private async resolveStageId(
+  /** Resolve the thread group that owns this scope's shared checklist: a `thread` scope's own `thread_group_id`, or a
+   *  `main` scope's job's `planning` thread group (mirrors `DriverStoreService.planningThreadId`'s lookup). */
+  private async resolveThreadGroupId(
     scope: TaskScope,
-  ): Promise<{ stageId: string; orgId: string } | null> {
+  ): Promise<{ threadGroupId: string; orgId: string } | null> {
     if (scope.kind === 'thread') {
       const thread = await this.threads.findOne({
         where: { id: scope.id },
-        select: { id: true, stage_id: true, org_id: true },
+        select: { id: true, thread_group_id: true, org_id: true },
       });
-      return thread ? { stageId: thread.stage_id, orgId: thread.org_id } : null;
+      return thread ? { threadGroupId: thread.thread_group_id, orgId: thread.org_id } : null;
     }
-    // scope.kind === 'main' — the job's planning stage owns the brain's own checklist.
-    const stage = await this.stages.findOne({
+    // scope.kind === 'main' — the job's planning thread group owns the brain's own checklist.
+    const threadGroup = await this.threadGroups.findOne({
       where: { job_id: scope.id, kind: 'planning' },
       order: { ordinal: 'ASC' },
       select: { id: true, org_id: true },
     });
-    return stage ? { stageId: stage.id, orgId: stage.org_id } : null;
+    return threadGroup ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id } : null;
   }
 
   private async seedCache(
     key: string,
-    stageId: string,
+    threadGroupId: string,
   ): Promise<TaskFoldCache> {
     const existing = this.cache.get(key);
     if (existing) return existing;
     const rows = await this.tasks.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
     });
     const rowIdBySdkId = new Map<string, string>();
@@ -299,10 +299,10 @@ export class EntityTaskEventSink implements TaskEventSink {
     input: Record<string, unknown>,
     result: unknown,
   ): Promise<void> {
-    const resolved = await this.resolveStageId(scope);
+    const resolved = await this.resolveThreadGroupId(scope);
     if (!resolved) return;
-    const { stageId, orgId } = resolved;
-    const before = await this.seedCache(key, stageId);
+    const { threadGroupId, orgId } = resolved;
+    const before = await this.seedCache(key, threadGroupId);
     const after = foldTaskEvent(before.items, toolName, input, result);
     if (after === before.items) return; // a read-only task tool (TaskList/TaskGet) — no-op fold
 
@@ -324,11 +324,11 @@ export class EntityTaskEventSink implements TaskEventSink {
       rowIdBySdkId.delete(prev.id);
     }
 
-    // Creates + updates, in the fold's own order (its ordinal). Only look up the stage's current max
+    // Creates + updates, in the fold's own order (its ordinal). Only look up the thread group's current max
     // ordinal when there's at least one genuine create to gap-number — a pure update/delete fold never
     // touches it.
     const hasCreate = after.some((item) => !resolveRowId(item.id));
-    let ordinal = hasCreate ? await this.maxTaskOrdinal(stageId) : 0;
+    let ordinal = hasCreate ? await this.maxTaskOrdinal(threadGroupId) : 0;
     for (const item of after) {
       const blockedBy = (item.blockedBy ?? [])
         .map((b) => resolveRowId(b))
@@ -339,7 +339,7 @@ export class EntityTaskEventSink implements TaskEventSink {
         ordinal += 10;
         const created = await this.tasks.save(
           this.tasks.create({
-            stage_id: stageId,
+            thread_group_id: threadGroupId,
             org_id: orgId,
             ordinal,
             title: item.subject,
@@ -376,17 +376,17 @@ export class EntityTaskEventSink implements TaskEventSink {
     this.cache.set(key, { items: after, rowIdBySdkId });
   }
 
-  private async maxTaskOrdinal(stageId: string): Promise<number> {
+  private async maxTaskOrdinal(threadGroupId: string): Promise<number> {
     const row = await this.tasks
       .createQueryBuilder('t')
       .select('MAX(t.ordinal)', 'max')
-      .where('t.stage_id = :stageId', { stageId })
+      .where('t.thread_group_id = :threadGroupId', { threadGroupId })
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
   }
 }
 
-/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
+/** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
  *  `DriverStoreService`'s own copy — kept local to avoid a cross-module dependency on the driver). */
 function toTaskItem(row: TaskEntity): TaskItem {
   return {

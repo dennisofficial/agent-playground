@@ -202,14 +202,14 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — accept refuse', 'running')`,
     [JOB_ACCEPT_REFUSE, ORG, REPO],
   );
-  const [stageAcceptRefuse] = await ds.query(
-    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+  const [threadGroupAcceptRefuse] = await ds.query(
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [JOB_ACCEPT_REFUSE, ORG],
   );
   await threads.save(
     threads.create({
       id: THREAD_ACCEPT_REFUSE,
-      stage_id: stageAcceptRefuse.id,
+      thread_group_id: threadGroupAcceptRefuse.id,
       role: 'builder',
       job_id: JOB_ACCEPT_REFUSE,
       org_id: ORG,
@@ -228,14 +228,14 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — retry refuse', 'running')`,
     [JOB_RETRY_REFUSE, ORG, REPO],
   );
-  const [stageRetryRefuse] = await ds.query(
-    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+  const [threadGroupRetryRefuse] = await ds.query(
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [JOB_RETRY_REFUSE, ORG],
   );
   await threads.save(
     threads.create({
       id: THREAD_RETRY_REFUSE,
-      stage_id: stageRetryRefuse.id,
+      thread_group_id: threadGroupRetryRefuse.id,
       role: 'builder',
       job_id: JOB_RETRY_REFUSE,
       org_id: ORG,
@@ -254,14 +254,14 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — accept happy path', 'running')`,
     [JOB_ACCEPT_OK, ORG, REPO],
   );
-  const [stageAcceptOk] = await ds.query(
-    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+  const [threadGroupAcceptOk] = await ds.query(
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [JOB_ACCEPT_OK, ORG],
   );
   await threads.save(
     threads.create({
       id: THREAD_ACCEPT_OK,
-      stage_id: stageAcceptOk.id,
+      thread_group_id: threadGroupAcceptOk.id,
       role: 'builder',
       job_id: JOB_ACCEPT_OK,
       org_id: ORG,

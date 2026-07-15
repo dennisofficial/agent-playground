@@ -181,7 +181,7 @@ function makeRegistry(running: (jobId: string) => boolean = () => false) {
 function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-1'),
-    ensurePlanningStage: vi.fn(async () => undefined),
+    ensurePlanningThreadGroup: vi.fn(async () => undefined),
   } as unknown as import('../job-bootstrap').JobBootstrapService;
 }
 

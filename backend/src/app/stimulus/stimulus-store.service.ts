@@ -80,13 +80,13 @@ export class StimulusStoreService {
     private readonly stimuli: Repository<StimulusEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
-    // Bootstraps a freshly-seeded thread's ONE planning stage + thread (d7: `stage_id` is never null).
+    // Bootstraps a freshly-seeded thread's ONE planning thread group + thread (d7: `thread_group_id` is never null).
     // @Optional (trailing) so the existing direct-construction unit tests (positional args) keep compiling
     // without a trailing argument.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
-  /** The job's planning-stage thread id — the anchor a job-level message row is stamped onto
+  /** The job's planning thread group thread id — the anchor a job-level message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
     if (!this.jobBootstrap)
@@ -119,9 +119,9 @@ export class StimulusStoreService {
         title: input.title,
       }),
     );
-    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for an
+    // Bootstrap the thread's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for an
     // event-seeded thread that never gets a plan proposed.
-    await this.jobBootstrap?.ensurePlanningStage(thread.id, input.orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, input.orgId);
     const threadId = await this.planningThreadId(thread.id);
 
     const message = await this.messages.save(
@@ -195,7 +195,7 @@ export class StimulusStoreService {
    * machinery drives delivery. Dedup rides the SAME (org, repo, source, dedupe_key) unique index — a
    * repeated conflict/CI/review event collapses to one delivered message.
    *
-   * ROUTING (thread 4 §CI-routing): once the job's `ci` stage-thread exists (post-ship —
+   * ROUTING (thread 4 §CI-routing): once the job's `ci` thread group thread exists (post-ship —
    * `DriverStoreService.ensureCiThread`), the event's `messages` row AND its `stimuli.lane` both target
    * that thread (`thread:<ciThreadId>`) instead of planning, so `EventStimulus.resumeThreadId` (derived
    * back from `lane` on read — see `rowToEventStimulus`) resumes the `ci` thread's own session. Pre-ship
@@ -216,7 +216,7 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    await this.jobBootstrap?.ensurePlanningStage(input.jobId, input.orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
     const ciThreadId =
       (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
@@ -379,7 +379,7 @@ export class StimulusStoreService {
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
     // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
     if (!input.lane?.startsWith('thread:')) {
-      await this.jobBootstrap?.ensurePlanningStage(input.jobId, input.orgId);
+      await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
     }
     const threadId = input.lane?.startsWith('thread:')
       ? input.lane.slice('thread:'.length)

@@ -705,11 +705,11 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
       { id: '1', title: 'a', status: 'pending' },
       { id: '2', title: 'b', status: 'pending' },
     ]);
-    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threadGroups = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
     const threads = { findOne: vi.fn() };
     const sink = new EntityTaskEventSink(
       threads as never,
-      stages as never,
+      threadGroups as never,
       tasks as never,
     );
 
@@ -734,13 +734,13 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
 
   it('creates a row for a TaskCreate then updates the SAME row on a later TaskUpdate by its SDK id', async () => {
     const tasks = fakeTasksRepo([]);
-    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threadGroups = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
     const threads = {
-      findOne: vi.fn(async () => ({ id: 'th1', stage_id: 'S', org_id: 'O' })),
+      findOne: vi.fn(async () => ({ id: 'th1', thread_group_id: 'S', org_id: 'O' })),
     };
     const sink = new EntityTaskEventSink(
       threads as never,
-      stages as never,
+      threadGroups as never,
       tasks as never,
     );
     const scope = { kind: 'thread' as const, id: 'th1' };

@@ -201,7 +201,7 @@ export class BuildShipService {
     const confirmed = await this.discoverOpenPr(repo, sandbox);
     if (confirmed) {
       await this.store.setPrReady(job.id, confirmed.url, confirmed.number);
-      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` stage-thread exists so inbound
+      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` thread group thread exists so inbound
       // GitHub/CI events have somewhere to route (the routing itself is thread 4's §CI-routing seam).
       await this.store.ensureCiThread({
         jobId: job.id,

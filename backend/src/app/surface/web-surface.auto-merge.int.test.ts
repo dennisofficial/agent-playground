@@ -160,7 +160,7 @@ async function seedGreenJob(
              'open', $5, 'clean', 'success')`,
     [jobId, ORG, REPO, title, prNumber],
   );
-  await bootstrap.ensurePlanningStage(jobId, ORG);
+  await bootstrap.ensurePlanningThreadGroup(jobId, ORG);
 }
 
 async function waitFor(
