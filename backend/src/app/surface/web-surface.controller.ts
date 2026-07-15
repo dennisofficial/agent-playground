@@ -736,6 +736,10 @@ export function formatReviewComments(
 export class WebSurfaceController {
   private readonly logger = new Logger(WebSurfaceController.name);
 
+  // Re-slam guard for the manual "Retry"/"Resume" buttons (see `claimManualRetry`) — deliberately short,
+  // just long enough to absorb a double-click or a duplicate caller re-firing within the same beat.
+  private static readonly MANUAL_RETRY_COOLDOWN_MS = 4_000;
+
   constructor(
     private readonly surface: WebSurface,
     private readonly liveTurns: LiveTurnStore,
@@ -1534,6 +1538,27 @@ export class WebSurfaceController {
   }
 
   /**
+   * CAS-claim a manual retry slot for this job: atomically stamps `retry_last_attempt_at = now()` iff the
+   * column is null OR older than the cooldown window, returning whether the claim succeeded. Durable +
+   * instance-agnostic (an HTTP retry can land on any backend instance, so an in-memory Map would be unsafe) —
+   * this is the SAME `jobs.retry_last_attempt_at` column the auto-retry lanes stamp, so a manual click and an
+   * auto-retry share one cooldown clock per job.
+   */
+  private async claimManualRetry(jobId: string): Promise<boolean> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ retry_last_attempt_at: () => 'now()' })
+      .where('id = :jobId', { jobId })
+      .andWhere(
+        "(retry_last_attempt_at IS NULL OR retry_last_attempt_at < now() - (:cooldownMs || ' milliseconds')::interval)",
+        { cooldownMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS },
+      )
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
+  /**
    * `POST …/threads/:jobId/retry` — the halted-build "Retry" button. Re-drives a HALTED build (a job
    * carrying a `halt`) through the deterministic, resumable driver (`JOB_DISPATCHER.retry` → flips back to
    * `running`, fast-forwards finished work, continues at the first unfinished step). `status` (the build
@@ -1542,17 +1567,30 @@ export class WebSurfaceController {
    *
    * Also the build-lane FORCE-resume for a `session_limit` park: `ThreadDriver.retry` un-halts any halt kind
    * (session_limit included) and clears the auto-resume clock, so this same endpoint resumes a parked build early.
+   *
+   * A bare click carries a short server-side re-slam cooldown (`claimManualRetry`); pass `?force=true` (the
+   * session-limit "Force resume now" affordance) to skip it.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry')
   @UseGuards(OrgMembershipGuard)
   async retry(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
+    @Query('force') force?: string,
   ): Promise<{ ok: boolean; status: string }> {
     const thread = await this.requireThread(jobId, org.id);
     if (!thread.halt) {
       // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
       return { ok: false, status: thread.status };
+    }
+    if (force !== 'true') {
+      const claimed = await this.claimManualRetry(jobId);
+      if (!claimed) {
+        throw new HttpException(
+          { status: 'cooling_down', retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
     }
     await this.dispatcher.retry(jobId);
     return { ok: true, status: 'running' };
@@ -1615,14 +1653,27 @@ export class WebSurfaceController {
    * `provide-secret`/`answer-question` already use) that resumes the SAME engine session
    * (`resume: sessionId`, already the default across turns) with a minimal harness-authored nudge — never
    * a new operator-authored chat bubble, and never repeats the original request back to the engine.
+   *
+   * A bare click carries a short server-side re-slam cooldown (`claimManualRetry`, shared with `/retry`);
+   * pass `?force=true` (the session-limit "Force resume now" affordance) to skip it.
    */
   @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/retry-turn')
   @UseGuards(OrgMembershipGuard)
   async retryTurn(
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
+    @Query('force') force?: string,
   ): Promise<{ ok: boolean }> {
     const thread = await this.requireThread(jobId, org.id);
+    if (force !== 'true') {
+      const claimed = await this.claimManualRetry(jobId);
+      if (!claimed) {
+        throw new HttpException(
+          { status: 'cooling_down', retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
     // Name the task in the resume nudge — a bare "Please continue." on a cold re-attach can leave the brain
     // disoriented (it re-asks what to continue). The title gives the resumed turn its bearings.
     const resumeNudge = retryResumeNudge(thread.title ?? undefined);

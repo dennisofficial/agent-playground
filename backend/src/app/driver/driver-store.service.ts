@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -240,10 +240,16 @@ export class DriverStoreService {
   }
 
   /** Every thread `running` AND not halted — the boot-reconciliation worklist. The `halt IS NULL` filter is
-   *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can). */
+   *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can).
+   *  Also leave future `session_resume_at` retry parks alone: the session-resume sweep owns those clocks, and
+   *  boot `resume()` must not clear/re-drive a still-cooling host retry early. */
   async runningJobs(): Promise<Job[]> {
     const rows = await this.jobs.find({
-      where: { status: 'running', halt: IsNull() },
+      where: {
+        status: 'running',
+        halt: IsNull(),
+        session_resume_at: Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`),
+      },
     });
     return rows.map(toJob);
   }
@@ -1197,6 +1203,55 @@ export class DriverStoreService {
       .execute();
     const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** CAS-claim one auth transient-error auto-retry attempt (driver lane). Atomically increment
+   *  `auth_retry_attempts` iff still below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}`
+   *  on success, else `{ok:false, used:cap}` (budget exhausted). Durable so a restart/crash-loop can't
+   *  re-grant a fresh budget. */
+  async claimAuthRetryAttempt(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ auth_retry_attempts: () => 'auth_retry_attempts + 1', retry_last_attempt_at: () => 'now()' })
+      .where('id = :jobId', { jobId })
+      .andWhere('auth_retry_attempts < :cap', { cap })
+      .returning('auth_retry_attempts')
+      .execute();
+    const used = res.raw?.[0]?.auth_retry_attempts as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** CAS-claim one host-transport transient-error auto-retry attempt (driver lane). Same shape as
+   *  {@link claimAuthRetryAttempt} against `driver_transient_retries`. */
+  async claimDriverTransientRetry(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ driver_transient_retries: () => 'driver_transient_retries + 1', retry_last_attempt_at: () => 'now()' })
+      .where('id = :jobId', { jobId })
+      .andWhere('driver_transient_retries < :cap', { cap })
+      .returning('driver_transient_retries')
+      .execute();
+    const used = res.raw?.[0]?.driver_transient_retries as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** Reset the driver's SESSION-scoped retry budgets to 0 on a clean drive. Does NOT touch
+   *  `retry_last_attempt_at` nor the brain's own lane columns. */
+  async clearDriverRetryCounters(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { auth_retry_attempts: 0, driver_transient_retries: 0 });
+  }
+
+  /** Read back the durable driver-transient-retry state (count + last-attempt timestamp) so a boot
+   *  re-entry into `runJobWithTransientRetry` can honor an in-flight cooldown instead of re-driving
+   *  immediately after a restart. */
+  async driverTransientRetryState(jobId: string): Promise<{ count: number; lastAttemptAt: Date | null }> {
+    const row = await this.jobs.findOne({
+      where: { id: jobId },
+      select: { id: true, driver_transient_retries: true, retry_last_attempt_at: true },
+    });
+    return { count: row?.driver_transient_retries ?? 0, lastAttemptAt: row?.retry_last_attempt_at ?? null };
   }
 
   /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets

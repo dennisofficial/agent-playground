@@ -296,6 +296,30 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'timestamptz', nullable: true })
   session_resume_at!: Date | null;
 
+  /** Durable mirror of AgentSessionManager.benignAbortRedrives. Reset to 0 on a clean turn; survives a
+   *  restart/crash-loop so a stuck job can't silently regain a fresh in-memory budget on every boot. */
+  @Column({ type: 'int', default: 0 })
+  benign_abort_redrives!: number;
+
+  /** Durable mirror of AgentSessionManager.transientRetryRedrives (host-transport auto-retry budget). */
+  @Column({ type: 'int', default: 0 })
+  transient_retry_redrives!: number;
+
+  /** Durable mirror of ThreadDriver.authRetryAttempts (transient-auth auto-retry budget). */
+  @Column({ type: 'int', default: 0 })
+  auth_retry_attempts!: number;
+
+  /** Durable mirror of the ThreadDriver.runJobWithTransientRetry loop counter (transient-drive infra-blip
+   *  budget) — today a bare local var that resets on every drive() re-entry AND every restart. */
+  @Column({ type: 'int', default: 0 })
+  driver_transient_retries!: number;
+
+  /** Last time ANY retry fired for this job (auto host-retry OR a manual Resume). Backstops the auto-retry
+   *  backoff across a restart (so a crash-loop can't fire retries back-to-back) and powers the manual
+   *  re-slam cooldown (thread 2). Null = never retried. */
+  @Column({ type: 'timestamptz', nullable: true })
+  retry_last_attempt_at!: Date | null;
+
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the
    * brain hasn't been told about yet + the watermark of the last pipeline state conveyed. Drained and

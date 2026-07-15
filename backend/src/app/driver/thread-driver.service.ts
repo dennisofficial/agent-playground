@@ -51,6 +51,7 @@ import {
   INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '../engine/engine.types';
 import { ProfileAwarenessService } from '../workspace-profile';
+import { summarizeTurnFailure } from '../engine/turn-failure-summary';
 import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
@@ -241,6 +242,11 @@ type StageDriveResult =
  * via its `terminal_record`/report — so a raw exception at the driver level is almost always infra. The few
  * exceptions that are genuinely terminal (auth → paused; detached → boot re-attach; unresumable session; a
  * runaway PHASE_TIMEOUT that must not re-run for another full timeout) are excluded so drive() handles them.
+ * Classification-consistency check (post-#231): the build lane's own `turn-runner.service.ts` still throws a
+ * typed `EngineSessionLimitError` directly (unlike the brain's engine-core, which now latches a mid-turn
+ * limit into a clean `result.sessionLimit`), and `drive()`'s catch classifies `isSessionLimitError(err)`
+ * BEFORE this predicate is ever consulted — so the `EngineSessionLimitError` exclusion below is real
+ * defense-in-depth, not dead code, and no session-limit error can fall through to a `retryable`/`failed` box.
  */
 function isTransientDriveError(err: unknown): boolean {
   if (err instanceof EngineAuthError) return false; // → paused
@@ -383,14 +389,6 @@ export class ThreadDriver implements JobDispatcher {
       throw new Error('thread-driver: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
-
-  /**
-   * Per-job auto-retry counter for the "lost the rotation race" auth halt (Thread 1, step 6). In-memory by
-   * design — no schema migration is allowed for this fix, and the residual (a process restart forgets the
-   * count) only ever GRANTS a fresh retry budget, never hangs. Cleared on a successful drive and on the
-   * terminal `needs_reauth` surfacing.
-   */
-  private readonly authRetryAttempts = new Map<string, number>();
 
   /** In-process 10s re-drive timers for host auth/transport retries (per job). The durable session_resume
    *  clock (kind:'retry') is the restart backstop; whichever fires first clears the clock. */
@@ -562,6 +560,10 @@ export class ThreadDriver implements JobDispatcher {
         `resumePaused job=${jobId} — re-armed ${rearmed} halted thread(s)`,
       );
     }
+    // OPERATOR RE-ARM (driver-transient lane): an explicit resume always starts a fresh transient-drive
+    // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
+    // re-entry. Boot `resume()` never calls `resumePaused()`, so it still keeps the accumulated, restart-safe count.
+    await this.store.clearDriverRetryCounters(jobId);
     // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
     await this.store.clearJobHalt(jobId);
     // Clear the durable auto-resume clock too, so the leader sweep never re-fires this resume (no-op for a
@@ -642,6 +644,10 @@ export class ThreadDriver implements JobDispatcher {
         `retry job=${jobId} — re-armed ${rearmed} halted thread(s)`,
       );
     }
+    // OPERATOR RE-ARM (driver-transient lane): an explicit human retry always starts a fresh transient-drive
+    // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
+    // re-entry. Boot `resume()` never calls `retry()`, so it still keeps the accumulated, restart-safe count.
+    await this.store.clearDriverRetryCounters(jobId);
     // Clear the halt (the invariant: only retry/resumePaused/redriveThread may un-halt) and re-drive. The
     // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
     // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
@@ -732,6 +738,10 @@ export class ThreadDriver implements JobDispatcher {
     // Clear the JOB-level phase-preserving halt too (budget-aware recovery path): the brain's authorized
     // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
     await this.store.clearJobHalt(jobId).catch(() => undefined);
+    // OPERATOR/BRAIN RE-ARM (driver-transient lane): this re-drive re-enters `drive()` too, so it needs the
+    // same fresh transient-drive retry budget `retry`/`resumePaused` grant — mirrors the old function-local
+    // `attempt` counter's every-drive() reset.
+    await this.store.clearDriverRetryCounters(jobId).catch(() => undefined);
     await this.store
       .setThreadStatus(threadId, 'executing')
       .catch(() => undefined);
@@ -920,8 +930,8 @@ export class ThreadDriver implements JobDispatcher {
     try {
       await this.runJobWithTransientRetry(jobId);
       // A clean drive clears the lost-rotation-race auto-retry budget so a future, unrelated auth halt on
-      // this job starts fresh.
-      this.authRetryAttempts.delete(jobId);
+      // this job starts fresh. Resets BOTH driver retry lanes (auth + transient-drive).
+      await this.store.clearDriverRetryCounters(jobId);
     } catch (err) {
       if (isEngineDetachedError(err)) {
         // The host lost its tail to a still-running turn (see EngineDetachedError) — the engine is alive and
@@ -1051,19 +1061,30 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async runJobWithTransientRetry(jobId: string): Promise<void> {
     const maxRetries = MAX_HOST_RETRIES;
-    for (let attempt = 0; ; attempt++) {
+    // Restart-safe re-entry: a retry may already have been in flight when the process died mid-backoff
+    // (the durable claim below stamps `retry_last_attempt_at` the instant it's granted). Honor whatever's
+    // left of that cooldown window before driving again, so a boot resume can't fire off immediately after
+    // a claim it never got to sleep out. A fresh entry (no prior claim, or one aged past the window) waits
+    // zero.
+    const { count, lastAttemptAt } = await this.store.driverTransientRetryState(jobId);
+    if (count > 0 && lastAttemptAt) {
+      const remaining = HOST_RETRY_BACKOFF_MS - (Date.now() - lastAttemptAt.getTime());
+      if (remaining > 0) {
+        await new Promise((r) => setTimeout(r, remaining));
+      }
+    }
+    for (;;) {
       try {
         await this.runJob(jobId);
         return;
       } catch (err) {
-        if (
-          this.election.isDraining() ||
-          attempt >= maxRetries ||
-          !isTransientDriveError(err)
-        ) {
+        if (this.election.isDraining() || !isTransientDriveError(err)) {
           throw err;
         }
-        const n = attempt + 1;
+        const { ok, used: n } = await this.store.claimDriverTransientRetry(jobId, maxRetries);
+        if (!ok) {
+          throw err;
+        }
         this.logger.warn(
           `job=${jobId} transient drive error (attempt ${n}/${maxRetries}) — retrying in ${HOST_RETRY_BACKOFF_MS}ms: ${
             err instanceof Error ? err.message : err
@@ -1104,36 +1125,36 @@ export class ThreadDriver implements JobDispatcher {
       isClaudeAuthHalt && orgId && this.claudeCreds
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
-    const attempts = this.authRetryAttempts.get(jobId) ?? 0;
-
-    if (isTransientAuthError(err) && attempts < MAX_HOST_RETRIES) {
-      // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
-      // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
-      const n = attempts + 1;
-      this.authRetryAttempts.set(jobId, n);
-      await this.relayRetrying(jobId, n, MAX_HOST_RETRIES);
-      const lane = await this.retryLaneForJob(jobId);
-      try {
-        this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
-          attempt: n,
-          max: MAX_HOST_RETRIES,
-          nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
-        });
-      } catch {
-        // live-only fan — never let a UI-indicator hiccup break the retry.
+    if (isTransientAuthError(err)) {
+      const { ok, used: n } = await this.store.claimAuthRetryAttempt(jobId, MAX_HOST_RETRIES);
+      if (ok) {
+        // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
+        // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
+        await this.relayRetrying(jobId, n, MAX_HOST_RETRIES);
+        const lane = await this.retryLaneForJob(jobId);
+        try {
+          this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
+            attempt: n,
+            max: MAX_HOST_RETRIES,
+            nextAttemptAt: Date.now() + HOST_RETRY_BACKOFF_MS,
+          });
+        } catch {
+          // live-only fan — never let a UI-indicator hiccup break the retry.
+        }
+        await this.scheduleBuildHostRetry(jobId, err.message);
+        this.logger.warn(
+          `job=${jobId} transient auth halt — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms`,
+        );
+        return;
       }
-      await this.scheduleBuildHostRetry(jobId, err.message);
-      this.logger.warn(
-        `job=${jobId} transient auth halt — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms`,
-      );
-      return;
     }
 
     // SURFACE (deterministic-fatal, or the retry budget is spent): set the halt HERE (renders the paused
     // banner), flip the selected cred to `needs_reauth` so Settings shows a reconnect affordance, then post a
     // pause notice and wait for the human. Only claim the login is dead (the actionable reconnect copy) when
-    // we actually marked it; otherwise fall back to the generic credential-pause notice.
-    this.authRetryAttempts.delete(jobId);
+    // we actually marked it; otherwise fall back to the generic credential-pause notice. Resets BOTH driver
+    // retry lanes (auth + transient-drive) — this is a genuine terminal auth-halt surface for this job.
+    await this.store.clearDriverRetryCounters(jobId);
     if (
       err.engine === 'codex' &&
       (await this.inFlightThreadIsMasterReview(jobId))
@@ -1320,13 +1341,14 @@ export class ThreadDriver implements JobDispatcher {
       overrideText != null
         ? `:lock: Build paused — ${overrideText}\n_Your work + the engine session are saved; resume (or reply here) to continue the SAME session._`
         : `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
+    const { summary } = summarizeTurnFailure(err);
     const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'warning' },
+        meta: { source: 'system_operator', severity: 'warning', category: 'auth', summary },
       })
       .catch((e) =>
         this.logger.error(
@@ -1367,6 +1389,8 @@ export class ThreadDriver implements JobDispatcher {
             source: 'system_operator',
             severity: 'warning',
             sessionLimit: true,
+            category: 'session_limit',
+            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         })
@@ -1387,6 +1411,8 @@ export class ThreadDriver implements JobDispatcher {
             source: 'system_operator',
             severity: 'warning',
             sessionLimit: true,
+            category: 'session_limit',
+            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         });
@@ -1474,13 +1500,14 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async relayFailure(jobId: string, err: unknown): Promise<void> {
     const text = `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`;
+    const { category, summary } = summarizeTurnFailure(err);
     const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'error' },
+        meta: { source: 'system_operator', severity: 'error', category, summary },
       })
       .catch((e) =>
         this.logger.error(

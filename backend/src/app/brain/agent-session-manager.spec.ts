@@ -3324,7 +3324,38 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
     stimulusRow?: ChatStimulus | null;
   }) {
+    // Durable retry-counter fakes (mirrors the real CAS columns on `jobs`), keyed by jobId — a fresh Map
+    // per `makeManager()` call so each test starts from a clean budget.
+    const brainRetryCounters = new Map<
+      string,
+      { benignAbort: number; transientRetry: number }
+    >();
+    const brainRetryCounterFor = (jobId: string) => {
+      let c = brainRetryCounters.get(jobId);
+      if (!c) {
+        c = { benignAbort: 0, transientRetry: 0 };
+        brainRetryCounters.set(jobId, c);
+      }
+      return c;
+    };
     const store = {
+      claimBenignAbortRedrive: vi.fn(async (jobId: string, cap: number) => {
+        const c = brainRetryCounterFor(jobId);
+        if (c.benignAbort >= cap) return { ok: false, used: cap };
+        c.benignAbort += 1;
+        return { ok: true, used: c.benignAbort };
+      }),
+      claimTransientRetryRedrive: vi.fn(async (jobId: string, cap: number) => {
+        const c = brainRetryCounterFor(jobId);
+        if (c.transientRetry >= cap) return { ok: false, used: cap };
+        c.transientRetry += 1;
+        return { ok: true, used: c.transientRetry };
+      }),
+      clearBrainRetryCounters: vi.fn(async (jobId: string) => {
+        const c = brainRetryCounterFor(jobId);
+        c.benignAbort = 0;
+        c.transientRetry = 0;
+      }),
       route: vi
         .fn()
         .mockResolvedValue({ channel: PROJECT_ID, threadTs: THREAD_ID }),

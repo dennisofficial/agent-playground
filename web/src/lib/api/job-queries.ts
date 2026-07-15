@@ -493,7 +493,7 @@ export function useApprove(ref: JobRef) {
 export function useRetryJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => retryJob(ref),
+    mutationFn: (opts?: { force?: boolean }) => retryJob(ref, opts),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
@@ -550,7 +550,7 @@ export function useShipWithoutReview(ref: JobRef) {
 export function useRetryTurn(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => retryTurn(ref),
+    mutationFn: (opts?: { force?: boolean }) => retryTurn(ref, opts),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },
