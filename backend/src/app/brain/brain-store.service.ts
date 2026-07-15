@@ -1676,6 +1676,44 @@ export class BrainStoreService {
       .execute();
   }
 
+  /** CAS-claim one benign-abort auto-resume attempt: atomically increment `benign_abort_redrives` iff still
+   *  below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}` on success, else `{ok:false,
+   *  used:cap}` (budget exhausted). Durable so a restart/crash-loop can't re-grant a fresh budget. */
+  async claimBenignAbortRedrive(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ benign_abort_redrives: () => 'benign_abort_redrives + 1', retry_last_attempt_at: () => 'now()' })
+      .where('id = :jobId', { jobId })
+      .andWhere('benign_abort_redrives < :cap', { cap })
+      .returning('benign_abort_redrives')
+      .execute();
+    const used = res.raw?.[0]?.benign_abort_redrives as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** CAS-claim one host-transport transient-error auto-retry attempt (brain lane). Same shape as
+   *  {@link claimBenignAbortRedrive} against `transient_retry_redrives`. */
+  async claimTransientRetryRedrive(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ transient_retry_redrives: () => 'transient_retry_redrives + 1', retry_last_attempt_at: () => 'now()' })
+      .where('id = :jobId', { jobId })
+      .andWhere('transient_retry_redrives < :cap', { cap })
+      .returning('transient_retry_redrives')
+      .execute();
+    const used = res.raw?.[0]?.transient_retry_redrives as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
+  /** Reset the brain's SESSION-scoped retry budgets to 0 on a clean turn (unlike the LIFETIME
+   *  `halt_fix_attempts`, these reset every clean turn). Does NOT touch `retry_last_attempt_at` (an
+   *  age-only cooldown backstop, never reset) nor the driver's own lane columns. */
+  async clearBrainRetryCounters(jobId: string): Promise<void> {
+    await this.jobs.update({ id: jobId }, { benign_abort_redrives: 0, transient_retry_redrives: 0 });
+  }
+
   /**
    * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
    * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are

@@ -11,7 +11,7 @@ import { SubagentCard, indexLiveSubagents, subagentNode } from "./subagents";
 import { streamingBlockKeys } from "./streaming-caret";
 import { Button } from "@/components/ui/button";
 import { useRetryJob, useRetryTurn } from "@/lib/api/job-queries";
-import type { JobMessage, JobRef } from "@/lib/api/job-api";
+import { ThreadApiError, type JobMessage, type JobRef } from "@/lib/api/job-api";
 import {
   formatElapsed,
   MAIN_LANE,
@@ -777,6 +777,27 @@ function useResumeCountdown(resumeAt: string | undefined): string {
   return `auto-resumes in ${formatRemaining(remaining)}`;
 }
 
+/** Humanize `meta.category` (a `TurnFailureCategory`) into the short label the header-strip badge shows.
+ *  `undefined`/`'unknown'` renders no badge — an unclassified category isn't informative on its own. */
+function humanizeFailureCategory(category: string | undefined): string | undefined {
+  switch (category) {
+    case "session_limit":
+      return "Session limit";
+    case "auth":
+      return "Login";
+    case "transient":
+      return "Reconnecting";
+    case "api_overloaded":
+      return "Overloaded";
+    case "sandbox_lost":
+      return "Sandbox lost";
+    case "unresumable":
+      return "Unresumable";
+    default:
+      return undefined;
+  }
+}
+
 /**
  * The action row for a session-limit notice — a live countdown to the harness's own auto-resume, plus a
  * "Force resume now" button for when the operator knows Anthropic already lifted the limit early. Main-lane
@@ -806,7 +827,7 @@ function SessionLimitActions({
         loading={resume.isPending}
         loadingText="Resuming…"
         disabled={resume.isSuccess}
-        onClick={() => resume.mutate()}
+        onClick={() => resume.mutate({ force: true })}
       >
         <RotateCw size={12} className="mr-1" />
         {resume.isSuccess ? "Resumed" : "Force resume now"}
@@ -847,8 +868,37 @@ export function SystemOperatorNotice({
   const sessionLimit = message.meta?.sessionLimit === true;
   const resumeAt =
     typeof message.meta?.resumeAt === "string" ? message.meta.resumeAt : undefined;
+  // The friendly, classified one-liner (`summarizeTurnFailure`) — when present, it's the headline and the
+  // raw `message.text` moves behind a "Details" disclosure instead of always showing verbatim.
+  const summary =
+    typeof message.meta?.summary === "string" ? message.meta.summary : undefined;
+  const categoryLabel = humanizeFailureCategory(
+    typeof message.meta?.category === "string" ? message.meta.category : undefined,
+  );
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
   const retry = useRetryTurn(jobRef);
+  // A bare (non-force) Resume within the server's manual-retry re-slam cooldown 429s (`ThreadApiError` w/
+  // `retryAfterMs`) rather than succeeding — react-query lands on `isError`, so it never latches to
+  // "Resumed", but the generic error hint would misread as a real failure. Track the cooldown window locally
+  // so the button re-disables with a "cooling down" hint instead, and re-enables itself once it elapses.
+  const [coolingUntil, setCoolingUntil] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const err = retry.error;
+    if (err instanceof ThreadApiError && err.status === 429) {
+      setCoolingUntil(Date.now() + (err.retryAfterMs ?? 0));
+    }
+  }, [retry.error]);
+  const coolingSecs = useRetryCountdown(coolingUntil);
+  const isCoolingDown = coolingSecs != null;
+  // Once the cooldown window elapses, the throttled attempt's stale error must not resurface as a
+  // generic "Couldn't resume" — clear it (and the cooldown marker) so the button goes back to idle.
+  useEffect(() => {
+    if (!isCoolingDown && coolingUntil !== undefined) {
+      setCoolingUntil(undefined);
+      retry.reset();
+    }
+  }, [isCoolingDown, coolingUntil, retry]);
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -874,12 +924,51 @@ export function SystemOperatorNotice({
         >
           System
         </span>
+        {categoryLabel ? (
+          <span
+            className="rounded-full px-1.5 py-[1px] font-mono text-[9.5px] font-medium uppercase tracking-wide"
+            style={{
+              color: "var(--red)",
+              background: "color-mix(in srgb, var(--red) 14%, transparent)",
+            }}
+          >
+            {categoryLabel}
+          </span>
+        ) : null}
         <span className="flex-1" />
         <span className="font-mono text-[10px] text-faint">harness</span>
       </div>
-      {/* Markdown body */}
+      {/* Markdown body — a classified failure leads with the friendly summary and tucks the raw text behind
+          a "Details" disclosure; an unclassified (older) row just renders the raw text as before. */}
       <div className="px-3.5 py-3">
-        <Markdown>{message.text}</Markdown>
+        {summary ? (
+          <>
+            <p className="text-[13px] text-text">{summary}</p>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((o) => !o)}
+              aria-expanded={detailsOpen}
+              className="mt-1.5 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide text-faint hover:text-dim"
+            >
+              <ChevronRight
+                size={10}
+                strokeWidth={2.6}
+                className={`shrink-0 transition-transform ${detailsOpen ? "rotate-90" : ""}`}
+              />
+              Details
+            </button>
+            {detailsOpen ? (
+              <div
+                className="mt-2 border-t pt-2.5"
+                style={{ borderColor: "var(--red-line)" }}
+              >
+                <Markdown>{message.text}</Markdown>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <Markdown>{message.text}</Markdown>
+        )}
       </div>
       {sessionLimit ? (
         <SessionLimitActions jobRef={jobRef} isMain={isMain} resumeAt={resumeAt} />
@@ -894,13 +983,17 @@ export function SystemOperatorNotice({
                 size="sm"
                 loading={retry.isPending}
                 loadingText="Resuming…"
-                disabled={retry.isSuccess}
-                onClick={() => retry.mutate()}
+                disabled={retry.isSuccess || isCoolingDown}
+                onClick={() => retry.mutate(undefined)}
               >
                 <RotateCw size={12} className="mr-1" />
                 {retry.isSuccess ? "Resumed" : "Resume"}
               </Button>
-              {retry.isError ? (
+              {isCoolingDown ? (
+                <span className="text-[11.5px] text-faint">
+                  Cooling down — try again in {coolingSecs}s.
+                </span>
+              ) : retry.isError ? (
                 <span className="text-[11.5px] text-red">
                   Couldn&apos;t resume. Try again.
                 </span>

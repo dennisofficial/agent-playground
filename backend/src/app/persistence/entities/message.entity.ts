@@ -92,7 +92,10 @@ export class MessageEntity extends TimestampedEntity {
 
   /**
    * Opaque metadata: subagent/phase join keys (`parentToolUseId`, `id`, `phaseId`, `batchOrdinal`,
-   * `batchStepIds`), tool `{name,input,result,isError}`, or message provenance (`source`); null otherwise.
+   * `batchStepIds`), tool `{name,input,result,isError}`, or message provenance (`source`); null otherwise. A
+   * `system_operator` box also carries `retryable`/`sessionLimit`/`resumeAt` plus, additively, a
+   * `TurnFailureCategory` `category` (`'session_limit'|'auth'|'transient'|'api_overloaded'|'sandbox_lost'|
+   * 'unresumable'|'unknown'`) and a friendly one-line `summary` — see `turn-failure-summary.ts`.
    */
   @Column({ type: 'jsonb', nullable: true })
   meta!: Record<string, unknown> | null;
