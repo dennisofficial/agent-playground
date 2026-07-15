@@ -4,6 +4,7 @@ export * from './live-turn.module';
 export * from './thread-registry';
 export * from './thread-input.service';
 export * from './turn-harness.service';
+export * from './task-tools';
 export * from './web-surface';
 export * from './approval-blocks';
 export * from './web-approval-card';
