@@ -317,6 +317,26 @@ export class OauthUsageService {
     return snapshot.windows[key]?.resetsAt;
   }
 
+  /**
+   * The binding window's current utilization (0-100) for the park corroboration check — prefers
+   * `rateLimitType`'s window, else `fiveHour`. Pure snapshot read; undefined when unknown or rolled over
+   * (a rolled-over window's latched value must not falsely corroborate).
+   */
+  async getUtilization(
+    orgId: string,
+    rateLimitType?: string,
+  ): Promise<number | undefined> {
+    const snapshot = await this.store.readClaudeUsageSnapshot(orgId);
+    if (!snapshot) return undefined;
+    const key =
+      (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
+    const w = snapshot.windows[key];
+    const resetAtMs = w ? new Date(w.resetsAt).getTime() : NaN;
+    if (!w || !Number.isFinite(resetAtMs) || resetAtMs <= Date.now())
+      return undefined;
+    return w.utilization;
+  }
+
   /** `fetchLive`, cached for {@link LIVE_FLOOR_MS} so repeated `get()` calls don't hammer the endpoint. */
   private async liveSnapshot(orgId: string): Promise<OrgUsage> {
     const cached = this.liveCache.get(orgId);

@@ -321,6 +321,12 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'timestamptz', nullable: true })
   retry_last_attempt_at!: Date | null;
 
+  /** Consecutive UNCORROBORATED text-fallback session-limit misfires for this job. Reset on any clean turn
+   *  or durable park; escalates the lane to a durable park once it hits
+   *  `SESSION_LIMIT_TEXT_MISFIRE_MAX`. */
+  @Column({ type: 'int', default: 0 })
+  session_limit_text_misfires!: number;
+
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the
    * brain hasn't been told about yet + the watermark of the last pipeline state conveyed. Drained and

@@ -3340,17 +3340,24 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     steer?: ReturnType<typeof vi.fn>;
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
     stimulusRow?: ChatStimulus | null;
+    /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
+     *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
+    usageUtilization?: number;
   }) {
     // Durable retry-counter fakes (mirrors the real CAS columns on `jobs`), keyed by jobId — a fresh Map
     // per `makeManager()` call so each test starts from a clean budget.
     const brainRetryCounters = new Map<
       string,
-      { benignAbort: number; transientRetry: number }
+      {
+        benignAbort: number;
+        transientRetry: number;
+        sessionLimitTextMisfires: number;
+      }
     >();
     const brainRetryCounterFor = (jobId: string) => {
       let c = brainRetryCounters.get(jobId);
       if (!c) {
-        c = { benignAbort: 0, transientRetry: 0 };
+        c = { benignAbort: 0, transientRetry: 0, sessionLimitTextMisfires: 0 };
         brainRetryCounters.set(jobId, c);
       }
       return c;
@@ -3368,10 +3375,20 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         c.transientRetry += 1;
         return { ok: true, used: c.transientRetry };
       }),
+      claimSessionLimitTextMisfire: vi.fn(
+        async (jobId: string, cap: number) => {
+          const c = brainRetryCounterFor(jobId);
+          if (c.sessionLimitTextMisfires >= cap)
+            return { ok: false, used: cap };
+          c.sessionLimitTextMisfires += 1;
+          return { ok: true, used: c.sessionLimitTextMisfires };
+        },
+      ),
       clearBrainRetryCounters: vi.fn(async (jobId: string) => {
         const c = brainRetryCounterFor(jobId);
         c.benignAbort = 0;
         c.transientRetry = 0;
+        c.sessionLimitTextMisfires = 0;
       }),
       route: vi
         .fn()
@@ -3459,6 +3476,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const usage = {
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
+    // The manager's OWN `usage` collaborator (distinct from the turn-harness `usage` above): the
+    // session-limit park site reads `getResetAt`/`getUtilization` and, on a durable park, `applyHarvest`.
+    // `opts.usageUtilization` drives a TEXT-fallback hit's corroboration check per-test.
+    const usageService = {
+      getResetAt: () => undefined,
+      getUtilization: vi.fn(async () => opts.usageUtilization),
+      applyHarvest: vi.fn().mockResolvedValue(undefined),
+    } as unknown as OauthUsageService;
     const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
@@ -3540,7 +3565,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
-      { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      usageService, // usage (OauthUsageService)
       ...optionalTail({ liveTurns }),
     );
     return {
@@ -3556,8 +3581,101 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       awareness,
       turnHarness,
       stimulusStore,
+      usageService,
     };
   }
+
+  it('a text-fallback session limit uncorroborated by the usage window quiet-retries instead of parking', async () => {
+    const run = vi.fn(async () => ({
+      result: undefined,
+      sessionId: 'sess-1',
+      sessionLimit: { source: 'text' as const, rateLimitType: 'five_hour' },
+    }));
+    const { manager, store, surface } = makeManager({
+      run,
+      usageUtilization: 40,
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(store.setSessionResume).toHaveBeenCalledWith(
+      THREAD_ID,
+      expect.any(String),
+      expect.objectContaining({ lane: 'main', kind: 'retry' }),
+    );
+    expect(
+      (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+        String(c[1]).includes("You've hit your session limit"),
+      ),
+    ).toHaveLength(0);
+    expect(store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(1);
+  });
+
+  it('a text-fallback session limit corroborated by a near-capped usage window durably parks like a structured hit', async () => {
+    const run = vi.fn(async () => ({
+      result: undefined,
+      sessionId: 'sess-1',
+      sessionLimit: { source: 'text' as const, rateLimitType: 'five_hour' },
+    }));
+    const { manager, store, surface, usageService } = makeManager({
+      run,
+      usageUtilization: 98,
+    });
+
+    await manager.handleChatTurn(stimulus);
+
+    expect(
+      (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+        String(c[1]).includes("You've hit your session limit"),
+      ),
+    ).toHaveLength(1);
+    expect(usageService.applyHarvest).toHaveBeenCalledWith(
+      TEAM_ID,
+      expect.objectContaining({ utilization: 100 }),
+    );
+    const resumeCall = (
+      store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.find((args) => args[0] === THREAD_ID);
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
+  });
+
+  it('a text-fallback session limit durably parks once the misfire budget is exhausted (backstop escalation)', async () => {
+    const run = vi.fn(async () => ({
+      result: undefined,
+      sessionId: 'sess-1',
+      sessionLimit: { source: 'text' as const, rateLimitType: 'five_hour' },
+    }));
+    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here. Drive THREE
+    // consecutive turns through the SAME manager/store (no pre-seeding, no mock override) to prove the
+    // counter genuinely ACCUMULATES across separate re-drives: the generic clean-turn counter reset must NOT
+    // fire for a turn whose own result is itself a session-limit hit, or the streak could never exceed 1.
+    const { manager, store, surface } = makeManager({ run });
+
+    await manager.handleChatTurn(stimulus); // misfire 1/3 — quiet retry
+    await manager.handleChatTurn(stimulus); // misfire 2/3 — quiet retry
+    await manager.handleChatTurn(stimulus); // misfire 3/3 — backstop park
+
+    expect(store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(3);
+    expect(
+      (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
+        String(c[1]).includes("You've hit your session limit"),
+      ),
+    ).toHaveLength(1);
+    const resumeCalls = (
+      store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.filter((args) => args[0] === THREAD_ID);
+    // The first 2 resume-clock writes are quiet retries (kind:'retry'); the 3rd is the durable park (no kind).
+    expect(
+      resumeCalls
+        .slice(0, 2)
+        .every((args) => (args[2] as { kind?: string }).kind === 'retry'),
+    ).toBe(true);
+    expect(
+      (resumeCalls[2]?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
+  });
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
     const run = vi.fn(async (args: RunEngineArgs) => {

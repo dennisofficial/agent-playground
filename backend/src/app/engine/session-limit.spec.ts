@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectSessionLimitText,
+  isCorroboratedSessionLimit,
   limitFromRateEvent,
   parseResetAt,
+  textSessionLimitHit,
 } from './session-limit';
 
 describe('limitFromRateEvent', () => {
@@ -18,6 +20,7 @@ describe('limitFromRateEvent', () => {
       resetAt: '2026-07-09T22:00:00.000Z',
       rateLimitType: 'five_hour',
       utilization: 100,
+      source: 'structured',
     });
   });
 
@@ -56,6 +59,7 @@ describe('limitFromRateEvent', () => {
       resetAt: undefined,
       rateLimitType: undefined,
       utilization: undefined,
+      source: 'structured',
     });
   });
 });
@@ -112,5 +116,43 @@ describe('parseResetAt', () => {
   it('returns undefined for an unparseable string', () => {
     expect(parseResetAt('resets soon')).toBeUndefined();
     expect(parseResetAt('no time here at all')).toBeUndefined();
+  });
+});
+
+describe('textSessionLimitHit', () => {
+  it('returns a text-sourced hit with the parsed resetAt when the clock is resolvable', () => {
+    const text = "You've hit your session limit · resets 5:20pm";
+    const hit = textSessionLimitHit(text);
+    expect(hit.source).toBe('text');
+    expect(hit.resetAt).toBe(parseResetAt(text));
+    expect(hit.resetAt).toBeDefined();
+  });
+
+  it('returns a text-sourced hit with resetAt undefined for an unparseable string', () => {
+    expect(textSessionLimitHit('usage limit reached')).toEqual({
+      source: 'text',
+      resetAt: undefined,
+    });
+  });
+});
+
+describe('isCorroboratedSessionLimit', () => {
+  it('is always true for a structured hit, regardless of utilization', () => {
+    expect(isCorroboratedSessionLimit('structured', undefined)).toBe(true);
+    expect(isCorroboratedSessionLimit('structured', 40)).toBe(true);
+  });
+
+  it('is true for an undefined source (back-compat with legacy fixtures)', () => {
+    expect(isCorroboratedSessionLimit(undefined, undefined)).toBe(true);
+  });
+
+  it('is true for a text hit only when utilization meets the corroboration threshold', () => {
+    expect(isCorroboratedSessionLimit('text', 95)).toBe(true);
+    expect(isCorroboratedSessionLimit('text', 99)).toBe(true);
+  });
+
+  it('is false for a text hit below the corroboration threshold or with unknown utilization', () => {
+    expect(isCorroboratedSessionLimit('text', 94)).toBe(false);
+    expect(isCorroboratedSessionLimit('text', undefined)).toBe(false);
   });
 });

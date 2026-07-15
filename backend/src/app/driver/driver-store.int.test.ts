@@ -1318,6 +1318,28 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.claimDriverTransientRetry(jobId, 2)).toEqual({ ok: false, used: 2 });
   });
 
+  it('claimSessionLimitTextMisfire is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
+    const { jobId } = await seedBareJob();
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 2 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 3 });
+    // At the cap → refused, budget unchanged.
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: false, used: 3 });
+  });
+
+  it('two concurrent claimSessionLimitTextMisfire calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
+    const { jobId } = await seedBareJob();
+    await store.claimSessionLimitTextMisfire(jobId, 2); // used → 1
+    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
+    const [a, b] = await Promise.all([
+      store.claimSessionLimitTextMisfire(jobId, 2),
+      store.claimSessionLimitTextMisfire(jobId, 2),
+    ]);
+    const oks = [a, b].filter((r) => r.ok);
+    expect(oks).toHaveLength(1);
+    expect(oks[0]).toEqual({ ok: true, used: 2 });
+  });
+
   it('claimAuthRetryAttempt and claimDriverTransientRetry both stamp retry_last_attempt_at', async () => {
     const { jobId } = await seedBareJob();
     const before = Date.now();
@@ -1349,9 +1371,13 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const { jobId } = await seedBareJob();
     await store.claimAuthRetryAttempt(jobId, 5);
     await store.claimDriverTransientRetry(jobId, 5);
+    await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the brain's own lane columns directly (no BrainStoreService in scope here) to prove
     // clearDriverRetryCounters doesn't reach across lanes.
-    await jobs.update({ id: jobId }, { benign_abort_redrives: 3, transient_retry_redrives: 4 });
+    await jobs.update(
+      { id: jobId },
+      { benign_abort_redrives: 3, transient_retry_redrives: 4 },
+    );
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
     expect(stampBefore).toBeInstanceOf(Date);
@@ -1361,6 +1387,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const after = await jobs.findOne({ where: { id: jobId } });
     expect(after?.auth_retry_attempts).toBe(0);
     expect(after?.driver_transient_retries).toBe(0);
+    expect(after?.session_limit_text_misfires).toBe(0);
     // Untouched by the driver-lane clear.
     expect(after?.retry_last_attempt_at).toEqual(stampBefore);
     expect(after?.benign_abort_redrives).toBe(3);

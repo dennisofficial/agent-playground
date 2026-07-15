@@ -1256,10 +1256,32 @@ export class DriverStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
+   *  `cap`. */
+  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .where('id = :jobId', { jobId })
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
+      .execute();
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
   /** Reset the driver's SESSION-scoped retry budgets to 0 on a clean drive. Does NOT touch
    *  `retry_last_attempt_at` nor the brain's own lane columns. */
   async clearDriverRetryCounters(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { auth_retry_attempts: 0, driver_transient_retries: 0 });
+    await this.jobs.update(
+      { id: jobId },
+      {
+        auth_retry_attempts: 0,
+        driver_transient_retries: 0,
+        session_limit_text_misfires: 0,
+      },
+    );
   }
 
   /** Read back the durable driver-transient-retry state (count + last-attempt timestamp) so a boot

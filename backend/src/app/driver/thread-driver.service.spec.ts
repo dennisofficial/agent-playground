@@ -125,12 +125,22 @@ function makeStore(state: StoreState): {
   // `state.job` since the domain `Job` shape doesn't expose these columns (store-internal only).
   const retryCounters = new Map<
     string,
-    { auth: number; driverTransient: number; lastAttemptAt: Date | null }
+    {
+      auth: number;
+      driverTransient: number;
+      sessionLimitTextMisfires: number;
+      lastAttemptAt: Date | null;
+    }
   >();
   const retryCounterFor = (jobId: string) => {
     let c = retryCounters.get(jobId);
     if (!c) {
-      c = { auth: 0, driverTransient: 0, lastAttemptAt: null };
+      c = {
+        auth: 0,
+        driverTransient: 0,
+        sessionLimitTextMisfires: 0,
+        lastAttemptAt: null,
+      };
       retryCounters.set(jobId, c);
     }
     return c;
@@ -680,10 +690,17 @@ function makeStore(state: StoreState): {
       c.lastAttemptAt = new Date();
       return { ok: true, used: c.driverTransient };
     }),
+    claimSessionLimitTextMisfire: vi.fn(async (jobId: string, cap: number) => {
+      const c = retryCounterFor(jobId);
+      if (c.sessionLimitTextMisfires >= cap) return { ok: false, used: cap };
+      c.sessionLimitTextMisfires += 1;
+      return { ok: true, used: c.sessionLimitTextMisfires };
+    }),
     clearDriverRetryCounters: vi.fn(async (jobId: string) => {
       const c = retryCounterFor(jobId);
       c.auth = 0;
       c.driverTransient = 0;
+      c.sessionLimitTextMisfires = 0;
     }),
     driverTransientRetryState: vi.fn(async (jobId: string) => {
       const c = retryCounterFor(jobId);
@@ -1150,6 +1167,9 @@ function assemble(
       import('./auto-merge.service').AutoMergeService,
       'mergeNow'
     >;
+    /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
+     *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
+    usageUtilization?: number;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1347,9 +1367,12 @@ function assemble(
       githubWriteIdentity: async () => ({}),
       engineAuth: async () => ({ secret: 'test-secret' }),
     } as unknown as CredentialResolver,
-    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window.
+    // OauthUsageService: the session-limit park reads getResetAt; default → no harvested window. A
+    // TEXT-fallback session-limit hit's corroboration check reads getUtilization — defaults to undefined
+    // (uncorroborated); opts.usageUtilization lets a test drive it deterministically.
     {
       getResetAt: () => undefined,
+      getUtilization: vi.fn(async () => opts.usageUtilization),
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService,
     // McpResolver: no user-defined MCP servers in tests.
@@ -2741,6 +2764,133 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(
       h.posts.filter((p) => p.includes("You've hit your session limit")),
     ).toHaveLength(1);
+  });
+
+  it('a text-fallback session limit uncorroborated by the usage window quiet-retries instead of parking', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { usageUtilization: 40 });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() =>
+      (h.store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls.some(
+        (args) => (args[2] as { kind?: string })?.kind === 'retry',
+      ),
+    );
+
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      expect.any(String),
+      expect.objectContaining({ lane: 'build', kind: 'retry' }),
+    );
+    expect(
+      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.some(
+        (args) => (args[1] as { kind?: string })?.kind === 'session_limit',
+      ),
+    ).toBe(false);
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(0);
+    expect(h.store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(1);
+  });
+
+  it('a text-fallback session limit corroborated by a near-capped usage window durably parks like a structured hit', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state, { usageUtilization: 98 });
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt?.kind).toBe('session_limit');
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(1);
+    const resumeCall = (
+      h.store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.find((args) => args[0] === state.job.id);
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
+  });
+
+  it('a text-fallback session limit durably parks once the misfire budget is exhausted (backstop escalation)', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
+      operatorInputCards: [],
+    };
+    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here.
+    const h = assemble(state);
+    // Preload two prior misses so this drive's third consecutive miss reaches
+    // SESSION_LIMIT_TEXT_MISFIRE_MAX and parks immediately.
+    await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
+    await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
+    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => {
+        throw new EngineSessionLimitError(
+          "You've hit your session limit",
+          undefined,
+          'five_hour',
+          'sess-limit',
+          undefined,
+          'text',
+        );
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+
+    expect(state.job.halt?.kind).toBe('session_limit');
+    expect(
+      h.posts.filter((p) => p.includes("You've hit your session limit")),
+    ).toHaveLength(1);
+    const resumeCall = (
+      h.store.setSessionResume as ReturnType<typeof vi.fn>
+    ).mock.calls.find((args) => args[0] === state.job.id);
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
   });
 
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {

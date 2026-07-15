@@ -324,6 +324,8 @@ export type SessionLimitHit = {
   rateLimitType?: string;
   /** 0-100 window utilization at the time of the hit, when reported. */
   utilization?: number;
+  /** Which detection path produced this hit. Absent ⇒ treat as 'structured' (back-compat for old fixtures). */
+  source?: 'structured' | 'text';
 };
 
 /** The result of one engine run — the report, the resume handle, and optional plan/usage. */
@@ -425,6 +427,7 @@ export class EngineSessionLimitError extends Error {
     readonly rateLimitType?: string,
     readonly sessionId?: string,
     readonly credentialId?: string,
+    readonly source: 'structured' | 'text' = 'structured',
   ) {
     super(message);
     this.name = 'EngineSessionLimitError';
