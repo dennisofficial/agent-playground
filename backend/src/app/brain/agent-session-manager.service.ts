@@ -53,10 +53,8 @@ import {
   type WebQuestionCard,
   webConventionProposalCard,
   webConventionEditProposalCard,
-  webFileRequestCard,
   webMcpProposalCard,
   webQuestionCard,
-  webSecretInputCard,
   webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
@@ -178,11 +176,7 @@ import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { JobDependencyService } from '../job-deps';
 import type { Decision } from '../domain';
-import {
-  nextDecisionId,
-  DECISION_CLASS_IDS,
-  HALT_FIX_ATTEMPT_CAP,
-} from '../domain';
+import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
 import type { DecisionClass } from '../domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
@@ -232,6 +226,7 @@ import {
 } from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
+import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
 
 type InjectedMemoryDedupState = {
   sessionId: string | null;
@@ -371,21 +366,6 @@ export class AgentSessionManager
     InjectedMemoryDedupState
   >();
 
-  /**
-   * Steer-id → build-completion/halt wake payload, awaiting the engine's `input_ack` (the real consumption
-   * signal — the engine emits it only after it PUSHES the steer into the live SDK session, never on the Redis
-   * write). Populated when a wake is steered into an already-live brain turn (`steerIntoLiveBrainTurn`) and
-   * consumed in `stampInputAck`, which stamps `done_waked_at`/`halt_waked_at` there. Bounded + per-process — an
-   * unacked entry (turn died before the steer was injected, or a leader failover) is harmless: the owed flag
-   * stays set and the 30s owed-wake sweep re-fires. Mirrors the durable-operator-message ack path.
-   */
-  private readonly pendingWakeAcks = new Map<
-    string,
-    | { kind: 'done'; threadId: string; gen: number }
-    | { kind: 'halt'; threadId: string; gen: number }
-  >();
-  private static readonly MAX_PENDING_WAKE_ACKS = 512;
-
   constructor(
     private readonly store: BrainStoreService,
     private readonly driverStore: DriverStoreService,
@@ -448,6 +428,11 @@ export class AgentSessionManager
     // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
     // @Global OnboardingModule.
     private readonly usage: OauthUsageService,
+    // The shared self-sufficiency toolset (request_secret/request_file/recall/remember) — the SAME handler
+    // bodies headless build/master_review threads dispatch through (see ThreadDriverService.buildTurnBridge),
+    // so there is one implementation, not two drifting copies. Plain (non-optional): the @Global BrainModule
+    // always provides it.
+    private readonly selfSufficiency: SelfSufficiencyToolsService,
     // Durable per-model usage/cost analytics (best-effort) for brain + compaction turns. @Optional so
     // unit tests can construct the manager without wiring analytics; DI (@Global) supplies it live.
     @Optional() private readonly usageProjector?: TurnUsageProjector,
@@ -1236,65 +1221,7 @@ export class AgentSessionManager
     } else {
       await this.stampLegacySeedCard(stimulus);
     }
-    // A completion/halt wake steered into a live turn is only marked delivered when the engine ACKS it (see
-    // `stampInputAck`) — stamping here on the XADD would drop the wake if the turn dies before injecting it,
-    // and a synthetic wake seed has no `stimuli` row to recover from. Record the payload keyed by the steer id
-    // so the ack can reach it; NOT recorded on the XADD-failure return above (that must stay owed for the sweep).
-    if (stimulus.seedDoneWake) {
-      this.rememberPendingWakeAck(stimulus.id, {
-        kind: 'done',
-        threadId: stimulus.seedDoneWake.threadId,
-        gen: stimulus.seedDoneWake.gen,
-      });
-    } else if (stimulus.seedHaltWake) {
-      this.rememberPendingWakeAck(stimulus.id, {
-        kind: 'halt',
-        threadId: stimulus.seedHaltWake.threadId,
-        gen: stimulus.seedHaltWake.gen,
-      });
-    }
     return true;
-  }
-
-  /** Remember a steered wake awaiting its `input_ack`, evicting the oldest entry past the bound (safe — an
-   *  evicted wake just degrades to sweep-driven re-fire). */
-  private rememberPendingWakeAck(
-    id: string,
-    wake:
-      | { kind: 'done'; threadId: string; gen: number }
-      | { kind: 'halt'; threadId: string; gen: number },
-  ): void {
-    this.pendingWakeAcks.set(id, wake);
-    while (
-      this.pendingWakeAcks.size > AgentSessionManager.MAX_PENDING_WAKE_ACKS
-    ) {
-      const oldest = this.pendingWakeAcks.keys().next().value;
-      if (oldest === undefined) break;
-      this.pendingWakeAcks.delete(oldest);
-    }
-  }
-
-  /** SUCCESS-TAIL wake stamps (halt + completion), generation-keyed. Shared by `runChatTurnInner`'s tail and
-   *  the `reattachOne` success path — a reattached wake turn runs outside `runChatTurnInner`, so without this
-   *  it would never stamp and the sweeps would re-wake it forever. Best-effort; a failed stamp just leaves the
-   *  wake owed for the next sweep (at-least-once). */
-  private async stampWakeSuccessTails(stimulus: ChatStimulus): Promise<void> {
-    if (stimulus.seedHaltWake) {
-      await this.driverStore
-        .markHaltWaked(
-          stimulus.seedHaltWake.threadId,
-          stimulus.seedHaltWake.gen,
-        )
-        .catch((err) => this.logger.warn(`markHaltWaked failed: ${err}`));
-    }
-    if (stimulus.seedDoneWake) {
-      await this.driverStore
-        .markDoneWaked(
-          stimulus.seedDoneWake.threadId,
-          stimulus.seedDoneWake.gen,
-        )
-        .catch((err) => this.logger.warn(`markDoneWaked failed: ${err}`));
-    }
   }
 
   /**
@@ -1778,9 +1705,7 @@ export class AgentSessionManager
     await lane.drainFreshTurn(collected);
   }
 
-  /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). A steered
-   *  completion/halt wake is also marked delivered HERE — the ack is the real consumption signal, so a wake
-   *  whose steer was never injected (turn died, held pre-stream) stays owed for the sweep to re-fire. */
+  /** Stamp `delivered_at` when the engine acks a steered message (from either onEvent path). */
   private stampInputAck(e: EngineEvent): void {
     if (e.kind !== 'input_ack' || !e.id) return;
     // A steered seed's card is stamped on the SAME ack that stamps its stimulus row — the ack is the real
@@ -1796,23 +1721,6 @@ export class AgentSessionManager
         `input_ack stamp for ${e.id} failed (sweep will retry): ${err}`,
       ),
     );
-    const wake = this.pendingWakeAcks.get(e.id);
-    if (wake) {
-      this.pendingWakeAcks.delete(e.id);
-      if (wake.kind === 'done') {
-        void this.driverStore
-          .markDoneWaked(wake.threadId, wake.gen)
-          .catch((err) =>
-            this.logger.warn(`markDoneWaked (ack) failed: ${err}`),
-          );
-      } else {
-        void this.driverStore
-          .markHaltWaked(wake.threadId, wake.gen)
-          .catch((err) =>
-            this.logger.warn(`markHaltWaked (ack) failed: ${err}`),
-          );
-      }
-    }
   }
 
   /** LEADER periodic + boot re-drive of any operator message still undelivered (the at-least-once sweep). */
@@ -2116,12 +2024,6 @@ export class AgentSessionManager
         // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
         // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
         deliveryStimulusId?: string;
-        seedHaltWake?: { threadId: string; gen: number };
-        seedDoneWake?: {
-          threadId: string;
-          reason: 'final' | 'notable';
-          gen: number;
-        };
         // SESSION RE-HOME: this turn persists its session onto `threads.session_id` for this thread, not the
         // job sandbox (see {@link ChatStimulus.resumeThreadId}) — carried so a reattach persists the same target.
         resumeThreadId?: string;
@@ -2166,12 +2068,6 @@ export class AgentSessionManager
           ? { seedSecretIds: ctx.seedSecretIds }
           : {}),
         ...(ctx.seedFileIds?.length ? { seedFileIds: ctx.seedFileIds } : {}),
-        // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
-        // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
-        ...(ctx.seedHaltWake ? { seedHaltWake: ctx.seedHaltWake } : {}),
-        // Same reasoning for the completion wake (decision d1) — else a reattached done-wake turn never
-        // stamps `done_waked_at` and the sweeps re-wake it forever.
-        ...(ctx.seedDoneWake ? { seedDoneWake: ctx.seedDoneWake } : {}),
         // Preserve the session re-home target so a reattached open-PR turn persists onto the thread, not the
         // job sandbox (else the fresh session would leak back onto `job_sandboxes.session_id`).
         ...(ctx.resumeThreadId ? { resumeThreadId: ctx.resumeThreadId } : {}),
@@ -2197,17 +2093,6 @@ export class AgentSessionManager
         threadId,
         channel: row.channel,
         turnId: row.turn_id,
-        // Tag a reattached completion-wake turn's blocks with its generation, exactly like a fresh run — else
-        // the reattach's persisted summary is UNTAGGED, escapes `supersedeDoneWakeMessages`, and a later sweep
-        // leaves it as a duplicate alongside the sweep's own re-run.
-        ...(ctx.seedDoneWake
-          ? {
-              metaTag: {
-                doneWakeGen: ctx.seedDoneWake.gen,
-                doneWakeThreadId: ctx.seedDoneWake.threadId,
-              },
-            }
-          : {}),
       });
       const sandboxRow = await this.sandboxRows.findOne({
         where: { job_id: row.job_id, org_id: row.org_id },
@@ -2255,11 +2140,7 @@ export class AgentSessionManager
               }
             : undefined,
         );
-        // SUCCESS TAIL — reattach runs OUTSIDE `runChatTurnInner`, so stamp the wake dedup markers here too
-        // (the same shared helper), else a reattached halt/done wake never stamps and the sweeps re-wake it
-        // forever. (This also makes the `seedHaltWake`/`seedDoneWake` preserve-comments above actually true.)
-        await this.stampWakeSuccessTails(stimulus);
-        // SUCCESS TAIL — same for a seed-card delivery that completed via reattach: stamp its durable stimulus
+        // SUCCESS TAIL — a seed-card delivery that completed via reattach: stamp its durable stimulus
         // row + card together, keyed on the `stimuli.id` carried in ctx (the reconstructed `stimulus.id` is the
         // engine turn id here, not the row). Else the sweep re-delivers an already-consumed answer (exactly-once).
         if (ctx.deliveryStimulusId) {
@@ -2292,16 +2173,7 @@ export class AgentSessionManager
         this.logger.warn(
           `re-attached turn ${row.turn_id} ended in error: ${err}`,
         );
-        // A benign stream abort on a WAKE turn (halt or completion) will be re-delivered in full by the owed-
-        // wake sweep (owed stays true — the success stamp above never ran), so DISCARD the truncated partial
-        // rather than persisting a durable half-message. Matches the fresh-run error tail. Any other error (or a
-        // non-wake turn) keeps its partial as context.
-        if (
-          this.isBenignStreamAbort(err) &&
-          (ctx.seedHaltWake || ctx.seedDoneWake)
-        ) {
-          await streamer.discard();
-        } else if (this.engineRunner.consumeClaim?.(row.turn_id) === false) {
+        if (this.engineRunner.consumeClaim?.(row.turn_id) === false) {
           // Errored AFTER another attacher already claimed the row — discard the partial rather than
           // double-finishing (row.turn_id IS the engine turnId on the reattach path, so the claim is exact).
           await streamer.discard();
@@ -2750,9 +2622,7 @@ export class AgentSessionManager
       jobId: stimulus.jobId,
     });
     const channel = route.channel ?? stimulus.replyRoute.jobRef;
-    // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation. EXCEPT a
-    // completion-wake turn: tag its blocks with the wake generation so a later re-delivery can supersede this
-    // attempt's rows if it dies mid-stream (see `supersedeDoneWakeMessages`).
+    // The brain streams on the default `main` lane (no metaTag) — its blocks ARE the conversation.
     const threadId =
       stimulus.resumeThreadId ?? (await this.planningThreadId(stimulus.jobId));
     const streamer = this.turnHarness.create({
@@ -2760,14 +2630,6 @@ export class AgentSessionManager
       orgId: stimulus.orgId,
       threadId,
       channel,
-      ...(stimulus.seedDoneWake
-        ? {
-            metaTag: {
-              doneWakeGen: stimulus.seedDoneWake.gen,
-              doneWakeThreadId: stimulus.seedDoneWake.threadId,
-            },
-          }
-        : {}),
     });
     // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
     // prefixes: compaction seed / reset notice / awareness / open-questions) is surfaced exactly once, on
@@ -2954,14 +2816,6 @@ export class AgentSessionManager
           ...(isSeedCardDelivery(stimulus)
             ? { deliveryStimulusId: stimulus.id }
             : {}),
-          // Halt-wake key: a reattached wake turn must still stamp `halt_waked_at` on success (Medium-1).
-          ...(stimulus.seedHaltWake
-            ? { seedHaltWake: stimulus.seedHaltWake }
-            : {}),
-          // Done-wake key (decision d1): same reasoning, for `done_waked_at`.
-          ...(stimulus.seedDoneWake
-            ? { seedDoneWake: stimulus.seedDoneWake }
-            : {}),
           // Session re-home target: a reattach must persist onto the same thread, not the job sandbox.
           ...(stimulus.resumeThreadId
             ? { resumeThreadId: stimulus.resumeThreadId }
@@ -3116,16 +2970,10 @@ export class AgentSessionManager
       this.logger.error(
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
-      // Classify BEFORE persisting so we can discard a partial that will be re-delivered in full. A benign
-      // `aborted_streaming` on a WAKE turn is re-fired by the owed-wake sweep (the stamp never landed, so the
-      // wake stays owed) — persisting its truncated partial would leave a durable half-message beside the
-      // complete re-run (the ship-gate duplicate). Discard it. A normal turn's benign abort still finishes
-      // (keeps its partial) and gets the continue-nudge below; a real failure always keeps its partial.
+      // A normal turn's benign abort finishes (keeps its partial) and gets the continue-nudge below; a real
+      // failure always keeps its partial.
       const benignAbort = this.isBenignStreamAbort(err);
-      const isWakeTurn = !!(stimulus.seedHaltWake || stimulus.seedDoneWake);
-      if (benignAbort && isWakeTurn) {
-        await streamer.discard();
-      } else if (this.engineRunner.consumeClaim?.(stimulus.id) === false) {
+      if (this.engineRunner.consumeClaim?.(stimulus.id) === false) {
         // Best-effort claim check: on the fresh-run path the engine turnId is generated INSIDE runner.run
         // (randomUUID) and never surfaced here, so `stimulus.id` won't match it — consumeClaim returns
         // undefined and we fall through to finish() (the safe back-compat default). The confirmed dup is the
@@ -3133,18 +2981,6 @@ export class AgentSessionManager
         await streamer.discard();
       } else {
         await streamer.finish();
-      }
-      // ADR 0004 Phase 3 / decision d1: a halt-wake OR done-wake turn is an internal, auto-retried delivery
-      // (the periodic + boot sweeps re-fire it because the stamp only lands on the success tail). Don't post a
-      // scary operator error box for it — that's noise the operator can't act on. Just log; the sweep will
-      // retry once the session settles. ORDERING is load-bearing: this wake early-return stays AHEAD of the
-      // benign continue-nudge branch, so a wake turn is re-delivered ONLY by the (gen-superseding) owed-wake
-      // sweep, never also by an untagged continue-nudge re-author.
-      if (isWakeTurn) {
-        this.logger.warn(
-          `wake turn failed for thread=${stimulus.jobId} (sweep will retry): ${err}`,
-        );
-        return;
       }
       // A turn failure is a HARNESS error, never Atlas talking — both branches post a system→operator
       // notice (its own red box, not an Atlas bubble). Show the TRUE error verbatim, no narrative wrapper
@@ -3471,13 +3307,6 @@ export class AgentSessionManager
       result.usage,
     );
 
-    // SUCCESS TAIL — ADR 0004 Phase 3 halt wake + decision d1 completion wake: the brain actually TRIAGED /
-    // reviewed this wake this turn, so stamp its (generation-keyed) dedup marker now. Reached only on the
-    // happy path — a swallowed engine error / single-turn-guard hit / detach all `return` above WITHOUT
-    // stamping, so the periodic + boot sweeps re-fire the wake (at-least-once). Shared with the reattach
-    // success path (which runs outside this method) so both stamp identically.
-    await this.stampWakeSuccessTails(stimulus);
-
     // SUCCESS TAIL — a solo seed-card fresh turn stamps its DURABLE stimulus row + exact card together here
     // (its `onRegistered` deferred the row stamp) so a register-then-fail turn leaves both unstamped and the
     // sweep re-drives it. On this path `stimulus.id === stimuli.id` (seeds deliver solo). Internal legacy
@@ -3779,37 +3608,9 @@ export class AgentSessionManager
         return { status: 'drafting', decisions: pending };
       },
 
-      recall: async (args) => {
-        const query = String(args['query'] ?? stimulus.body);
-        try {
-          const facts = await this.memory.recall(query, {
-            scopes: [`project:${stimulus.repoId}`, `team:${stimulus.orgId}`],
-            orgId: stimulus.orgId,
-            limit: 8,
-          });
-          return facts.map((f) => ({ fact: f.fact, scope: f.scope }));
-        } catch (err) {
-          this.logger.debug(`recall failed: ${err}`);
-          return [];
-        }
-      },
+      recall: this.selfSufficiencyTools(stimulus).recall,
 
-      remember: async (args) => {
-        const fact = String(args['fact'] ?? '').trim();
-        if (!fact) return { stored: false, reason: 'empty fact' };
-        const scope = String(args['scope'] ?? `project:${stimulus.repoId}`);
-        try {
-          await this.memory.remember({
-            fact,
-            scope,
-            orgId: stimulus.orgId,
-            assertedBy: stimulus.author.id,
-          });
-          return { stored: true };
-        } catch (err) {
-          return { stored: false, reason: String(err) };
-        }
-      },
+      remember: this.selfSufficiencyTools(stimulus).remember,
 
       ask_question: async (args) => {
         const question = String(args['question'] ?? '').trim();
@@ -4817,8 +4618,8 @@ export class AgentSessionManager
     // any job) AND amend the repo's DB-backed workspace config (mounts/seed) — writes land instantly for
     // every job on the repo, no PR/ship step needed outside the ceremony (see `write_workspace_config`).
     const intake = {
-      request_secret: this.buildRequestSecretTool(stimulus),
-      request_file: this.buildRequestFileTool(stimulus),
+      request_secret: this.selfSufficiencyTools(stimulus).request_secret,
+      request_file: this.selfSufficiencyTools(stimulus).request_file,
       withdraw_file_request: this.buildWithdrawFileRequestTool(stimulus),
       withdraw_secret_request: this.buildWithdrawSecretRequestTool(stimulus),
       write_workspace_config: this.buildWriteWorkspaceConfigTool(stimulus),
@@ -4920,239 +4721,18 @@ export class AgentSessionManager
   // ── Repo-onboarding tools (only handed to `kind='onboarding'` threads; see the onboarding fragments) ──
 
   /**
-   * `request_secret({ name, path, description })` — securely request an env-file SECRET VALUE from the
-   * operator. Mirrors `ask_question`: posts a value-FREE card + opens the durable `awaiting_secret_id`
-   * gate, then the brain stops and waits. The value never passes through this tool — it arrives only at the
-   * owner-gated `provide-secret` endpoint, which writes it to the encrypted store + grants it; the brain
-   * later sees a masked confirmation. org/repo come from the closure (never tool args) — tenant safety.
+   * `request_secret` / `request_file` / `recall` / `remember` — the shared self-sufficiency toolset,
+   * dispatched through `SelfSufficiencyToolsService` so the brain and headless build threads run the SAME
+   * handler bodies. org/repo/job/author come from the stimulus's closure (never tool args) — tenant safety.
    */
-  private buildRequestSecretTool(stimulus: ChatStimulus): ToolImpl {
-    return async (args) => {
-      const name = String(args['name'] ?? '').trim();
-      const path = String(args['path'] ?? '').trim();
-      const description = String(args['description'] ?? '').trim();
-      // Optional headless-login URL (e.g. `gcloud auth login --no-launch-browser`): surfaced as a clickable
-      // link on the card so the operator opens it, then pastes the resulting code back. https only.
-      const rawUrl = String(args['url'] ?? '').trim();
-      const url = /^https:\/\//.test(rawUrl) ? rawUrl : undefined;
-      const ephemeral = args['ephemeral'] === true;
-      const deliverTo = String(args['deliver_to'] ?? '').trim();
-
-      if (!description)
-        return {
-          ok: false,
-          reason: 'description is required (why the secret is needed)',
-        };
-
-      // EPHEMERAL: a one-time, short-lived value (an OAuth verification code, a 2FA code) piped straight to a
-      // process the brain has running and NEVER stored. `deliver_to` (an absolute in-container path — the FIFO
-      // the brain already wired its waiting process to read) replaces `path`; `name` is just a display label.
-      if (ephemeral) {
-        if (!deliverTo.startsWith('/') || deliverTo.split('/').includes('..')) {
-          return {
-            ok: false,
-            reason:
-              'deliver_to must be an absolute in-container path (e.g. /tmp/atlas-login-in), no ..',
-          };
-        }
-        const label = name || 'ONE_TIME_CODE';
-        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(label)) {
-          return {
-            ok: false,
-            reason:
-              'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
-          };
-        }
-        const requestId = `s-${randomUUID()}`;
-        const card = webSecretInputCard({
-          jobId: stimulus.jobId,
-          requestId,
-          name: label,
-          description,
-          ephemeral: true,
-          deliver_to: deliverTo,
-          ...(url ? { url } : {}),
-        });
-        const opened = await this.store.openSecretRequest(stimulus.jobId, {
-          requestId,
-          card,
-        });
-        if (!opened.ok) {
-          return {
-            ok: false,
-            reason: opened.alreadyOpen
-              ? 'A secret request is already awaiting the operator — wait for it before requesting another.'
-              : 'Could not open the secret request (thread not found).',
-          };
-        }
-        return {
-          ok: true,
-          requestId,
-          message:
-            `Ephemeral secure card posted for "${label}". Make SURE your process is already reading ${deliverTo} ` +
-            `(open the FIFO read-write: \`exec 0<>${deliverTo}\`) before the operator submits. Stop and wait — ` +
-            'the value is piped straight into that path and never stored; you only get a masked confirmation.',
-        };
-      }
-
-      // MCP-TARGET: the value is a credential slot (header/env) for a user-defined MCP server the OWNER just
-      // approved (via propose_mcp_servers). It writes into `mcp_servers.secrets_enc` (McpServerStore.setSecret)
-      // — NOT the worktree store — and does not grant/rehydrate; the scope is re-derived from this thread's
-      // repo at commit (never trusted from the card). No worktree `path`.
-      const mcpArg = args['mcp'];
-      if (mcpArg && typeof mcpArg === 'object' && !Array.isArray(mcpArg)) {
-        const m = mcpArg as Record<string, unknown>;
-        const server = String(m['server'] ?? '').trim();
-        const slot = String(m['slot'] ?? '').trim();
-        const key = String(m['key'] ?? '').trim();
-        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(server)) {
-          return {
-            ok: false,
-            reason: 'mcp.server must be the name of a registered MCP server',
-          };
-        }
-        if (slot !== 'header' && slot !== 'env') {
-          return { ok: false, reason: "mcp.slot must be 'header' or 'env'" };
-        }
-        if (!key)
-          return {
-            ok: false,
-            reason: 'mcp.key is required (the header/env key name)',
-          };
-        // An OAuth server has NO fillable secret slot — its Authorization is minted by the owner Connect flow
-        // (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
-        // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
-        // land on THIS repo's scope, so check the repo-scoped row.
-        const oauthRow = await this.mcpStore
-          ?.rawRow(stimulus.orgId, stimulus.repoId, server)
-          .catch(() => null);
-        if (oauthRow?.auth_kind === 'oauth') {
-          return {
-            ok: false,
-            reason: `MCP server "${server}" uses OAuth — it is connected by the OWNER via the Connect button on the MCP proposal card or in the console (MCP settings → Connect), not via a secret slot. Do not request a secret or inject an Authorization/Bearer header for it.`,
-          };
-        }
-        const requestId = `s-${randomUUID()}`;
-        const card = webSecretInputCard({
-          jobId: stimulus.jobId,
-          requestId,
-          name: key,
-          description,
-          mcp: { server, slot, key },
-          ...(url ? { url } : {}),
-        });
-        const opened = await this.store.openSecretRequest(stimulus.jobId, {
-          requestId,
-          card,
-        });
-        if (!opened.ok)
-          return {
-            ok: false,
-            reason: 'Could not open the secret request (thread not found).',
-          };
-        return {
-          ok: true,
-          requestId,
-          message:
-            `Secure secret card posted for MCP server "${server}" (${slot}:${key}). The operator's value goes ` +
-            'straight into the encrypted MCP store and activates the server; you only see a masked ' +
-            'confirmation. Never ask for the value in chat. You may open several secret requests at once.',
-        };
-      }
-
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-        return {
-          ok: false,
-          reason:
-            'name must be an env-var-style identifier (e.g. DATABASE_URL)',
-        };
-      }
-      if (!path || path.startsWith('/') || path.split('/').includes('..')) {
-        return {
-          ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
-        };
-      }
-      const requestId = `s-${randomUUID()}`;
-      const card = webSecretInputCard({
-        jobId: stimulus.jobId,
-        requestId,
-        name,
-        path,
-        description,
-        ...(url ? { url } : {}),
-      });
-      const opened = await this.store.openSecretRequest(stimulus.jobId, {
-        requestId,
-        card,
-      });
-      if (!opened.ok)
-        return {
-          ok: false,
-          reason: 'Could not open the secret request (thread not found).',
-        };
-      return {
-        ok: true,
-        requestId,
-        message:
-          `Secure secret card posted for "${name}". The operator's value goes straight to encrypted storage; ` +
-          'you will only see a masked confirmation. Never ask for the value in chat. You may open several ' +
-          'secret requests at once (and withdraw_secret_request any you no longer need).',
-      };
-    };
-  }
-
-  /**
-   * `request_file({ path, description })` — ask the operator to UPLOAD a file whose contents can't be
-   * typed (a service-account JSON, a keystore/`.pem`, a gitignored `.env.keys`). Posts a value-FREE card;
-   * the file arrives only at the owner-gated `provide-file` endpoint, which stores the contents ENCRYPTED
-   * (as a file-valued secret) + grants them to `path` for future build threads. PER-CARD (multiple may be
-   * open at once — no one-at-a-time gate). The brain only ever sees a masked confirmation. org/repo come
-   * from the closure (never tool args) — tenant safety. The destination MUST be gitignored, or the
-   * hydrator refuses to render it (it would leak into the PR).
-   */
-  private buildRequestFileTool(stimulus: ChatStimulus): ToolImpl {
-    return async (args) => {
-      const path = String(args['path'] ?? '').trim();
-      const description = String(args['description'] ?? '').trim();
-      if (!path || path.startsWith('/') || path.split('/').includes('..')) {
-        return {
-          ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
-        };
-      }
-      if (!description)
-        return {
-          ok: false,
-          reason: 'description is required (why the file is needed)',
-        };
-      const requestId = await this.store.nextFileRequestId(stimulus.jobId);
-      const card = webFileRequestCard({
-        jobId: stimulus.jobId,
-        requestId,
-        path,
-        description,
-      });
-      const opened = await this.store.openFileRequest(stimulus.jobId, {
-        requestId,
-        card,
-      });
-      if (!opened.ok)
-        return {
-          ok: false,
-          reason: 'Could not open the file request (thread not found).',
-        };
-      return {
-        ok: true,
-        requestId,
-        message:
-          `File-upload card posted for "${path}". The operator uploads the file through a secure field; ` +
-          'its contents go straight to encrypted storage and you will only see a masked confirmation. ' +
-          'Never ask them to paste file contents in chat. Ensure the destination is gitignored.',
-      };
-    };
+  private selfSufficiencyTools(stimulus: ChatStimulus) {
+    return this.selfSufficiency.buildTools({
+      jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
+      authorId: stimulus.author.id,
+      defaultQuery: stimulus.body,
+    });
   }
 
   /**

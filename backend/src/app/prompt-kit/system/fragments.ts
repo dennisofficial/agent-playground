@@ -581,7 +581,8 @@ export const VALIDATE_BY_RUNNING_NOTE =
  * says "a not-yet-runnable environment is a problem you FIX or ASK about, never a licence to skip." Encodes
  * decision d1 (operator-confirmed): treat a set-up, runnable repo as the EXPECTED default; verification is a
  * hard requirement. Lane-agnostic on purpose — the brain provisions via the workspace-profile tools, a build
- * thread hands a genuinely-missing secret to Atlas via `block_thread({reason:"needs_env"})`; the STANCE is
+ * thread self-serves a genuinely-missing secret/file via `request_secret`/`request_file` (and simply ends its
+ * turn without `complete_thread` if something only Atlas can provision is truly missing); the STANCE is
  * shared. The named failure ("secret-gated" server whose key was present) is the real reported incident.
  */
 export const RUNNABLE_WORKSPACE_NOTE =
@@ -593,9 +594,11 @@ export const RUNNABLE_WORKSPACE_NOTE =
   'and the service may just need starting. The classic failure is giving up on a "secret-gated" server whose ' +
   'key was present the whole time, then screenshotting a broken stand-in. (2) MAKE IT WORK: boot the service, ' +
   'run the setup, and fix the DURABLE workspace profile (request the missing secret, correct the setup ' +
-  'script) so it stays fixed for the next job — from a build thread you cannot provision it yourself, so hand ' +
-  'the genuinely-missing piece to Atlas via `block_thread({reason:"needs_env"})`. (3) ASK for what only the ' +
-  'operator can supply and WAIT — "why didn\'t you just ask?" is the failure to design out. (4) NEVER ' +
+  'script) so it stays fixed for the next job — from a build thread, self-serve first via ' +
+  '`request_secret`/`request_file` if that is the actual gap; if something only Atlas can provision is ' +
+  'genuinely missing, end the turn without asserting completion rather than guessing. ' +
+  '(3) ASK for what only the operator can supply and WAIT — "why didn\'t you just ask?" is the failure to ' +
+  'design out. (4) NEVER ' +
   'FABRICATE A STAND-IN that dodges the real environment — a throwaway harness that skips the real app config, ' +
   'a mock that bypasses the real service — and call it validated: that is a FALSE GREEN, worse than no check ' +
   'because it lies. Validate the REAL thing in its REAL environment. The ONLY acceptable skip is something ' +

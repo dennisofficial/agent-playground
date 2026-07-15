@@ -85,6 +85,7 @@ function makeManager(opts: {
     inert, // threadInput (ThreadInputService)
     inert, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     inert, // usage (OauthUsageService)
+    inert, // selfSufficiency
   );
   return { manager, store, stimulusStore };
 }

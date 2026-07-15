@@ -13,7 +13,6 @@ import type {
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
-  ThreadBlockReason,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -128,6 +127,25 @@ export interface WebCardAction {
   value: string;
 }
 
+/** One build thread's SELF-REPORTED verification, carried on the `ship` card (backend `ShipThreadVerification`
+ *  in `web-approval-card.ts`). No judge grades it — `unverified` just flags a thread that asserted done with
+ *  zero evidence, so the operator knows to eyeball it. */
+export interface ShipThreadVerification {
+  /** The build thread's title/brief. */
+  title: string;
+  /** Whether this thread asserted completion; `not_done` is advisory on the ship card. */
+  status: "done" | "not_done";
+  /** The thread's captured verification evidence (command + exit code + output tail). */
+  verification: {
+    kind: string;
+    command: string;
+    exitCode: number;
+    outputTail: string;
+  }[];
+  /** The thread asserted done but reported no verification evidence at all. */
+  unverified: boolean;
+}
+
 export interface WebApprovalCard {
   type: "approval_card";
   jobId: string;
@@ -150,6 +168,9 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `ship` card only — each build thread's self-reported verification evidence. Verbatim passthrough,
+   *  no judge; rendered so the operator reviews the honest signal before shipping. */
+  verifications?: ShipThreadVerification[];
   /** `db_write` card only — the exact proposed single SQL statement (the approved artifact). */
   sql?: string;
   /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
@@ -490,18 +511,6 @@ export interface PipelineThread {
   status: ThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
   condition: ThreadCondition;
-  /**
-   * Why this lane is held on its `blocked` terminal record (`condition==='paused'`); `null` otherwise.
-   * Mirrors backend `terminal_record.blocked.reason`. `'judge_unavailable'` drives the operator
-   * escape-hatch banner ("Retry now" / "Skip & accept").
-   */
-  blockReason?: ThreadBlockReason | null;
-  /**
-   * True only when the LIVE judge was the outage AND the static build+tests already passed — gates the
-   * "Skip & accept" button (mirrors the backend accept guard, so the UI never offers an unsafe accept).
-   * "Retry now" shows for ANY `judge_unavailable` hold; accept only when this is true.
-   */
-  acceptableOnJudgeOutage?: boolean;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The resumable engine session id, or null before the thread's first turn. */

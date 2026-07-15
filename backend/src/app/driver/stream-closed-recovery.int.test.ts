@@ -60,8 +60,6 @@ import type { ToolBridgeOptions } from '../engine';
 import type { CredentialResolver } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';
-import type { LiveVerificationJudge } from './live-verification-judge';
-import type { StaticVerificationJudge } from './static-verification-judge';
 
 function dbOpts() {
   return {
@@ -346,24 +344,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         notifyThreadHalted: vi.fn(async () => undefined),
         notifyThreadDone: vi.fn(async () => undefined),
       } as unknown as import('../brain-gateway').BrainGateway;
-      let judgeCalls = 0;
-      const judge = {
-        async judge() {
-          judgeCalls++;
-          return {
-            runtimeSurfaceTouched: false,
-            liveVerificationAdequate: true,
-            reason: 'test verdict',
-          };
-        },
-      } as unknown as LiveVerificationJudge;
-      let staticJudgeCalls = 0;
-      const staticJudge = {
-        async judge() {
-          staticJudgeCalls++;
-          return { staticChecksAdequate: true, reason: 'test verdict' };
-        },
-      } as unknown as StaticVerificationJudge;
       const electionState = { draining: false, leader: true };
 
       const driver = new ThreadDriver(
@@ -463,8 +443,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           listRunning: async () => [],
         } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
         brainGateway,
-        judge,
-        staticJudge,
         taskSink,
         undefined, // exposure
         undefined, // conventions

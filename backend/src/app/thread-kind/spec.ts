@@ -74,9 +74,6 @@ export interface ThreadKindSpec {
   execution: ThreadExecution;
   /** Engine-agnostic reasoning effort (e.g. `xhigh` for master review); undefined = the engine default. */
   reasoningEffort?: ReasoningEffort;
-  /** Host-side gates that run after this kind's execute turn (the diagnostics done-gate + the ADR-0005
-   *  live-verification judge). Master review carries its own verify mandate, so both are off for it. */
-  gates: { verification: boolean; liveVerification: boolean };
   /** The wire lane this kind streams on — resolved through `surface/thread-registry.ts` (`laneFor`). */
   laneKind: LaneKind;
   /** Who holds the input side (operator composer / another agent / read-only). */

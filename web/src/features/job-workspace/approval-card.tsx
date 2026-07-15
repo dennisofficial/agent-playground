@@ -10,6 +10,7 @@ import {
   Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CiHeaderGlyph } from "@/components/ui/badges";
 import { Markdown } from "./markdown";
 import { makeResolveFileLink } from "./repo-file-links";
 import { shouldShowSpinUpPreview } from "./spin-up-preview-visibility";
@@ -31,6 +32,7 @@ import {
   MERGE_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
+  type ShipThreadVerification,
   type WebApprovalCard,
   type WebCardAction,
   type WebVerdictCard,
@@ -241,6 +243,12 @@ function ShipCardView({
         </div>
       ) : null}
 
+      {card.kind === "ship" ? <ShipCardCiRow jobRef={jobRef} /> : null}
+
+      {card.kind === "ship" && card.verifications?.length ? (
+        <ShipVerificationsList verifications={card.verifications} />
+      ) : null}
+
       <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {card.actions.map((action) => (
           <ShipActionButton
@@ -253,6 +261,74 @@ function ShipCardView({
           <ShipCardPreviewButton jobRef={jobRef} card={card} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** The PR's CI state, alongside the self-reported verification list — the ship gate is otherwise all
+ *  self-reported, so this is the one externally-checked signal. Reuses the same {@link CiHeaderGlyph}
+ *  the job header shows after the PR # line, so the two never drift visually. Hidden entirely when
+ *  there's no CI to report (no PR yet, or the PR has no checks). */
+function ShipCardCiRow({ jobRef }: { jobRef: JobRef }) {
+  const pipeline = usePipeline(jobRef);
+  const job =
+    pipeline.data && pipeline.data.status !== "no_job" ? pipeline.data : null;
+  if (!job?.ciStatus) return null;
+  return (
+    <div className="flex items-center gap-1.5 border-t border-border px-4 py-2.5">
+      <span className="font-mono text-[9.5px] font-semibold tracking-[0.04em] text-faint">
+        CI
+      </span>
+      <CiHeaderGlyph ci={job.ciStatus} counts={job.ciCounts} />
+    </div>
+  );
+}
+
+/** Each build thread's self-reported verification, listed on the ship card (d5). No judge grades it —
+ *  `unverified` just flags a thread that asserted done with zero evidence, so the operator knows to
+ *  eyeball it before shipping. */
+function ShipVerificationsList({
+  verifications,
+}: {
+  verifications: ShipThreadVerification[];
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
+      {verifications.map((v, i) => (
+        <div key={`${v.title}-${i}`} className="text-[11.5px] leading-relaxed">
+          <div className="flex items-center gap-1.5 font-medium text-text">
+            {v.status === "not_done" || v.unverified ? (
+              <AlertTriangle size={12} className="shrink-0 text-amber" />
+            ) : (
+              <CheckCircle2 size={12} className="shrink-0 text-green" />
+            )}
+            <span>{v.title}</span>
+          </div>
+          {v.status === "not_done" ? (
+            <p className="pl-[18px] text-faint">
+              Not done — needs operator attention.
+            </p>
+          ) : v.unverified ? (
+            <p className="pl-[18px] text-faint">
+              No verification evidence reported.
+            </p>
+          ) : (
+            <div className="mt-1 flex flex-col gap-1 pl-[18px]">
+              {v.verification.map((entry, j) => (
+                <div key={j} className="font-mono text-[10.5px] text-dim">
+                  <span
+                    className={entry.exitCode === 0 ? "text-green" : "text-red"}
+                  >
+                    exit {entry.exitCode}
+                  </span>{" "}
+                  <span className="text-faint">{entry.kind}</span>{" "}
+                  {entry.command}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -434,7 +510,11 @@ function DbWriteCardView({
 
       <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {card.actions.map((action) => (
-          <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
+          <ShipActionButton
+            key={action.actionId}
+            jobRef={jobRef}
+            action={action}
+          />
         ))}
       </div>
     </div>

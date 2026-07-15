@@ -447,28 +447,6 @@ export function retryJob(
   return webJson(threadPath(ref, `/retry${q}`), { method: "POST" });
 }
 
-/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive (re-runs the live judge),
- *  re-arming the judge-cap re-drive budget. Refused server-side if the hold is not a judge outage. */
-export function retryVerification(
-  ref: JobRef,
-  threadId: string,
-): Promise<{ ok: boolean; reason?: string }> {
-  return webJson(threadPath(ref, `/threads/${threadId}/retry-verification`), {
-    method: "POST",
-  });
-}
-
-/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete the thread, bypassing only the
- *  unreachable live judge, then advance the job. Refused server-side unless the static gate already passed. */
-export function acceptThread(
-  ref: JobRef,
-  threadId: string,
-): Promise<{ ok: boolean; reason?: string }> {
-  return webJson(threadPath(ref, `/threads/${threadId}/accept`), {
-    method: "POST",
-  });
-}
-
 /** "Ship without review" escape hatch on a `codex_review_unavailable` job hold — marks the ship-time
  *  master_review thread skipped/done and lands the job at the normal ship-review gate (the human PR gate
  *  still applies). Refused server-side unless the job is actually held on a Codex outage. */

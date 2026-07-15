@@ -54,19 +54,8 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
-import {
-  CODEX_REVIEW_OUTAGE_RETRY_MS,
-  JUDGE_UNAVAILABLE_REDRIVE_CAP,
-} from '../domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '../domain';
 import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
-import type {
-  LiveVerificationJudge,
-  LiveVerificationVerdict,
-} from './live-verification-judge';
-import type {
-  StaticVerificationJudge,
-  StaticVerificationVerdict,
-} from './static-verification-judge';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 
 /**
@@ -542,133 +531,6 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === threadId);
       return s?.jobId ?? null;
     }),
-    // ── Phase 3 halt-wake + bounded fix (ADR 0004 rider 4) — backed on the thread objects, like the DB ──
-    setHaltOwed: vi.fn(async (threadId: string, outcome: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      if (s) {
-        s.halt_outcome = outcome;
-        s.halt_waked_at = null;
-      }
-    }),
-    clearHalt: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      if (s) {
-        s.halt_outcome = null;
-        s.halt_waked_at = null;
-      }
-    }),
-    markHaltWaked: vi.fn(async (threadId: string, gen: number) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      // Generation-keyed CAS: only stamp if the budget is unchanged + still owed + un-waked.
-      if (
-        s &&
-        (s.halt_fix_attempts ?? 0) === gen &&
-        s.halt_waked_at == null &&
-        s.halt_outcome != null
-      ) {
-        s.halt_waked_at = new Date();
-      }
-    }),
-    threadsAwaitingHaltWake: vi.fn(async (jobId?: string) =>
-      state.threads
-        .filter((x) => {
-          const h = x as HaltFields;
-          return (
-            h.halt_outcome != null &&
-            h.halt_waked_at == null &&
-            (jobId == null || x.jobId === jobId)
-          );
-        })
-        .map((x) => {
-          const h = x as HaltFields;
-          return {
-            jobId: x.jobId,
-            threadId: x.id,
-            gen: h.halt_fix_attempts ?? 0,
-            outcome: h.halt_outcome as 'blocked' | 'incomplete' | 'failed',
-          };
-        }),
-    ),
-    claimHaltFixAttempt: vi.fn(async (threadId: string, cap: number) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      const used = s?.halt_fix_attempts ?? 0;
-      if (!s || used >= cap) return { ok: false, used: cap };
-      s.halt_fix_attempts = used + 1;
-      return { ok: true, used: used + 1 };
-    }),
-    haltFixAttempts: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      return s?.halt_fix_attempts ?? 0;
-    }),
-    haltBudgetReason: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId);
-      const recovery = s?.config?.recovery as
-        | Record<string, unknown>
-        | undefined;
-      return recovery?.haltBudgetReason === 'judge_unavailable'
-        ? 'judge_unavailable'
-        : null;
-    }),
-    setHaltBudgetReason: vi.fn(
-      async (threadId: string, reason: 'judge_unavailable' | null) => {
-        const s = state.threads.find((x) => x.id === threadId);
-        if (!s) return;
-        const config = { ...(s.config ?? {}) };
-        const recovery = {
-          ...((config.recovery as Record<string, unknown> | undefined) ?? {}),
-        };
-        if (reason) recovery.haltBudgetReason = reason;
-        else delete recovery.haltBudgetReason;
-        if (Object.keys(recovery).length > 0) config.recovery = recovery;
-        else delete config.recovery;
-        s.config = config;
-      },
-    ),
-    haltOutcome: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      return (
-        (s?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null
-      );
-    }),
-    rearmHaltedThreads: vi.fn(async (jobId: string) => {
-      let n = 0;
-      for (const x of state.threads) {
-        const h = x as HaltFields;
-        if (x.jobId === jobId && (h.halt_fix_attempts ?? 0) > 0) {
-          h.halt_fix_attempts = 0;
-          n += 1;
-        }
-      }
-      return n;
-    }),
-    rearmThread: vi.fn(async (threadId: string) => {
-      const s = state.threads.find((x) => x.id === threadId) as
-        | HaltFields
-        | undefined;
-      if (s && (s.halt_fix_attempts ?? 0) > 0) {
-        s.halt_fix_attempts = 0;
-        return 1;
-      }
-      return 0;
-    }),
-    // Decision d1 — completion wake (mirrors the halt trio's presence-for-type-only stubbing above).
-    setDoneWakeOwed: vi.fn(
-      async (_threadId: string, _reason: 'final' | 'notable') => undefined,
-    ),
-    threadsAwaitingDoneWake: vi.fn(async (_jobId?: string) => []),
-    markDoneWaked: vi.fn(async (_threadId: string) => undefined),
     masterReviewThreadId: vi.fn(async (jobId: string) => {
       const s = state.threads.find(
         (x) => x.jobId === jobId && x.kind === 'master_review',
@@ -823,8 +685,10 @@ function makeTurn(
      *  test drive a SPECIFIC transient shape — e.g. the d1 circuit-breaker's `in-sandbox engine turn failed:
      *  Error: engine stream closed …` — through the REAL `runJobWithTransientRetry`/`TRANSIENT_ERROR_RE`. */
     transientMessage?: string;
-    /** Simulate the orchestrator VOLUNTARILY halting via `block_thread` (ADR 0004 Phase 3) instead of
-     *  asserting completion — the turn calls `block_thread` with this and returns cleanly. */
+    /** VESTIGIAL: `block_thread` was removed from the real tool bridge (d2 — ending a turn without
+     *  `complete_thread` IS the "needs operator" signal now). No test sets this option, so
+     *  `input.toolBridge?.tools?.['block_thread']` below is always undefined and this branch never fires;
+     *  left in place only as a harmless no-op rather than unpicking the (unused) option plumbing. */
     blockThread?: { reason: string; detail: string };
   } = {},
   /** The writer commits + pushes its own work now; call this after `complete_thread` to advance the fake
@@ -988,57 +852,6 @@ function cleanSummary(mode: 'thread' | 'pull_request') {
   };
 }
 
-/** A fake live-verification judge whose verdict the test controls (and whose calls it can assert). Mirrors
- *  `decision-classifier.service.spec.ts`'s `fakeLlm()` pattern — NO default parameter (a test that wants
- *  "judge unavailable" must be able to pass `undefined` explicitly and have it stick; a default parameter
- *  would silently substitute a real verdict, since JS defaults also fire on an explicit `undefined` arg). */
-function fakeJudge(
-  verdict: LiveVerificationVerdict | undefined,
-): LiveVerificationJudge & { calls: number } {
-  return {
-    calls: 0,
-    async judge() {
-      this.calls++;
-      return verdict;
-    },
-  };
-}
-
-/** `assemble()`'s own default judge when a test doesn't care about the gate — `runtimeSurfaceTouched: false`
- *  so the ~1100 lines of pre-existing `complete_thread`-driven tests keep asserting `status: 'done'`
- *  unchanged even though every one of them now routes through the gate. */
-function defaultTestJudge(): LiveVerificationJudge & { calls: number } {
-  return fakeJudge({
-    runtimeSurfaceTouched: false,
-    liveVerificationAdequate: true,
-    reason: 'default test verdict',
-  });
-}
-
-/** A fake static-verification judge — the sibling of `fakeJudge`, same "no default param" reasoning: a test
- *  asserting "judge unavailable" must be able to pass `undefined` explicitly and have it stick. */
-function fakeStaticJudge(
-  verdict: StaticVerificationVerdict | undefined,
-): StaticVerificationJudge & { calls: number } {
-  return {
-    calls: 0,
-    async judge() {
-      this.calls++;
-      return verdict;
-    },
-  };
-}
-
-/** `assemble()`'s own default static judge when a test doesn't care about the static gate — adequate, so the
- *  ~1100 lines of pre-existing `complete_thread`-driven tests keep asserting `status: 'done'` unchanged even
- *  though every one of them now also routes through the static gate. */
-function defaultTestStaticJudge(): StaticVerificationJudge & { calls: number } {
-  return fakeStaticJudge({
-    staticChecksAdequate: true,
-    reason: 'default test verdict',
-  });
-}
-
 function makeSurface(): { surface: ChatSurface; posts: string[] } {
   const posts: string[] = [];
   const surface = {
@@ -1141,11 +954,7 @@ function assemble(
       import('../sandbox/turn-registry.service').TurnRegistry,
       'listRunning'
     >;
-    judge?: LiveVerificationJudge & { calls: number };
-    /** The sibling static-verification judge (`gateStaticVerification`) — defaults to an always-adequate fake. */
-    staticJudge?: StaticVerificationJudge & { calls: number };
-    /** Override `CredentialResolver.anthropicKey` — defaults to the env-fallback shape (no key). A test that
-     *  exercises the judge-unavailable-WITH-key path (transient infra hold) sets this to return a key. */
+    /** Override `CredentialResolver.anthropicKey` — defaults to the env-fallback shape (no key). */
     anthropicKey?: (orgId?: string) => Promise<string | undefined>;
     /** SHIP-REVIEW GATE: feature/bugfix builds now PARK before the PR (awaiting the operator's "Ship it").
      *  Default true → the harness auto-clicks "Ship it" the instant the gate parks, so the many
@@ -1301,8 +1110,6 @@ function assemble(
   // LeaderElectionService stub: `draining`/`leader` are flippable so tests can simulate SIGTERM (drain) and a
   // mid-drive leadership loss (demotion). Mirrors production: `isLeader()` is false while draining.
   const electionState = { draining: false, leader: true };
-  const judge = opts.judge ?? defaultTestJudge();
-  const staticJudge = opts.staticJudge ?? defaultTestStaticJudge();
   // Captures the driver's Phase-3 brain wakes (`notifyThreadHalted`) fired via the BrainGateway.
   const wakes: Array<{
     jobId: string;
@@ -1324,10 +1131,8 @@ function assemble(
       jobId: string,
       threadId: string,
       outcome: 'blocked' | 'incomplete' | 'failed',
-      gen: number,
     ) => {
       wakes.push({ jobId, threadId, outcome });
-      await store.markHaltWaked(threadId, gen);
     },
   } as unknown as BrainGateway;
   // Spy for the per-thread service teardown (`atlas-svc stop-all` via the sandbox provider). The driver
@@ -1440,8 +1245,6 @@ function assemble(
     }) as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
     // BrainGateway: the driver's neutral brain seam (Phase-3 halt wakes).
     brainGateway,
-    judge,
-    staticJudge,
     taskSink,
     undefined,
     undefined,
@@ -1492,8 +1295,6 @@ function assemble(
     blockSink,
     sunk,
     electionState,
-    judge,
-    staticJudge,
     wakes,
     stopAllServices,
   };
@@ -2372,7 +2173,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       );
 
       expect(existsSync(trail)).toBe(true);
-      expect(readFileSync(trail, 'utf8')).toContain('# Thread halted: Backend');
+      expect(readFileSync(trail, 'utf8')).toContain('# Thread not done: Backend');
 
       // Regression guard (the whole point): nothing is written into the git worktree.
       expect(existsSync(join(worktreeDir, '.atlas'))).toBe(false);
@@ -3109,30 +2910,6 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
   });
 });
 
-// ── ADR 0005 — the live-verification judge gate inside `complete_thread` ───────────────────────────
-
-/** A judge fake that also captures each call's input, for the two Codex-requested regression cases below
- *  (proving the diff signal the judge sees, not just whether it was called). */
-function capturingJudge(
-  verdict: LiveVerificationVerdict | undefined,
-): LiveVerificationJudge & {
-  calls: number;
-  seenChangedFiles: string[][];
-  seenSummaries: string[];
-} {
-  return {
-    calls: 0,
-    seenChangedFiles: [],
-    seenSummaries: [],
-    async judge(input) {
-      this.calls++;
-      this.seenChangedFiles.push(input.changedFiles);
-      this.seenSummaries.push(input.terminalRecordSummary);
-      return verdict;
-    },
-  };
-}
-
 /** Cast a git mock's `changedFileNames` to a mock fn so a test can stub its return per baseSha. Mirrors
  *  the `as ReturnType<typeof vi.fn>` cast style already used on the store mocks above. */
 function stubChangedFileNames(
@@ -3144,902 +2921,6 @@ function stubChangedFileNames(
   ).changedFileNames = vi.fn(impl);
 }
 
-describe('ThreadDriver — re-halt idempotency (stops the all-night "Thread blocked → Holding." spam)', () => {
-  // A blocked thread leaves the JOB `running`, so the 30-min reap's resume() re-drives it and re-enters the
-  // "already blocked → re-halt" short-circuit. It must NOT re-post the card or re-arm the owed wake once the
-  // halt was already delivered — except for a `judge_unavailable` transient hold, whose periodic re-wake IS
-  // its recovery. And it MUST still notify if haltJob never ran (halt_outcome missing → wake would be lost).
-  function blockedState(o: {
-    reason?: 'unverified' | 'judge_unavailable' | 'question';
-    haltOutcome?: 'blocked' | null;
-    haltWakedAt?: Date | null;
-    haltFixAttempts?: number;
-    haltBudgetReason?: 'judge_unavailable';
-  }): StoreState {
-    const t = thread('sec-be', 10, 'Backend', 'executing', false, 'paused');
-    (
-      t as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record = {
-      status: 'blocked',
-      summary: 'blocked',
-      blocked: { reason: o.reason ?? 'unverified', detail: 'needs your input' },
-    };
-    const h = t as HaltFields;
-    h.halt_outcome = o.haltOutcome ?? null;
-    h.halt_waked_at = o.haltWakedAt ?? null;
-    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
-    if (o.haltBudgetReason) {
-      (t as DriverThread & { config?: Record<string, unknown> }).config = {
-        recovery: { haltBudgetReason: o.haltBudgetReason },
-      };
-    }
-    return {
-      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
-      record: makeRecord(),
-      threads: [t],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-  }
-  const blockedCards = (h: { sunk: Array<{ block: { text?: string } }> }) =>
-    h.sunk.filter((s) => s.block.text?.includes('Thread blocked'));
-
-  it('already-notified block (owed-wake row exists + delivered) → re-drive re-posts NOTHING and does not re-arm', async () => {
-    // haltJob already ran on the first block: halt_outcome set, wake delivered (halt_waked_at stamped).
-    const state = blockedState({
-      reason: 'unverified',
-      haltOutcome: 'blocked',
-      haltWakedAt: new Date(),
-    });
-    const h = assemble(state);
-    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
-
-    await h.driver.resume();
-    await flush();
-
-    expect(blockedCards(h)).toHaveLength(0); // no re-posted "Thread blocked" card
-    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // no re-arm
-    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(
-      0,
-    ); // stays acked
-  });
-
-  it('REGRESSION: blocked record but halt_outcome MISSING (crash before haltJob) → re-drive still runs haltJob ONCE', async () => {
-    // The block_thread terminal record persisted, but haltJob never created the owed-wake row. A re-drive must
-    // NOT suppress — else `threadsAwaitingHaltWake` has nothing to deliver and the brain is never woken.
-    const state = blockedState({
-      reason: 'unverified',
-      haltOutcome: null,
-      haltWakedAt: null,
-    });
-    const h = assemble(state);
-
-    await h.driver.resume();
-    await flush();
-
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed-wake row created
-    expect(blockedCards(h).length).toBeGreaterThan(0); // the card posts (the FIRST notification)
-    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(
-      1,
-    );
-  });
-
-  it('judge_unavailable transient hold KEEPS re-arming on re-drive UNDER the judge cap (its only recovery path)', async () => {
-    // Already delivered, but judge_unavailable must re-wake the brain to retry_thread when the judge recovers.
-    const state = blockedState({
-      reason: 'judge_unavailable',
-      haltOutcome: 'blocked',
-      haltWakedAt: new Date(),
-    });
-    const h = assemble(state);
-    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
-
-    await h.driver.resume();
-    await flush();
-
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
-    expect(await h.store.threadsAwaitingHaltWake('job-abcdef12')).toHaveLength(
-      1,
-    ); // owed again
-    expect(state.job.halt).toBeNull(); // still held, NOT rested — the operator dot lights via the owed wake
-  });
-
-  it('judge_unavailable hold RESTS once re-arming has spent the judge cap (no longer re-arms forever)', async () => {
-    // The deadlock's fix: patient re-arming is BOUNDED. Once halt_fix_attempts reaches JUDGE_UNAVAILABLE_REDRIVE_CAP
-    // the re-halt no longer owes a fresh wake — it rests the job `incomplete` for the operator's Retry/Accept levers.
-    const state = blockedState({
-      reason: 'judge_unavailable',
-      haltOutcome: 'blocked',
-      haltWakedAt: new Date(),
-      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
-    });
-    const h = assemble(state);
-    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
-
-    await h.driver.resume();
-    await flushUntil(() => state.job.halt?.kind === 'incomplete');
-
-    expect(state.job.halt?.kind).toBe('incomplete'); // rested for the operator
-    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false — the sweep stops re-waking the brain
-    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
-    expect(h.posts.some((p) => p.includes('Retry now'))).toBe(true);
-  });
-
-  it('judge retry budget does NOT consume the real defect budget when the hold flips to unverified', async () => {
-    // Two patient judge-outage retries used the shared counter. If the next drive reaches the judges and gets
-    // a genuine unverified result, that stale judge budget must reset before the 2-attempt defect cap is read.
-    const state = blockedState({
-      reason: 'unverified',
-      haltOutcome: null,
-      haltWakedAt: null,
-      haltFixAttempts: 2,
-      haltBudgetReason: 'judge_unavailable',
-    });
-    const h = assemble(state);
-    (h.store.setHaltOwed as ReturnType<typeof vi.fn>).mockClear();
-
-    await h.driver.resume();
-    await flush();
-
-    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be');
-    expect(h.store.setHaltBudgetReason).toHaveBeenCalledWith('sec-be', null);
-    expect(state.job.halt).toBeNull();
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked');
-    expect(await h.store.haltFixAttempts('sec-be')).toBe(0);
-  });
-});
-
-describe('ThreadDriver — ADR 0005 live-verification judge gate (always on — no rollout dial)', () => {
-  it('touched + adequate verification → done (judge consulted, never gates)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'curl evidence present',
-    });
-    const h = assemble(state, { judge });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(1);
-    expect(state.threads[0].status).toBe('done');
-    expect(state.job.status).toBe('done');
-    expect(state.job.prUrl).toBeTruthy(); // shipped
-  });
-
-  it('a STRING `verification` (not an array) is coerced into one entry, never silently dropped', async () => {
-    // Live-validated gap (07-03): the orchestrator sometimes collapses its verification narrative into
-    // one free-text string instead of discrete {kind,command,exitCode,outputTail} entries. Losing that
-    // silently would make a genuinely-verified thread look unverified to the judge for the wrong reason.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const evidence =
-      'booted the real app and curled it: GET /health/version -> 200 {"version":"1.0.0"}';
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          await input.toolBridge?.tools?.['complete_thread']?.({
-            summary: 'built it',
-            verification: evidence, // a STRING, not an array — the shape that was silently dropped before
-          });
-          return {
-            report: 'did it',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: 'execute' as const,
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'evidence present',
-    });
-    const h = assemble(state, { turn, judge });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.verification).toHaveLength(1);
-    expect(term.verification?.[0].outputTail).toBe(evidence);
-    expect(term.status).toBe('done');
-  });
-
-  it('a decisive evidence token PAST char 2000 survives ingestion → the judge input (no head-only truncation)', async () => {
-    // Regression for job 76f0ee2a: the `effort=high` proof landed past the head-only slice, so the judge
-    // was fed truncated evidence and (correctly, given what it saw) blocked. Ingestion now head+TAIL clamps,
-    // and the whole-item render preserves the tail — the decisive token must reach the judge.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    // >3000 chars total, decisive token at ~char 3000 — past BOTH the old 2000 ingestion slice and the old
-    // 300 renderer slice, and in the tail region the clamp keeps.
-    const decisive = 'DECISIVE_effort=high_in_pipeline_response';
-    const longTail = `${'DIAG '.repeat(600)}${decisive} TAIL`;
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          await input.toolBridge?.tools?.['complete_thread']?.({
-            summary: 'plumbed effort through to the SDK',
-            verification: [
-              {
-                kind: 'reported',
-                command: 'curl /pipeline',
-                exitCode: 0,
-                outputTail: longTail,
-              },
-            ],
-          });
-          return {
-            report: 'did it',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: 'execute' as const,
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const judge = capturingJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'effort=high observed live',
-    });
-    const h = assemble(state, { turn, judge });
-    stubChangedFileNames(h.git, async () => ['src/engine/run-claude.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBeGreaterThanOrEqual(1);
-    // The exact evidence the judge blocked on before now reaches it.
-    expect(judge.seenSummaries[0]).toContain(decisive);
-  });
-
-  it('touched + INADEQUATE verification → downgraded to blocked (unverified), build halts, no PR', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: false,
-      reason: 'only unit tests ran',
-      missingChecks: 'curl the new endpoint',
-    });
-    const h = assemble(state, { judge });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(judge.calls).toBe(1);
-    expect(state.job.status).toBe('running'); // NOT failed, NOT paused — Phase 3 owns the resume path
-    expect(h.opened).toHaveLength(0); // nothing shipped on an unverified claim
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-    expect(term.blocked?.detail).toContain('only unit tests ran');
-    expect(term.blocked?.detail).toContain('curl the new endpoint'); // missingChecks flows into detail
-    expect(h.posts.some((p) => p.includes('curl the new endpoint'))).toBe(true);
-  });
-
-  it('NOT touched → done regardless of what verification[] contains', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    // The judge says the diff never touched a runtime surface at all — done regardless of `liveVerificationAdequate`.
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: false,
-      liveVerificationAdequate: false,
-      reason: 'refactor only, no runtime surface',
-    });
-    const h = assemble(state, { judge });
-    stubChangedFileNames(h.git, async () => ['src/internal/helper.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(1);
-    expect(state.threads[0].status).toBe('done');
-    expect(state.job.prUrl).toBeTruthy(); // shipped
-  });
-
-  it('judge UNAVAILABLE (undefined) → conservative blocked, never a silent done', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge(undefined); // no key / no verdict
-    const h = assemble(state, { judge });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(judge.calls).toBe(1);
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-    // No Anthropic key resolves in the default CredentialResolver fake → the operator-facing message names it.
-    expect(term.blocked?.detail).toContain('no Anthropic API key configured');
-  });
-
-  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable), job stays running UNDER the judge cap', async () => {
-    // 07-09 incident: an Anthropic outage made the judge return undefined for EVERY thread. With a key present
-    // that is a TRANSIENT infra failure, not unverified work — the thread must hold + retry, NOT burn the fix
-    // budget and rest the job `budget_exhausted`. Under the judge cap the job never rests.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge(undefined); // judge unreachable (Anthropic down)
-    const h = assemble(state, {
-      judge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('judge_unavailable'); // distinct from 'unverified'
-    expect(term.blocked?.detail).toContain('temporarily unavailable');
-    // Held for retry — the job is NOT rested and the operator card does NOT claim the fix budget is spent.
-    expect(state.job.status).toBe('running');
-    expect(h.posts.some((p) => p.includes('temporarily unavailable'))).toBe(
-      true,
-    );
-    expect(h.posts.some((p) => p.includes('autonomous fix attempts'))).toBe(
-      false,
-    );
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed wake keeps the recovery alive
-    expect(h.opened).toHaveLength(0); // nothing shipped
-  });
-
-  it('judge UNAVAILABLE with the judge cap already spent → RESTS the job `incomplete` for the operator', async () => {
-    // The bounded end of the patient-retry loop: once halt_fix_attempts has reached JUDGE_UNAVAILABLE_REDRIVE_CAP,
-    // a fresh judge_unavailable block stops re-arming and rests the job so the operator's Retry/Accept levers take over.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts =
-      JUDGE_UNAVAILABLE_REDRIVE_CAP;
-    const judge = fakeJudge(undefined);
-    const h = assemble(state, {
-      judge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'incomplete');
-
-    expect(state.job.halt?.kind).toBe('incomplete'); // rested, not left running forever
-    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false — no more brain re-wakes
-    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
-    expect(h.opened).toHaveLength(0); // still nothing shipped
-  });
-
-  it('judge THROWING → caught, conservative blocked, never crashes the drive', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const throwing: LiveVerificationJudge & { calls: number } = {
-      calls: 0,
-      async judge() {
-        this.calls++;
-        throw new Error('boom');
-      },
-    };
-    const h = assemble(state, { judge: throwing });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(throwing.calls).toBe(1);
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-  });
-
-  it('master-review thread BYPASSES the judge entirely (judge.calls stays 0)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [
-        thread(
-          'sec-review',
-          30,
-          'Master review — whole-diff review & fix',
-          'pending',
-          true,
-        ),
-      ],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: false,
-      reason: 'would gate if it were ever consulted',
-    });
-    const h = assemble(state, { judge });
-    // Even with a runtime-looking changed-file set, the master-review bypass short-circuits BEFORE the
-    // gate ever calls `changedFileNames` — the judge (and the pre-filter) never run for it.
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(0);
-    expect(state.threads[0].status).toBe('done');
-  });
-
-  it('pre-filter: an all-docs/lockfile changed-file set skips the judge call entirely', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: false,
-      reason: 'would gate if it were ever consulted',
-    });
-    const h = assemble(state, { judge });
-    stubChangedFileNames(h.git, async () => [
-      'docs/guide.md',
-      'package-lock.json',
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(0); // pre-filter classified it non-runtime without ever asking the judge
-    expect(state.threads[0].status).toBe('done');
-  });
-
-  // ── Codex-requested regressions: the exact scenarios the original whole-job `origin/main...HEAD`
-  // diff-signal design would have gotten wrong (see ADR 0005 §2c / the plan's "Diff-signal timing bug"). ──
-
-  it('regression: a FIRST thread with an UNCOMMITTED new route file — the judge sees it (not an empty list)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = capturingJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'live curl evidence present',
-    });
-    const h = assemble(state, { judge });
-    // `complete_thread` runs BEFORE `commitAll` — nothing has been committed yet when the judge is
-    // consulted. `changedFileNames` is the only signal that would ever see this file at that moment.
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(1);
-    expect(judge.seenChangedFiles[0]).toEqual(['src/routes/health.ts']); // NOT empty
-  });
-
-  it('regression: a SECOND docs-only thread after a prior runtime thread — its judge call sees ONLY its own changed files', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: makeSections(), // 'sec-be' (Backend, ordinal 10) then 'sec-fe' (Frontend, ordinal 20)
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = capturingJudge({
-      runtimeSurfaceTouched: false,
-      liveVerificationAdequate: true,
-      reason: 'non-runtime change',
-    });
-    const h = assemble(state, { judge });
-    // Thread 1 (Backend) is mid-turn at `complete_thread` time — its own new runtime file. Thread 2
-    // (Frontend) starts AFTER thread 1 committed, so its `sectionStartSha` (headSha) has advanced — the
-    // fake writer turn bumps HEAD after `complete_thread`, so keying off `baseSha` isolates each thread's diff.
-    stubChangedFileNames(h.git, async (_wt, baseSha) =>
-      baseSha === 'sha0'
-        ? ['src/routes/health.ts']
-        : ['notes/CONTRIBUTING.txt'],
-    );
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(judge.calls).toBe(2);
-    // Thread 1's call saw its own runtime file; thread 2's call saw ONLY its own docs-ish file — never
-    // thread 1's already-committed file. This is exactly what the per-thread `sectionStartSha` base
-    // guarantees and a whole-job `origin/main...HEAD` diff would have gotten wrong (it would have shown
-    // thread 2 the union of both threads' changes).
-    expect(judge.seenChangedFiles[0]).toEqual(['src/routes/health.ts']);
-    expect(judge.seenChangedFiles[1]).toEqual(['notes/CONTRIBUTING.txt']);
-  });
-});
-
-describe('ThreadDriver — static-verification judge gate (sibling of the live gate)', () => {
-  it('adequate static checks → done (judge consulted)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge({
-      staticChecksAdequate: true,
-      reason: 'typecheck clean',
-    });
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(staticJudge.calls).toBe(1);
-    expect(state.threads[0].status).toBe('done');
-  });
-
-  it('inadequate static checks → downgraded to blocked (unverified), warm-turn retry', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge({
-      staticChecksAdequate: false,
-      reason: 'no typecheck evidence',
-      missingChecks: 'typecheck',
-    });
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(staticJudge.calls).toBe(1);
-    expect(state.job.status).toBe('running'); // NOT failed, NOT paused — Phase 3 owns the resume path
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-    expect(term.blocked?.detail).toContain('no typecheck evidence');
-    expect(term.blocked?.detail).toContain('typecheck'); // missingChecks flows into detail
-  });
-
-  it('judge UNAVAILABLE but a key IS configured → transient HOLD (judge_unavailable) UNDER the judge cap', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // judge unreachable (Anthropic down)
-    const h = assemble(state, {
-      staticJudge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('judge_unavailable'); // distinct from 'unverified'
-    expect(term.blocked?.detail).toContain('temporarily unavailable');
-    expect(state.job.status).toBe('running'); // held for retry, not rested
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // owed wake keeps re-arming
-  });
-
-  it('static judge UNAVAILABLE with the judge cap already spent → RESTS the job `incomplete`', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts =
-      JUDGE_UNAVAILABLE_REDRIVE_CAP;
-    const staticJudge = fakeStaticJudge(undefined);
-    const h = assemble(state, {
-      staticJudge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'incomplete');
-
-    expect(state.job.halt?.kind).toBe('incomplete'); // the static gate's judge_unavailable rests the same way
-    expect(h.store.setHaltOwed).not.toHaveBeenCalled();
-    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
-  });
-
-  it('judge UNAVAILABLE with NO key configured → conservative blocked (unverified)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // no key / no verdict
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(staticJudge.calls).toBe(1);
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-    expect(term.blocked?.detail).toContain('no Anthropic API key configured');
-  });
-
-  // ── pre-filter regression guards (BUILD_RELEVANT_FILE_RE — deliberately divergent from the live judge's
-  // NON_RUNTIME_FILE_RE): a test-only or build-config-only diff MUST still reach the static judge, while a
-  // pure docs/lockfile/.github diff must NOT. ──────────────────────────────────────────────────────────────
-
-  it('pre-filter: a TEST-ONLY (.spec.ts) changed file still fires the static judge', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // would block if fired
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.spec.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(staticJudge.calls).toBe(1);
-  });
-
-  it('pre-filter: a tsconfig*.json-only changed file still fires the static judge', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // would block if fired
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['tsconfig.json']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(staticJudge.calls).toBe(1);
-  });
-
-  it('pre-filter: a package.json-only changed file still fires the static judge', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // would block if fired
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => ['package.json']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(staticJudge.calls).toBe(1);
-  });
-
-  it('pre-filter: an all-docs/lockfile/CI changed-file set skips the static judge entirely (pre-filter skip = adequate)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const staticJudge = fakeStaticJudge(undefined); // would block if fired
-    const h = assemble(state, { staticJudge });
-    stubChangedFileNames(h.git, async () => [
-      'README.md',
-      'docs/x.md',
-      'pnpm-lock.yaml',
-      '.github/workflows/ci.yml',
-    ]);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(staticJudge.calls).toBe(0);
-    expect(state.threads[0].status).toBe('done');
-  });
-
-  // ── merge with the live gate: `complete_thread` runs BOTH judges against the SAME candidate and blocks
-  // if EITHER is inadequate, preferring the static block as primary. ─────────────────────────────────────
-
-  it('merge: static INADEQUATE + live adequate → thread blocked (static block wins as primary)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'ok',
-    });
-    const staticJudge = fakeStaticJudge({
-      staticChecksAdequate: false,
-      reason: 'no tests',
-      missingChecks: 'unit tests',
-    });
-    const h = assemble(state, { judge, staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('blocked');
-    expect(term.blocked?.reason).toBe('unverified');
-    expect(term.blocked?.detail).toContain('no tests');
-  });
-
-  it('merge: both static AND live adequate → done', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'ok',
-    });
-    const staticJudge = fakeStaticJudge({
-      staticChecksAdequate: true,
-      reason: 'typecheck clean',
-    });
-    const h = assemble(state, { judge, staticJudge });
-    stubChangedFileNames(h.git, async () => ['src/foo.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(state.threads[0].status).toBe('done');
-  });
-});
-
 describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-thread review base)', () => {
   it('FIRST execute: captures pre-build HEAD and set-once persists it as the thread start_sha', async () => {
     const state: StoreState = {
@@ -4050,12 +2931,7 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
     };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'curl evidence present',
-    });
-    const h = assemble(state, { judge });
+    const h = assemble(state);
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
@@ -4079,12 +2955,7 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
     };
-    const judge = fakeJudge({
-      runtimeSurfaceTouched: true,
-      liveVerificationAdequate: true,
-      reason: 'curl evidence present',
-    });
-    const h = assemble(state, { judge });
+    const h = assemble(state);
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
@@ -4097,64 +2968,23 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
   });
 });
 
-// ── ADR 0004 Phase 3 — block_thread + brain auto-wake + bounded autonomous fix ─────────────────────
+// ── not-done handling + operator redrive ───────────────────────────────────────────────────────────
 
-/** Production delivers the owed halt wake via the PERIODIC sweep (`startChatDeliverySweep` →
- *  `deliverOwedHaltWakes`), NOT inline from `drive()` — a live-validated fix (the inline wake fired ≈7s after
- *  the build turn and raced `dispatch_build`'s session rewrite → `error_during_execution`). Simulate the sweep
- *  in unit tests: wait for the halt to be recorded on the row, then fire `deliverOwedHaltWakes`. */
-async function sweepDeliversWake(
-  h: { driver: ThreadDriver; wakes: unknown[] },
+/** Wait until a thread lands in the single "not done" state (`condition==='incomplete'`) and the drive has
+ *  FULLY exited (its `finally` cleared the `active` guard) — the real precondition for an operator redrive,
+ *  which would otherwise hit the `active` no-op while `drive` is still unwinding. */
+async function waitForNotDoneHalt(
+  h: { driver: ThreadDriver },
   state: StoreState,
 ): Promise<void> {
   await flushUntil(() =>
-    state.threads.some((t) => (t as HaltFields).halt_outcome != null),
+    state.threads.some((t) => t.condition === 'incomplete'),
   );
-  // Let `drive()` FULLY exit (its `finally` clears the `active` guard) before the sweep fires — production
-  // runs the sweep on a 30s timer, long after any drive settled, so a `retry_thread`→`redriveThread` in the
-  // wake re-enters cleanly. Firing while `drive` is still unwinding would hit the `active` no-op.
   const active = (h.driver as unknown as { active?: Set<string> }).active;
   await flushUntil(() => !active?.has(state.job.id));
 }
 
-describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bounded fix)', () => {
-  it('block_thread → blocked outcome → halts headlessly (job stays running, thread executing+paused, no PR)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const { turn } = makeTurn({
-      blockThread: {
-        reason: 'needs_env',
-        detail: 'STRIPE_KEY is not granted to the sandbox',
-      },
-    });
-    const h = assemble(state, { turn });
-
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    // The typed voluntary halt flowed through the existing blocked plumbing — the STEP stays at 'executing'
-    // and the pause is carried on the condition overlay:
-    expect(state.threads[0].status).toBe('executing');
-    expect(state.threads[0].condition).toBe('paused');
-    expect(state.job.status).toBe('running'); // blocked leaves the job running (not paused/failed)
-    expect(h.opened).toHaveLength(0); // nothing shipped
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
-    expect(term?.status).toBe('blocked');
-    expect(term?.blocked?.reason).toBe('needs_env');
-    // A durable "Thread blocked" card was relayed:
-    expect(h.posts.some((p) => p.includes('Thread blocked'))).toBe(true);
-    // Headless driver: the halted thread is visible to the operator, with no bounce back to planning.
-    expect(h.wakes).toEqual([]);
-  });
-
+describe('ThreadDriver — not-done handling, operator redrive, and complete_thread task-nudge', () => {
   it('an operator redrive after the halt leaves the active window can resume the thread', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -4164,16 +2994,12 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
     };
-    const { turn } = makeTurn({
-      blockThread: {
-        reason: 'decision',
-        detail: 'needs a call on the retry policy',
-      },
-    });
+    // A turn that ends WITHOUT complete_thread → the thread lands not-done (`incomplete`).
+    const { turn } = makeTurn({ completeThread: false });
     const h = assemble(state, { turn });
     await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-    // A redrive issued right after the halt succeeds (job flips back to running from awaiting_input path):
+    await waitForNotDoneHalt(h, state);
+    // A redrive issued right after the halt succeeds (job flips back to running from the incomplete halt):
     await h.driver.redriveThread(
       state.job.id,
       'sec-be',
@@ -4185,189 +3011,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.threads[0].orientation).toBe('grant the env and retry');
   });
 
-  it('terminal latch: a stray complete_thread AFTER block_thread does not overwrite the blocked assertion', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    // A misbehaving turn that blocks, THEN tries to also complete — the latch must reject the second call.
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          mode: string;
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          const tools = input.toolBridge?.tools;
-          if (tools?.['block_thread']) {
-            const first = await tools['block_thread']({
-              reason: 'decision',
-              detail: 'needs a design call',
-            });
-            const second = await tools['complete_thread']?.({
-              summary: 'sneaky done',
-            });
-            // The latch rejects the second assertion:
-            expect((second as { ok?: boolean })?.ok).toBe(false);
-            expect((first as { ok?: boolean })?.ok).toBe(true);
-          }
-          return {
-            report: 'blocked step',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: input.mode as 'plan' | 'execute' | 'review',
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, { turn });
-
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
-    expect(term?.status).toBe('blocked'); // NOT overwritten to done
-    expect(term?.blocked?.reason).toBe('decision');
-  });
-
-  it('terminal latch: a REPEAT block_thread (same assertion) is idempotent (ok:true + stop directive), not a retryable error', async () => {
-    // ANTI-SPIN: a model that re-calls the terminal tool after latching must NOT get a bare error it reads as
-    // "retry" (that spins the turn to PHASE_TIMEOUT). A same-kind repeat succeeds idempotently and is told to
-    // STOP; the FIRST assertion's record is never overwritten.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          mode: string;
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          const tools = input.toolBridge?.tools;
-          if (tools?.['block_thread']) {
-            const first = await tools['block_thread']({
-              reason: 'decision',
-              detail: 'needs a design call',
-            });
-            const second = await tools['block_thread']({
-              reason: 'decision',
-              detail: 'needs a design call',
-            });
-            expect((first as { ok?: boolean })?.ok).toBe(true);
-            // Idempotent success, NOT an error — and it tells the model to stop:
-            expect(
-              (second as { ok?: boolean; alreadyRecorded?: boolean })?.ok,
-            ).toBe(true);
-            expect(
-              (second as { alreadyRecorded?: boolean })?.alreadyRecorded,
-            ).toBe(true);
-            expect((second as { message?: string })?.message).toMatch(
-              /stop|end your turn/i,
-            );
-          }
-          return {
-            report: 'blocked step',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: input.mode as 'plan' | 'execute' | 'review',
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, { turn });
-
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
-    expect(term?.status).toBe('blocked');
-    expect(term?.blocked?.detail).toBe('needs a design call'); // the first assertion, unmodified
-  });
-
-  it('rejects block_thread with an invalid reason (unverified is host-only) or a missing detail', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const captured: Array<{ ok?: boolean; error?: string }> = [];
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          mode: string;
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          const block = input.toolBridge?.tools?.['block_thread'];
-          if (block) {
-            captured.push(
-              (await block({ reason: 'unverified', detail: 'x' })) as never,
-            );
-            captured.push(
-              (await block({ reason: 'needs_env', detail: '' })) as never,
-            );
-            // A valid one so the thread still asserts a terminal state (else it'd be incomplete).
-            await block({ reason: 'needs_env', detail: 'missing DB url' });
-          }
-          return {
-            report: 'blocked',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: input.mode as 'plan' | 'execute' | 'review',
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, { turn });
-
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    expect(captured[0].ok).toBe(false); // 'unverified' rejected (host-only reason)
-    expect(captured[1].ok).toBe(false); // missing detail rejected
-  });
-
   it('redriveThread: clears the record + halt, injects guidance into orientation, and re-drives to completion', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -4377,8 +3020,9 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
     };
-    // First turn blocks; after the operator/brain re-drives with guidance, the SAME thread completes.
-    let blockedOnce = false;
+    // First turn ends WITHOUT complete_thread (not done); after the operator/brain re-drives with guidance,
+    // the SAME thread completes.
+    let endedIncompleteOnce = false;
     const turn = {
       runTurn: vi.fn(
         async (input: {
@@ -4388,12 +3032,9 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
           toolBridge?: ToolBridgeOptions;
         }) => {
           const tools = input.toolBridge?.tools;
-          if (!blockedOnce && tools?.['block_thread']) {
-            blockedOnce = true;
-            await tools['block_thread']({
-              reason: 'needs_env',
-              detail: 'missing key',
-            });
+          if (!endedIncompleteOnce) {
+            endedIncompleteOnce = true;
+            // end the turn without asserting completion → `incomplete`
           } else if (tools?.['complete_thread']) {
             await tools['complete_thread']({ summary: 'built after guidance' });
           }
@@ -4416,15 +3057,17 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    // Wait for the WAKE (fired once the job leaves the active window) — the real precondition for a redrive,
-    // since the brain re-drives FROM the wake turn. Redriving before then would hit the `active` guard.
-    await sweepDeliversWake(h, state);
+    // Wait for the not-done halt (fired once the job leaves the active window) — the real precondition for a
+    // redrive. Redriving before then would hit the `active` guard.
+    await waitForNotDoneHalt(h, state);
+    // A not-done thread writes NO terminal record (`complete_thread` is the sole done-report).
     expect(
       (state.threads[0] as { terminal_record?: ThreadTerminalRecord | null })
-        .terminal_record?.status,
-    ).toBe('blocked');
+        .terminal_record ?? null,
+    ).toBeNull();
+    expect(state.threads[0].condition).toBe('incomplete');
 
-    // The brain re-drives with guidance (what retry_thread does after claiming the budget).
+    // The operator/brain re-drives with guidance.
     await h.driver.redriveThread(
       state.job.id,
       'sec-be',
@@ -4463,101 +3106,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.threads[0].status).toBe('executing');
     expect(state.threads[0].condition).toBe('none');
     expect(h.store.setThreadCondition).toHaveBeenCalledWith('sec-be', 'none');
-  });
-
-  it('a Phase-2 judge DOWNGRADE does NOT latch — the orchestrator adds evidence and re-completes in the same turn', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    // Judge downgrades the FIRST complete_thread (no live evidence), accepts the SECOND (evidence captured).
-    let jc = 0;
-    const judge: LiveVerificationJudge & { calls: number } = {
-      calls: 0,
-      async judge() {
-        this.calls++;
-        jc++;
-        return jc === 1
-          ? {
-              runtimeSurfaceTouched: true,
-              liveVerificationAdequate: false,
-              reason: 'no live evidence yet',
-            }
-          : {
-              runtimeSurfaceTouched: true,
-              liveVerificationAdequate: true,
-              reason: 'live 200 captured',
-            };
-      },
-    };
-    const returns: Array<Record<string, unknown>> = [];
-    const turn = {
-      runTurn: vi.fn(
-        async (input: {
-          mode: string;
-          stepId?: string | null;
-          jobId: string;
-          toolBridge?: ToolBridgeOptions;
-        }) => {
-          const ct = input.toolBridge?.tools?.['complete_thread'];
-          if (ct) {
-            returns.push(
-              (await ct({ summary: 'built endpoint' })) as Record<
-                string,
-                unknown
-              >,
-            );
-            // The judge warned; capture real evidence and re-complete — MUST NOT be latch-rejected.
-            returns.push(
-              (await ct({
-                summary: 'built endpoint',
-                verification: [
-                  {
-                    kind: 'live',
-                    command: 'curl :4002/x',
-                    exitCode: 0,
-                    outputTail: 'HTTP 200',
-                  },
-                ],
-              })) as Record<string, unknown>,
-            );
-          }
-          return {
-            report: 'built',
-            session: {
-              id: 'sess',
-              jobId: input.jobId,
-              stepId: input.stepId ?? null,
-              engine: 'claude' as const,
-              mode: input.mode as 'plan' | 'execute' | 'review',
-              branch: 'b',
-              worktreePath: '/wt/b',
-            },
-          };
-        },
-      ),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, { turn, judge });
-    stubChangedFileNames(h.git, async () => ['src/routes/x.ts']); // runtime file → judge runs
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
-
-    // The 2nd complete_thread was NOT rejected by the latch (it reached the judge and was accepted):
-    expect(String(returns[1]?.['error'] ?? '')).not.toContain(
-      'already asserted',
-    );
-    expect(judge.calls).toBe(2);
-    const term = (
-      state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
-    ).terminal_record;
-    expect(term?.status).toBe('done'); // recovered in-turn, not falsely stuck blocked
-    expect(state.job.status).toBe('done');
   });
 
   it('does NOT block complete_thread on an open checklist — the FIRST assertion latches done and the host drops the leftovers (advisory-only, decision d1)', async () => {
@@ -4703,180 +3251,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
-  it('a plain re-drive of a BLOCKED thread RE-HALTS headlessly (never re-runs the orchestrator)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    // Pre-seed an existing block (as a prior turn left it) + a stamped wake (already delivered once).
-    (
-      state.threads[0] as unknown as {
-        terminal_record: ThreadTerminalRecord;
-        halt_outcome: string;
-        halt_waked_at: Date | null;
-      }
-    ).terminal_record = {
-      status: 'blocked',
-      summary: 'needs env',
-      blocked: { reason: 'needs_env', detail: 'missing KEY' },
-    };
-    const { turn, calls } = makeTurn();
-    const h = assemble(state, { turn });
-
-    // Simulate boot resume re-driving the still-`running` job.
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    // The orchestrator was NOT re-run (no execute turn) — the thread just re-halted for operator inspection:
-    expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.threads[0].status).toBe('executing');
-    expect(state.threads[0].condition).toBe('paused');
-    expect(h.opened).toHaveLength(0); // nothing shipped
-    expect(h.wakes).toEqual([]);
-
-    // But an explicit redriveThread (clears the record first) DOES re-run it to completion:
-    await h.driver.redriveThread(state.job.id, 'sec-be', 'KEY granted — retry');
-    await flushUntil(() => state.job.status === 'done');
-    expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(0); // re-ran now
-    expect(state.threads[0].orientation).toBe('KEY granted — retry');
-    expect(state.job.status).toBe('done');
-  });
-
-  it('a plain re-drive of a BLOCKED master_review RE-HALTS too (the stale isMasterReview exemption is gone — job 43705139 runaway)', async () => {
-    // REGRESSION: master_review was once exempt from the blocked short-circuit — harmless until Codex gained
-    // `block_thread` (a2a06b2). After that, a master-review that blocked (e.g. the full test suite is red for a
-    // reason outside its diff, so the green-build completion bar is unreachable) left the job `running`, and
-    // every boot resume re-ran the WHOLE Codex review — an UNBOUNDED loop bypassing the brain's re-drive cap.
-    // Now it re-halts like any other thread; only the brain's bounded `redriveThread` re-runs it.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [
-        thread('sec-be', 10, 'Backend', 'done'),
-        thread(
-          'review',
-          40,
-          'Master review',
-          'executing',
-          /* isMasterReview */ true,
-          'paused',
-        ),
-      ],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (
-      state.threads[1] as unknown as {
-        terminal_record: ThreadTerminalRecord;
-      }
-    ).terminal_record = {
-      status: 'blocked',
-      summary: 'full suite red',
-      blocked: {
-        reason: 'needs_env',
-        detail:
-          'full `pnpm test` red from an unrelated EPERM in install-script-fetch-hook.spec.ts',
-      },
-    };
-    const { turn, calls } = makeTurn();
-    const h = assemble(state, { turn });
-
-    // Simulate boot resume re-driving the still-`running` job.
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-
-    // The Codex review was NOT re-run (no execute turn) — the master_review just re-halted headlessly:
-    expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.threads[1].status).toBe('executing');
-    expect(state.threads[1].condition).toBe('paused');
-    expect(h.opened).toHaveLength(0); // nothing shipped
-    expect(h.wakes).toEqual([]);
-  });
-
-  it('a blocked thread whose autonomous budget is EXHAUSTED rests the job (paused, no owed wake) instead of re-waking forever', async () => {
-    // Residual fix: once Atlas has spent its re-drive budget the block is waiting on the OPERATOR — leaving the
-    // job `running` made every boot re-wake the brain to re-hit the same refusal. Now the driver rests it.
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record = {
-      status: 'blocked',
-      summary: 'needs env',
-      blocked: { reason: 'needs_env', detail: 'missing KEY' },
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 2; // budget already spent (cap = 2)
-    const { turn, calls } = makeTurn();
-    const h = assemble(state, { turn });
-
-    // Simulate boot resume re-driving the still-`running` job.
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'budget_exhausted');
-
-    // No orchestrator re-run, the job is RESTED (budget-exhausted halt), and NO wake was owed (halt_outcome
-    // stays null → the sweeps have nothing to re-fire), so the brain is not re-woken to re-escalate a halt it
-    // can't fix:
-    expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-    expect(state.job.halt?.kind).toBe('budget_exhausted');
-    expect(
-      (state.threads[0] as unknown as HaltFields).halt_outcome ?? null,
-    ).toBeNull();
-    expect(h.wakes).toHaveLength(0);
-  });
-
-  it('operator RETRY re-arms the exhausted budget so Atlas gets fresh autonomous attempts', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record = {
-      status: 'blocked',
-      summary: 'needs env',
-      blocked: { reason: 'needs_env', detail: 'missing KEY' },
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 2;
-    const { turn } = makeTurn();
-    const h = assemble(state, { turn });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'budget_exhausted');
-    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(
-      2,
-    );
-
-    // The operator's explicit retry re-grants the budget (boot resume never would). Poll until dispatch's
-    // drive releases the in-flight `active` lock so the retry lands rather than no-opping.
-    for (
-      let i = 0;
-      i < 50 &&
-      (state.threads[0] as unknown as HaltFields).halt_fix_attempts !== 0;
-      i++
-    ) {
-      await h.driver.retry(state.job.id);
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(
-      0,
-    );
-  });
-
   it('redriveThread REFUSES a threadId belonging to another job (Codex High-1) — no budget, no mutation, no drive', async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -4893,7 +3267,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       'some-other-job',
       'sec-be',
       'guidance',
-      2,
     );
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/not part of this job/i);
@@ -4917,12 +3290,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     const h = assemble(state);
     // A stale `retry_thread` (the brain acting on an old view) must not clear the record + flip the finished
     // thread back to `executing` — that would erase the `done` evidence and re-run a completed thread.
-    const r = await h.driver.redriveThread(
-      state.job.id,
-      'sec-be',
-      'stale retry',
-      2,
-    );
+    const r = await h.driver.redriveThread(state.job.id, 'sec-be', 'stale retry');
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/already complete/i);
     // Untouched: status still done, no terminal-record clear, no `executing` flip, no budget spent, no drive.
@@ -4934,392 +3302,17 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
   });
 
-  it('redriveThread refuses (no budget spent) once the re-drive cap is hit (Codex High-2)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts = 2; // already at cap
-    const h = assemble(state);
-    const r = await h.driver.redriveThread(
-      state.job.id,
-      'sec-be',
-      'guidance',
-      2,
-    );
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/budget exhausted/i);
-    expect((state.threads[0] as unknown as HaltFields).halt_fix_attempts).toBe(
-      2,
-    ); // CAS did not increment
-    expect(state.threads[0].orientation).toBeNull(); // not mutated
-  });
-
-  it('renderCompletionMd projects the record into a readable trail (blocked + failed shapes)', () => {
-    const t = thread('sec-be', 10, 'Backend');
-    const blockedMd = renderCompletionMd(
-      t,
-      'blocked',
-      {
-        status: 'blocked',
-        summary: 'could not reach the DB',
-        blocked: { reason: 'needs_env', detail: 'DATABASE_URL missing' },
-        gaps: ['no live check run'],
-      },
-      '2026-07-04T00:00:00.000Z',
-    );
-    expect(blockedMd).toContain('# Thread halted: Backend');
-    expect(blockedMd).toContain('**Outcome:** blocked');
-    expect(blockedMd).toContain('needs_env');
-    expect(blockedMd).toContain('DATABASE_URL missing');
-    expect(blockedMd).toContain('no live check run');
-
-    const incompleteMd = renderCompletionMd(
-      t,
-      'incomplete',
-      null,
-      '2026-07-04T00:00:00.000Z',
-    );
-    expect(incompleteMd).toContain('**Outcome:** incomplete');
-    expect(incompleteMd).toContain('without asserting completion');
-  });
-
   it('renderCompletionMd renders the Transcript line from the resolved anchor (even with a null record)', () => {
     const t = thread('sec-be', 10, 'Backend');
-    const md = renderCompletionMd(
-      t,
-      'incomplete',
-      null,
-      '2026-07-04T00:00:00.000Z',
-      {
-        sessionId: 'sess-xyz',
-        legOrdinal: 3,
-      },
-    );
+    const md = renderCompletionMd(t, null, '2026-07-04T00:00:00.000Z', {
+      sessionId: 'sess-xyz',
+      legOrdinal: 3,
+    });
     expect(md).toContain('**Transcript:** session `sess-xyz` (Leg 3)');
     expect(md).toContain('atlas-tx show sess-xyz');
   });
 });
 
-// ── judge_unavailable recovery mechanics (the deadlock, asserted gone) ─────────────────────────────
-//
-// The pre-fix deadlock: a `judge_unavailable` hold re-armed FOREVER (an Anthropic blip could park every
-// in-flight job indefinitely). The fix bounds the patient auto-retry at JUDGE_UNAVAILABLE_REDRIVE_CAP and
-// keeps the thread RECOVERABLE via two operator levers ("Retry now" / "Skip & accept"). These tests prove
-// (a) it holds while under the cap, (b) it rests at the cap, and (c) it stays operator-recoverable.
-describe('ThreadDriver — judge_unavailable recovery mechanics (deadlock repro)', () => {
-  /** A `judge_unavailable`-stuck thread `sec-be` on job `job-abcdef12`, shaped like the prod-stuck row. */
-  function judgeStuckState(
-    o: {
-      staticAdequate?: boolean;
-      acceptRequested?: boolean;
-      haltFixAttempts?: number;
-      threadStatus?: ThreadStatus;
-      withStep?: boolean;
-      reason?: 'judge_unavailable' | 'unverified';
-    } = {},
-  ): StoreState {
-    const t = thread(
-      'sec-be',
-      10,
-      'Backend',
-      o.threadStatus ?? 'executing',
-      false,
-      'paused',
-    );
-    const term: ThreadTerminalRecord = {
-      status: 'blocked',
-      summary: 'built it; live judge was unreachable',
-      blocked: {
-        reason: o.reason ?? 'judge_unavailable',
-        detail: 'a verification judge is temporarily unavailable',
-      },
-      ...(o.staticAdequate !== undefined
-        ? {
-            staticVerification: {
-              verdict: {
-                staticChecksAdequate: o.staticAdequate,
-                reason: 'typecheck clean',
-              },
-            },
-          }
-        : {}),
-      ...(o.acceptRequested ? { acceptRequested: true } : {}),
-    };
-    (
-      t as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record = term;
-    const h = t as HaltFields;
-    h.halt_outcome = 'blocked';
-    h.halt_waked_at = null;
-    h.halt_fix_attempts = o.haltFixAttempts ?? 0;
-    const steps: Step[] = o.withStep
-      ? [
-          {
-            id: 'sec-be-ph0',
-            threadId: 'sec-be',
-            jobId: 'job-abcdef12',
-            ordinal: 10,
-            title: 'build',
-            brief: 'do the backend',
-            stage: 'build',
-            status: 'building',
-            sessionId: null,
-            batchOrdinal: null,
-            legOrdinal: 1,
-            commitSha: null,
-          },
-        ]
-      : [];
-    return {
-      job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
-      record: makeRecord(),
-      threads: [t],
-      steps,
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-  }
-
-  // ── A. the reproduction: hold under the cap, rest at the cap, stay recoverable ──────────────────
-
-  it('A1 — under the cap: a fresh judge_unavailable block re-arms (owed wake) and does NOT rest', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts =
-      JUDGE_UNAVAILABLE_REDRIVE_CAP - 1; // just under
-    const judge = fakeJudge(undefined); // Anthropic down
-    const h = assemble(state, {
-      judge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.threads[0].condition === 'paused');
-
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // re-armed
-    expect(state.job.halt).toBeNull(); // NOT rested
-    expect(state.job.status).toBe('running');
-    expect(h.posts.some((p) => p.includes('holding to retry'))).toBe(true);
-    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(false);
-  });
-
-  it('A2 — at the cap: haltJob rests the job `incomplete` with NO owed wake', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    (state.threads[0] as unknown as HaltFields).halt_fix_attempts =
-      JUDGE_UNAVAILABLE_REDRIVE_CAP; // spent
-    const judge = fakeJudge(undefined);
-    const h = assemble(state, {
-      judge,
-      anthropicKey: async () => 'sk-ant-present',
-    });
-    stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'incomplete');
-
-    expect(state.job.halt?.kind).toBe('incomplete'); // deadlock gone — the loop bottoms out into a rest
-    expect(h.store.setHaltOwed).not.toHaveBeenCalled(); // owedWake=false: sweeps stop re-waking the brain
-    expect(h.posts.some((p) => p.includes('paused for you'))).toBe(true);
-    expect(h.posts.some((p) => p.includes('Skip & accept'))).toBe(true);
-  });
-
-  it('A3 — still recoverable: operatorRetryStuckThread re-arms + re-drives a rested judge hold', async () => {
-    const state = judgeStuckState({
-      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
-    });
-    state.job.halt = {
-      kind: 'incomplete',
-      reason: 'a verification judge is temporarily unavailable',
-      at: new Date().toISOString(),
-    };
-    const h = assemble(state);
-
-    const r = await h.driver.operatorRetryStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(true);
-    expect(h.store.rearmThread).toHaveBeenCalledWith('sec-be'); // fresh judge-cap budget, scoped to the target thread
-    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled(); // never job-wide (would reset resting siblings)
-    expect(h.store.clearTerminalRecord).toHaveBeenCalledWith('sec-be'); // redriveThread ran (stale record cleared)
-    expect(h.store.setThreadStatus).toHaveBeenCalledWith('sec-be', 'executing'); // re-driven off paused
-    await flush();
-  });
-
-  it('A3 — still recoverable: operatorAcceptStuckThread marks + drives a static-passed judge hold to done', async () => {
-    const state = judgeStuckState({
-      staticAdequate: true,
-      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
-      withStep: true,
-    });
-    state.threads[0].startSha = 'base-sha'; // so finalize stamps a real commit sha (headSha 'sha0' != base)
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(true);
-    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
-      'sec-be',
-      expect.objectContaining({ acceptRequested: true }),
-    );
-    await flushUntil(() => state.threads[0].status === 'done');
-    expect(state.threads[0].status).toBe('done'); // the drive finalized the accepted thread
-  });
-
-  // ── C. operatorRetryStuckThread guards ──────────────────────────────────────────────────────────
-
-  it('operatorRetryStuckThread REFUSES a thread not held on a judge outage (e.g. unverified)', async () => {
-    const state = judgeStuckState({ reason: 'unverified' });
-    const h = assemble(state);
-
-    const r = await h.driver.operatorRetryStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/verification-judge/i);
-    expect(h.store.rearmThread).not.toHaveBeenCalled(); // no re-arm, no re-drive
-    expect(h.store.rearmHaltedThreads).not.toHaveBeenCalled();
-    expect(h.store.clearTerminalRecord).not.toHaveBeenCalled();
-  });
-
-  // ── C. operatorAcceptStuckThread guards ─────────────────────────────────────────────────────────
-
-  it('operatorAcceptStuckThread REFUSES a non-judge_unavailable thread (never marks/drives)', async () => {
-    const state = judgeStuckState({
-      reason: 'unverified',
-      staticAdequate: true,
-    });
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/only a verification-judge outage/i);
-    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
-    expect(h.store.clearHalt).not.toHaveBeenCalled();
-  });
-
-  it('operatorAcceptStuckThread REFUSES a foreign thread (threadJobId !== jobId)', async () => {
-    const state = judgeStuckState({ staticAdequate: true });
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(
-      'some-other-job',
-      'sec-be',
-    );
-
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/not part of this job/i);
-    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
-  });
-
-  it('operatorAcceptStuckThread REFUSES an already-done thread', async () => {
-    const state = judgeStuckState({
-      staticAdequate: true,
-      threadStatus: 'done',
-    });
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/already complete/i);
-    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
-  });
-
-  it('operatorAcceptStuckThread REFUSES when the static gate has NOT passed (would ship un-built work)', async () => {
-    const state = judgeStuckState({ staticAdequate: false }); // static verdict present but inadequate
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/static/i);
-    expect(r.reason).toMatch(/have not passed/i);
-    expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
-  });
-
-  it('operatorAcceptStuckThread on a valid judge+static-passed hold marks acceptRequested, clears halt, and drives', async () => {
-    const state = judgeStuckState({ staticAdequate: true });
-    const h = assemble(state);
-
-    const r = await h.driver.operatorAcceptStuckThread(state.job.id, 'sec-be');
-
-    expect(r.ok).toBe(true);
-    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
-      'sec-be',
-      expect.objectContaining({ acceptRequested: true }),
-    );
-    expect(h.store.clearHalt).toHaveBeenCalledWith('sec-be');
-    expect(h.store.clearJobHalt).toHaveBeenCalledWith(state.job.id);
-    expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'running');
-    await flush(); // let the kicked drive settle
-  });
-
-  // ── C. finalizeAcceptedThread (reached through the drive via the acceptRequested marker) ─────────
-
-  it('finalizeAcceptedThread on a CLEAN tree stamps the commit, flips steps + thread done, strips the marker', async () => {
-    const state = judgeStuckState({
-      staticAdequate: true,
-      acceptRequested: true,
-      withStep: true,
-    });
-    state.threads[0].startSha = 'base-sha'; // head 'sha0' != base → a real commit sha (not the NOTHING sentinel)
-    const h = assemble(state);
-
-    await h.driver.resume();
-    await flushUntil(() => state.threads[0].status === 'done');
-
-    expect(state.steps[0].commitSha).toBe('sha0'); // setStepCommit stamped the anchor
-    expect(state.steps[0].status).toBe('done');
-    expect(state.threads[0].status).toBe('done');
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.status).toBe('done');
-    expect(term.acceptRequested).toBeUndefined(); // marker cleared
-    expect(term.blocked).toBeUndefined(); // blocked stripped
-    expect(h.posts.some((p) => p.includes('Accepted'))).toBe(true);
-  });
-
-  it('finalizeAcceptedThread on a DIRTY tree refuses — stays recoverable (marker cleared, halt re-owed)', async () => {
-    const state = judgeStuckState({
-      staticAdequate: true,
-      acceptRequested: true,
-      withStep: true,
-    });
-    const h = assemble(state);
-    (h.git as unknown as { hasChanges: ReturnType<typeof vi.fn> }).hasChanges =
-      vi.fn(async () => true);
-
-    await h.driver.resume();
-    await flush();
-
-    expect(state.threads[0].status).not.toBe('done'); // NOT shipped with an uncommitted tree
-    const term = (
-      state.threads[0] as unknown as { terminal_record: ThreadTerminalRecord }
-    ).terminal_record;
-    expect(term.acceptRequested).toBeUndefined(); // the accept marker was cleared
-    expect(h.store.setHaltOwed).toHaveBeenCalledWith('sec-be', 'blocked'); // stays recoverable
-    expect(h.posts.some((p) => p.includes('uncommitted changes'))).toBe(true);
-  });
-});
 
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────
 
@@ -5913,6 +3906,37 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     expect(state.job.status).toBe('awaiting_ship_review'); // ship gate reached — human diff review still runs
     expect(state.job.prUrl).toBeNull();
     expect(h.opened).toHaveLength(0);
+  });
+
+  it('surfaces a not-done master_review as advisory on the ship-review card', async () => {
+    const state = masterReviewState();
+    const { turn } = makeTurn({ completeThread: false });
+    const h = assemble(state, { turn, autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+
+    expect(state.job.status).toBe('awaiting_ship_review');
+    expect(state.threads[0].condition).toBe('incomplete');
+    const card = (
+      h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls[0]?.[1] as
+      | {
+          verifications?: Array<{
+            title: string;
+            status: string;
+            unverified: boolean;
+          }>;
+        }
+      | undefined;
+    expect(card?.verifications).toEqual([
+      {
+        title: 'Master review',
+        status: 'not_done',
+        verification: [],
+        unverified: false,
+      },
+    ]);
   });
 
   it('operatorShipWithoutReview REFUSES when the job is not on a codex_review_unavailable hold', async () => {

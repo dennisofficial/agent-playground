@@ -126,22 +126,6 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedResetVerify?: boolean;
   /**
-   * HALT-WAKE SEED (ADR 0004 Phase 3): a synthetic wake delivering a halted build thread's terminal record to
-   * the brain to triage. Carries the halted `threadId` + the `gen` (`halt_fix_attempts`) captured when the
-   * wake fired. Stamped `halt_waked_at` on the turn's SUCCESS TAIL (generation-keyed CAS) — so a swallowed
-   * engine error / guard-hit / detach leaves the halt un-waked, letting the periodic + boot sweeps retry it
-   * (at-least-once, matching `seedQuestionId`'s delivered-on-success semantics). In-memory only.
-   */
-  seedHaltWake?: { threadId: string; gen: number };
-  /**
-   * COMPLETION-WAKE SEED (decision d1): a synthetic wake delivering a CLEAN completion to the brain — either
-   * the FINAL thread (whole build parked at the ship gate) or a NOTABLE completion (done-with-gaps). Carries
-   * the completed `threadId` + the `reason` that drives the wake framing. Stamped `done_waked_at` on the
-   * turn's SUCCESS TAIL (a swallowed engine error / guard-hit / detach leaves it un-waked, letting the
-   * periodic + boot sweeps retry it — at-least-once, mirroring {@link seedHaltWake}). In-memory only.
-   */
-  seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
-  /**
    * SEED RENDER COMMAND (see {@link SeedRow}): how this seed turn shows in the transcript. Read by the
    * central `persistSeedRow` at turn intake. In-memory only — never persisted on the stimulus row.
    */

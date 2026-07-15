@@ -22,6 +22,28 @@ import {
   VIEW_PLAN_ACTION_ID,
 } from './approval-blocks';
 
+/**
+ * One build thread's SELF-REPORTED verification, surfaced verbatim on the ship-review card (d5). No judge
+ * grades it: `unverified` just flags a thread that asserted done with zero evidence, so the operator knows
+ * to eyeball it. A verbatim passthrough of `terminal_record.verification` — the human ship-review + CI are
+ * the real backstops.
+ */
+export interface ShipThreadVerification {
+  /** The build thread's title/brief. */
+  title: string;
+  /** Whether this thread asserted completion; `not_done` is advisory on the ship card (master_review only). */
+  status: 'done' | 'not_done';
+  /** The thread's captured verification evidence (command + exit code + output tail). */
+  verification: {
+    kind: string;
+    command: string;
+    exitCode: number;
+    outputTail: string;
+  }[];
+  /** The thread asserted done but reported no verification evidence at all. */
+  unverified: boolean;
+}
+
 /** A single action button in the web card. */
 export interface WebCardAction {
   actionId: string;
@@ -62,6 +84,9 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `ship` card only — each build thread's self-reported verification evidence (d5). Verbatim passthrough,
+   *  no judge; Thread 2 renders it so the operator reviews the honest signal before shipping. */
+  verifications?: ShipThreadVerification[];
   /** `db_write` card only — the exact proposed single SQL statement. */
   sql?: string;
   /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
@@ -150,6 +175,7 @@ export function webShipReviewCard(input: {
   jobId: string;
   title: string;
   summary: string;
+  verifications?: ShipThreadVerification[];
 }): WebApprovalCard {
   const value = JSON.stringify({ jobId: input.jobId });
   return {
@@ -160,6 +186,9 @@ export function webShipReviewCard(input: {
     summary: input.summary,
     decisions: [],
     threads: [],
+    ...(input.verifications?.length
+      ? { verifications: input.verifications }
+      : {}),
     actions: [
       {
         actionId: SHIP_ACTION_ID,

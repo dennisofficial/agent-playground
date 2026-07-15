@@ -67,8 +67,6 @@ import type { CredentialResolver } from './onboarding';
 import type { OauthUsageService } from './onboarding/oauth-usage.service';
 import type { LeaderElectionService } from './cluster';
 import type { BrainGateway } from './brain-gateway';
-import type { LiveVerificationJudge } from './driver/live-verification-judge';
-import type { StaticVerificationJudge } from './driver/static-verification-judge';
 
 function dbOpts() {
   return {
@@ -105,14 +103,15 @@ const RESOLVED: ResolvedRepo = {
 
 /** How the fake engine should terminate a given thread's turn — keyed by the thread id the driver passes as
  *  `input.stepId` (a thread's synthetic step id IS its own id). Anything not listed completes cleanly. */
-type ThreadScript = { rotateThreadId?: string; blockThreadId?: string };
+type ThreadScript = { rotateThreadId?: string; incompleteThreadId?: string };
 
 /**
  * A FAKE {@link TurnRunnerService}: no real engine. For each `runTurn`, it looks up the running thread
  * (`input.stepId`) in the script and drives the host tool bridge to the desired terminal outcome:
  *  - `rotateThreadId` → calls `record_leg_handoff` (no `complete_thread`): the driver rotates in a fresh
  *    builder leg.
- *  - `blockThreadId` → calls `block_thread`: the driver halts the lane.
+ *  - `incompleteThreadId` → ends the turn WITHOUT `complete_thread`: the thread lands in the single "not
+ *    done" state (`condition='incomplete'`), the driver halts the job for the operator.
  *  - otherwise → calls `complete_thread` (retrying once past the one-shot open-task nudge).
  */
 function makeFakeTurn(script: ThreadScript): {
@@ -134,15 +133,8 @@ function makeFakeTurn(script: ThreadScript): {
         calls.push({ mode: input.mode, stepId: input.stepId });
         const tools = input.toolBridge?.tools ?? {};
         const tid = input.stepId ?? '';
-        if (
-          script.blockThreadId &&
-          tid === script.blockThreadId &&
-          tools['block_thread']
-        ) {
-          await tools['block_thread']({
-            reason: 'decision',
-            detail: 'Need a product decision before this lane can proceed.',
-          });
+        if (script.incompleteThreadId && tid === script.incompleteThreadId) {
+          // End the turn WITHOUT calling `complete_thread` — the single "not done" path.
         } else if (
           script.rotateThreadId &&
           tid === script.rotateThreadId &&
@@ -321,20 +313,6 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
     const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
-    const judge = {
-      async judge() {
-        return {
-          runtimeSurfaceTouched: false,
-          liveVerificationAdequate: true,
-          reason: 'test verdict',
-        };
-      },
-    } as unknown as LiveVerificationJudge;
-    const staticJudge = {
-      async judge() {
-        return { staticChecksAdequate: true, reason: 'test verdict' };
-      },
-    } as unknown as StaticVerificationJudge;
     const electionState = { draining: false, leader: true };
 
     return new ThreadDriver(
@@ -434,8 +412,6 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         listRunning: async () => [],
       } as unknown as import('./sandbox/turn-registry.service').TurnRegistry,
       brainGateway,
-      judge,
-      staticJudge,
       taskSink,
       undefined, // exposure
       undefined, // conventions
@@ -723,37 +699,35 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
   );
 
   it(
-    'a block_thread halt leaves the thread blocked + stops the job driving, and the HEADLESS driver NEVER ' +
-      'calls BrainGateway (2c: no brain wake on a halt)',
+    'a builder that ends without complete_thread lands NOT DONE (condition=incomplete) + stops the job ' +
+      'driving, and the HEADLESS driver NEVER calls BrainGateway (2c: no brain wake on a halt)',
     async () => {
       const seed = await seedPlan();
 
       const brainGateway = makeBrainGatewaySpy();
-      const { turn } = makeFakeTurn({ blockThreadId: seed.backendBuilderId });
+      const { turn } = makeFakeTurn({
+        incompleteThreadId: seed.backendBuilderId,
+      });
       const driver = makeDriver(turn, brainGateway);
 
       await driver.dispatch(await store.loadJob(seed.jobId));
 
-      // Poll for the halt to land (the drive returns without shipping) — the blocked thread's terminal
-      // record is the durable signal.
+      // Poll for the "not done" state to land (the drive returns without shipping) — the thread's
+      // `incomplete` condition is the durable signal (no terminal record, no reason taxonomy).
       const deadline = Date.now() + 30_000;
-      let blockedOutcome: string | null = null;
+      let condition: string | null = null;
       while (Date.now() < deadline) {
-        blockedOutcome = await store
-          .haltOutcome(seed.backendBuilderId)
-          .catch(() => null);
-        if (blockedOutcome) break;
+        condition =
+          (await store.getThread(seed.backendBuilderId).catch(() => null))
+            ?.condition ?? null;
+        if (condition === 'incomplete') break;
         await new Promise((r) => setTimeout(r, 25));
       }
-      expect(blockedOutcome).toBe('blocked');
+      expect(condition).toBe('incomplete');
 
-      // The blocked thread carries the paused overlay + a `blocked` terminal record.
+      // A not-done thread writes NO terminal record (`complete_thread` is the sole done-report).
       const term = await store.getTerminalRecord(seed.backendBuilderId);
-      expect(term?.status).toBe('blocked');
-      const blockedRow = await threads.findOneOrFail({
-        where: { id: seed.backendBuilderId },
-      });
-      expect(blockedRow.condition).toBe('paused');
+      expect(term).toBeNull();
 
       // The job driving STOPPED for it: no ship, no PR, and the downstream thread groups never ran.
       const jobRow = await jobs.findOneOrFail({ where: { id: seed.jobId } });

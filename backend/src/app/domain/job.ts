@@ -166,19 +166,6 @@ export interface Message {
   createdAt: Date;
 }
 
-/**
- * Phase 3 (ADR 0004 rider 4) — the LIFETIME budget of AUTONOMOUS brain re-drives of a halted thread before
- * Atlas must stop looping and rest the job for the operator. CAS-enforced on `threads.halt_fix_attempts`.
- * Shared by the brain (`retry_thread` claims against it) and the driver (`haltJob` rests the job once it is
- * spent; `resumePaused`/`retry` re-arm it on operator re-engagement) so the two can't drift.
- */
-export const HALT_FIX_ATTEMPT_CAP = 2;
-
-/** Separate, higher re-drive budget for a judge_unavailable hold (transient infra, NOT a work defect —
- *  see Decision d2). The 2-try HALT_FIX_ATTEMPT_CAP bounds fixes for real defects; a judge blip must
- *  self-heal patiently, then rest for the operator. The ~30s owed-wake sweep paces each re-drive. */
-export const JUDGE_UNAVAILABLE_REDRIVE_CAP = 20;
-
 /** How long a master_review Codex-outage hold waits before the resume sweep re-attempts the Codex review. */
 export const CODEX_REVIEW_OUTAGE_RETRY_MS = 5 * 60_000;
 

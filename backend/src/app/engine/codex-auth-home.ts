@@ -97,7 +97,7 @@ export function assertValidCodexAuthJson(parsed: unknown): void {
 export interface CodexMcpBridge {
   /** In-container path of the bundled MCP bridge server (`node <serverPath>`). */
   serverPath: string;
-  /** Bare host tool names to expose (e.g. `['complete_thread','block_thread']`). */
+  /** Bare host tool names to expose (e.g. `['complete_thread','record_deviation']`). */
   toolNames: string[];
   /** Env for the spawned server: at least TURN_ID + REDIS_URL. */
   env: Record<string, string>;

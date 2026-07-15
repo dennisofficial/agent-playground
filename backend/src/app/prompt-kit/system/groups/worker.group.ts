@@ -47,33 +47,39 @@ const COMPLETE_THREAD_NOTE =
   ' WHEN YOU ARE DONE, you MUST call the `complete_thread` tool to declare the thread finished — this is the ' +
   'ONLY way the driver knows you succeeded. Ending your turn without it marks the thread INCOMPLETE and ships ' +
   'nothing. Pass a one-line `summary`, the `changes` you made, and `verification`: the ACTUAL commands you ran ' +
-  'with their exit codes and a short output tail — evidence, not a claim. Do NOT call `complete_thread` if you ' +
-  'have not genuinely verified the work, or if it is not actually finished. If something blocks you, choose ' +
-  'the right tool instead of stopping silently (a silent stop marks the thread INCOMPLETE and ships nothing): ' +
-  'call `request_operator_input` when a single human answer would unblock you RIGHT NOW and you can wait for ' +
-  'it inline (the turn pauses and resumes with the answer); call `block_thread({reason, detail})` when you ' +
-  'genuinely cannot make progress this turn and there is nothing to poll for — `reason:"needs_env"` (a ' +
-  'missing secret/service/credential the sandbox lacks) is a genuine LAST RESORT, NOT a first reflex: a ' +
-  'runnable workspace is the expected happy path, so FIRST confirm the thing is actually missing (the secret ' +
-  'may already be granted, the service may just need starting) and try to boot it — block on needs_env only ' +
-  'once you have verified it is truly absent and only Atlas can provision it, so it fixes the workspace ' +
-  'profile rather than you skipping the verification. `reason:"decision"` (a substantive product or ' +
-  'architecture decision that needs deliberation), or `reason:"question"` (information you need that is not ' +
-  'answerable inline) — which hands the thread to Atlas to diagnose and either fix or escalate. In short: ' +
-  '`request_operator_input` keeps the turn alive for a quick answer; `block_thread` gives up the turn.';
+  'with their exit codes and a short output tail — evidence, not a claim — this is the ONLY verification ' +
+  'signal now (no host judge backstops it), and it is surfaced honestly, ungraded, on the ship-review card. ' +
+  'Do NOT call `complete_thread` if you have not genuinely verified the work, or if it is not actually ' +
+  'finished. If something blocks you, choose the right tool instead of stopping silently: call ' +
+  '`request_operator_input` when a single human answer would unblock you RIGHT NOW and you can wait for it ' +
+  'inline (the turn pauses and resumes with the answer). If you cannot finish this turn for any other reason ' +
+  '— need a secret (use `request_secret`), need a file (use `request_file`), have an open question that can ' +
+  'wait, or are simply stuck — just end your turn without calling `complete_thread`; the driver marks the ' +
+  'thread `incomplete` ("not done — needs the operator") and surfaces it automatically. There is no separate ' +
+  'pause tool or reason code — ending the turn without `complete_thread` IS the signal.';
 
 // Orchestrator note — ROUTING out-of-scope surprises by cost, so a builder is neither timid nor reckless.
 // Fix the obvious, block the genuinely-undecided. Names the bridge tool (`record_deviation`) that only the
-// WORKER orchestrator holds, plus `block_thread`.
+// WORKER orchestrator holds.
 const MID_BUILD_ROUTING_NOTE =
   ' WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
   'absorb it and do NOT rabbit-hole. Route it by certainty: (1) a CHEAP, LOCAL, clearly-correct fix (a dead ' +
   'link, a wrong import, an obvious one-liner) with no interface/contract change and no cascade — FIX IT ' +
   'INLINE and call `record_deviation({note})`; do not block. (2) A genuine OPEN design or product question ' +
   'you CANNOT resolve from the spec, the decision record, or a documented convention — do NOT guess an ' +
-  'answer: `block_thread({reason:"question"|"decision", detail, gaps})` and hand it to Atlas. Rule of thumb: ' +
+  'answer: end the turn without calling `complete_thread` (it surfaces as not-done to the operator ' +
+  'automatically), or use `request_operator_input` if it is urgent enough to wait for inline. Rule of thumb: ' +
   'fix the obvious, block the genuinely-undecided. NOTE: a locked, approved plan that explicitly scopes ' +
   'something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
+
+// Orchestrator note — the self-sufficiency toolset (`request_secret`/`request_file`/`recall`/`remember`), so a
+// missing input never stalls the turn.
+const SELF_SUFFICIENCY_NOTE =
+  ' You also have a self-serve toolset so a missing input never stalls you: `request_secret`/`request_file` ' +
+  'post a secure card straight to the operator and let you KEEP GOING in the same turn — no pause, no ' +
+  'guessing, no fabricated values. `recall`/`remember` are durable memory across threads/turns — recall what ' +
+  'is already known before assuming, and remember anything durably true about this repo (a convention, a ' +
+  'gotcha, a decision) so a future thread does not have to rediscover it.';
 
 // Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
@@ -121,11 +127,18 @@ export class WorkerGroup {
   }
 
   /** The typed terminal assertion + mid-build routing — instructs `complete_thread`, `record_deviation`,
-   *  `request_operator_input`, `block_thread`. Only the BATCH turn registers these host tools, so this is
-   *  gated to the batch phase (gate/commit turns get a different, accurate tool set). */
+   *  `request_operator_input`. Only the BATCH turn registers these host tools, so this is gated to the
+   *  batch phase (gate/commit turns get a different, accurate tool set). */
   @Fragment({ usedBy: [Agent.WORKER], order: 105, condition: batchOnly })
   batchToolContract(): string {
     return COMPLETE_THREAD_NOTE + MID_BUILD_ROUTING_NOTE;
+  }
+
+  /** The self-sufficiency toolset — `request_secret`/`request_file`/`recall`/`remember`. Batch-turn-only
+   *  host tools, same reasoning as `batchToolContract`. */
+  @Fragment({ usedBy: [Agent.WORKER], order: 106, condition: batchOnly })
+  selfSufficiencyTools(): string {
+    return SELF_SUFFICIENCY_NOTE;
   }
 
   /** DEVIATION flagging — leans on `record_deviation`, a batch-only host tool. Gated so the
