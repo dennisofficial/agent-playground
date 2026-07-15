@@ -31,6 +31,7 @@ import {
   MERGE_ACTION_ID,
   RETRACT_SHIP_ACTION_ID,
   type ApprovalActionId,
+  type ShipThreadVerification,
   type WebApprovalCard,
   type WebCardAction,
   type WebVerdictCard,
@@ -241,6 +242,10 @@ function ShipCardView({
         </div>
       ) : null}
 
+      {card.kind === "ship" && card.verifications?.length ? (
+        <ShipVerificationsList verifications={card.verifications} />
+      ) : null}
+
       <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {card.actions.map((action) => (
           <ShipActionButton
@@ -253,6 +258,51 @@ function ShipCardView({
           <ShipCardPreviewButton jobRef={jobRef} card={card} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Each build thread's self-reported verification, listed on the ship card (d5). No judge grades it —
+ *  `unverified` just flags a thread that asserted done with zero evidence, so the operator knows to
+ *  eyeball it before shipping. */
+function ShipVerificationsList({
+  verifications,
+}: {
+  verifications: ShipThreadVerification[];
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
+      {verifications.map((v, i) => (
+        <div key={`${v.title}-${i}`} className="text-[11.5px] leading-relaxed">
+          <div className="flex items-center gap-1.5 font-medium text-text">
+            {v.unverified ? (
+              <AlertTriangle size={12} className="shrink-0 text-amber" />
+            ) : (
+              <CheckCircle2 size={12} className="shrink-0 text-green" />
+            )}
+            <span>{v.title}</span>
+          </div>
+          {v.unverified ? (
+            <p className="pl-[18px] text-faint">
+              No verification evidence reported.
+            </p>
+          ) : (
+            <div className="mt-1 flex flex-col gap-1 pl-[18px]">
+              {v.verification.map((entry, j) => (
+                <div key={j} className="font-mono text-[10.5px] text-dim">
+                  <span
+                    className={entry.exitCode === 0 ? "text-green" : "text-red"}
+                  >
+                    exit {entry.exitCode}
+                  </span>{" "}
+                  <span className="text-faint">{entry.kind}</span>{" "}
+                  {entry.command}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -434,7 +484,11 @@ function DbWriteCardView({
 
       <div className="flex flex-wrap gap-2 border-t border-border bg-surface-2 px-4 py-3">
         {card.actions.map((action) => (
-          <ShipActionButton key={action.actionId} jobRef={jobRef} action={action} />
+          <ShipActionButton
+            key={action.actionId}
+            jobRef={jobRef}
+            action={action}
+          />
         ))}
       </div>
     </div>

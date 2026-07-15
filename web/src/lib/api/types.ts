@@ -128,6 +128,23 @@ export interface WebCardAction {
   value: string;
 }
 
+/** One build thread's SELF-REPORTED verification, carried on the `ship` card (backend `ShipThreadVerification`
+ *  in `web-approval-card.ts`). No judge grades it — `unverified` just flags a thread that asserted done with
+ *  zero evidence, so the operator knows to eyeball it. */
+export interface ShipThreadVerification {
+  /** The build thread's title/brief. */
+  title: string;
+  /** The thread's captured verification evidence (command + exit code + output tail). */
+  verification: {
+    kind: string;
+    command: string;
+    exitCode: number;
+    outputTail: string;
+  }[];
+  /** The thread asserted done but reported no verification evidence at all. */
+  unverified: boolean;
+}
+
 export interface WebApprovalCard {
   type: "approval_card";
   jobId: string;
@@ -150,6 +167,9 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `ship` card only — each build thread's self-reported verification evidence. Verbatim passthrough,
+   *  no judge; rendered so the operator reviews the honest signal before shipping. */
+  verifications?: ShipThreadVerification[];
   /** `db_write` card only — the exact proposed single SQL statement (the approved artifact). */
   sql?: string;
   /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
