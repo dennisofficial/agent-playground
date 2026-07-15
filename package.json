@@ -9,7 +9,7 @@
     "build:packages": "pnpm --filter @workspace/shared --filter \"./packages/**\" run build",
     "daemon:build": "bash backend/scripts/build-daemon.sh",
     "daemon:reset": "bash backend/scripts/reset-sandboxes.sh",
-    "docker": "docker compose up",
+    "docker": ".docker compose up",
     "test:unit": "pnpm --filter backend test:unit"
   },
   "devDependencies": {
