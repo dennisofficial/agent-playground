@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-export class StripHaltMachinery1784136547464 implements MigrationInterface {
-    name = 'StripHaltMachinery1784136547464'
+export class StripHaltMachinery1784150306913 implements MigrationInterface {
+    name = 'StripHaltMachinery1784150306913'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
         await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "halt_fix_attempts"`);
