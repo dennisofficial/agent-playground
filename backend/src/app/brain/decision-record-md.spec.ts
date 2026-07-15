@@ -21,16 +21,22 @@ describe('renderDecisionRecordMd', () => {
       {
         decisionClass: 'api_contract',
         title: 'Availability endpoint',
-        ruling: 'Add a live availability check that also considers held orders.',
+        ruling:
+          'Add a live availability check that also considers held orders.',
       },
     ];
-    const md = renderDecisionRecordMd(decisions, 'Customer-chosen subdomains for servers.');
+    const md = renderDecisionRecordMd(
+      decisions,
+      'Customer-chosen subdomains for servers.',
+    );
 
     expect(md).toContain('## Overview');
     expect(md).toContain('Customer-chosen subdomains for servers.');
     expect(md).toContain('## Data model');
     expect(md).toContain('#### Subdomain column');
-    expect(md).toContain('> **Q:** Where does the customer pick the subdomain?');
+    expect(md).toContain(
+      '> **Q:** Where does the customer pick the subdomain?',
+    );
     expect(md).toContain('> **A:** In the new-server wizard');
     expect(md).toContain('## API contract');
     // A decision without a question renders no Q&A block.
@@ -60,7 +66,11 @@ describe('renderDecisionRecordMd', () => {
 
   it('omits classes with no decisions', () => {
     const md = renderDecisionRecordMd([
-      { decisionClass: 'dependency', title: 'Use Stripe', ruling: 'Keep Stripe for checkout.' },
+      {
+        decisionClass: 'dependency',
+        title: 'Use Stripe',
+        ruling: 'Keep Stripe for checkout.',
+      },
     ]);
     expect(md).toContain('## Dependencies');
     expect(md).not.toContain('## Data model');

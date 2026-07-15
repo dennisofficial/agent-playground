@@ -10,11 +10,18 @@
  * default settings is byte-identical. `enabled` replaces the per-feature kill-switches.
  */
 import { agentMessage } from '../message';
-import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
+import {
+  ROTATION_REMINDER_NUDGE,
+  ROTATION_SOFT_NUDGE,
+} from '../messages/build-handoff';
 import { composePreviewPrepSeed } from '../system/fragments';
 import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
-import { detectGithubHtmlUrl, renderGithubFetchNudge, FETCH_TOOL_MATCHER } from './github-fetch-guard';
+import {
+  detectGithubHtmlUrl,
+  renderGithubFetchNudge,
+  FETCH_TOOL_MATCHER,
+} from './github-fetch-guard';
 import { detectInstallCommand } from './install-awareness';
 import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 import { planApprovedRule } from './plan-approved';
@@ -37,7 +44,11 @@ export const BG_TASK_HOLD_CAP_MS = 600_000;
 export const svcNudgeRule: JitRule = {
   id: 'svc-nudge',
   enabled: true,
-  trigger: { kind: 'tool-match', tool: 'Bash', match: detectLongRunningCommand },
+  trigger: {
+    kind: 'tool-match',
+    tool: 'Bash',
+    match: detectLongRunningCommand,
+  },
   delivery: 'postToolUse-additionalContext',
   throttle: { deltaTokens: SVC_NUDGE_DELTA_TOKENS },
   render: (ctx) => agentMessage(renderSvcNudge(ctx.command ?? '')),
@@ -53,7 +64,11 @@ export const svcNudgeRule: JitRule = {
 export const githubFetchGuardRule: JitRule = {
   id: 'github-fetch-guard',
   enabled: true,
-  trigger: { kind: 'url-match', toolMatcher: FETCH_TOOL_MATCHER, match: detectGithubHtmlUrl },
+  trigger: {
+    kind: 'url-match',
+    toolMatcher: FETCH_TOOL_MATCHER,
+    match: detectGithubHtmlUrl,
+  },
   delivery: 'postToolUse-additionalContext',
   render: (ctx) => agentMessage(renderGithubFetchNudge(ctx.url ?? '')),
 };
@@ -68,7 +83,11 @@ export const githubFetchGuardRule: JitRule = {
 export const installAwarenessRule: JitRule = {
   id: 'install-awareness',
   enabled: true,
-  trigger: { kind: 'tool-match', tool: 'Bash', match: (c) => detectInstallCommand(c)?.label ?? null },
+  trigger: {
+    kind: 'tool-match',
+    tool: 'Bash',
+    match: (c) => detectInstallCommand(c)?.label ?? null,
+  },
   delivery: 'postToolUse-additionalContext',
   render: (ctx) => agentMessage(ctx.installAwarenessText ?? ''),
 };
@@ -88,7 +107,10 @@ export const legRotationRule: JitRule = {
     reminderDeltaTokens: ROTATION_REMINDER_DELTA_TOKENS,
   },
   delivery: 'steer-now',
-  render: (ctx) => agentMessage(ctx.phase === 'reminder' ? ROTATION_REMINDER_NUDGE : ROTATION_SOFT_NUDGE),
+  render: (ctx) =>
+    agentMessage(
+      ctx.phase === 'reminder' ? ROTATION_REMINDER_NUDGE : ROTATION_SOFT_NUDGE,
+    ),
 };
 
 /**
@@ -114,8 +136,12 @@ export const previewPrepRule: JitRule = {
   enabled: true,
   trigger: { kind: 'lifecycle', event: 'preview-requested' },
   delivery: 'host-seed-notice',
-  render: (ctx) => agentMessage(composePreviewPrepSeed(ctx.previewInstructions ?? null)),
-  seed: { label: 'Spin up preview requested', chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? '') },
+  render: (ctx) =>
+    agentMessage(composePreviewPrepSeed(ctx.previewInstructions ?? null)),
+  seed: {
+    label: 'Spin up preview requested',
+    chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? ''),
+  },
 };
 
 /**
@@ -157,9 +183,12 @@ assertEnforcementSeamConfigured();
  * Find the single enabled rule whose lifecycle trigger matches `event`, or undefined. The host-side executor's
  * lookup; kept here so the catalog stays the one place rules are enumerated.
  */
-export function findLifecycleRule(event: 'preview-requested' | 'plan-approved'): JitRule | undefined {
+export function findLifecycleRule(
+  event: 'preview-requested' | 'plan-approved',
+): JitRule | undefined {
   return JIT_RULES.find(
-    (r) => r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
+    (r) =>
+      r.enabled && r.trigger.kind === 'lifecycle' && r.trigger.event === event,
   );
 }
 
@@ -168,5 +197,7 @@ export function findLifecycleRule(event: 'preview-requested' | 'plan-approved'):
  * turn-prefix prepend rail (d18). Kept here so the catalog stays the one place rules are enumerated.
  */
 export function operatorMessageRules(): JitRule[] {
-  return JIT_RULES.filter((r) => r.enabled && r.trigger.kind === 'operator-message');
+  return JIT_RULES.filter(
+    (r) => r.enabled && r.trigger.kind === 'operator-message',
+  );
 }

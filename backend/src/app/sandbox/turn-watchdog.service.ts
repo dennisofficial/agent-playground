@@ -9,7 +9,10 @@ import {
 } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
-import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
+import {
+  REDIS_STREAM_PORT,
+  type RedisStreamPort,
+} from '../../_lib/redis/redis.port';
 import type { ActiveTurnEntity } from '../persistence/entities';
 import { LeaderElectionService } from '../cluster';
 import { turnKeys } from './redis-turn-keys';
@@ -37,7 +40,9 @@ const WATCHDOG_INTERVAL = 'sandbox:turn-watchdog';
  * the once-per-boot reattach sweep. A live turn is never finalized (that would kill a running engine).
  */
 @Injectable()
-export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class TurnWatchdogService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(TurnWatchdogService.name);
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
@@ -80,7 +85,11 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
     // promote — racing (and beating) boot re-attach. The touch gives each a full stale window to re-attach.
     void this.registry
       .touchAllRunningHeartbeats()
-      .catch((err) => this.logger.debug(`watchdog boot heartbeat touch failed (ignored): ${err}`))
+      .catch((err) =>
+        this.logger.debug(
+          `watchdog boot heartbeat touch failed (ignored): ${err}`,
+        ),
+      )
       .finally(() => void this.sweep());
     const iv = setInterval(() => void this.sweep(), SWEEP_INTERVAL_MS);
     iv.unref?.(); // never keep the process alive (SchedulerRegistry does not unref for us)
@@ -117,7 +126,9 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
       // stream means the turn is alive-but-unattached — freshen the row (so it leaves the stale set until
       // re-attach resumes the relay) and leave it for the boot re-attach instead of finalizing it.
       try {
-        const idleSec = await this.redis.objectIdleTime(turnKeys(turn.turn_id).events);
+        const idleSec = await this.redis.objectIdleTime(
+          turnKeys(turn.turn_id).events,
+        );
         if (idleSec !== null && idleSec * 1000 < this.staleMs) {
           // Alive-but-unattached: the engine is still streaming (its 5s heartbeat frame keeps the events key
           // fresh) but no host is relaying it — a restart / leader flap severed the tail. TRIGGER a re-attach
@@ -130,7 +141,9 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
           continue;
         }
       } catch (err) {
-        this.logger.debug(`liveness probe for ${turn.turn_id} failed (treating as stale): ${err}`);
+        this.logger.debug(
+          `liveness probe for ${turn.turn_id} failed (treating as stale): ${err}`,
+        );
       }
       await this.registry
         .finalize(turn.turn_id, 'failed')
@@ -139,7 +152,11 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
             `finalized stale turn ${turn.turn_id} (thread ${turn.job_id}) — engine heartbeat lost`,
           ),
         )
-        .catch((err) => this.logger.debug(`finalize ${turn.turn_id} failed (ignored): ${err}`));
+        .catch((err) =>
+          this.logger.debug(
+            `finalize ${turn.turn_id} failed (ignored): ${err}`,
+          ),
+        );
     }
   }
 
@@ -164,7 +181,9 @@ export class TurnWatchdogService implements OnApplicationBootstrap, OnApplicatio
           : `turn ${turn.turn_id} live but unattached (${turn.kind}) — reattach deferred to existing recovery (job not drivable)`,
       );
     } catch (err) {
-      this.logger.warn(`reattach trigger for turn ${turn.turn_id} (${turn.kind}) threw: ${err}`);
+      this.logger.warn(
+        `reattach trigger for turn ${turn.turn_id} (${turn.kind}) threw: ${err}`,
+      );
     }
   }
 }

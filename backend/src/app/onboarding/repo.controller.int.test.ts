@@ -44,7 +44,9 @@ import { CredentialResolver } from './credential-resolver.service';
 /** GitHub PR service stub: a repo is reachable unless its name contains "ghost" (drives accessOk=false). */
 class StubGithubPrService {
   async getRepo(_token: string, owner: string, repo: string): Promise<unknown> {
-    return repo.includes('ghost') ? null : { fullName: `${owner}/${repo}`, defaultBranch: 'main' };
+    return repo.includes('ghost')
+      ? null
+      : { fullName: `${owner}/${repo}`, defaultBranch: 'main' };
   }
   async openPullRequest(): Promise<unknown> {
     return { url: '', number: 0, existing: false };
@@ -84,12 +86,15 @@ let ownerCookie: string;
 let memberCookie: string;
 
 /** Register a user over HTTP; return its auth cookie jar + id. Registration is open + immediately usable. */
-async function register(email: string): Promise<{ cookie: string; id: string }> {
+async function register(
+  email: string,
+): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie =
+    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
@@ -97,17 +102,30 @@ async function register(email: string): Promise<{ cookie: string; id: string }> 
 /** Remove this test's orgs + users (idempotent — survives a prior failed run; fixed ids would PK-collide). */
 async function purge(): Promise<void> {
   for (const org of [ORG1, ORG2]) {
-    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [org]).catch(() => undefined);
-    await ds.query(`DELETE FROM repos WHERE org_id = $1`, [org]).catch(() => undefined);
-    await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [org]).catch(() => undefined);
-    await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]).catch(() => undefined);
+    await ds
+      .query(`DELETE FROM jobs WHERE org_id = $1`, [org])
+      .catch(() => undefined);
+    await ds
+      .query(`DELETE FROM repos WHERE org_id = $1`, [org])
+      .catch(() => undefined);
+    await ds
+      .query(`DELETE FROM organization_members WHERE org_id = $1`, [org])
+      .catch(() => undefined);
+    await ds
+      .query(`DELETE FROM organizations WHERE id = $1`, [org])
+      .catch(() => undefined);
   }
   await ds
-    .query(`DELETE FROM organization_members WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1))`, [
+    .query(
+      `DELETE FROM organization_members WHERE user_id IN (SELECT id FROM users WHERE email = ANY($1))`,
+      [[OWNER_EMAIL, MEMBER_EMAIL]],
+    )
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = ANY($1)`, [
       [OWNER_EMAIL, MEMBER_EMAIL],
     ])
     .catch(() => undefined);
-  await ds.query(`DELETE FROM users WHERE email = ANY($1)`, [[OWNER_EMAIL, MEMBER_EMAIL]]).catch(() => undefined);
 }
 
 beforeAll(async () => {
@@ -127,7 +145,9 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.use(cookieParser()); // populates req.cookies — the auth guard reads the access_token cookie from it
   app.enableShutdownHooks();
   await app.init();
@@ -142,11 +162,23 @@ beforeAll(async () => {
   memberCookie = member.cookie;
 
   // Two orgs the OWNER owns (the multi-org case); the member belongs to ORG1 only.
-  for (const [id, slug] of [[ORG1, 'repo-it-one'], [ORG2, 'repo-it-two']] as const) {
-    await ds.query(`INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`, [id, `Org ${slug}`, slug]);
-    await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [id, owner.id]);
+  for (const [id, slug] of [
+    [ORG1, 'repo-it-one'],
+    [ORG2, 'repo-it-two'],
+  ] as const) {
+    await ds.query(
+      `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`,
+      [id, `Org ${slug}`, slug],
+    );
+    await ds.query(
+      `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+      [id, owner.id],
+    );
   }
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member')`, [ORG1, member.id]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+    [ORG1, member.id],
+  );
 
   if (prevSurface === undefined) delete process.env.SURFACE;
   else process.env.SURFACE = prevSurface;
@@ -178,16 +210,25 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
       .set('Cookie', ownerCookie)
       .send({ repoUrl: 'https://github.com/atlas-it/repo-one.git' });
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ slug: 'repo-one', name: 'repo-one', accessOk: true });
+    expect(res.body).toMatchObject({
+      slug: 'repo-one',
+      name: 'repo-one',
+      accessOk: true,
+    });
     // Repo-level merge defaults — a freshly-connected repo gets the built-in default ('squash' + delete branch).
-    expect(res.body).toMatchObject({ defaultAutoMergeMethod: 'squash', defaultAutoMergeDeleteBranch: true });
+    expect(res.body).toMatchObject({
+      defaultAutoMergeMethod: 'squash',
+      defaultAutoMergeDeleteBranch: true,
+    });
     const repoId = res.body.id as string;
     expect(repoId).toBeTruthy();
 
     // READ — enriched list carries the derived fields
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
-    const row = (res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId);
+    const row = (res.body as Array<Record<string, unknown>>).find(
+      (r) => r.id === repoId,
+    );
     expect(row).toMatchObject({ slug: 'repo-one', threadCount: 0 });
     expect(row?.accessCheckedAt).toBeTruthy();
 
@@ -211,23 +252,34 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
 
     // UPDATE persisted
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
-    const updatedRow = (res.body as Array<Record<string, unknown>>).find((r) => r.id === repoId);
+    const updatedRow = (res.body as Array<Record<string, unknown>>).find(
+      (r) => r.id === repoId,
+    );
     expect(updatedRow?.name).toBe('Renamed by IT');
-    expect(updatedRow).toMatchObject({ defaultAutoMergeMethod: 'rebase', defaultAutoMergeDeleteBranch: false });
+    expect(updatedRow).toMatchObject({
+      defaultAutoMergeMethod: 'rebase',
+      defaultAutoMergeDeleteBranch: false,
+    });
 
     // REVALIDATE
-    res = await request(server).post(`${reposPath(ORG1)}/${repoId}/revalidate`).set('Cookie', ownerCookie);
+    res = await request(server)
+      .post(`${reposPath(ORG1)}/${repoId}/revalidate`)
+      .set('Cookie', ownerCookie);
     expect(res.status).toBe(201);
     expect(res.body.accessOk).toBe(true);
 
     // DELETE (empty repo → cascade count is zero)
-    res = await request(server).delete(`${reposPath(ORG1)}/${repoId}`).set('Cookie', ownerCookie);
+    res = await request(server)
+      .delete(`${reposPath(ORG1)}/${repoId}`)
+      .set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, threadsDeleted: 0 });
 
     // DELETE confirmed
     res = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
-    expect((res.body as Array<Record<string, unknown>>).some((r) => r.id === repoId)).toBe(false);
+    expect(
+      (res.body as Array<Record<string, unknown>>).some((r) => r.id === repoId),
+    ).toBe(false);
   });
 
   it('records accessOk=false when the repo is unreachable with the org token', async () => {
@@ -240,42 +292,103 @@ describe('RepoController HTTP (auth + owner/membership guards, live Postgres)', 
   });
 
   it('an owner of multiple orgs manages each org independently', async () => {
-    const r1 = await request(server).post(reposPath(ORG1)).set('Cookie', ownerCookie).send({ repoUrl: 'https://github.com/atlas-it/alpha.git' });
-    const r2 = await request(server).post(reposPath(ORG2)).set('Cookie', ownerCookie).send({ repoUrl: 'https://github.com/atlas-it/beta.git' });
+    const r1 = await request(server)
+      .post(reposPath(ORG1))
+      .set('Cookie', ownerCookie)
+      .send({ repoUrl: 'https://github.com/atlas-it/alpha.git' });
+    const r2 = await request(server)
+      .post(reposPath(ORG2))
+      .set('Cookie', ownerCookie)
+      .send({ repoUrl: 'https://github.com/atlas-it/beta.git' });
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
 
     // Each org lists ONLY its own repo (no cross-tenant bleed).
-    const l1 = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
-    const l2 = await request(server).get(reposPath(ORG2)).set('Cookie', ownerCookie);
-    expect((l1.body as Array<{ slug: string }>).map((r) => r.slug)).toEqual(['alpha']);
-    expect((l2.body as Array<{ slug: string }>).map((r) => r.slug)).toEqual(['beta']);
+    const l1 = await request(server)
+      .get(reposPath(ORG1))
+      .set('Cookie', ownerCookie);
+    const l2 = await request(server)
+      .get(reposPath(ORG2))
+      .set('Cookie', ownerCookie);
+    expect((l1.body as Array<{ slug: string }>).map((r) => r.slug)).toEqual([
+      'alpha',
+    ]);
+    expect((l2.body as Array<{ slug: string }>).map((r) => r.slug)).toEqual([
+      'beta',
+    ]);
   });
 
   it('a member can read repos but every write is owner-gated (403)', async () => {
     // Owner seeds a repo first.
-    const created = await request(server).post(reposPath(ORG1)).set('Cookie', ownerCookie).send({ repoUrl: 'https://github.com/atlas-it/shared.git' });
+    const created = await request(server)
+      .post(reposPath(ORG1))
+      .set('Cookie', ownerCookie)
+      .send({ repoUrl: 'https://github.com/atlas-it/shared.git' });
     const repoId = created.body.id as string;
 
     // Member CAN read.
-    const list = await request(server).get(reposPath(ORG1)).set('Cookie', memberCookie);
+    const list = await request(server)
+      .get(reposPath(ORG1))
+      .set('Cookie', memberCookie);
     expect(list.status).toBe(200);
-    expect((list.body as Array<{ id: string }>).some((r) => r.id === repoId)).toBe(true);
+    expect(
+      (list.body as Array<{ id: string }>).some((r) => r.id === repoId),
+    ).toBe(true);
 
     // Member CANNOT write — connect / update / revalidate / disconnect all 403.
-    expect((await request(server).post(reposPath(ORG1)).set('Cookie', memberCookie).send({ repoUrl: 'https://github.com/atlas-it/nope.git' })).status).toBe(403);
-    expect((await request(server).patch(`${reposPath(ORG1)}/${repoId}`).set('Cookie', memberCookie).send({ name: 'hax' })).status).toBe(403);
-    expect((await request(server).post(`${reposPath(ORG1)}/${repoId}/revalidate`).set('Cookie', memberCookie)).status).toBe(403);
-    expect((await request(server).delete(`${reposPath(ORG1)}/${repoId}`).set('Cookie', memberCookie)).status).toBe(403);
+    expect(
+      (
+        await request(server)
+          .post(reposPath(ORG1))
+          .set('Cookie', memberCookie)
+          .send({ repoUrl: 'https://github.com/atlas-it/nope.git' })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(server)
+          .patch(`${reposPath(ORG1)}/${repoId}`)
+          .set('Cookie', memberCookie)
+          .send({ name: 'hax' })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(server)
+          .post(`${reposPath(ORG1)}/${repoId}/revalidate`)
+          .set('Cookie', memberCookie)
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(server)
+          .delete(`${reposPath(ORG1)}/${repoId}`)
+          .set('Cookie', memberCookie)
+      ).status,
+    ).toBe(403);
 
     // The repo is untouched (the member's blocked delete did nothing).
-    const after = await request(server).get(reposPath(ORG1)).set('Cookie', ownerCookie);
-    expect((after.body as Array<{ id: string }>).some((r) => r.id === repoId)).toBe(true);
+    const after = await request(server)
+      .get(reposPath(ORG1))
+      .set('Cookie', ownerCookie);
+    expect(
+      (after.body as Array<{ id: string }>).some((r) => r.id === repoId),
+    ).toBe(true);
   });
 
   it('a non-member is denied every route on an org they do not belong to (403)', async () => {
     // The member user belongs to ORG1 only — ORG2 must be fully closed to them.
-    expect((await request(server).get(reposPath(ORG2)).set('Cookie', memberCookie)).status).toBe(403);
-    expect((await request(server).post(reposPath(ORG2)).set('Cookie', memberCookie).send({ repoUrl: 'https://github.com/atlas-it/x.git' })).status).toBe(403);
+    expect(
+      (await request(server).get(reposPath(ORG2)).set('Cookie', memberCookie))
+        .status,
+    ).toBe(403);
+    expect(
+      (
+        await request(server)
+          .post(reposPath(ORG2))
+          .set('Cookie', memberCookie)
+          .send({ repoUrl: 'https://github.com/atlas-it/x.git' })
+      ).status,
+    ).toBe(403);
   });
 });

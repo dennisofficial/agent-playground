@@ -1,4 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -18,7 +25,10 @@ afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 function writeSkillMd(dir: string, description: string): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'SKILL.md'), `---\ndescription: ${description}\n---\nbody\n`);
+  writeFileSync(
+    join(dir, 'SKILL.md'),
+    `---\ndescription: ${description}\n---\nbody\n`,
+  );
 }
 
 describe('composeSkillsDir — managed (system) skills', () => {
@@ -26,7 +36,14 @@ describe('composeSkillsDir — managed (system) skills', () => {
     writeSkillMd(join(MANAGED_ROOT, 'atlas-example'), 'managed');
     composeSkillsDir(
       CLAUDE_CONFIG_DIR,
-      [{ name: 'atlas-example', description: 'managed', dirPath: 'atlas-example', managed: true }],
+      [
+        {
+          name: 'atlas-example',
+          description: 'managed',
+          dirPath: 'atlas-example',
+          managed: true,
+        },
+      ],
       SKILLS_ROOT,
       MANAGED_ROOT,
     );
@@ -62,7 +79,14 @@ describe('composeSkillsDir — managed (system) skills', () => {
     writeSkillMd(join(MANAGED_ROOT, 'no-org-root'), 'managed');
     composeSkillsDir(
       CLAUDE_CONFIG_DIR,
-      [{ name: 'no-org-root', description: 'managed', dirPath: 'no-org-root', managed: true }],
+      [
+        {
+          name: 'no-org-root',
+          description: 'managed',
+          dirPath: 'no-org-root',
+          managed: true,
+        },
+      ],
       undefined,
       MANAGED_ROOT,
     );
@@ -74,7 +98,14 @@ describe('composeSkillsDir — managed (system) skills', () => {
     writeSkillMd(join(MANAGED_GIT_ROOT, 'playwright-cli'), 'git-managed');
     composeSkillsDir(
       CLAUDE_CONFIG_DIR,
-      [{ name: 'playwright-cli', description: 'git-managed', dirPath: 'playwright-cli', managedGit: true }],
+      [
+        {
+          name: 'playwright-cli',
+          description: 'git-managed',
+          dirPath: 'playwright-cli',
+          managedGit: true,
+        },
+      ],
       SKILLS_ROOT,
       MANAGED_ROOT,
       MANAGED_GIT_ROOT,
@@ -86,11 +117,20 @@ describe('composeSkillsDir — managed (system) skills', () => {
   it('a managedGit skill not yet synced to disk is skipped, not a dangling symlink', () => {
     composeSkillsDir(
       CLAUDE_CONFIG_DIR,
-      [{ name: 'unsynced', description: 'd', dirPath: 'unsynced', managedGit: true }],
+      [
+        {
+          name: 'unsynced',
+          description: 'd',
+          dirPath: 'unsynced',
+          managedGit: true,
+        },
+      ],
       SKILLS_ROOT,
       MANAGED_ROOT,
       MANAGED_GIT_ROOT,
     );
-    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(false);
+    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(
+      false,
+    );
   });
 });

@@ -51,7 +51,13 @@ export interface LiveTurnSnapshot {
   startedAt: number;
   /** Set while a retry is in flight (SDK native `api_retry` mid-turn, or a host backstop between turns) so a
    *  reconnect snapshot replays the "Reconnecting…" indicator. Cleared by any real event / turn_start / end(). */
-  retrying?: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string };
+  retrying?: {
+    attempt: number;
+    max: number;
+    retryDelayMs?: number;
+    nextAttemptAt?: number;
+    reason?: string;
+  };
 }
 
 /** A frame fanned to SSE: an engine delta, a `{kind:'snapshot'}`, or a `{kind:'turn_end'}` — all seq'd. */
@@ -78,7 +84,13 @@ interface TurnState {
   startedAt: number;
   /** Set while a retry is in flight (SDK native `api_retry` mid-turn, or a host backstop between turns) so a
    *  reconnect snapshot replays the "Reconnecting…" indicator. Cleared by any real event / turn_start / end(). */
-  retrying?: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string };
+  retrying?: {
+    attempt: number;
+    max: number;
+    retryDelayMs?: number;
+    nextAttemptAt?: number;
+    reason?: string;
+  };
 }
 
 /** The default lane — the thread brain's conversational turn. */
@@ -154,7 +166,10 @@ export class LiveTurnStore {
         attempt: Number(event['attempt']),
         max: Number(event['maxRetries']),
         retryDelayMs: Number(event['retryDelayMs']),
-        reason: typeof event['reason'] === 'string' ? (event['reason'] as string) : undefined,
+        reason:
+          typeof event['reason'] === 'string'
+            ? (event['reason'] as string)
+            : undefined,
       };
       const seq = ++this.seq;
       state.lastSeq = seq;
@@ -192,7 +207,13 @@ export class LiveTurnStore {
   /** End a turn: fan a `turn_end` marker (so the client reconciles against the durable log), then drop it. */
   end(channel: string, jobId: string, lane: string = MAIN_LANE): void {
     const seq = ++this.seq;
-    this.subject.next({ channel, jobId, lane, seq, event: { kind: 'turn_end' } });
+    this.subject.next({
+      channel,
+      jobId,
+      lane,
+      seq,
+      event: { kind: 'turn_end' },
+    });
     this.turns.get(channel)?.delete(this.key(jobId, lane));
   }
 
@@ -207,7 +228,13 @@ export class LiveTurnStore {
     channel: string,
     jobId: string,
     lane: string = MAIN_LANE,
-    info: { attempt: number; max: number; retryDelayMs?: number; nextAttemptAt?: number; reason?: string },
+    info: {
+      attempt: number;
+      max: number;
+      retryDelayMs?: number;
+      nextAttemptAt?: number;
+      reason?: string;
+    },
   ): void {
     const state = this.ensure(channel, jobId, lane);
     state.active = true;
@@ -223,8 +250,12 @@ export class LiveTurnStore {
         kind: 'turn_retry',
         attempt: info.attempt,
         max: info.max,
-        ...(info.retryDelayMs != null ? { retryDelayMs: info.retryDelayMs } : {}),
-        ...(info.nextAttemptAt != null ? { nextAttemptAt: info.nextAttemptAt } : {}),
+        ...(info.retryDelayMs != null
+          ? { retryDelayMs: info.retryDelayMs }
+          : {}),
+        ...(info.nextAttemptAt != null
+          ? { nextAttemptAt: info.nextAttemptAt }
+          : {}),
         ...(info.reason != null ? { reason: info.reason } : {}),
       },
     });
@@ -242,7 +273,11 @@ export class LiveTurnStore {
   }
 
   /** The current cumulative snapshot for one turn lane (or null when no turn is in flight). */
-  snapshot(channel: string, jobId: string, lane: string = MAIN_LANE): LiveTurnSnapshot | null {
+  snapshot(
+    channel: string,
+    jobId: string,
+    lane: string = MAIN_LANE,
+  ): LiveTurnSnapshot | null {
     const state = this.turns.get(channel)?.get(this.key(jobId, lane));
     if (!state) return null;
     return {
@@ -284,7 +319,14 @@ export class LiveTurnStore {
     const k = this.key(jobId, lane);
     let s = m.get(k);
     if (!s) {
-      s = { jobId, lane, blocks: [], active: true, lastSeq: 0, startedAt: Date.now() };
+      s = {
+        jobId,
+        lane,
+        blocks: [],
+        active: true,
+        lastSeq: 0,
+        startedAt: Date.now(),
+      };
       m.set(k, s);
     }
     s.active = true;
@@ -301,8 +343,12 @@ export class LiveTurnStore {
     const text = typeof ev['text'] === 'string' ? (ev['text'] as string) : '';
     // Only merge into the open block when it belongs to the SAME author (brain vs a given subagent), so a
     // subagent's forwarded text never appends onto the brain's open text block (or another subagent's).
-    const pid = typeof ev['parentToolUseId'] === 'string' ? (ev['parentToolUseId'] as string) : undefined;
-    const sameAuthor = (b: LiveTurnBlock | undefined): boolean => !!b && b.parentToolUseId === pid;
+    const pid =
+      typeof ev['parentToolUseId'] === 'string'
+        ? (ev['parentToolUseId'] as string)
+        : undefined;
+    const sameAuthor = (b: LiveTurnBlock | undefined): boolean =>
+      !!b && b.parentToolUseId === pid;
     // Finalize the most-recent still-open block of this kind+author. Interleaved thinking (auto-enabled by
     // adaptive thinking) means a turn can have TWO open delta blocks at once — an open `thinking` and an open
     // `text` — so the authoritative block we're closing is NOT necessarily `last`. Checking only `last` here
@@ -351,7 +397,12 @@ export class LiveTurnStore {
         return emittedAt;
       }
       case 'thinking_delta':
-        if (last && last.kind === 'thinking' && !last.done && sameAuthor(last)) {
+        if (
+          last &&
+          last.kind === 'thinking' &&
+          !last.done &&
+          sameAuthor(last)
+        ) {
           last.text = (last.text ?? '') + text;
           return last.emittedAt;
         } else {
@@ -387,7 +438,8 @@ export class LiveTurnStore {
           kind: 'tool',
           key: `b${this.blockSeq++}`,
           toolId: typeof ev['id'] === 'string' ? (ev['id'] as string) : '',
-          name: typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
+          name:
+            typeof ev['name'] === 'string' ? (ev['name'] as string) : 'tool',
           input: ev['input'],
           done: false,
           emittedAt,
@@ -402,7 +454,8 @@ export class LiveTurnStore {
           if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
             b.result = ev['result'];
             b.isError = Boolean(ev['isError']);
-            if (ev['structuredPatch'] !== undefined) b.structuredPatch = ev['structuredPatch'];
+            if (ev['structuredPatch'] !== undefined)
+              b.structuredPatch = ev['structuredPatch'];
             b.done = true;
             return b.emittedAt;
           }

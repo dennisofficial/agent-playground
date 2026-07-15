@@ -6,7 +6,11 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
-import { RealtimeEngine, type Logger as RealtimeLogger, type SubscriptionImpl } from '@workspace/pg-realtime';
+import {
+  RealtimeEngine,
+  type Logger as RealtimeLogger,
+  type SubscriptionImpl,
+} from '@workspace/pg-realtime';
 import pg from 'pg';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
@@ -27,7 +31,9 @@ const PUBLICATION_NAME = 'pg_realtime_pub';
  * `wal_level` isn't `logical`), boot continues and the REST list endpoints still serve `needsYou`.
  */
 @Injectable()
-export class RealtimeService implements OnApplicationBootstrap, OnApplicationShutdown {
+export class RealtimeService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(RealtimeService.name);
   private engine: RealtimeEngine | null = null;
   private promoteSub?: Subscription;
@@ -62,8 +68,11 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
   }
 
   /** Open a per-operator subscription over ALL their orgs' threads (the cross-org sidebar stream). */
-  async openThreadSubscription(principal: RealtimePrincipal): Promise<SubscriptionImpl> {
-    if (!this.engine) throw new ServiceUnavailableException('realtime unavailable');
+  async openThreadSubscription(
+    principal: RealtimePrincipal,
+  ): Promise<SubscriptionImpl> {
+    if (!this.engine)
+      throw new ServiceUnavailableException('realtime unavailable');
     return this.engine.openSubscription({ model: 'jobs', user: principal });
   }
 
@@ -71,11 +80,15 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
 
   /** Serialized entry points — chained on `engineOp` so start/stop never overlap. */
   private startEngine(): Promise<void> {
-    return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStartEngine()));
+    return (this.engineOp = this.engineOp
+      .catch(() => undefined)
+      .then(() => this.doStartEngine()));
   }
 
   private stopEngine(): Promise<void> {
-    return (this.engineOp = this.engineOp.catch(() => undefined).then(() => this.doStopEngine()));
+    return (this.engineOp = this.engineOp
+      .catch(() => undefined)
+      .then(() => this.doStopEngine()));
   }
 
   private async doStartEngine(): Promise<void> {
@@ -92,7 +105,9 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
       });
       await engine.start();
       this.engine = engine;
-      this.logger.log(`realtime engine started (threads → SSE), slot ${slotName}`);
+      this.logger.log(
+        `realtime engine started (threads → SSE), slot ${slotName}`,
+      );
     } catch (err) {
       this.engine = null;
       this.logger.warn(
@@ -128,8 +143,12 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
       for (const { slot_name } of res.rows) {
         await client
           .query('SELECT pg_drop_replication_slot($1)', [slot_name])
-          .then(() => this.logger.log(`dropped orphaned replication slot ${slot_name}`))
-          .catch((err) => this.logger.debug(`could not drop slot ${slot_name}: ${err}`));
+          .then(() =>
+            this.logger.log(`dropped orphaned replication slot ${slot_name}`),
+          )
+          .catch((err) =>
+            this.logger.debug(`could not drop slot ${slot_name}: ${err}`),
+          );
       }
     });
   }
@@ -144,7 +163,9 @@ export class RealtimeService implements OnApplicationBootstrap, OnApplicationShu
     });
   }
 
-  private async withClient(fn: (client: pg.Client) => Promise<void>): Promise<void> {
+  private async withClient(
+    fn: (client: pg.Client) => Promise<void>,
+  ): Promise<void> {
     const client = new pg.Client({
       connectionString: pgConnectionString(this.env),
       ssl: resolveSsl(this.env),

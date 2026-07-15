@@ -68,7 +68,9 @@ export class BrainGateway implements BrainGatewayHandler {
     return this.handler;
   }
 
-  openPrAtShip(input: Parameters<BrainGatewayHandler['openPrAtShip']>[0]): Promise<void> {
+  openPrAtShip(
+    input: Parameters<BrainGatewayHandler['openPrAtShip']>[0],
+  ): Promise<void> {
     return this.require().openPrAtShip(input);
   }
 

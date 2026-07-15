@@ -21,21 +21,35 @@
  */
 export const DECISION_CLASS_META = [
   { id: 'data_model', heading: 'Data model', grill: 'data model/schema' },
-  { id: 'api_contract', heading: 'API contract', grill: 'public API contracts' },
+  {
+    id: 'api_contract',
+    heading: 'API contract',
+    grill: 'public API contracts',
+  },
   { id: 'dependency', heading: 'Dependencies', grill: 'new dependencies' },
-  { id: 'infrastructure', heading: 'Infrastructure', grill: 'infrastructure/topology' },
+  {
+    id: 'infrastructure',
+    heading: 'Infrastructure',
+    grill: 'infrastructure/topology',
+  },
   {
     id: 'cross_cutting',
     heading: 'Cross-cutting',
-    grill: 'cross-cutting patterns (auth, caching, state, concurrency, error-handling)',
+    grill:
+      'cross-cutting patterns (auth, caching, state, concurrency, error-handling)',
   },
   { id: 'one_way_door', heading: 'One-way doors', grill: 'one-way doors' },
-] as const satisfies ReadonlyArray<{ id: string; heading: string; grill: string }>;
+] as const satisfies ReadonlyArray<{
+  id: string;
+  heading: string;
+  grill: string;
+}>;
 
 export type DecisionClass = (typeof DECISION_CLASS_META)[number]['id'];
 
 /** The canonical ordered list of class ids — drives every derived enumeration (order, set, enum). */
-export const DECISION_CLASS_IDS: readonly DecisionClass[] = DECISION_CLASS_META.map((c) => c.id);
+export const DECISION_CLASS_IDS: readonly DecisionClass[] =
+  DECISION_CLASS_META.map((c) => c.id);
 
 /**
  * Allocate the next stable decision id for a thread's working set: `d<max+1>` over the existing

@@ -12,7 +12,11 @@ import type { PromptCtx } from '../prompt-ctx';
 @FragmentGroup()
 export class IdentityGroup {
   /** The orchestrator identity. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1000, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1000,
+    condition: isBuildBrain,
+  })
   atlasIdentity(): string {
     return [
       'You are Atlas, an autonomous software-engineering orchestrator. You are talking with the operator',
@@ -64,7 +68,11 @@ export class IdentityGroup {
   }
 
   /** The repo bring-up identity. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2000, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2000,
+    condition: isOnboarding,
+  })
   onboardingIdentity(): string {
     return [
       'You are Atlas, onboarding a newly-connected repository. Think of it as your first day as a new engineer:',

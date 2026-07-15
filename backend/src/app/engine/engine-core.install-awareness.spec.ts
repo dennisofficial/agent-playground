@@ -16,13 +16,23 @@ import { agentMessage } from '../prompt-kit/message';
 const HOME_ROOT = join(tmpdir(), `atlas-install-awareness-spec-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
-const TEST_KEY: EngineHomeKey = { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' };
+const TEST_KEY: EngineHomeKey = {
+  orgId: 'acme',
+  repoId: 'atlas',
+  jobId: 'feat',
+  type: 'build',
+};
 
 /** A fake Claude SDK whose `query` records the options it was called with and yields a success. */
 function fakeClaudeSdk() {
   const captured: { options?: Record<string, unknown> } = {};
   const sdk = {
-    query: ({ options }: { prompt: string; options: Record<string, unknown> }) => {
+    query: ({
+      options,
+    }: {
+      prompt: string;
+      options: Record<string, unknown>;
+    }) => {
       captured.options = options;
       return (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
@@ -45,14 +55,26 @@ function fakeCodexSdk() {
 }
 
 /** Pulls the Bash PostToolUse callbacks array out of the captured options (empty if none registered). */
-function bashHooks(options: Record<string, unknown>): Array<(input: unknown) => Promise<unknown>> {
+function bashHooks(
+  options: Record<string, unknown>,
+): Array<(input: unknown) => Promise<unknown>> {
   const hooks = options.hooks as
-    | { PostToolUse?: Array<{ matcher: string; hooks: Array<(input: unknown) => Promise<unknown>> }> }
+    | {
+        PostToolUse?: Array<{
+          matcher: string;
+          hooks: Array<(input: unknown) => Promise<unknown>>;
+        }>;
+      }
     | undefined;
   return hooks?.PostToolUse?.[0]?.hooks ?? [];
 }
 
-async function runWithBridgeCall(bridgeCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>) {
+async function runWithBridgeCall(
+  bridgeCall?: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>,
+) {
   const { sdk, captured } = fakeClaudeSdk();
   const core = new EngineCore(sdk, fakeCodexSdk().sdk, { homeRoot: HOME_ROOT });
   await core.run({
@@ -76,12 +98,14 @@ describe('install-awareness PostToolUse hook', () => {
     const hooks = bashHooks(options);
     expect(hooks.length).toBeGreaterThan(0);
     const results = await Promise.all(
-      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
+      hooks.map((h) =>
+        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
+      ),
     );
     const hit = results.find(
       (r) =>
-        (r as { hookSpecificOutput?: { additionalContext?: string } })?.hookSpecificOutput
-          ?.additionalContext === 'TEXT',
+        (r as { hookSpecificOutput?: { additionalContext?: string } })
+          ?.hookSpecificOutput?.additionalContext === 'TEXT',
     );
     expect(hit).toBeTruthy();
     expect(bridgeCall).toHaveBeenCalledWith(INTERNAL_PROFILE_AWARENESS_TOOL, {
@@ -94,7 +118,11 @@ describe('install-awareness PostToolUse hook', () => {
     const bridgeCall = vi.fn(async () => 'TEXT');
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
-    const results = await Promise.all(hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'ls -la' } })));
+    const results = await Promise.all(
+      hooks.map((h) =>
+        h({ tool_name: 'Bash', tool_input: { command: 'ls -la' } }),
+      ),
+    );
     for (const r of results) expect(r).toEqual({});
     expect(bridgeCall).not.toHaveBeenCalled();
   });
@@ -104,7 +132,9 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
+      hooks.map((h) =>
+        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
+      ),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -116,7 +146,9 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(bridgeCall);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
+      hooks.map((h) =>
+        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
+      ),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -125,7 +157,9 @@ describe('install-awareness PostToolUse hook', () => {
     const options = await runWithBridgeCall(undefined);
     const hooks = bashHooks(options);
     const results = await Promise.all(
-      hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
+      hooks.map((h) =>
+        h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
+      ),
     );
     for (const r of results) expect(r).toEqual({});
   });
@@ -137,7 +171,9 @@ describe('install-awareness PostToolUse hook', () => {
       const options = await runWithBridgeCall(bridgeCall);
       const hooks = bashHooks(options);
       const pending = Promise.all(
-        hooks.map((h) => h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } })),
+        hooks.map((h) =>
+          h({ tool_name: 'Bash', tool_input: { command: 'pnpm add eslint' } }),
+        ),
       );
       await vi.advanceTimersByTimeAsync(5_000);
       const results = await pending;

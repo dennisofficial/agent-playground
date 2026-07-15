@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Collapse the two-table worktree-secrets model (a named `org_worktree_secrets` VALUE + a separate
@@ -14,17 +14,27 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * migration log. It also announces any inert ungranted values it is about to drop.
  */
 export class CollapseWorktreeSecretFiles1783304635651 implements MigrationInterface {
-    name = 'CollapseWorktreeSecretFiles1783304635651'
+  name = 'CollapseWorktreeSecretFiles1783304635651';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`CREATE TABLE "org_worktree_secret_files" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "org_id" uuid NOT NULL, "repo_id" uuid NOT NULL, "path" text NOT NULL, "value_enc" text NOT NULL, "label" text, CONSTRAINT "pk_org_worktree_secret_files" PRIMARY KEY ("org_id", "repo_id", "path"))`);
-        await queryRunner.query(`CREATE INDEX "idx_org_worktree_secret_files_org_id_repo_id" ON "org_worktree_secret_files" ("org_id", "repo_id") `);
-        await queryRunner.query(`CREATE INDEX "idx_org_worktree_secret_files_org_id" ON "org_worktree_secret_files" ("org_id") `);
-        await queryRunner.query(`ALTER TABLE "org_worktree_secret_files" ADD CONSTRAINT "fk_org_worktree_secret_files_org_id_organizations" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
-        await queryRunner.query(`ALTER TABLE "org_worktree_secret_files" ADD CONSTRAINT "fk_org_worktree_secret_files_repo_id_repos" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `CREATE TABLE "org_worktree_secret_files" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "org_id" uuid NOT NULL, "repo_id" uuid NOT NULL, "path" text NOT NULL, "value_enc" text NOT NULL, "label" text, CONSTRAINT "pk_org_worktree_secret_files" PRIMARY KEY ("org_id", "repo_id", "path"))`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "idx_org_worktree_secret_files_org_id_repo_id" ON "org_worktree_secret_files" ("org_id", "repo_id") `,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "idx_org_worktree_secret_files_org_id" ON "org_worktree_secret_files" ("org_id") `,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "org_worktree_secret_files" ADD CONSTRAINT "fk_org_worktree_secret_files_org_id_organizations" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "org_worktree_secret_files" ADD CONSTRAINT "fk_org_worktree_secret_files_repo_id_repos" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
+    );
 
-        // Backfill + drop the old two-table model — only where it exists.
-        await queryRunner.query(`
+    // Backfill + drop the old two-table model — only where it exists.
+    await queryRunner.query(`
 DO $$
 DECLARE r RECORD;
 BEGIN
@@ -72,11 +82,11 @@ BEGIN
   END IF;
 END $$;
         `);
-    }
+  }
 
-    public async down(): Promise<void> {
-        // Irreversible: the collapse discards the value/authority separation and any inert ungranted
-        // values. Restoring the two-table split from the merged rows is not supported.
-        throw new Error('CollapseWorktreeSecretFiles is irreversible');
-    }
+  public async down(): Promise<void> {
+    // Irreversible: the collapse discards the value/authority separation and any inert ungranted
+    // values. Restoring the two-table split from the merged rows is not supported.
+    throw new Error('CollapseWorktreeSecretFiles is irreversible');
+  }
 }

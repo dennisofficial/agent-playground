@@ -10,7 +10,9 @@ import type { SubscriptionImpl } from '@workspace/pg-realtime';
  *
  * Re-implements cubix's trimmed `sseObservable` locally (the vendored package ships core only).
  */
-export function subscriptionToObservable(sub: SubscriptionImpl): Observable<MessageEvent> {
+export function subscriptionToObservable(
+  sub: SubscriptionImpl,
+): Observable<MessageEvent> {
   return new Observable<MessageEvent>((subscriber) => {
     sub.on((delta) => subscriber.next({ data: delta }));
     return () => sub.close();

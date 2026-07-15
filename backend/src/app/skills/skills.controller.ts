@@ -12,7 +12,15 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MinLength,
+} from 'class-validator';
 import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -28,8 +36,16 @@ import { BUNDLED_CLAUDE_CODE_SKILLS } from './bundled-skills';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { SkillUpdaterService } from './skill-updater.service';
-import { SystemSkillResolver, type SystemSkillView } from './system-skill-resolver.service';
-import { ORG_SCOPE, WorkspaceSkillStore, type SkillInput, type SkillView } from './workspace-skill.store';
+import {
+  SystemSkillResolver,
+  type SystemSkillView,
+} from './system-skill-resolver.service';
+import {
+  ORG_SCOPE,
+  WorkspaceSkillStore,
+  type SkillInput,
+  type SkillView,
+} from './workspace-skill.store';
 
 const SURFACES = ['brain', 'build', 'review'] as const;
 const PROVENANCES = ['git', 'custom', 'managed'] as const;
@@ -43,7 +59,10 @@ class InstallSkillDto {
   @IsOptional() @IsString() ref?: string;
   @IsOptional() @IsString() subpath?: string;
   @IsOptional() @IsIn(UPDATE_POLICIES) updatePolicy?: SkillUpdatePolicy;
-  @IsOptional() @IsArray() @IsIn(SURFACES, { each: true }) surfaces?: McpSurface[];
+  @IsOptional()
+  @IsArray()
+  @IsIn(SURFACES, { each: true })
+  surfaces?: McpSurface[];
 }
 
 /**
@@ -62,7 +81,10 @@ class SetSkillDto implements SkillInput {
   @IsOptional() @IsString() installed_sha?: string | null;
   @IsOptional() @IsIn(UPDATE_POLICIES) update_policy?: SkillUpdatePolicy | null;
   @IsOptional() @IsString() forked_from?: string | null;
-  @IsOptional() @IsArray() @IsIn(SURFACES, { each: true }) surfaces?: McpSurface[];
+  @IsOptional()
+  @IsArray()
+  @IsIn(SURFACES, { each: true })
+  surfaces?: McpSurface[];
   @IsOptional() @IsArray() @IsString({ each: true }) reviewForTypes?: string[];
   @IsOptional() @IsArray() @IsString({ each: true }) reviewForGlobs?: string[];
   @IsOptional() @IsBoolean() enabled?: boolean;
@@ -96,9 +118,11 @@ export class SkillsController {
    *  bundled skill names (display-only — already active via `skills: 'all'`, see `bundled-skills.ts`);
    *  `skills` = this org's Organization/Repository tiers, unchanged. */
   @Get()
-  async list(
-    @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ system: SystemSkillView[]; bundled: string[]; skills: SkillView[] }> {
+  async list(@CurrentOrg() org: CurrentOrgCtx): Promise<{
+    system: SystemSkillView[];
+    bundled: string[];
+    skills: SkillView[];
+  }> {
     return {
       system: this.systemSkills.list(),
       bundled: [...BUNDLED_CLAUDE_CODE_SKILLS],
@@ -109,7 +133,10 @@ export class SkillsController {
   /** Install (or re-install) a skill — or every skill a marketplace manifest lists — from a git repo. */
   @Post('install')
   @UseGuards(OrgOwnerGuard)
-  async install(@CurrentOrg() org: CurrentOrgCtx, @Body() body: InstallSkillDto): Promise<{ skills: SkillView[] }> {
+  async install(
+    @CurrentOrg() org: CurrentOrgCtx,
+    @Body() body: InstallSkillDto,
+  ): Promise<{ skills: SkillView[] }> {
     const dbScope = await this.resolveScope(org.id, body.scope);
     const skills = await this.installer.install({
       orgId: org.id,
@@ -149,7 +176,13 @@ export class SkillsController {
     // A create/edit from the console carries the SKILL.md body directly — the row alone would leave a
     // custom skill with no file on the host store to symlink into a turn (see SkillFileWriter's header).
     if (body.body !== undefined) {
-      this.skillFiles.writeSkillMd(org.id, dbScope, name, body.description, body.body);
+      this.skillFiles.writeSkillMd(
+        org.id,
+        dbScope,
+        name,
+        body.description,
+        body.body,
+      );
     }
     return { ok: true };
   }
@@ -180,7 +213,10 @@ export class SkillsController {
   ): Promise<{ skill: SkillView }> {
     const dbScope = await this.resolveScope(org.id, scope);
     const source = await this.store.get(org.id, dbScope, name);
-    if (!source) throw new BadRequestException(`no such skill '${name}' at scope '${scope}'`);
+    if (!source)
+      throw new BadRequestException(
+        `no such skill '${name}' at scope '${scope}'`,
+      );
     let forkName = `${name}-custom`;
     for (let n = 2; await this.store.get(org.id, dbScope, forkName); n++) {
       forkName = `${name}-custom-${n}`;
@@ -196,7 +232,10 @@ export class SkillsController {
       enabled: true,
     });
     const skill = await this.store.get(org.id, dbScope, forkName);
-    if (!skill) throw new Error(`skill '${forkName}' vanished immediately after write — should be unreachable`);
+    if (!skill)
+      throw new Error(
+        `skill '${forkName}' vanished immediately after write — should be unreachable`,
+      );
     return { skill };
   }
 
@@ -218,8 +257,13 @@ export class SkillsController {
   /** Map `'org'` → the `'*'` sentinel; otherwise require the repo to belong to this org. */
   private async resolveScope(orgId: string, scope: string): Promise<string> {
     if (scope === 'org') return ORG_SCOPE;
-    const repo = await this.repos.findOne({ where: { id: scope, org_id: orgId } });
-    if (!repo) throw new BadRequestException(`unknown repo scope '${scope}' for this org`);
+    const repo = await this.repos.findOne({
+      where: { id: scope, org_id: orgId },
+    });
+    if (!repo)
+      throw new BadRequestException(
+        `unknown repo scope '${scope}' for this org`,
+      );
     return scope;
   }
 }

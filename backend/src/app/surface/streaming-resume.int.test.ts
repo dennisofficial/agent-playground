@@ -86,7 +86,11 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
       .overrideProvider(RedisEngineRunner)
       .useValue(runner)
       .overrideProvider(SANDBOX_PROVIDER)
-      .useValue({ attach: async ({ sandbox }: { sandbox: unknown }) => sandbox, teardown: async () => {}, teardownByIdentity: async () => {} })
+      .useValue({
+        attach: async ({ sandbox }: { sandbox: unknown }) => sandbox,
+        teardown: async () => {},
+        teardownByIdentity: async () => {},
+      })
       .overrideProvider(LocalGitService)
       .useValue(new FakeLocalGitService())
       .overrideProvider(GithubPrService)
@@ -124,9 +128,15 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
   }, 60_000);
 
   async function purge() {
-    await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-    await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    await ds
+      .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      .query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
+      .catch(() => undefined);
+    await ds
+      .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+      .catch(() => undefined);
   }
 
   afterAll(async () => {
@@ -139,7 +149,12 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
 
   it('resumes an in-flight turn on (re)connect, then persists the durable transcript on completion', async () => {
     // Drive a real human message — fire-and-forget; the brain turn runs async (producer ≠ connection).
-    surface.sendFromHuman(repoId, 'Say hello', { orgId: ORG_ID, threadTs: jobId, authorId: 'U', authorName: 'Op' });
+    surface.sendFromHuman(repoId, 'Say hello', {
+      orgId: ORG_ID,
+      threadTs: jobId,
+      authorId: 'U',
+      authorName: 'Op',
+    });
 
     // Wait until the turn has streamed a couple of tokens and is paused mid-flight.
     await runner.reachedMid.promise;
@@ -149,24 +164,37 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     const snap = liveTurns.snapshot(repoId, jobId);
     expect(snap).not.toBeNull();
     expect(snap!.active).toBe(true);
-    expect(snap!.blocks.find((b) => b.kind === 'text')).toMatchObject({ text: 'Hello', done: false });
+    expect(snap!.blocks.find((b) => b.kind === 'text')).toMatchObject({
+      text: 'Hello',
+      done: false,
+    });
 
     // (1b) NO double-render: the in-flight content is NOT yet in the durable log (it's persisted only at
     // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
     // `/messages` and once from the live snapshot.
-    const midRows = await ds.query(`SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`, [jobId]);
+    const midRows = await ds.query(
+      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`,
+      [jobId],
+    );
     expect(midRows[0].n).toBe(0);
 
     // (2) A client that connects NOW (e.g. after a refresh) replays that snapshot the instant it subscribes.
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events(ORG_ID, repoId)
-      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+      .subscribe((m: MessageEvent) =>
+        frames.push(m.data as Record<string, unknown>),
+      );
     const snapshotFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'snapshot',
     );
     expect(snapshotFrame).toBeDefined();
-    expect((snapshotFrame!.event as { blocks: Array<{ text?: string }> }).blocks[0].text).toBe('Hello');
+    expect(
+      (snapshotFrame!.event as { blocks: Array<{ text?: string }> }).blocks[0]
+        .text,
+    ).toBe('Hello');
 
     // Release the turn → it finishes and persists.
     runner.release.resolve();
@@ -177,20 +205,30 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
         `SELECT text, kind FROM messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
         [jobId],
       );
-      return rows.some((r: { text: string; kind: string }) => r.kind === 'chat' && r.text === 'Hello world');
+      return rows.some(
+        (r: { text: string; kind: string }) =>
+          r.kind === 'chat' && r.text === 'Hello world',
+      );
     });
     expect(liveTurns.snapshot(repoId, jobId)).toBeNull();
 
     // The late subscriber also saw the turn_end marker (its cue to reconcile against /messages).
     expect(
-      frames.some((f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end'),
+      frames.some(
+        (f) =>
+          f.type === 'stream' &&
+          (f.event as { kind?: string }).kind === 'turn_end',
+      ),
     ).toBe(true);
     sub.unsubscribe();
   }, 30_000);
 });
 
 /** Poll a predicate until true or timeout. */
-async function waitFor(pred: () => Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+async function waitFor(
+  pred: () => Promise<boolean>,
+  timeoutMs = 10_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (await pred()) return;

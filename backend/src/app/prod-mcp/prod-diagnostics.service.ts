@@ -18,7 +18,10 @@ import {
 } from '../persistence/entities';
 import { agentMessage, type AgentMessage } from '../prompt-kit/message';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
-import { webDbWriteApprovalCard, webVerdictCard } from '../surface/web-approval-card';
+import {
+  webDbWriteApprovalCard,
+  webVerdictCard,
+} from '../surface/web-approval-card';
 import { TOOL_HANDLERS, type ToolCtx, type ToolRoots } from './tools';
 import { redactSecrets } from './redact';
 import { audit } from './audit';
@@ -94,7 +97,9 @@ export class ProdDiagnosticsService {
         jobId,
         orgId: ctx.audit.orgId,
         ok: true,
-        sql: ctx.audit.sql ? (redactSecrets(ctx.audit.sql) as string) : undefined,
+        sql: ctx.audit.sql
+          ? (redactSecrets(ctx.audit.sql) as string)
+          : undefined,
         rows: ctx.audit.rowCount,
       });
       return redactSecrets(result);
@@ -105,7 +110,9 @@ export class ProdDiagnosticsService {
         orgId: ctx.audit.orgId,
         ok: false,
         error: redactSecrets(String((err as Error)?.message ?? err)) as string,
-        sql: ctx.audit.sql ? (redactSecrets(ctx.audit.sql) as string) : undefined,
+        sql: ctx.audit.sql
+          ? (redactSecrets(ctx.audit.sql) as string)
+          : undefined,
         rows: ctx.audit.rowCount,
       });
       throw err;
@@ -119,7 +126,9 @@ export class ProdDiagnosticsService {
    * by spike) — benign, surfaces as `{}` (estimate unavailable), NOT an error. Any other EXPLAIN failure
    * is a genuine statement problem (syntax/bad column) and surfaces on the card.
    */
-  private async previewWrite(stmt: string): Promise<ProdMaintenanceWriteDryRun> {
+  private async previewWrite(
+    stmt: string,
+  ): Promise<ProdMaintenanceWriteDryRun> {
     const reader = this.requireReader();
     try {
       const rows: Array<Record<string, unknown>> = await reader.query(
@@ -127,16 +136,22 @@ export class ProdDiagnosticsService {
       );
       const planPayload = rows?.[0]?.['QUERY PLAN'];
       const planRoot = Array.isArray(planPayload) ? planPayload[0] : undefined;
-      const topPlan = (planRoot as { Plan?: Record<string, unknown> } | undefined)?.Plan;
+      const topPlan = (
+        planRoot as { Plan?: Record<string, unknown> } | undefined
+      )?.Plan;
       const estimatedRows =
-        typeof topPlan?.['Plan Rows'] === 'number' ? (topPlan['Plan Rows'] as number) : undefined;
+        typeof topPlan?.['Plan Rows'] === 'number'
+          ? (topPlan['Plan Rows'] as number)
+          : undefined;
       return {
         plan: planRoot ? JSON.stringify(planRoot) : undefined,
         ...(estimatedRows !== undefined ? { estimatedRows } : {}),
       };
     } catch (err) {
       if (pgErrorCode(err) === PG_PERMISSION_DENIED) return {};
-      return { error: redactSecrets(String((err as Error)?.message ?? err)) as string };
+      return {
+        error: redactSecrets(String((err as Error)?.message ?? err)) as string,
+      };
     }
   }
 
@@ -227,7 +242,11 @@ export class ProdDiagnosticsService {
     // double-approval loses this conditional update (`affected === 0`) and is a no-op — no double-execute.
     const claim = await this.ledger.update(
       { id: writeId, status: 'pending' },
-      { status: 'approved', approved_by: approverUserId, approved_at: new Date() },
+      {
+        status: 'approved',
+        approved_by: approverUserId,
+        approved_at: new Date(),
+      },
     );
     if (!claim.affected) return;
 
@@ -243,7 +262,12 @@ export class ProdDiagnosticsService {
         'deny',
         'Failed: prod writer DataSource not configured.',
       );
-      await this.notify(row, agentMessage('<prod DB write> FAILED: prod writer DataSource not configured.'));
+      await this.notify(
+        row,
+        agentMessage(
+          '<prod DB write> FAILED: prod writer DataSource not configured.',
+        ),
+      );
       return;
     }
 
@@ -254,7 +278,9 @@ export class ProdDiagnosticsService {
       result = { affectedRows };
       status = 'executed';
     } catch (err) {
-      result = { error: redactSecrets(String((err as Error)?.message ?? err)) as string };
+      result = {
+        error: redactSecrets(String((err as Error)?.message ?? err)) as string,
+      };
       status = 'failed';
     }
 
@@ -300,7 +326,11 @@ export class ProdDiagnosticsService {
   /** DENY a pending write — marks it rejected, notifies the job. Idempotent, same as `executeApproved`;
    *  `expectedJobId` gates the row to the approving operator's job so a foreign/stale `writeId` can't be
    *  denied here either. */
-  async denyWrite(writeId: string, approverUserId: string, expectedJobId: string): Promise<void> {
+  async denyWrite(
+    writeId: string,
+    approverUserId: string,
+    expectedJobId: string,
+  ): Promise<void> {
     const row = await this.ledger.findOne({ where: { id: writeId } });
     if (!row || row.status !== 'pending') return;
     if (row.job_id !== expectedJobId) return;
@@ -314,7 +344,12 @@ export class ProdDiagnosticsService {
       },
     );
     if (!claim.affected) return;
-    await this.settleApprovalCard(row, 'Prod DB write declined', 'deny', 'Declined by operator.');
+    await this.settleApprovalCard(
+      row,
+      'Prod DB write declined',
+      'deny',
+      'Declined by operator.',
+    );
     await this.notify(row, agentMessage('<prod DB write> declined.'));
   }
 
@@ -340,7 +375,12 @@ export class ProdDiagnosticsService {
     });
   }
 
-  private async notify(row: ProdMaintenanceWriteEntity, body: AgentMessage): Promise<void> {
-    this.surface.seedSystemNotification?.(row.repo_id, row.job_id, body, { orgId: row.org_id });
+  private async notify(
+    row: ProdMaintenanceWriteEntity,
+    body: AgentMessage,
+  ): Promise<void> {
+    this.surface.seedSystemNotification?.(row.repo_id, row.job_id, body, {
+      orgId: row.org_id,
+    });
   }
 }

@@ -18,10 +18,18 @@ export const LSP_SERVER_NAME = 'atlas-lsp-ts';
  * `edit_file` — a generic line-range text editor with no LSP semantics, redundant with (and potentially
  * confusing next to) the SDK's native `Edit` tool.
  */
-export const LSP_TOOL_NAMES = ['rename_symbol', 'references', 'definition', 'hover', 'diagnostics'];
+export const LSP_TOOL_NAMES = [
+  'rename_symbol',
+  'references',
+  'definition',
+  'hover',
+  'diagnostics',
+];
 
 /** Read-only subset — everything except `rename_symbol`, for subagents that must not mutate files. */
-export const LSP_NAV_TOOL_NAMES = LSP_TOOL_NAMES.filter((name) => name !== 'rename_symbol');
+export const LSP_NAV_TOOL_NAMES = LSP_TOOL_NAMES.filter(
+  (name) => name !== 'rename_symbol',
+);
 
 /** How the model addresses each LSP tool: `mcp__atlas-lsp-ts__<tool>`. */
 export function qualifyLspToolNames(toolNames: string[]): string[] {

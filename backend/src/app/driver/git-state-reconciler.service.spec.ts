@@ -5,7 +5,12 @@ import { RateLimitedError } from '../git';
 import type { GithubPrService, CheckRun, PullDetail } from '../git';
 import type { StimulusIntake } from '../stimulus';
 import type { JobEntity, RepoEntity } from '../persistence/entities';
-import { CADENCE_MS, GitStateReconciler, sameCounts, summarizeChecks } from './git-state-reconciler.service';
+import {
+  CADENCE_MS,
+  GitStateReconciler,
+  sameCounts,
+  summarizeChecks,
+} from './git-state-reconciler.service';
 
 // Fixed clock so the adaptive-cadence `next_poll_at` writes are deterministic (new Date(now + ms)).
 const NOW = 1_700_000_000_000;
@@ -57,7 +62,9 @@ function make(over: {
   const intake = { intakeEvent } as unknown as StimulusIntake;
   // Fire-and-forget re-evaluation on every reconcile — never asserted here, just must not throw (which
   // would otherwise be swallowed by `tick()`'s catch-all and silently default the cadence tier to `active`).
-  const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as import('./auto-merge.service').AutoMergeService;
+  const autoMerge = {
+    maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as import('./auto-merge.service').AutoMergeService;
   const svc = new GitStateReconciler(jobs, repos, pr, creds, intake, autoMerge);
   return { svc, job, update, intakeEvent, pr, findOpenPullByHead, jobs };
 }
@@ -135,7 +142,9 @@ describe('GitStateReconciler.tick', () => {
         pr_mergeable: 'clean',
       },
     );
-    expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
+    expect(nextPollWrite(update)).toEqual({
+      next_poll_at: new Date(NOW + CADENCE_MS.active),
+    });
   });
 
   it('null mergeable_state (GitHub still computing) → no conflict, re-polls at the FAST computing cadence', async () => {
@@ -231,7 +240,15 @@ describe('GitStateReconciler.tick', () => {
         pr_mergeable: 'clean',
         pr_state: 'open',
       },
-      runs: [{ id: 1, name: 'CI', status: 'completed', conclusion: 'success', detailsUrl: null }],
+      runs: [
+        {
+          id: 1,
+          name: 'CI',
+          status: 'completed',
+          conclusion: 'success',
+          detailsUrl: null,
+        },
+      ],
     });
     await svc.tick();
     expect(update.mock.calls).toHaveLength(1);
@@ -254,7 +271,9 @@ describe('GitStateReconciler.tick', () => {
     await svc.tick();
     // Nothing changed (mergeableState unchanged, ci columns kept) — only the poll-clock re-stamp write.
     expect(update.mock.calls).toHaveLength(1);
-    expect(nextPollWrite(update)).toEqual({ next_poll_at: new Date(NOW + CADENCE_MS.active) });
+    expect(nextPollWrite(update)).toEqual({
+      next_poll_at: new Date(NOW + CADENCE_MS.active),
+    });
   });
 
   it('a throwing reconcile still re-stamps the clock (active) so the job backs off, not hammers', async () => {
@@ -384,16 +403,25 @@ describe('GitStateReconciler.markJobDue', () => {
 });
 
 describe('summarizeChecks', () => {
-  const run = (conclusion: string | null, status = 'completed'): CheckRun => ({ id: 1, name: 'x', status, conclusion, detailsUrl: null });
+  const run = (conclusion: string | null, status = 'completed'): CheckRun => ({
+    id: 1,
+    name: 'x',
+    status,
+    conclusion,
+    detailsUrl: null,
+  });
 
   it('{ status: null, counts: null } when no checks', () =>
     expect(summarizeChecks([])).toEqual({ status: null, counts: null }));
 
   it('THE EXACT REPRO: 2 failing + 1 skipped + 3 success → failure, with per-category counts', () => {
     const runs = [
-      run('failure'), run('failure'),
+      run('failure'),
+      run('failure'),
       run('skipped'),
-      run('success'), run('success'), run('success'),
+      run('success'),
+      run('success'),
+      run('success'),
     ];
     expect(summarizeChecks(runs)).toEqual({
       status: 'failure',
@@ -414,18 +442,30 @@ describe('summarizeChecks', () => {
   });
 
   it('failing + in_progress → failure (failure takes precedence over pending)', () => {
-    expect(summarizeChecks([run('failure'), run(null, 'in_progress')]).status).toBe('failure');
+    expect(
+      summarizeChecks([run('failure'), run(null, 'in_progress')]).status,
+    ).toBe('failure');
   });
 
   it('success + in_progress → pending', () => {
-    expect(summarizeChecks([run('success'), run(null, 'in_progress')]).status).toBe('pending');
+    expect(
+      summarizeChecks([run('success'), run(null, 'in_progress')]).status,
+    ).toBe('pending');
   });
 });
 
 describe('sameCounts', () => {
   it('treats null/null as equal and null/non-null as unequal', () => {
     expect(sameCounts(null, null)).toBe(true);
-    expect(sameCounts(null, { failing: 0, pending: 0, passed: 1, skipped: 0, total: 1 })).toBe(false);
+    expect(
+      sameCounts(null, {
+        failing: 0,
+        pending: 0,
+        passed: 1,
+        skipped: 0,
+        total: 1,
+      }),
+    ).toBe(false);
   });
   it('compares each category', () => {
     const a = { failing: 1, pending: 0, passed: 2, skipped: 0, total: 3 };

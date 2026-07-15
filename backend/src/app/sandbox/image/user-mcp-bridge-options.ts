@@ -53,7 +53,11 @@ export function buildUserMcpBridgeOptions(
     // Per-transport validity gate + the DIRECT Codex block (stdio only) — the hub does not front Codex.
     if (s.transport === 'stdio') {
       if (!s.command) continue;
-      const entry: { command: string; args?: string[]; env?: Record<string, string> } = {
+      const entry: {
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+      } = {
         command: s.command,
       };
       if (s.args && s.args.length > 0) entry.args = s.args;
@@ -66,10 +70,18 @@ export function buildUserMcpBridgeOptions(
     // CLAUDE: front EVERY transport with the persistent per-sandbox hub on a local loopback route +
     // `alwaysLoad` (tools present at turn-1 against the warm hub). Upstream config/secrets never ride the
     // turn — the hub holds them (host-written config, see mcp-hub-config.ts).
-    mcpServers[s.name] = { type: 'http', url: mcpHubUrl(s.name), alwaysLoad: true };
+    mcpServers[s.name] = {
+      type: 'http',
+      url: mcpHubUrl(s.name),
+      alwaysLoad: true,
+    };
     userMcpToolNames.push(`mcp__${s.name}`);
   }
 
   if (Object.keys(mcpServers).length === 0) return undefined;
-  return { extraClaudeOptions: { mcpServers }, userMcpToolNames, codexExtraMcpServers };
+  return {
+    extraClaudeOptions: { mcpServers },
+    userMcpToolNames,
+    codexExtraMcpServers,
+  };
 }

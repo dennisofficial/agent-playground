@@ -22,7 +22,9 @@ declare const AGENT_MESSAGE_BRAND: unique symbol;
  * A body destined for an agent session. Opaque brand: mint it with {@link agentMessage} (the sole hub factory);
  * a bare `string` will NOT satisfy this type. Runtime value is exactly the underlying string.
  */
-export type AgentMessage = string & { readonly [AGENT_MESSAGE_BRAND]: 'AgentMessage' };
+export type AgentMessage = string & {
+  readonly [AGENT_MESSAGE_BRAND]: 'AgentMessage';
+};
 
 /**
  * The ONE factory that mints an {@link AgentMessage}. Call it only from inside the hub (`prompt-kit/**`) — every

@@ -1,10 +1,19 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  existsSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { LocalGitService } from '../git';
 import { readForbiddenPaths } from '../git';
-import type { WorkspaceConfigStore, WorkspaceSecretFileStore } from '../onboarding';
+import type {
+  WorkspaceConfigStore,
+  WorkspaceSecretFileStore,
+} from '../onboarding';
 import type { MountSpec } from '../sandbox/container-paths';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
@@ -20,15 +29,28 @@ function fakeGit(ignored: Set<string>): LocalGitService {
 
 interface SecretWorld {
   /** Per-repo secret files (repoId defaults to REPO). `value` absent → row exists but read returns null. */
-  files?: Array<{ path: string; value?: string; updatedAt?: number; label?: string | null; repoId?: string }>;
+  files?: Array<{
+    path: string;
+    value?: string;
+    updatedAt?: number;
+    label?: string | null;
+    repoId?: string;
+  }>;
 }
 function fakeSecrets(world: SecretWorld): WorkspaceSecretFileStore {
-  const forRepo = (repoId: string) => (world.files ?? []).filter((f) => (f.repoId ?? REPO) === repoId);
+  const forRepo = (repoId: string) =>
+    (world.files ?? []).filter((f) => (f.repoId ?? REPO) === repoId);
   return {
     read: async (orgId: string, repoId: string, path: string) =>
-      orgId === ORG ? (forRepo(repoId).find((f) => f.path === path)?.value ?? null) : null,
+      orgId === ORG
+        ? (forRepo(repoId).find((f) => f.path === path)?.value ?? null)
+        : null,
     listForRepo: async (_orgId: string, repoId: string) =>
-      forRepo(repoId).map((f) => ({ path: f.path, label: f.label ?? null, updatedAt: f.updatedAt ?? 0 })),
+      forRepo(repoId).map((f) => ({
+        path: f.path,
+        label: f.label ?? null,
+        updatedAt: f.updatedAt ?? 0,
+      })),
     list: async (_orgId: string, repoId?: string) =>
       (repoId ? forRepo(repoId) : (world.files ?? [])).map((f) => ({
         repoId: f.repoId ?? REPO,
@@ -82,7 +104,11 @@ describe('WorktreeHydrator', () => {
       fakeConfig({}),
     );
 
-    const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
+    const { forbiddenPaths: forbidden } = await h.hydrateFiles({
+      worktreePath: wt,
+      orgId: ORG,
+      repoDbId: REPO,
+    });
 
     expect(forbidden).toEqual(['.env.keys']);
     expect(readFileSync(join(wt, '.env.keys'), 'utf8')).toBe('SECRET=1');
@@ -97,7 +123,11 @@ describe('WorktreeHydrator', () => {
       fakeSecrets({ files: [] }),
       fakeConfig({}),
     );
-    const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
+    const { forbiddenPaths: forbidden } = await h.hydrateFiles({
+      worktreePath: wt,
+      orgId: ORG,
+      repoDbId: REPO,
+    });
     expect(forbidden).toEqual([]);
     expect(existsSync(join(wt, '.env.keys'))).toBe(false);
   });
@@ -111,7 +141,9 @@ describe('WorktreeHydrator', () => {
       fakeConfig({}),
     );
     const { forbiddenPaths: forbidden } = await h.hydrateFiles({
-      worktreePath: wt, orgId: ORG, repoDbId: REPO,
+      worktreePath: wt,
+      orgId: ORG,
+      repoDbId: REPO,
     });
     expect(forbidden).toEqual(['.env.keys']);
     expect(existsSync(join(wt, '.env.keys'))).toBe(true);
@@ -123,7 +155,11 @@ describe('WorktreeHydrator', () => {
       fakeSecrets({ files: [{ path: 'config.json', value: 'v' }] }),
       fakeConfig({}),
     );
-    const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
+    const { forbiddenPaths: forbidden } = await h.hydrateFiles({
+      worktreePath: wt,
+      orgId: ORG,
+      repoDbId: REPO,
+    });
     expect(forbidden).toEqual([]);
     expect(existsSync(join(wt, 'config.json'))).toBe(false);
   });
@@ -135,7 +171,11 @@ describe('WorktreeHydrator', () => {
       fakeSecrets({ files: [{ path: '.env.keys' }] }),
       fakeConfig({}),
     );
-    const { forbiddenPaths, notices } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG, repoDbId: REPO });
+    const { forbiddenPaths, notices } = await h.hydrateFiles({
+      worktreePath: wt,
+      orgId: ORG,
+      repoDbId: REPO,
+    });
     expect(forbiddenPaths).toEqual([]);
     expect(existsSync(join(wt, '.env.keys'))).toBe(false);
     expect(notices.some((n) => n.includes('disappeared'))).toBe(true);
@@ -147,7 +187,10 @@ describe('WorktreeHydrator', () => {
       fakeSecrets({ files: [{ path: '.env.keys', value: 'v' }] }),
       fakeConfig({}),
     );
-    const { forbiddenPaths: forbidden } = await h.hydrateFiles({ worktreePath: wt, orgId: ORG });
+    const { forbiddenPaths: forbidden } = await h.hydrateFiles({
+      worktreePath: wt,
+      orgId: ORG,
+    });
     expect(forbidden).toEqual([]);
   });
 
@@ -162,7 +205,9 @@ describe('WorktreeHydrator', () => {
         ],
       }),
     );
-    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([{ path: '.venv', mode: 'per-thread' }]);
+    expect(await h.resolveMounts(ORG, REPO, wt)).toEqual([
+      { path: '.venv', mode: 'per-thread' },
+    ]);
   });
 
   it('resolveMounts keeps a valid EXTERNAL (absolute) mount and drops a reserved one', async () => {
@@ -216,7 +261,11 @@ describe('WorktreeHydrator', () => {
   });
 
   it('computeSig changes when a mount is added (so write_workspace_config re-triggers hydration)', async () => {
-    const before = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), fakeConfig({}));
+    const before = new WorktreeHydrator(
+      fakeGit(new Set()),
+      fakeSecrets({}),
+      fakeConfig({}),
+    );
     const after = new WorktreeHydrator(
       fakeGit(new Set()),
       fakeSecrets({}),
@@ -229,13 +278,23 @@ describe('WorktreeHydrator', () => {
 
   describe('resilience — a worktree-config store failure never throws', () => {
     it('resolveMounts returns [] (not a rejection) when the store is down', async () => {
-      const h = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), failingConfig());
+      const h = new WorktreeHydrator(
+        fakeGit(new Set()),
+        fakeSecrets({}),
+        failingConfig(),
+      );
       await expect(h.resolveMounts(ORG, REPO, wt)).resolves.toEqual([]);
     });
 
     it('computeSig still resolves (treating mounts as empty) when the store is down', async () => {
-      const h = new WorktreeHydrator(fakeGit(new Set()), fakeSecrets({}), failingConfig());
-      await expect(h.computeSig(wt, ORG, REPO)).resolves.toEqual(expect.any(String));
+      const h = new WorktreeHydrator(
+        fakeGit(new Set()),
+        fakeSecrets({}),
+        failingConfig(),
+      );
+      await expect(h.computeSig(wt, ORG, REPO)).resolves.toEqual(
+        expect.any(String),
+      );
     });
 
     it('hydrateFiles resolves with a notice (not a rejection) when the store is down, and secrets still render', async () => {
@@ -245,7 +304,9 @@ describe('WorktreeHydrator', () => {
         failingConfig('connect ECONNREFUSED'),
       );
       const { forbiddenPaths, notices } = await h.hydrateFiles({
-        worktreePath: wt, orgId: ORG, repoDbId: REPO,
+        worktreePath: wt,
+        orgId: ORG,
+        repoDbId: REPO,
       });
       // Secrets are independent of workspace config — a config-store outage doesn't block secret rendering.
       expect(forbiddenPaths).toEqual(['.env.keys']);

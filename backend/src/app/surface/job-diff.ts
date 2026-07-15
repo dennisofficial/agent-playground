@@ -25,21 +25,38 @@ export type JobDiffFile = {
 
 export type JobDiff = { files: JobDiffFile[]; truncated: boolean };
 
-export type JobDiffNumstatEntry = { path: string; additions: number; deletions: number; binary: boolean };
+export type JobDiffNumstatEntry = {
+  path: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+};
 
-export type JobDiffNameStatusEntry = { path: string; oldPath?: string; status: JobDiffStatus };
+export type JobDiffNameStatusEntry = {
+  path: string;
+  oldPath?: string;
+  status: JobDiffStatus;
+};
 
-export type JobDiffSummaryFile = JobDiffNumstatEntry & Pick<JobDiffNameStatusEntry, 'status' | 'oldPath'>;
+export type JobDiffSummaryFile = JobDiffNumstatEntry &
+  Pick<JobDiffNameStatusEntry, 'status' | 'oldPath'>;
 
 export type JobDiffSummary = { files: JobDiffSummaryFile[] };
 
 /** Summary-only view (numstat, no hunks) for the sidebar's +/- totals. */
-export function buildDiffSummary(numstat: JobDiffNumstatEntry[], nameStatus: JobDiffNameStatusEntry[] = []): JobDiffSummary {
+export function buildDiffSummary(
+  numstat: JobDiffNumstatEntry[],
+  nameStatus: JobDiffNameStatusEntry[] = [],
+): JobDiffSummary {
   const statusByPath = new Map(nameStatus.map((entry) => [entry.path, entry]));
   return {
     files: numstat.map((entry) => {
       const status = statusByPath.get(entry.path);
-      return { ...entry, ...(status?.oldPath ? { oldPath: status.oldPath } : {}), status: status?.status ?? 'modified' };
+      return {
+        ...entry,
+        ...(status?.oldPath ? { oldPath: status.oldPath } : {}),
+        status: status?.status ?? 'modified',
+      };
     }),
   };
 }
@@ -51,7 +68,10 @@ function stripDiffPrefix(name: string | undefined): string | undefined {
   return name;
 }
 
-function countSignLines(hunks: { lines: string[] }[]): { additions: number; deletions: number } {
+function countSignLines(hunks: { lines: string[] }[]): {
+  additions: number;
+  deletions: number;
+} {
   let additions = 0;
   let deletions = 0;
   for (const hunk of hunks) {
@@ -69,7 +89,11 @@ function countSignLines(hunks: { lines: string[] }[]): { additions: number; dele
  * (the authoritative source — parsing `+`/`-` lines is only a fallback for entries numstat didn't cover,
  * e.g. a pure rename with no content change).
  */
-export function parseGitDiff(raw: string, numstat: JobDiffNumstatEntry[], opts: { maxBytes: number }): JobDiff {
+export function parseGitDiff(
+  raw: string,
+  numstat: JobDiffNumstatEntry[],
+  opts: { maxBytes: number },
+): JobDiff {
   const numstatByPath = new Map(numstat.map((entry) => [entry.path, entry]));
   // Simplest safe cap for v1: an oversized diff still reports every file's header/counts, just no hunks.
   const truncated = raw.length > opts.maxBytes;
@@ -80,7 +104,13 @@ export function parseGitDiff(raw: string, numstat: JobDiffNumstatEntry[], opts: 
     const isAdded = strippedOld === undefined || strippedOld === '/dev/null';
     const isDeleted = strippedNew === undefined || strippedNew === '/dev/null';
     const isRenamed = !isAdded && !isDeleted && strippedOld !== strippedNew;
-    const status: JobDiffStatus = isAdded ? 'added' : isDeleted ? 'deleted' : isRenamed ? 'renamed' : 'modified';
+    const status: JobDiffStatus = isAdded
+      ? 'added'
+      : isDeleted
+        ? 'deleted'
+        : isRenamed
+          ? 'renamed'
+          : 'modified';
     const path = (status === 'deleted' ? strippedOld : strippedNew) ?? '';
 
     const numstatEntry = numstatByPath.get(path);

@@ -29,7 +29,10 @@ export function skillsStoreRoot(root: string | undefined): string {
  * what `SandboxManager` bind-mounts into every sandbox for that org (see `CONTAINER_SKILLS_STORE`),
  * exactly like `SandboxRefsService.teamRefsDir`.
  */
-export function orgSkillsRootHost(root: string | undefined, orgId: string): string {
+export function orgSkillsRootHost(
+  root: string | undefined,
+  orgId: string,
+): string {
   return join(skillsStoreRoot(root), 'orgs', safe(orgId));
 }
 
@@ -37,7 +40,12 @@ export function orgSkillsRootHost(root: string | undefined, orgId: string): stri
  * The HOST dir for one skill, given its DB `(org_id, scope, name)`. `scope==='*'` → org-scoped
  * (`<org-root>/<name>`); otherwise `scope` is a repo id → repo-scoped (`<org-root>/repos/<repoId>/<name>`).
  */
-export function skillDirHost(root: string | undefined, orgId: string, scope: string, name: string): string {
+export function skillDirHost(
+  root: string | undefined,
+  orgId: string,
+  scope: string,
+  name: string,
+): string {
   return join(orgSkillsRootHost(root, orgId), skillRelativeDir(scope, name));
 }
 
@@ -65,7 +73,10 @@ export function managedGitSkillsRootHost(root: string | undefined): string {
 }
 
 /** One git-sourced managed skill's dir, given its registry `name`. Same sanitization as {@link safe}. */
-export function managedGitSkillDirHost(root: string | undefined, name: string): string {
+export function managedGitSkillDirHost(
+  root: string | undefined,
+  name: string,
+): string {
   return join(managedGitSkillsRootHost(root), safe(name));
 }
 
@@ -76,7 +87,11 @@ export function managedGitSkillDirHost(root: string | undefined, name: string): 
  * cannot mutate it after proposing (freezes exactly what the owner reviews; approval vendors from here).
  * Removed on approve OR dismiss so no orphaned copies accumulate.
  */
-export function pendingSkillDirHost(root: string | undefined, orgId: string, requestId: string): string {
+export function pendingSkillDirHost(
+  root: string | undefined,
+  orgId: string,
+  requestId: string,
+): string {
   return join(skillsStoreRoot(root), '.pending', safe(orgId), safe(requestId));
 }
 

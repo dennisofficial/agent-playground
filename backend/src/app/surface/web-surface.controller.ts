@@ -27,7 +27,15 @@ import {
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { createReadStream, existsSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
@@ -90,7 +98,12 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
-import { parseGitDiff, buildDiffSummary, type JobDiff, type JobDiffSummary } from './job-diff';
+import {
+  parseGitDiff,
+  buildDiffSummary,
+  type JobDiff,
+  type JobDiffSummary,
+} from './job-diff';
 import { JobBootstrapService } from '../job-bootstrap';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
@@ -104,7 +117,11 @@ import { WorkspaceSecretFileStore } from '../onboarding';
 import { McpServerStore } from '../mcp/mcp-server.store';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import { ConventionProfileResolver } from '../conventions';
-import { SkillFileWriter, SkillInstallerService, WorkspaceSkillStore } from '../skills';
+import {
+  SkillFileWriter,
+  SkillInstallerService,
+  WorkspaceSkillStore,
+} from '../skills';
 import { parseSkillFrontmatter } from '../skills/skill-frontmatter';
 import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
@@ -368,7 +385,11 @@ interface CreateThreadDto {
  * intake / repo onboarding), never operator-set, so they are deliberately excluded — an unknown or
  * excluded value is ignored (kind stays null and the brain scopes it as before).
  */
-const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['feature', 'bugfix', 'review']);
+const OPERATOR_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>([
+  'feature',
+  'bugfix',
+  'review',
+]);
 
 function coerceOperatorKind(raw: string | undefined): JobKind | null {
   if (raw && OPERATOR_JOB_KINDS.has(raw as JobKind)) return raw as JobKind;
@@ -463,9 +484,29 @@ const MAX_ATTACHMENTS = 25;
  * Anything else is rejected. `.pdf` isn't in `MIME_BY_EXT` (added just here).
  */
 const ATTACHMENT_EXTS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', // images
-  '.txt', '.md', '.markdown', '.log', '.json', '.csv', '.xml', '.yaml', '.yml', // text
-  '.html', '.htm', '.css', '.js', '.ts', '.tsx', '.pdf', // code + pdf
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.avif',
+  '.svg', // images
+  '.txt',
+  '.md',
+  '.markdown',
+  '.log',
+  '.json',
+  '.csv',
+  '.xml',
+  '.yaml',
+  '.yml', // text
+  '.html',
+  '.htm',
+  '.css',
+  '.js',
+  '.ts',
+  '.tsx',
+  '.pdf', // code + pdf
   '.zip', // archive — Read on demand, extracted by the brain
 ]);
 
@@ -663,18 +704,22 @@ export function formatReviewComments(
       if (newSpan) attrs.push(`new-lines="${newSpan}"`);
       out.push(`  <comment ${attrs.join(' ')}>`);
       out.push('    ```diff');
-      for (const line of item.lines.fragment.split('\n')) out.push(`    ${line}`);
+      for (const line of item.lines.fragment.split('\n'))
+        out.push(`    ${line}`);
       out.push('    ```');
-      if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+      if (item.note?.trim())
+        out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
       out.push('  </comment>');
       continue;
     }
     out.push(`  <comment file="${xmlEscape(item.file)}">`);
     out.push(`    <quote>${xmlEscape(item.quote)}</quote>`);
-    if (item.note?.trim()) out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
+    if (item.note?.trim())
+      out.push(`    <note>${xmlEscape(item.note.trim())}</note>`);
     out.push('  </comment>');
   }
-  if (message?.trim()) out.push(`  <message>${xmlEscape(message.trim())}</message>`);
+  if (message?.trim())
+    out.push(`  <message>${xmlEscape(message.trim())}</message>`);
   out.push('</review-comments>');
   return out.join('\n');
 }
@@ -791,7 +836,9 @@ export class WebSurfaceController {
       }),
       this.repos.find({ where: { org_id: In(orgIds) } }),
     ]);
-    const blockedIds = threads.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockedIds = threads
+      .filter((t) => t.status === 'blocked')
+      .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
@@ -812,12 +859,14 @@ export class WebSurfaceController {
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
-        blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+        blockedSeedMessage:
+          t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
           openQuestion: t.open_question_count > 0,
-          awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
+          awaitingSecret:
+            t.awaiting_secret_id != null || t.open_secret_count > 0,
           halted: t.halted || t.halt != null,
         }),
         createdAt: t.created_at,
@@ -885,7 +934,9 @@ export class WebSurfaceController {
       where: { org_id: org.id, repo_id: repoId },
       order: { created_at: 'DESC' },
     });
-    const blockedIds = rows.filter((t) => t.status === 'blocked').map((t) => t.id);
+    const blockedIds = rows
+      .filter((t) => t.status === 'blocked')
+      .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
     return rows.map((t) => ({
       id: t.id,
@@ -897,7 +948,8 @@ export class WebSurfaceController {
       halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
-      blockedSeedMessage: t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+      blockedSeedMessage:
+        t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -947,7 +999,9 @@ export class WebSurfaceController {
     const placeholder = body.title ?? null;
     // Operator-chosen kind is stamped at creation (an unknown/excluded value stays null → brain scopes it,
     // as before). The brain's system prompt reads `kind` fresh each turn, so a review job orients on turn 1.
-    const kind = coerceOperatorKind(typeof body.kind === 'string' ? body.kind.trim() : undefined);
+    const kind = coerceOperatorKind(
+      typeof body.kind === 'string' ? body.kind.trim() : undefined,
+    );
     const orgRow = await this.orgService.get(org.id);
     // Operator-chosen auto-approve mode, armed at creation. Same write shape as PATCH /auto-approve: a
     // non-'off' mode also records who armed it. Absent falls back to the org's default_auto_approve_mode
@@ -1010,7 +1064,9 @@ export class WebSurfaceController {
       kind === 'review' && Number.isInteger(prNumber) && prNumber > 0
         ? renderReviewSeedXml(prNumber, repo.slug)
         : null;
-    const bodyText = [prXml, attach?.xml, operatorText].filter(Boolean).join('\n\n');
+    const bodyText = [prXml, attach?.xml, operatorText]
+      .filter(Boolean)
+      .join('\n\n');
     // Wire each requested blocker edge, tracking whether any of them is still LIVE (born-blocks the job).
     // seed=bodyText so a woken job replays the exact first-turn body (review/attachment XML included).
     let anyBlocked = false;
@@ -1179,10 +1235,14 @@ export class WebSurfaceController {
     if (targetLane && targetLane !== 'main') {
       const seam = this.threadInput;
       if (!seam) {
-        throw new ServiceUnavailableException('thread messaging is unavailable — retry momentarily.');
+        throw new ServiceUnavailableException(
+          'thread messaging is unavailable — retry momentarily.',
+        );
       }
       if (!seam.canPost(targetLane)) {
-        throw new BadRequestException(`thread "${targetLane}" is not accepting messages right now`);
+        throw new BadRequestException(
+          `thread "${targetLane}" is not accepting messages right now`,
+        );
       }
       const author = operatorAuthor(user);
       await seam.postToThread(
@@ -1238,7 +1298,9 @@ export class WebSurfaceController {
     for (const file of files) {
       const ext = extname(file.originalname).toLowerCase();
       if (!ATTACHMENT_EXTS.has(ext)) {
-        throw new BadRequestException(`unsupported attachment type: ${ext || file.originalname}`);
+        throw new BadRequestException(
+          `unsupported attachment type: ${ext || file.originalname}`,
+        );
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
         throw new PayloadTooLargeException(
@@ -1375,7 +1437,11 @@ export class WebSurfaceController {
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
       filter((e) => e.orgId === orgId),
-      map((e): MessageEvent => ({ data: { type: 'usage', orgId: e.orgId, usage: e.usage } })),
+      map(
+        (e): MessageEvent => ({
+          data: { type: 'usage', orgId: e.orgId, usage: e.usage },
+        }),
+      ),
     );
     return merge(snapshot$, live$, messages$, meta$, usage$);
   }
@@ -1439,8 +1505,13 @@ export class WebSurfaceController {
     // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
     // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
     if (actionId === MERGE_ACTION_ID) {
-      const merged = await resolveMergeApproval(this.moduleRef, meta.jobId, user.id);
-      if (!merged) throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
+      const merged = await resolveMergeApproval(
+        this.moduleRef,
+        meta.jobId,
+        user.id,
+      );
+      if (!merged)
+        throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
       return { ok: true, jobId: meta.jobId };
     }
     this.surface.receiveApprovalClick(actionId, value, user.id, note);
@@ -1507,7 +1578,9 @@ export class WebSurfaceController {
    * verification-judge outage (`judge_unavailable`). Re-arms the judge-cap re-drive budget and re-drives.
    * Scoped to the caller's org via the membership guard + `requireThread` (job ownership).
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/threads/:threadId/retry-verification',
+  )
   @UseGuards(OrgMembershipGuard)
   async retryVerification(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -1610,13 +1683,18 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: questionId, kind: 'card' },
     });
     const payload = card?.card as WebQuestionCard | undefined;
-    if (!card || payload?.type !== 'question_card') return { status: 'notfound' };
+    if (!card || payload?.type !== 'question_card')
+      return { status: 'notfound' };
     if (payload.deliveredAt) return { status: 'stale' };
     if (payload.withdrawnAt) return { status: 'withdrawn' };
     if (payload.answer != null) return { status: 'noop' };
     // Atomic first-answer: only the txn that flips the still-unanswered card "wins" (decrements the
     // open-question counter); a concurrent loser is an idempotent no-op with no second delivery turn.
-    const { firstAnswer } = await this.store.markQuestionAnswered(jobId, questionId, answer);
+    const { firstAnswer } = await this.store.markQuestionAnswered(
+      jobId,
+      questionId,
+      answer,
+    );
     if (!firstAnswer) return { status: 'noop' };
     if (payload.origin === 'build') return { status: 'noop' };
     const question = (payload.question ?? '').trim();
@@ -1655,11 +1733,16 @@ export class WebSurfaceController {
     // Deliver the answer to the brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT
     // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
     // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
-      orgId: org.id,
-      deliveredQuestionId: r.seedId!,
-      seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      r.notice!,
+      {
+        orgId: org.id,
+        deliveredQuestionId: r.seedId!,
+        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
+      },
+    );
     return { ok: true, ts };
   }
 
@@ -1690,7 +1773,10 @@ export class WebSurfaceController {
     // already stamped the card irreversibly, so degrade to 'no recipe' rather than throwing post-stamp.
     let previewInstructions: string | null | undefined;
     try {
-      previewInstructions = await this.configStore?.getPreviewInstructions(org.id, thread.repo_id);
+      previewInstructions = await this.configStore?.getPreviewInstructions(
+        org.id,
+        thread.repo_id,
+      );
     } catch {
       previewInstructions = null;
     }
@@ -1734,7 +1820,8 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
     const payload = card?.card as WebSecretInputCard | undefined;
-    if (!card || payload?.type !== 'secret_input_card') return { status: 'notfound' };
+    if (!card || payload?.type !== 'secret_input_card')
+      return { status: 'notfound' };
     if (payload.ephemeral) return { status: 'noop' };
     if (payload.withdrawnAt) return { status: 'withdrawn' };
     if (payload.delivered_at) return { status: 'stale' };
@@ -1751,7 +1838,9 @@ export class WebSurfaceController {
       // pasted secret. Refuse a secret write to an `auth_kind='oauth'` row (no setSecret, no probe) even if a
       // stale card slipped past the brain-side check — the row is the source of truth. Terminal (withdrawn)
       // with a failure notice the SINGLE endpoint seeds; the batch simply excludes a withdrawn card.
-      const target = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
+      const target = await this.mcpStore
+        .rawRow(orgId, repoId, server)
+        .catch(() => null);
       if (target?.auth_kind === 'oauth') {
         await this.store.withdrawSecretRequest(
           jobId,
@@ -1774,7 +1863,11 @@ export class WebSurfaceController {
       );
       if (!wrote) {
         // The server row is gone (deleted between propose/approve and provide) — terminal (withdrawn).
-        await this.store.withdrawSecretRequest(jobId, requestId, 'MCP server row is gone');
+        await this.store.withdrawSecretRequest(
+          jobId,
+          requestId,
+          'MCP server row is gone',
+        );
         return {
           status: 'withdrawn',
           notice: mcpSecretStoreFailed(key, server),
@@ -1783,10 +1876,14 @@ export class WebSurfaceController {
       }
       // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
       // in-sandbox). Never throws — a failure is persisted as the server's validation state.
-      const row = await this.mcpStore.rawRow(orgId, repoId, server).catch(() => null);
+      const row = await this.mcpStore
+        .rawRow(orgId, repoId, server)
+        .catch(() => null);
       if (row) {
         const result = await this.mcpProbe.validate(row);
-        await this.mcpStore.recordValidation(orgId, repoId, server, result).catch(() => undefined);
+        await this.mcpStore
+          .recordValidation(orgId, repoId, server, result)
+          .catch(() => undefined);
       }
       // Per-card lane: stamp provided_at AND decrement the open-secret counter in one transaction. No
       // rehydrate — mcp secrets don't render into the worktree.
@@ -1801,7 +1898,9 @@ export class WebSurfaceController {
     }
 
     if (!payload.path) {
-      throw new BadRequestException('secret request is missing its destination path');
+      throw new BadRequestException(
+        'secret request is missing its destination path',
+      );
     }
     // Write the value to the ENCRYPTED store as this repo's secret file at (repo, path); the row IS the
     // authority. `payload.name` rides along as the display label. This is the value's only resting place.
@@ -1847,7 +1946,10 @@ export class WebSurfaceController {
     // target process isn't reading (dead reader → the write times out), clear the gate and tell the brain to
     // restart the login rather than wedge.
     if (payload.ephemeral) {
-      if (thread.awaiting_secret_id !== body.requestId || payload.delivered_at) {
+      if (
+        thread.awaiting_secret_id !== body.requestId ||
+        payload.delivered_at
+      ) {
         return { ok: false, ts: '' };
       }
       if (payload.provided_at != null) {
@@ -1873,10 +1975,18 @@ export class WebSurfaceController {
           payload.name,
           delivered.reason ?? 'the target process is not reading',
         );
-        const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-          orgId: org.id,
-          seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name, { fail: true }) },
-        });
+        const ts = this.surface.seedSystemNotification(
+          thread.repo_id,
+          jobId,
+          notice,
+          {
+            orgId: org.id,
+            seedRow: {
+              label: notice,
+              chunkKey: chunkKey.secret(jobId, payload.name, { fail: true }),
+            },
+          },
+        );
         return { ok: false, ts };
       }
       // Delivered — stamp the card provided (no value) + hand the brain a masked confirmation. The gate clears
@@ -1887,11 +1997,19 @@ export class WebSurfaceController {
       };
       await this.messages.save(card);
       const notice = secretEphemeralDelivered(payload.name);
-      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-        orgId: org.id,
-        deliveredSecretId: body.requestId,
-        seedRow: { label: notice, chunkKey: chunkKey.secret(jobId, payload.name) },
-      });
+      const ts = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        notice,
+        {
+          orgId: org.id,
+          deliveredSecretId: body.requestId,
+          seedRow: {
+            label: notice,
+            chunkKey: chunkKey.secret(jobId, payload.name),
+          },
+        },
+      );
       return { ok: true, ts };
     }
 
@@ -1907,22 +2025,34 @@ export class WebSurfaceController {
       if (r.rehydrate) {
         // Render the newly-written value into the RUNNING sandbox now, so it is on disk before the brain's
         // confirmation turn runs. Best-effort — the next turn's ensureContainer hydrates it otherwise.
-        await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
+        await this.threadLifecycle
+          .rehydrateThread(jobId, org.id)
+          .catch(() => undefined);
       }
-      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
-        orgId: org.id,
-        deliveredSecretId: r.seedId!,
-        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-      });
+      const ts = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        r.notice!,
+        {
+          orgId: org.id,
+          deliveredSecretId: r.seedId!,
+          seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
+        },
+      );
       return { ok: true, ts };
     }
     // MCP terminal failure (oauth server / row gone): the helper already withdrew the card; seed its failure
     // notice and report not-ok (byte-identical to the pre-refactor behavior).
     if (r.status === 'withdrawn' && r.notice) {
-      const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice, {
-        orgId: org.id,
-        seedRow: { label: r.notice, chunkKey: r.chunkKey! },
-      });
+      const ts = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        r.notice,
+        {
+          orgId: org.id,
+          seedRow: { label: r.notice, chunkKey: r.chunkKey! },
+        },
+      );
       return { ok: false, ts };
     }
     return { ok: r.status === 'noop', ts: '' };
@@ -1938,7 +2068,9 @@ export class WebSurfaceController {
    * `request_secret` (mcp target). A remote server needing no secret is probed so its tool list populates
    * immediately. Idempotent (a re-approve of an already-committed card is a no-op).
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/mcp-proposals/:requestId/approve')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/mcp-proposals/:requestId/approve',
+  )
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveMcpProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -1947,7 +2079,8 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; committed: string[]; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getMcpProposalCard(jobId, requestId);
-    if (!card) throw new BadRequestException('no such MCP proposal on this thread');
+    if (!card)
+      throw new BadRequestException('no such MCP proposal on this thread');
     if (card.approved_at) {
       return { ok: true, committed: card.committed ?? [] };
     }
@@ -1967,10 +2100,18 @@ export class WebSurfaceController {
       }
       await this.store.markMcpProposalApproved(jobId, requestId, removed);
       const rmNotice = mcpRemoved(removed, card.scope);
-      const rmTs = this.surface.seedSystemNotification(thread.repo_id, jobId, rmNotice, {
-        orgId: org.id,
-        seedRow: { label: rmNotice, chunkKey: chunkKey.mcpRemove(jobId, requestId) },
-      });
+      const rmTs = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        rmNotice,
+        {
+          orgId: org.id,
+          seedRow: {
+            label: rmNotice,
+            chunkKey: chunkKey.mcpRemove(jobId, requestId),
+          },
+        },
+      );
       return { ok: true, committed: removed, ts: rmTs };
     }
 
@@ -1980,7 +2121,12 @@ export class WebSurfaceController {
     let readyStatic = 0;
     for (const s of card.servers) {
       if (!s.name || isReservedMcpName(s.name)) continue;
-      await this.mcpStore.write(org.id, dbScope, s.name, this.mcpProposalToInput(s));
+      await this.mcpStore.write(
+        org.id,
+        dbScope,
+        s.name,
+        this.mcpProposalToInput(s),
+      );
       committed.push(s.name);
       // OAuth server: lands UNCONNECTED (no token yet). It has no secret slot to fill and MUST NOT be static-
       // probed here — an unconnected OAuth endpoint 401s, which would falsely mark it broken. The owner completes
@@ -1990,13 +2136,19 @@ export class WebSurfaceController {
         continue;
       }
       const secretSlots = [
-        ...(s.headers ?? []).filter((h) => h.secret).map((h) => `${s.name} header:${h.name}`),
-        ...(s.env ?? []).filter((e) => e.secret).map((e) => `${s.name} env:${e.name}`),
+        ...(s.headers ?? [])
+          .filter((h) => h.secret)
+          .map((h) => `${s.name} header:${h.name}`),
+        ...(s.env ?? [])
+          .filter((e) => e.secret)
+          .map((e) => `${s.name} env:${e.name}`),
       ];
       needSecrets.push(...secretSlots);
       // A remote server that needs no secret can be validated now so its tool list is populated.
       if (s.transport !== 'stdio' && secretSlots.length === 0) {
-        const row = await this.mcpStore.rawRow(org.id, dbScope, s.name).catch(() => null);
+        const row = await this.mcpStore
+          .rawRow(org.id, dbScope, s.name)
+          .catch(() => null);
         if (row) {
           const result = await this.mcpProbe.validate(row);
           await this.mcpStore
@@ -2007,11 +2159,25 @@ export class WebSurfaceController {
       if (secretSlots.length === 0) readyStatic += 1;
     }
     await this.store.markMcpProposalApproved(jobId, requestId, committed);
-    const notice = mcpApproved({ committed, scope: card.scope, needSecrets, needConnect, readyStatic });
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      seedRow: { label: notice, chunkKey: chunkKey.mcpApprove(jobId, requestId) },
+    const notice = mcpApproved({
+      committed,
+      scope: card.scope,
+      needSecrets,
+      needConnect,
+      readyStatic,
     });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      notice,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: notice,
+          chunkKey: chunkKey.mcpApprove(jobId, requestId),
+        },
+      },
+    );
     return { ok: true, committed, ts };
   }
 
@@ -2022,7 +2188,9 @@ export class WebSurfaceController {
    * the console), and the scope is FORCED to `thread.repo_id` — never trusted from the card. Idempotent (a
    * re-approve of an already-attached card is a no-op).
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-proposals/:requestId/approve')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/convention-proposals/:requestId/approve',
+  )
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveConventionProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2031,7 +2199,10 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getConventionProposalCard(jobId, requestId);
-    if (!card) throw new BadRequestException('no such convention proposal on this thread');
+    if (!card)
+      throw new BadRequestException(
+        'no such convention proposal on this thread',
+      );
     if (card.approved_at) {
       return { ok: true, slug: card.slug };
     }
@@ -2040,10 +2211,18 @@ export class WebSurfaceController {
     await this.conventions.attach(org.id, thread.repo_id, card.slug);
     await this.store.markConventionProposalApproved(jobId, requestId);
     const notice = conventionAttached(card.profileName);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      seedRow: { label: notice, chunkKey: chunkKey.convApprove(jobId, requestId) },
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      notice,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: notice,
+          chunkKey: chunkKey.convApprove(jobId, requestId),
+        },
+      },
+    );
     return { ok: true, slug: card.slug, ts };
   }
 
@@ -2054,7 +2233,9 @@ export class WebSurfaceController {
    * profile is org-level — the write is keyed on `(org, slug)` from the card, not the repo. Idempotent (a
    * re-approve of an already-applied card is a no-op).
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/convention-edit-proposals/:requestId/approve')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/convention-edit-proposals/:requestId/approve',
+  )
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveConventionEditProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2062,8 +2243,14 @@ export class WebSurfaceController {
     @Param('requestId') requestId: string,
   ): Promise<{ ok: boolean; slug: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
-    const card = await this.store.getConventionEditProposalCard(jobId, requestId);
-    if (!card) throw new BadRequestException('no such convention-edit proposal on this thread');
+    const card = await this.store.getConventionEditProposalCard(
+      jobId,
+      requestId,
+    );
+    if (!card)
+      throw new BadRequestException(
+        'no such convention-edit proposal on this thread',
+      );
     if (card.approved_at) {
       return { ok: true, slug: card.slug };
     }
@@ -2074,10 +2261,18 @@ export class WebSurfaceController {
     });
     await this.store.markConventionEditProposalApproved(jobId, requestId);
     const notice = conventionEdited(card.mode, card.name);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      seedRow: { label: notice, chunkKey: chunkKey.convEditApprove(jobId, requestId) },
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      notice,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: notice,
+          chunkKey: chunkKey.convEditApprove(jobId, requestId),
+        },
+      },
+    );
     return { ok: true, slug: card.slug, ts };
   }
 
@@ -2087,7 +2282,9 @@ export class WebSurfaceController {
    * a matching repo/org behaves, so it's owner-only. The write scope is the card's `scope`: `'org'` → the
    * `'*'` sentinel (every repo), `'repo'` → this repo id. Idempotent (a re-approve is a no-op).
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-proposals/:requestId/approve')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/skill-proposals/:requestId/approve',
+  )
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveSkillProposal(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2096,7 +2293,8 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; name: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getSkillProposalCard(jobId, requestId);
-    if (!card) throw new BadRequestException('no such skill proposal on this thread');
+    if (!card)
+      throw new BadRequestException('no such skill proposal on this thread');
     if (card.approved_at) {
       return { ok: true, name: card.name };
     }
@@ -2123,9 +2321,13 @@ export class WebSurfaceController {
       // /context draft, then remove both. A brain-authored skill is always 'custom' provenance.
       const srcDir = card.stagingPath;
       if (!srcDir || !existsSync(join(srcDir, 'SKILL.md'))) {
-        throw new BadRequestException('the authored skill draft is missing — ask the brain to propose it again');
+        throw new BadRequestException(
+          'the authored skill draft is missing — ask the brain to propose it again',
+        );
       }
-      const fm = parseSkillFrontmatter(readFileSync(join(srcDir, 'SKILL.md'), 'utf8'));
+      const fm = parseSkillFrontmatter(
+        readFileSync(join(srcDir, 'SKILL.md'), 'utf8'),
+      );
       this.skillFiles.vendorDir(srcDir, org.id, dbScope, card.name);
       await this.skillStore.write(org.id, dbScope, card.name, {
         description: card.description,
@@ -2136,17 +2338,32 @@ export class WebSurfaceController {
       });
       this.skillFiles.removeStaging(org.id, requestId);
       // Drop the now-stale /context draft so the brain edits the durable store copy (via edit-access) instead.
-      rmSync(join(this.threadLifecycle.contextDirHost(jobId, org.id), 'skill-drafts', card.name), {
-        recursive: true,
-        force: true,
-      });
+      rmSync(
+        join(
+          this.threadLifecycle.contextDirHost(jobId, org.id),
+          'skill-drafts',
+          card.name,
+        ),
+        {
+          recursive: true,
+          force: true,
+        },
+      );
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
     const notice = skillApproved(card.mode, card.name, card.scope);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      seedRow: { label: notice, chunkKey: chunkKey.skillApprove(jobId, requestId) },
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      notice,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: notice,
+          chunkKey: chunkKey.skillApprove(jobId, requestId),
+        },
+      },
+    );
     return { ok: true, name: card.name, ts };
   }
 
@@ -2159,7 +2376,9 @@ export class WebSurfaceController {
    * already-approved card is a no-op). Owner-only — unlocking a skill for live edits is as consequential as
    * creating one.
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve')
+  @Post(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/skill-edit-access/:requestId/approve',
+  )
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async approveSkillEditAccess(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -2168,9 +2387,16 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; name: string; grantedAs?: string; ts?: string }> {
     const thread = await this.requireThread(jobId, org.id);
     const card = await this.store.getSkillEditAccessCard(jobId, requestId);
-    if (!card) throw new BadRequestException('no such skill edit-access request on this thread');
+    if (!card)
+      throw new BadRequestException(
+        'no such skill edit-access request on this thread',
+      );
     if (card.approved_at) {
-      return { ok: true, name: card.name, ...(card.forkedTo ? { grantedAs: card.forkedTo } : {}) };
+      return {
+        ok: true,
+        name: card.name,
+        ...(card.forkedTo ? { grantedAs: card.forkedTo } : {}),
+      };
     }
     const dbScope = card.scope === 'org' ? '*' : card.repoId;
     const row = await this.skillStore.get(org.id, dbScope, card.name);
@@ -2179,30 +2405,58 @@ export class WebSurfaceController {
       // (the card is terminal either way) and tell the brain rather than silently wedging the request.
       await this.store.markSkillEditAccessApproved(jobId, requestId);
       const gone = skillEditGone(card.name);
-      const goneTs = this.surface.seedSystemNotification(thread.repo_id, jobId, gone, {
-        orgId: org.id,
-        seedRow: { label: gone, chunkKey: chunkKey.skillEditApprove(jobId, requestId) },
-      });
+      const goneTs = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        gone,
+        {
+          orgId: org.id,
+          seedRow: {
+            label: gone,
+            chunkKey: chunkKey.skillEditApprove(jobId, requestId),
+          },
+        },
+      );
       return { ok: true, name: card.name, ts: goneTs };
     }
     // git → fork-to-custom (§P3): the original stays clean + updatable; the grant applies to the fork.
-    const forkedTo = row.provenance === 'git' ? await this.forkSkillToCustom(org.id, dbScope, card.name) : undefined;
+    const forkedTo =
+      row.provenance === 'git'
+        ? await this.forkSkillToCustom(org.id, dbScope, card.name)
+        : undefined;
     const grantName = forkedTo ?? card.name;
     this.brain.grantSkillEditAccess(jobId, grantName);
     await this.store.markSkillEditAccessApproved(jobId, requestId, forkedTo);
     const notice = skillEditApproved(card.name, forkedTo);
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, notice, {
-      orgId: org.id,
-      seedRow: { label: notice, chunkKey: chunkKey.skillEditApprove(jobId, requestId) },
-    });
-    return { ok: true, name: card.name, ...(forkedTo ? { grantedAs: forkedTo } : {}), ts };
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      notice,
+      {
+        orgId: org.id,
+        seedRow: {
+          label: notice,
+          chunkKey: chunkKey.skillEditApprove(jobId, requestId),
+        },
+      },
+    );
+    return {
+      ok: true,
+      name: card.name,
+      ...(forkedTo ? { grantedAs: forkedTo } : {}),
+      ts,
+    };
   }
 
   /** Fork a `git`-provenance skill to a fresh `custom` copy in the same scope — `<name>-custom`, or
    *  `<name>-custom-2`/`-3`/… on a name collision (a prior fork, or an unrelated skill of that name). Copies
    *  the dir (full fidelity) then writes the new registry row (`forked_from` the original's name). Returns
    *  the fork's name. */
-  private async forkSkillToCustom(orgId: string, dbScope: string, name: string): Promise<string> {
+  private async forkSkillToCustom(
+    orgId: string,
+    dbScope: string,
+    name: string,
+  ): Promise<string> {
     let forkName = `${name}-custom`;
     for (let n = 2; await this.skillStore.get(orgId, dbScope, forkName); n++) {
       forkName = `${name}-custom-${n}`;
@@ -2214,8 +2468,12 @@ export class WebSurfaceController {
       provenance: 'custom',
       forked_from: name,
       surfaces: source?.surfaces,
-      ...(source?.reviewForTypes ? { reviewForTypes: source.reviewForTypes } : {}),
-      ...(source?.reviewForGlobs ? { reviewForGlobs: source.reviewForGlobs } : {}),
+      ...(source?.reviewForTypes
+        ? { reviewForTypes: source.reviewForTypes }
+        : {}),
+      ...(source?.reviewForGlobs
+        ? { reviewForGlobs: source.reviewForGlobs }
+        : {}),
       enabled: true,
     });
     return forkName;
@@ -2282,7 +2540,8 @@ export class WebSurfaceController {
       where: { job_id: jobId, ts: requestId, kind: 'card' },
     });
     const payload = card?.card as WebFileRequestCard | undefined;
-    if (!card || payload?.type !== 'file_request_card') return { status: 'notfound' };
+    if (!card || payload?.type !== 'file_request_card')
+      return { status: 'notfound' };
     // Per-card gate (same shape as answer-question): a delivered card is stale; an already-provided card is
     // an idempotent no-op (double submit); a withdrawn card was retracted by the brain, so refuse the upload
     // rather than write a secret to a path it abandoned.
@@ -2339,15 +2598,22 @@ export class WebSurfaceController {
     if (r.status !== 'applied') return { ok: r.status === 'noop', ts: '' };
     // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
     if (r.rehydrate) {
-      await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
+      await this.threadLifecycle
+        .rehydrateThread(jobId, org.id)
+        .catch(() => undefined);
     }
     // Deliver a MASKED confirmation carrying this card's id so the delivery turn's success tail stamps
     // exactly THIS card delivered (at-least-once).
-    const ts = this.surface.seedSystemNotification(thread.repo_id, jobId, r.notice!, {
-      orgId: org.id,
-      deliveredFileId: r.seedId!,
-      seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-    });
+    const ts = this.surface.seedSystemNotification(
+      thread.repo_id,
+      jobId,
+      r.notice!,
+      {
+        orgId: org.id,
+        deliveredFileId: r.seedId!,
+        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
+      },
+    );
     return { ok: true, ts };
   }
 
@@ -2367,12 +2633,18 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @Param('jobId') jobId: string,
     @Body() body: AnswerBatchDto,
-  ): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+  ): Promise<{
+    ok: boolean;
+    ts: string;
+    results: Array<{ id: string; status: string }>;
+  }> {
     if (!Array.isArray(body?.items) || body.items.length === 0) {
       throw new BadRequestException('items must be a non-empty array');
     }
     if (body.items.length > MAX_BATCH_ITEMS) {
-      throw new BadRequestException(`batch may contain at most ${MAX_BATCH_ITEMS} items`);
+      throw new BadRequestException(
+        `batch may contain at most ${MAX_BATCH_ITEMS} items`,
+      );
     }
     const items = body.items.map((item) => normalizeAnswerBatchItem(item));
     // Owner is required only when the batch carries a file/secret — a question-only batch stays
@@ -2382,7 +2654,9 @@ export class WebSurfaceController {
       (i) => i.kind === 'file' || i.kind === 'secret',
     );
     if (needsOwner && org.role !== 'owner') {
-      throw new ForbiddenException('providing files/secrets requires an org owner');
+      throw new ForbiddenException(
+        'providing files/secrets requires an org owner',
+      );
     }
     const totalBytes = items.reduce(
       (n, i) =>
@@ -2447,7 +2721,9 @@ export class WebSurfaceController {
     // One rehydrate for the whole batch if anything landed in the worktree secret store (see the single
     // file/secret endpoints, which rehydrate per-item). Best-effort.
     if (wroteToStore) {
-      await this.threadLifecycle.rehydrateThread(jobId, org.id).catch(() => undefined);
+      await this.threadLifecycle
+        .rehydrateThread(jobId, org.id)
+        .catch(() => undefined);
     }
     const ts = this.deliverBatchSeed(
       thread.repo_id,
@@ -2469,7 +2745,11 @@ export class WebSurfaceController {
     repoId: string,
     jobId: string,
     orgId: string,
-    applied: Array<{ id: string; notice: AgentMessage; kind: 'question' | 'file' | 'secret' }>,
+    applied: Array<{
+      id: string;
+      notice: AgentMessage;
+      kind: 'question' | 'file' | 'secret';
+    }>,
     note?: string,
   ): string {
     if (applied.length === 0 && !note) return '';
@@ -2483,7 +2763,9 @@ export class WebSurfaceController {
       deliveredQuestionIds: applied
         .filter((a) => a.kind === 'question')
         .map((a) => a.id),
-      deliveredFileIds: applied.filter((a) => a.kind === 'file').map((a) => a.id),
+      deliveredFileIds: applied
+        .filter((a) => a.kind === 'file')
+        .map((a) => a.id),
       deliveredSecretIds: applied
         .filter((a) => a.kind === 'secret')
         .map((a) => a.id),
@@ -2646,7 +2928,9 @@ export class WebSurfaceController {
     const buf = readFileSync(abs);
     return {
       name: basename(abs),
-      path: relative(realpathSync(sandbox.worktreePath), abs).split(sep).join('/'),
+      path: relative(realpathSync(sandbox.worktreePath), abs)
+        .split(sep)
+        .join('/'),
       size: st.size,
       mtime: st.mtime.toISOString(),
       encoding: binary ? 'base64' : 'text',
@@ -3028,21 +3312,35 @@ export class WebSurfaceController {
     const job = await this.requireThread(jobId, org.id);
     const result = await this.jobs.update(
       { id: jobId, org_id: org.id },
-      { auto_approve_mode: body.mode, ...(body.mode !== 'off' ? { auto_approve_by: user.id } : {}) },
+      {
+        auto_approve_mode: body.mode,
+        ...(body.mode !== 'off' ? { auto_approve_by: user.id } : {}),
+      },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`);
+    this.logger.log(
+      `web set auto-approve mode=${body.mode} on thread ${jobId} (org ${org.id})`,
+    );
     // d2 — enabling a gate the job is ALREADY parked on immediately approves it, through the exact seam a real
     // button click uses (receiveApprovalClick → the module bridge → resolve / resolveShipApprovalDurably, with
     // the durable-restart fallback). Disabling a gate only affects future gates and never un-approves anything.
     if (job.status === 'awaiting_approval' && modeApprovesPlan(body.mode)) {
       const value = JSON.stringify({
         jobId,
-        ...(job.decision_record_id ? { decisionRecordId: job.decision_record_id } : {}),
+        ...(job.decision_record_id
+          ? { decisionRecordId: job.decision_record_id }
+          : {}),
       });
       this.surface.receiveApprovalClick(APPROVE_ACTION_ID, value, user.id);
-    } else if (job.status === 'awaiting_ship_review' && modeApprovesShip(body.mode)) {
-      this.surface.receiveApprovalClick(SHIP_ACTION_ID, JSON.stringify({ jobId }), user.id);
+    } else if (
+      job.status === 'awaiting_ship_review' &&
+      modeApprovesShip(body.mode)
+    ) {
+      this.surface.receiveApprovalClick(
+        SHIP_ACTION_ID,
+        JSON.stringify({ jobId }),
+        user.id,
+      );
     }
     return { ok: true, autoApproveMode: body.mode };
   }
@@ -3070,8 +3368,11 @@ export class WebSurfaceController {
       },
     );
     if (!result.affected) throw new NotFoundException('thread not found');
-    this.logger.log(`web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`);
-    if (enable) void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
+    this.logger.log(
+      `web set auto-merge=${enable} on thread ${jobId} (org ${org.id})`,
+    );
+    if (enable)
+      void this.autoMerge.maybeAutoMerge(jobId).catch(() => undefined);
     const fresh = await this.jobs.findOneBy({ id: jobId });
     return {
       ok: true,
@@ -3098,7 +3399,9 @@ export class WebSurfaceController {
       } catch (err) {
         // Abort the delete (decision d3: never silently orphan). The job stays in its normal status.
         throw new BadGatewayException(
-          err instanceof Error ? err.message : 'Could not close the pull request',
+          err instanceof Error
+            ? err.message
+            : 'Could not close the pull request',
         );
       }
     }
@@ -3135,7 +3438,8 @@ export class WebSurfaceController {
   ): Promise<{ ok: boolean; blocked: boolean; blockers: unknown[] }> {
     await this.requireThread(jobId, org.id);
     const dependsOnJobId = String(body?.dependsOnJobId ?? '').trim();
-    if (!dependsOnJobId) throw new BadRequestException('dependsOnJobId is required');
+    if (!dependsOnJobId)
+      throw new BadRequestException('dependsOnJobId is required');
     const { blocked } = await this.jobDeps.addDependency({
       orgId: org.id,
       repoId,
@@ -3143,7 +3447,9 @@ export class WebSurfaceController {
       dependsOnJobId,
     });
     const blockers = await this.jobDeps.blockersOf(jobId);
-    this.logger.log(`web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`);
+    this.logger.log(
+      `web blocked job ${jobId} on ${dependsOnJobId} (org ${org.id})`,
+    );
     return { ok: true, blocked, blockers };
   }
 
@@ -3157,9 +3463,16 @@ export class WebSurfaceController {
     @Param('dependsOnJobId') dependsOnJobId: string,
   ): Promise<{ ok: boolean; blockers: unknown[] }> {
     await this.requireThread(jobId, org.id);
-    await this.jobDeps.removeDependency({ orgId: org.id, repoId, jobId, dependsOnJobId });
+    await this.jobDeps.removeDependency({
+      orgId: org.id,
+      repoId,
+      jobId,
+      dependsOnJobId,
+    });
     const blockers = await this.jobDeps.blockersOf(jobId);
-    this.logger.log(`web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`);
+    this.logger.log(
+      `web unblocked job ${jobId} from ${dependsOnJobId} (org ${org.id})`,
+    );
     return { ok: true, blockers };
   }
 
@@ -3208,7 +3521,12 @@ export class WebSurfaceController {
       kind: t.kind,
       createdBy: t.created_by ?? null,
       pr: t.pr_state
-        ? { state: t.pr_state, number: t.pr_number, mergeable: t.pr_mergeable, url: t.pr_url }
+        ? {
+            state: t.pr_state,
+            number: t.pr_number,
+            mergeable: t.pr_mergeable,
+            url: t.pr_url,
+          }
         : null,
       needsYou: deriveNeedsYou({
         status: t.status,

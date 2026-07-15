@@ -6,24 +6,37 @@ import type { CurrentOrgCtx } from '../org/current-org.decorator';
 import type { GitHubAppTokenService } from '../git/github-app-token.service';
 import type { OrganizationService } from '../org/organization.service';
 import type { UserEntity } from '../persistence/entities';
-import { GithubAppCallbackController, GithubAppController } from './github-app.controller';
-import type { GithubAppConnectState, GithubAppStateStore } from './github-app-state.store';
+import {
+  GithubAppCallbackController,
+  GithubAppController,
+} from './github-app.controller';
+import type {
+  GithubAppConnectState,
+  GithubAppStateStore,
+} from './github-app-state.store';
 import type { OnboardingService } from './onboarding.service';
-import type { TenantCredentials, TenantCredentialStore } from './tenant-credential.store';
+import type {
+  TenantCredentials,
+  TenantCredentialStore,
+} from './tenant-credential.store';
 
 const ORG: CurrentOrgCtx = { id: 'org-1', role: 'owner' };
 const USER = { id: 'user-1' } as UserEntity;
 
-function fakeStore(overrides: {
-  read?: TenantCredentials | null;
-  presence?: Partial<Awaited<ReturnType<TenantCredentialStore['presence']>>>;
-  write?: (orgId: string, patch: unknown) => Promise<void>;
-  orgsHoldingInstallation?: string[];
-} = {}) {
+function fakeStore(
+  overrides: {
+    read?: TenantCredentials | null;
+    presence?: Partial<Awaited<ReturnType<TenantCredentialStore['presence']>>>;
+    write?: (orgId: string, patch: unknown) => Promise<void>;
+    orgsHoldingInstallation?: string[];
+  } = {},
+) {
   return {
     read: vi.fn(async () => overrides.read ?? null),
     write: vi.fn(overrides.write ?? (async () => undefined)),
-    orgsHoldingInstallation: vi.fn(async () => overrides.orgsHoldingInstallation ?? []),
+    orgsHoldingInstallation: vi.fn(
+      async () => overrides.orgsHoldingInstallation ?? [],
+    ),
     presence: vi.fn(async () => ({
       hasAnthropic: false,
       hasOpenai: false,
@@ -48,19 +61,28 @@ function fakeOrgs(overrides: { ownsAnyOf?: boolean } = {}) {
   } as unknown as OrganizationService & { ownsAnyOf: ReturnType<typeof vi.fn> };
 }
 
-function fakeAppTokens(overrides: {
-  isConfigured?: boolean;
-  appSlug?: string;
-  getInstallation?: (id: string) => Promise<{ id: string; account: { login: string; id: number; type: string } } | null>;
-  getInstallationToken?: (id: string) => Promise<string>;
-} = {}) {
+function fakeAppTokens(
+  overrides: {
+    isConfigured?: boolean;
+    appSlug?: string;
+    getInstallation?: (id: string) => Promise<{
+      id: string;
+      account: { login: string; id: number; type: string };
+    } | null>;
+    getInstallationToken?: (id: string) => Promise<string>;
+  } = {},
+) {
   return {
     isConfigured: vi.fn(() => overrides.isConfigured ?? true),
     appSlug: vi.fn(async () => overrides.appSlug ?? 'atlas-app'),
     getInstallation:
       overrides.getInstallation ??
-      vi.fn(async () => ({ id: '999', account: { login: 'acme', id: 1, type: 'Organization' } })),
-    getInstallationToken: overrides.getInstallationToken ?? vi.fn(async () => 'ghs_minted'),
+      vi.fn(async () => ({
+        id: '999',
+        account: { login: 'acme', id: 1, type: 'Organization' },
+      })),
+    getInstallationToken:
+      overrides.getInstallationToken ?? vi.fn(async () => 'ghs_minted'),
   } as unknown as GitHubAppTokenService & {
     isConfigured: ReturnType<typeof vi.fn>;
     appSlug: ReturnType<typeof vi.fn>;
@@ -81,7 +103,9 @@ function fakeStateStore(
 ) {
   return {
     stash: vi.fn(async () => overrides.stash ?? 'nonce-abc'),
-    consume: vi.fn(overrides.consume ?? (async () => ({ orgId: 'org-1', userId: 'user-1' }))),
+    consume: vi.fn(
+      overrides.consume ?? (async () => ({ orgId: 'org-1', userId: 'user-1' })),
+    ),
   } as unknown as GithubAppStateStore & {
     stash: ReturnType<typeof vi.fn>;
     consume: ReturnType<typeof vi.fn>;
@@ -95,7 +119,9 @@ function fakeEnv(frontendHost = 'https://console.atlas.test') {
 }
 
 function fakeRes() {
-  return { redirect: vi.fn() } as unknown as Response & { redirect: ReturnType<typeof vi.fn> };
+  return { redirect: vi.fn() } as unknown as Response & {
+    redirect: ReturnType<typeof vi.fn>;
+  };
 }
 
 describe('GithubAppController', () => {
@@ -110,7 +136,9 @@ describe('GithubAppController', () => {
         stateStore,
       );
       const result = await controller.installUrl(ORG, USER);
-      expect(result.url).toBe('https://github.com/apps/atlas-app/installations/new?state=nonce-xyz');
+      expect(result.url).toBe(
+        'https://github.com/apps/atlas-app/installations/new?state=nonce-xyz',
+      );
       expect(stateStore.stash).toHaveBeenCalledWith('org-1', 'user-1');
     });
 
@@ -121,7 +149,9 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(controller.installUrl(ORG, USER)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(controller.installUrl(ORG, USER)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 
@@ -134,7 +164,9 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(controller.setMode(ORG, { mode: 'app' })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        controller.setMode(ORG, { mode: 'app' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(store.write).not.toHaveBeenCalled();
     });
 
@@ -149,7 +181,9 @@ describe('GithubAppController', () => {
       );
       const result = await controller.setMode(ORG, { mode: 'app' });
       expect(result).toEqual({ ok: true, mode: 'app' });
-      expect(store.write).toHaveBeenCalledWith('org-1', { githubAuthMode: 'app' });
+      expect(store.write).toHaveBeenCalledWith('org-1', {
+        githubAuthMode: 'app',
+      });
       expect(onboarding.tryActivate).toHaveBeenCalledWith('org-1');
     });
 
@@ -161,7 +195,9 @@ describe('GithubAppController', () => {
         fakeOnboarding(),
         fakeStateStore(),
       );
-      await expect(controller.setMode(ORG, { mode: 'pat' })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        controller.setMode(ORG, { mode: 'pat' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(store.write).not.toHaveBeenCalled();
     });
 
@@ -175,7 +211,9 @@ describe('GithubAppController', () => {
       );
       const result = await controller.setMode(ORG, { mode: 'pat' });
       expect(result).toEqual({ ok: true, mode: 'pat' });
-      expect(store.write).toHaveBeenCalledWith('org-1', { githubAuthMode: 'pat' });
+      expect(store.write).toHaveBeenCalledWith('org-1', {
+        githubAuthMode: 'pat',
+      });
     });
   });
 
@@ -204,7 +242,10 @@ describe('GithubAppController', () => {
     it('shapes configured/connected/mode/installationId/account from presence + read', async () => {
       const store = fakeStore({
         presence: { hasGithubApp: true, githubAuthMode: 'app' },
-        read: { githubAppInstallationId: '123', githubAppInstallationAccount: 'acme' },
+        read: {
+          githubAppInstallationId: '123',
+          githubAppInstallationAccount: 'acme',
+        },
       });
       const controller = new GithubAppController(
         store,
@@ -240,14 +281,26 @@ describe('GithubAppCallbackController', () => {
   it('on success (first claim): consumes state, verifies + persists the installation, redirects ?githubApp=connected', async () => {
     const store = fakeStore(); // orgsHoldingInstallation defaults to [] — no other holder
     const onboarding = fakeOnboarding();
-    const stateStore = fakeStateStore({ consume: async () => ({ orgId: 'org-1', userId: 'user-1' }) });
+    const stateStore = fakeStateStore({
+      consume: async () => ({ orgId: 'org-1', userId: 'user-1' }),
+    });
     const appTokens = fakeAppTokens({
-      getInstallation: async () => ({ id: '999', account: { login: 'acme', id: 1, type: 'Organization' } }),
+      getInstallation: async () => ({
+        id: '999',
+        account: { login: 'acme', id: 1, type: 'Organization' },
+      }),
       getInstallationToken: async () => 'ghs_minted',
     });
     const orgs = fakeOrgs();
     const res = fakeRes();
-    const controller = new GithubAppCallbackController(stateStore, appTokens, store, onboarding, orgs, fakeEnv());
+    const controller = new GithubAppCallbackController(
+      stateStore,
+      appTokens,
+      store,
+      onboarding,
+      orgs,
+      fakeEnv(),
+    );
 
     await controller.callback('999', 'install', 'nonce-abc', res);
 
@@ -314,7 +367,9 @@ describe('GithubAppCallbackController', () => {
   });
 
   it('installation verification failure: redirects verification_failed', async () => {
-    const stateStore = fakeStateStore({ consume: async () => ({ orgId: 'org-1', userId: 'user-1' }) });
+    const stateStore = fakeStateStore({
+      consume: async () => ({ orgId: 'org-1', userId: 'user-1' }),
+    });
     const appTokens = fakeAppTokens({ getInstallation: async () => null });
     const store = fakeStore();
     const res = fakeRes();
@@ -337,7 +392,9 @@ describe('GithubAppCallbackController', () => {
   });
 
   it('reuse allowed: installation held by an org the user owns → persists + redirects connected', async () => {
-    const stateStore = fakeStateStore({ consume: async () => ({ orgId: 'org-2', userId: 'user-1' }) });
+    const stateStore = fakeStateStore({
+      consume: async () => ({ orgId: 'org-2', userId: 'user-1' }),
+    });
     const store = fakeStore({ orgsHoldingInstallation: ['org-1'] });
     const onboarding = fakeOnboarding();
     const orgs = fakeOrgs({ ownsAnyOf: true }); // user-1 owns org-1, a current holder
@@ -366,7 +423,9 @@ describe('GithubAppCallbackController', () => {
   });
 
   it('reuse denied: installation held only by an org the user does NOT own → already_connected, no write', async () => {
-    const stateStore = fakeStateStore({ consume: async () => ({ orgId: 'org-2', userId: 'user-1' }) });
+    const stateStore = fakeStateStore({
+      consume: async () => ({ orgId: 'org-2', userId: 'user-1' }),
+    });
     const store = fakeStore({ orgsHoldingInstallation: ['org-1'] });
     const orgs = fakeOrgs({ ownsAnyOf: false }); // user-1 owns none of the holders
     const res = fakeRes();
@@ -390,7 +449,9 @@ describe('GithubAppCallbackController', () => {
   });
 
   it('reuse denied for a legacy nonce (no userId): another holder → already_connected, no write', async () => {
-    const stateStore = fakeStateStore({ consume: async () => ({ orgId: 'org-2', userId: null }) });
+    const stateStore = fakeStateStore({
+      consume: async () => ({ orgId: 'org-2', userId: null }),
+    });
     const store = fakeStore({ orgsHoldingInstallation: ['org-1'] });
     const orgs = fakeOrgs({ ownsAnyOf: true });
     const res = fakeRes();

@@ -85,11 +85,13 @@ export function nextQuestionId(existingIds: readonly string[]): string {
 
 /** Lowercase-kebab a label into a stable option id. */
 function slug(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48) || 'opt';
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'opt'
+  );
 }
 
 /** Build a `WebQuestionCard` from the brain's `ask_question` args (options normalized + id-filled). */
@@ -107,7 +109,11 @@ export function webQuestionCard(input: {
     let id = o.id?.trim() || slug(o.label);
     while (seen.has(id)) id = `${id}-${i}`;
     seen.add(id);
-    return { id, label: o.label, ...(o.description ? { description: o.description } : {}) };
+    return {
+      id,
+      label: o.label,
+      ...(o.description ? { description: o.description } : {}),
+    };
   });
   return {
     type: 'question_card',

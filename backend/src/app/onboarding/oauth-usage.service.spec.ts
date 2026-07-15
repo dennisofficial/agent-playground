@@ -1,15 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } from '@workspace/shared';
-import { OauthUsageService, parseModelWindows, toPercentUtilization } from './oauth-usage.service';
-import type { ClaudeCredentialStore, ClaudeCredentialSummary } from './claude-credential.store';
+import type {
+  ClaudeUsageSnapshot,
+  ClaudeUsageWindowKey,
+  StoredUsageWindow,
+} from '@workspace/shared';
+import {
+  OauthUsageService,
+  parseModelWindows,
+  toPercentUtilization,
+} from './oauth-usage.service';
+import type {
+  ClaudeCredentialStore,
+  ClaudeCredentialSummary,
+} from './claude-credential.store';
 import type { CredentialRefreshService } from './credential-refresh.service';
 import type { CredentialResolver } from './credential-resolver.service';
 import type { TenantCredentialStore } from './tenant-credential.store';
 import { UsageEventBus, type UsageChange } from './usage-event-bus';
 
-type SelectedDisplay = { accountEmail: string | null; subscriptionType: string | null; label: string };
+type SelectedDisplay = {
+  accountEmail: string | null;
+  subscriptionType: string | null;
+  label: string;
+};
 
-type FakeCredentialRow = { id: string; kind: 'setup_token' | 'personal'; secret: string };
+type FakeCredentialRow = {
+  id: string;
+  kind: 'setup_token' | 'personal';
+  secret: string;
+};
 
 /**
  * Minimal in-memory stand-in for `ClaudeCredentialStore`'s full surface these tests need: the
@@ -18,7 +37,11 @@ type FakeCredentialRow = { id: string; kind: 'setup_token' | 'personal'; secret:
  * (`getSelectedCredentialId`) `get()` now uses to gate harvest trust.
  */
 class FakeClaudeStore {
-  readonly advanceCalls: Array<{ orgId: string; credentialId: string; secret: string }> = [];
+  readonly advanceCalls: Array<{
+    orgId: string;
+    credentialId: string;
+    secret: string;
+  }> = [];
 
   constructor(
     private readonly rows: FakeCredentialRow[] = [],
@@ -52,11 +75,18 @@ class FakeClaudeStore {
     );
   }
 
-  getDecryptedById(_orgId: string, id: string): Promise<FakeCredentialRow | null> {
+  getDecryptedById(
+    _orgId: string,
+    id: string,
+  ): Promise<FakeCredentialRow | null> {
     return Promise.resolve(this.rows.find((row) => row.id === id) ?? null);
   }
 
-  advanceClaudeCredential(orgId: string, credentialId: string, secret: string): Promise<void> {
+  advanceClaudeCredential(
+    orgId: string,
+    credentialId: string,
+    secret: string,
+  ): Promise<void> {
     this.advanceCalls.push({ orgId, credentialId, secret });
     return Promise.resolve();
   }
@@ -73,7 +103,8 @@ class FakeCredRefresh {
 
   async ensureFresh(orgId: string, credentialId: string): Promise<string> {
     const row = await this.claudeStore.getDecryptedById(orgId, credentialId);
-    if (!row) throw new Error(`credential ${credentialId} not found for org ${orgId}`);
+    if (!row)
+      throw new Error(`credential ${credentialId} not found for org ${orgId}`);
     return row.secret;
   }
 }
@@ -84,7 +115,9 @@ class FakeCredRefresh {
  * contract `applyHarvest`/`get` depend on in production.
  */
 class FakeCredentialStore {
-  constructor(private readonly snapshots = new Map<string, ClaudeUsageSnapshot>()) {}
+  constructor(
+    private readonly snapshots = new Map<string, ClaudeUsageSnapshot>(),
+  ) {}
 
   readClaudeUsageSnapshot(orgId: string): Promise<ClaudeUsageSnapshot | null> {
     return Promise.resolve(this.snapshots.get(orgId) ?? null);
@@ -103,7 +136,11 @@ class FakeCredentialStore {
       snapshot = { windows: {}, fetchedAt: 0, credentialId };
     }
     const existing = snapshot.windows[key];
-    if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
+    if (
+      existing &&
+      existing.utilization === window.utilization &&
+      existing.resetsAt === window.resetsAt
+    ) {
       return Promise.resolve(false);
     }
     this.snapshots.set(orgId, {
@@ -131,7 +168,11 @@ const NO_ENGINE_AUTH: Pick<CredentialResolver, 'engineAuth'> = {
 };
 
 /** A `personal` credential's decrypted secret shape: a `{claudeAiOauth:{…}}` JSON blob. */
-function personalSecret(p: { accessToken: string; refreshToken: string; expiresAt: number }): string {
+function personalSecret(p: {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}): string {
   return JSON.stringify({ claudeAiOauth: p });
 }
 
@@ -169,11 +210,20 @@ function makeService(
     selectedDisplay?: SelectedDisplay | null;
     selectedCredentialId?: string | null;
   } = {},
-): { svc: OauthUsageService; bus: UsageEventBus; published: UsageChange[]; claudeStore: FakeClaudeStore } {
+): {
+  svc: OauthUsageService;
+  bus: UsageEventBus;
+  published: UsageChange[];
+  claudeStore: FakeClaudeStore;
+} {
   const store = opts.store ?? new FakeCredentialStore();
   const claudeStore =
     opts.claudeStore ??
-    new FakeClaudeStore([], opts.selectedDisplay ?? null, opts.selectedCredentialId ?? CRED);
+    new FakeClaudeStore(
+      [],
+      opts.selectedDisplay ?? null,
+      opts.selectedCredentialId ?? CRED,
+    );
   const bus = new UsageEventBus();
   const published: UsageChange[] = [];
   bus.stream$.subscribe((e) => published.push(e));
@@ -192,7 +242,11 @@ describe('OauthUsageService.applyHarvest', () => {
   it('paints the session window full on a rejected frame that omits utilization + window', async () => {
     const { svc } = makeService();
     const resetsAt = Date.now() + 60 * 60 * 1000;
-    await svc.applyHarvest('org1', { status: 'rejected', resetsAt, credentialId: CRED });
+    await svc.applyHarvest('org1', {
+      status: 'rejected',
+      resetsAt,
+      credentialId: CRED,
+    });
 
     const usage = await svc.get('org1');
     expect(usage.ok).toBe(true);
@@ -233,9 +287,13 @@ describe('OauthUsageService.applyHarvest', () => {
       credentialId: CRED,
     });
     const usage = await svc.get('org1');
-    expect(usage.fiveHour?.resetsAt).toBe(new Date(seconds * 1000).toISOString());
+    expect(usage.fiveHour?.resetsAt).toBe(
+      new Date(seconds * 1000).toISOString(),
+    );
     // The bug this guards is a seconds value mis-read as ms → 1970; assert it landed in the present era.
-    expect(new Date(usage.fiveHour!.resetsAt).getUTCFullYear()).toBeGreaterThan(2020);
+    expect(new Date(usage.fiveHour!.resetsAt).getUTCFullYear()).toBeGreaterThan(
+      2020,
+    );
   });
 
   it('records a non-rejected frame at its reported utilization', async () => {
@@ -323,7 +381,11 @@ describe('OauthUsageService realtime publish', () => {
   it('does not publish an additional frame when the SAME window is re-applied unchanged', async () => {
     const { svc, published } = makeService();
     const resetsAt = Date.now() + 60 * 60 * 1000;
-    const frame = { status: 'rejected' as const, rateLimitType: 'five_hour', resetsAt };
+    const frame = {
+      status: 'rejected' as const,
+      rateLimitType: 'five_hour',
+      resetsAt,
+    };
     await svc.applyHarvest('org1', frame);
     await flushMicrotasks();
     await svc.applyHarvest('org1', frame);
@@ -412,7 +474,10 @@ describe('OauthUsageService.get harvested-window expiry', () => {
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
-      { utilization: 100, resetsAt: new Date(Date.now() - 60_000).toISOString() },
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() - 60_000).toISOString(),
+      },
       Date.now(),
     );
     const usage = await svc.get('org1');
@@ -426,7 +491,10 @@ describe('OauthUsageService.get harvested-window expiry', () => {
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
-      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60_000).toISOString() },
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      },
       Date.now(),
       CRED,
     );
@@ -578,7 +646,11 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
         Promise.resolve({
           secret: '',
           kind: 'personal',
-          refreshBack: { orgId: 'org1', engine: 'claude', credentialId: 'cred-live' },
+          refreshBack: {
+            orgId: 'org1',
+            engine: 'claude',
+            credentialId: 'cred-live',
+          },
         }),
     };
     const svc = new OauthUsageService(
@@ -596,13 +668,21 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
-      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
       Date.now(),
       'cred-old', // A — a different, now-deselected credential
     );
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+      vi.fn(() =>
+        jsonResponse(
+          200,
+          usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+        ),
+      ),
     );
 
     const usage = await svc.get('org1');
@@ -615,13 +695,21 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
     const { svc, store } = makeServiceForTrust('cred-live');
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+      vi.fn(() =>
+        jsonResponse(
+          200,
+          usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+        ),
+      ),
     );
     const harvestNow = Date.now() + 1000; // strictly newer than the live fetch's own `fetchedAt`
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
-      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
       harvestNow,
       'cred-live',
     );
@@ -637,13 +725,21 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
     await store.mergeClaudeUsageWindow(
       'org1',
       'fiveHour',
-      { utilization: 100, resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() },
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      },
       Date.now(),
       // no credentialId — legacy/untagged snapshot
     );
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => jsonResponse(200, usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()))),
+      vi.fn(() =>
+        jsonResponse(
+          200,
+          usageBody(21, new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+        ),
+      ),
     );
 
     const usage = await svc.get('org1');
@@ -654,7 +750,10 @@ describe('OauthUsageService.get credential-scoped harvest trust', () => {
 
   it('applyHarvest forwards its credentialId into mergeClaudeUsageWindow (tags the resulting snapshot)', async () => {
     const store = new FakeCredentialStore();
-    const { svc } = makeService({ store, selectedCredentialId: 'cred-forward' });
+    const { svc } = makeService({
+      store,
+      selectedCredentialId: 'cred-forward',
+    });
     await svc.applyHarvest('org1', {
       status: 'rejected',
       rateLimitType: 'five_hour',
@@ -675,8 +774,18 @@ describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () 
   it('extracts a weekly_scoped model entry (Fable) with its 0-100 percent and null reset', () => {
     const root = {
       limits: [
-        { kind: 'session', group: 'session', percent: 94, resets_at: '2026-07-11T10:10:00Z' },
-        { kind: 'weekly_all', group: 'weekly', percent: 59, resets_at: '2026-07-12T09:00:00Z' },
+        {
+          kind: 'session',
+          group: 'session',
+          percent: 94,
+          resets_at: '2026-07-11T10:10:00Z',
+        },
+        {
+          kind: 'weekly_all',
+          group: 'weekly',
+          percent: 59,
+          resets_at: '2026-07-12T09:00:00Z',
+        },
         {
           kind: 'weekly_scoped',
           group: 'weekly',
@@ -686,7 +795,9 @@ describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () 
         },
       ],
     };
-    expect(parseModelWindows(root)).toEqual([{ label: 'Fable', utilization: 0, resetsAt: null }]);
+    expect(parseModelWindows(root)).toEqual([
+      { label: 'Fable', utilization: 0, resetsAt: null },
+    ]);
   });
 
   it('ignores non-scoped limits, malformed entries, and a missing/necessarily-array field', () => {
@@ -696,7 +807,11 @@ describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () 
       parseModelWindows({
         limits: [
           { kind: 'weekly_scoped', percent: 12 }, // no scope.model.display_name -> skipped
-          { kind: 'weekly_scoped', percent: 'x', scope: { model: { display_name: 'Bad' } } }, // percent not a number
+          {
+            kind: 'weekly_scoped',
+            percent: 'x',
+            scope: { model: { display_name: 'Bad' } },
+          }, // percent not a number
           { kind: 'session', percent: 94 },
         ],
       }),
@@ -706,8 +821,17 @@ describe('parseModelWindows (usage API limits[] → per-model weekly rows)', () 
   it('clamps + rounds the model percent (already 0-100, not the SDK fraction)', () => {
     const root = {
       limits: [
-        { kind: 'weekly_scoped', percent: 150.7, scope: { model: { display_name: 'A' } } },
-        { kind: 'weekly_scoped', percent: 33.4, resets_at: '2026-07-12T09:00:00Z', scope: { model: { display_name: 'B' } } },
+        {
+          kind: 'weekly_scoped',
+          percent: 150.7,
+          scope: { model: { display_name: 'A' } },
+        },
+        {
+          kind: 'weekly_scoped',
+          percent: 33.4,
+          resets_at: '2026-07-12T09:00:00Z',
+          scope: { model: { display_name: 'B' } },
+        },
       ],
     };
     expect(parseModelWindows(root)).toEqual([
@@ -737,7 +861,9 @@ describe('OauthUsageService account header', () => {
     expect(usage.accountLabel).toBe('dennis@atlas.dev');
     expect(usage.plan).toBe('Max plan');
     // the harvested push carries the same header
-    expect(published[published.length - 1]?.usage.accountLabel).toBe('dennis@atlas.dev');
+    expect(published[published.length - 1]?.usage.accountLabel).toBe(
+      'dennis@atlas.dev',
+    );
     expect(published[published.length - 1]?.usage.plan).toBe('Max plan');
   });
 
@@ -796,7 +922,9 @@ describe('OauthUsageService.getForCredential', () => {
     const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     const fetchMock = vi.fn((url: string, init: RequestInit) => {
       expect(url).toBe('https://api.anthropic.com/api/oauth/usage');
-      expect((init.headers as Record<string, string>).Authorization).toBe('Bearer at-personal');
+      expect((init.headers as Record<string, string>).Authorization).toBe(
+        'Bearer at-personal',
+      );
       return jsonResponse(200, usageBody(42, resetsAt));
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -817,7 +945,10 @@ describe('OauthUsageService.getForCredential', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(usage.ok).toBe(true);
-    expect(usage.fiveHour).toEqual({ utilization: 42, resetsAt: new Date(resetsAt).toISOString() });
+    expect(usage.fiveHour).toEqual({
+      utilization: 42,
+      resetsAt: new Date(resetsAt).toISOString(),
+    });
     expect(claudeStore.advanceCalls).toHaveLength(0);
   });
 
@@ -826,10 +957,17 @@ describe('OauthUsageService.getForCredential', () => {
     // and (often) only a per-model weekly cap. That is a fresh, not-started account — NOT an outage — so it
     // must surface as ok:true/source:'usage_api' (which the UI reads as "Waiting for next turn" rather than
     // the "Usage unavailable" reserved for a real fetch failure).
-    const resetsAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    const resetsAt = new Date(
+      Date.now() + 3 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const freshBody = {
       limits: [
-        { kind: 'weekly_scoped', percent: 0, resets_at: resetsAt, scope: { model: { display_name: 'Fable' } } },
+        {
+          kind: 'weekly_scoped',
+          percent: 0,
+          resets_at: resetsAt,
+          scope: { model: { display_name: 'Fable' } },
+        },
       ],
     };
     vi.stubGlobal(
@@ -855,7 +993,9 @@ describe('OauthUsageService.getForCredential', () => {
     expect(usage.source).toBe('usage_api');
     expect(usage.fiveHour).toBeNull();
     expect(usage.sevenDay).toBeNull();
-    expect(usage.modelWindows).toEqual([{ label: 'Fable', utilization: 0, resetsAt }]);
+    expect(usage.modelWindows).toEqual([
+      { label: 'Fable', utilization: 0, resetsAt },
+    ]);
   });
 
   it('never routes the per-credential fetch through the org-level harvested snapshot', async () => {

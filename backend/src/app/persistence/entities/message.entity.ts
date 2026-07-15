@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { JobEntity } from './job.entity';
 import { ThreadEntity } from './thread.entity';
@@ -14,7 +21,10 @@ import { SubagentEntity } from './subagent.entity';
 @Index(['job_id', 'created_at'])
 @Index(['thread_id', 'created_at'])
 @Index(['subagent_id'])
-@Index('ux_messages_idem_key', ['idem_key'], { unique: true, where: `"idem_key" IS NOT NULL` })
+@Index('ux_messages_idem_key', ['idem_key'], {
+  unique: true,
+  where: `"idem_key" IS NOT NULL`,
+})
 export class MessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

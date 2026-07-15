@@ -11,7 +11,12 @@ import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, StageEntity, ThreadEntity } from '../persistence/entities';
-import { TurnHarnessFactory, laneFor, BLOCK_SINK, type BlockSink } from '../surface';
+import {
+  TurnHarnessFactory,
+  laneFor,
+  BLOCK_SINK,
+  type BlockSink,
+} from '../surface';
 import {
   Agent,
   renderAgentPrompt,
@@ -61,7 +66,12 @@ export function codexReviewLane(jobId: string): string {
 // Re-exported so existing callers (agent-session-manager.service.ts, specs) keep importing them from
 // here — the severity-tagged parser itself is pure (no NestJS/TypeORM) and lives in `plan-review-findings`
 // so `plan-review.eval.ts` can import it without dragging the eval CLI through the entity barrel.
-export { type ReviewFinding, parsePlanFindings, serializeFindings, deserializeFindings };
+export {
+  type ReviewFinding,
+  parsePlanFindings,
+  serializeFindings,
+  deserializeFindings,
+};
 
 /** Outcome of one synchronous `review` call — fed straight into the brain turn as the tool result. */
 export type ReviewOutcome = {
@@ -140,7 +150,10 @@ function toReviewRow(thread: ThreadEntity): PlanReviewRow {
 }
 
 function readPlanReviewConfig(raw: unknown): PlanReviewConfig {
-  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
   const rawStatus = c['status'] ?? c['codexStatus'];
   const status: PlanReviewStatus =
     rawStatus === 'complete' || rawStatus === 'failed' ? rawStatus : 'running';
@@ -226,7 +239,8 @@ export class PlanReviewService {
         return null;
       });
     if (!ensured) {
-      const error = 'Could not attach a sandbox to run the review (no container for this job).';
+      const error =
+        'Could not attach a sandbox to run the review (no container for this job).';
       row = await this.persistRow(row, input, null, 'failed', [], error);
       return { status: 'failed', findings: [], specHash: null, error };
     }
@@ -250,7 +264,10 @@ export class PlanReviewService {
       jobId: input.jobId,
       type: 'plan-review',
     };
-    const auth: EngineAuth | undefined = await this.creds.engineAuth(input.orgId, 'codex');
+    const auth: EngineAuth | undefined = await this.creds.engineAuth(
+      input.orgId,
+      'codex',
+    );
     const priorSessionId = row.codex_session_id ?? undefined;
     const task = isResume
       ? renderReReview(input, input.note)
@@ -265,7 +282,9 @@ export class PlanReviewService {
     // grades the plan against the same conventions the builders get.
     const repoConventions =
       job?.repo_id && this.conventions
-        ? await this.conventions.resolveForRepo(input.orgId, job.repo_id).catch(() => null)
+        ? await this.conventions
+            .resolveForRepo(input.orgId, job.repo_id)
+            .catch(() => null)
         : null;
     // The reviewer's reasoning effort — sourced from the `plan_review` kind spec so it lives in one place
     // (and the composer footer's pre-turn default matches what the turn actually runs at).
@@ -341,7 +360,14 @@ export class PlanReviewService {
         // whose reply is about to become durable — the invariant "reply durable ⟹ row terminal" that
         // stops the whole review turn (prompt + tools + reply + footer) from being re-persisted twice.
         const findings = parsePlanFindings(result.result);
-        row = await this.persistRow(row, input, specHash, 'complete', findings, null);
+        row = await this.persistRow(
+          row,
+          input,
+          specHash,
+          'complete',
+          findings,
+          null,
+        );
         await harness.finish(
           result.result,
           result.usage ? { usage: result.usage } : undefined,
@@ -360,19 +386,34 @@ export class PlanReviewService {
     // `codexReviewId` so the web routes it into the review sub-page; keyed per round so a resume-retry (two
     // `attempt()` calls) or a restart never duplicates it. Best-effort.
     await this.blockSink
-      .appendBlockOnce(input.jobId, `codex:${input.jobId}:${row.resume_count}`, {
-        kind: 'agent_prompt',
-        threadId: reviewThreadId,
-        text: task,
-        meta: { codexReviewId: input.jobId, agentPrompt: true, reviewRound: row.resume_count },
-      })
+      .appendBlockOnce(
+        input.jobId,
+        `codex:${input.jobId}:${row.resume_count}`,
+        {
+          kind: 'agent_prompt',
+          threadId: reviewThreadId,
+          text: task,
+          meta: {
+            codexReviewId: input.jobId,
+            agentPrompt: true,
+            reviewRound: row.resume_count,
+          },
+        },
+      )
       .catch((err) =>
-        this.logger.warn(`plan-review: emitPrompt failed for job=${input.jobId}: ${err}`),
+        this.logger.warn(
+          `plan-review: emitPrompt failed for job=${input.jobId}: ${err}`,
+        ),
       );
 
     let res = await attempt(priorSessionId);
     // RESUME-FAILURE FALLBACK: a stale/unresumable session degrades to a fresh review instead of failing.
-    if (!res.ok && priorSessionId && !res.timedOut && !this.election.isDraining()) {
+    if (
+      !res.ok &&
+      priorSessionId &&
+      !res.timedOut &&
+      !this.election.isDraining()
+    ) {
       this.logger.warn(
         `plan-review: job=${input.jobId} resume failed (${res.error}) — retrying with a fresh Codex thread`,
       );
@@ -415,7 +456,8 @@ export class PlanReviewService {
     orgId: string,
   ): Promise<{ row: PlanReviewRow; specHash: string | null } | null> {
     const row = await this.loadRow(jobId);
-    if (!row || (row.status !== 'complete' && row.status !== 'failed')) return null;
+    if (!row || (row.status !== 'complete' && row.status !== 'failed'))
+      return null;
     const currentHash = await this.hashSpecs(jobId, orgId);
     if (row.spec_hash === currentHash) return { row, specHash: currentHash };
     // CEILING ESCAPE VALVE: below the ceiling a hash mismatch correctly forces a re-review (Atlas edited
@@ -460,7 +502,10 @@ export class PlanReviewService {
    * at 0), to satisfy the job-wide UNIQUE(job_id, parent_thread_id, ordinal). Idempotent: a resume/re-review
    * reuses the same stage + thread. The driver never executes the row (render-only role).
    */
-  private async ensurePlanReviewThread(jobId: string, orgId: string): Promise<string> {
+  private async ensurePlanReviewThread(
+    jobId: string,
+    orgId: string,
+  ): Promise<string> {
     let stage = await this.stages.findOne({
       where: { job_id: jobId, kind: 'plan_review' },
       order: { ordinal: 'ASC' },
@@ -468,7 +513,13 @@ export class PlanReviewService {
     if (!stage) {
       const ordinal = (await this.maxOrdinal(this.stages, jobId)) + ORDINAL_GAP;
       stage = await this.stages.save(
-        this.stages.create({ job_id: jobId, org_id: orgId, ordinal, kind: 'plan_review', config: {} }),
+        this.stages.create({
+          job_id: jobId,
+          org_id: orgId,
+          ordinal,
+          kind: 'plan_review',
+          config: {},
+        }),
       );
     }
     const existingThread = await this.threads.findOne({
@@ -476,7 +527,11 @@ export class PlanReviewService {
     });
     if (existingThread) return existingThread.id;
     const threadOrdinal =
-      (await this.maxOrdinal(this.threads, jobId, 't.parent_thread_id IS NULL')) + ORDINAL_GAP;
+      (await this.maxOrdinal(
+        this.threads,
+        jobId,
+        't.parent_thread_id IS NULL',
+      )) + ORDINAL_GAP;
     const thread = await this.threads.save(
       this.threads.create({
         stage_id: stage.id,
@@ -511,8 +566,12 @@ export class PlanReviewService {
     findings: ReviewFinding[] | null,
     error: string | null,
   ): Promise<PlanReviewRow> {
-    const threadId = existing?.id ?? (await this.ensurePlanReviewThread(input.jobId, input.orgId));
-    const thread = await this.threads.findOneOrFail({ where: { id: threadId } });
+    const threadId =
+      existing?.id ??
+      (await this.ensurePlanReviewThread(input.jobId, input.orgId));
+    const thread = await this.threads.findOneOrFail({
+      where: { id: threadId },
+    });
     const prev = readPlanReviewConfig(thread.config);
 
     let next: PlanReviewConfig;
@@ -520,7 +579,11 @@ export class PlanReviewService {
       const sameVersion = prev.specHash != null && prev.specHash === specHash;
       next = {
         specHash,
-        resumeCount: existing ? (sameVersion ? prev.resumeCount : prev.resumeCount + 1) : 0,
+        resumeCount: existing
+          ? sameVersion
+            ? prev.resumeCount
+            : prev.resumeCount + 1
+          : 0,
         findings: [],
         status,
         error,
@@ -542,7 +605,9 @@ export class PlanReviewService {
       config: { ...(thread.config ?? {}), ...next },
     } as any);
     await this.syncReviewActivity(input.jobId, status);
-    return toReviewRow(await this.threads.findOneOrFail({ where: { id: threadId } }));
+    return toReviewRow(
+      await this.threads.findOneOrFail({ where: { id: threadId } }),
+    );
   }
 
   /** The highest `ordinal` among a job's rows in `repo` (0 when none). `extraWhere` (aliased `t`) narrows
@@ -586,7 +651,10 @@ export class PlanReviewService {
    * Content hash of the job's authored `/context/specs/` (host-readable durable mount, keyed by jobId) —
    * the plan version a review graded. Stable across restarts; null when the specs dir is unreadable/empty.
    */
-  private async hashSpecs(jobId: string, orgId: string): Promise<string | null> {
+  private async hashSpecs(
+    jobId: string,
+    orgId: string,
+  ): Promise<string | null> {
     const specsDir = join(this.lifecycle.contextDirHost(jobId, orgId), 'specs');
     const files: string[] = [];
     const walk = async (dir: string): Promise<void> => {

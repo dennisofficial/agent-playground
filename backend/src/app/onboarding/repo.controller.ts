@@ -33,7 +33,9 @@ class UpdateRepoDto {
   /** Per-repo feature-branch prefix. Empty string clears it back to the neutral built-in default. */
   @IsOptional() @IsString() branchPrefix?: string;
   /** Default GitHub merge method for this repo's jobs (auto-merge / manual Merge PR button). */
-  @IsOptional() @IsIn(AUTO_MERGE_METHODS) defaultAutoMergeMethod?: AutoMergeMethod;
+  @IsOptional()
+  @IsIn(AUTO_MERGE_METHODS)
+  defaultAutoMergeMethod?: AutoMergeMethod;
   /** Whether to delete the head branch after a merge, for this repo's jobs. */
   @IsOptional() @IsBoolean() defaultAutoMergeDeleteBranch?: boolean;
 }
@@ -119,7 +121,9 @@ export class RepoController {
       gitUrl: r.git_url,
       defaultBranch: r.default_branch,
       accessOk: r.access_ok,
-      accessCheckedAt: r.access_checked_at ? r.access_checked_at.toISOString() : null,
+      accessCheckedAt: r.access_checked_at
+        ? r.access_checked_at.toISOString()
+        : null,
       threadCount: countByRepo.get(r.id) ?? 0,
       onboardingThreadId: r.onboarding_job_id,
       onboardedAt: r.onboarded_at ? r.onboarded_at.toISOString() : null,
@@ -176,8 +180,12 @@ export class RepoController {
   ): Promise<ConnectedRepo> {
     return this.onboarding.updateRepo(org.id, repoId, {
       ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.defaultBranch !== undefined ? { defaultBranch: body.defaultBranch } : {}),
-      ...(body.branchPrefix !== undefined ? { branchPrefix: body.branchPrefix } : {}),
+      ...(body.defaultBranch !== undefined
+        ? { defaultBranch: body.defaultBranch }
+        : {}),
+      ...(body.branchPrefix !== undefined
+        ? { branchPrefix: body.branchPrefix }
+        : {}),
       ...(body.defaultAutoMergeMethod !== undefined
         ? { defaultAutoMergeMethod: body.defaultAutoMergeMethod }
         : {}),

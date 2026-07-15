@@ -83,9 +83,18 @@ export interface CheckRun {
 }
 
 /** Per-category CI check counts for a PR head. Sum of the four categories === total. */
-export type CiCounts = { failing: number; pending: number; passed: number; skipped: number; total: number };
+export type CiCounts = {
+  failing: number;
+  pending: number;
+  passed: number;
+  skipped: number;
+  total: number;
+};
 /** The rolled-up CI summary: overall status + counts (both null when no checks reported). */
-export type CiSummary = { status: 'failure' | 'pending' | 'success' | 'skipped' | null; counts: CiCounts | null };
+export type CiSummary = {
+  status: 'failure' | 'pending' | 'success' | 'skipped' | null;
+  counts: CiCounts | null;
+};
 
 /** A submitted PR review (approve / request-changes / comment). */
 export interface PullReview {
@@ -544,7 +553,13 @@ export class GithubPrService {
       number,
       method,
       sha,
-    }: { owner: string; repo: string; number: number; method: AutoMergeMethod; sha?: string },
+    }: {
+      owner: string;
+      repo: string;
+      number: number;
+      method: AutoMergeMethod;
+      sha?: string;
+    },
   ): Promise<MergeResult> {
     const res = await this.fetchImpl(
       `${API}/repos/${owner}/${repo}/pulls/${number}/merge`,
@@ -568,7 +583,9 @@ export class GithubPrService {
     if (res.status === 409) reason = 'sha_mismatch';
     else if (res.status === 422) reason = 'method_disallowed';
     else if (res.status === 405) {
-      reason = /already merged/i.test(message) ? 'already_merged' : 'not_mergeable';
+      reason = /already merged/i.test(message)
+        ? 'already_merged'
+        : 'not_mergeable';
     }
     return { ok: false, reason, status: res.status, message };
   }
@@ -584,7 +601,9 @@ export class GithubPrService {
       { method: 'DELETE', headers: this.headers(token) },
     );
     if (res.ok || res.status === 404 || res.status === 422) return;
-    const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+    const errBody = (await res.json().catch(() => ({}))) as {
+      message?: string;
+    };
     throw new Error(
       `GitHub refused to delete branch ${branch} (${res.status}): ${errBody.message ?? 'no detail'}`,
     );

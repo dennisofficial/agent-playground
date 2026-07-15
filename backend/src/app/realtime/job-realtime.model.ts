@@ -4,7 +4,12 @@ import {
   type Row,
 } from '@workspace/pg-realtime';
 import type { JobHalt } from '@workspace/shared';
-import { deriveNeedsYou, JOB_ACTIVITIES, type JobActivity, type JobProvenance } from '../domain/job';
+import {
+  deriveNeedsYou,
+  JOB_ACTIVITIES,
+  type JobActivity,
+  type JobProvenance,
+} from '../domain/job';
 import type { CiCounts } from '../git';
 
 /**

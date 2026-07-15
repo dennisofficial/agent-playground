@@ -91,7 +91,8 @@ export class BuildShipService {
     // against the branch HEAD is actually on — not the host-named `sandbox.branch` (= feature_branch).
     // `current_branch` is kept fresh by the observation listener; re-read once as a safety net (detached
     // HEAD → null → fall back to the canonical name). Persist so discovery + GitHub-event correlation see it.
-    const observed = job.currentBranch ?? (await this.git.currentBranch(sandbox.worktreePath));
+    const observed =
+      job.currentBranch ?? (await this.git.currentBranch(sandbox.worktreePath));
     const shipBranch = observed ?? sandbox.branch;
     if (observed && observed !== job.currentBranch) {
       await this.store.setCurrentBranch(job.id, observed);
@@ -120,7 +121,12 @@ export class BuildShipService {
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
     return confirmed
-      ? { opened: true, prConfirmed: true, url: confirmed.url, number: confirmed.number }
+      ? {
+          opened: true,
+          prConfirmed: true,
+          url: confirmed.url,
+          number: confirmed.number,
+        }
       : { opened: true, prConfirmed: false };
   }
 

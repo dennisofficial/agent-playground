@@ -54,7 +54,10 @@ import type {
   ThreadCondition,
   Job,
 } from '../domain';
-import { CODEX_REVIEW_OUTAGE_RETRY_MS, JUDGE_UNAVAILABLE_REDRIVE_CAP } from '../domain';
+import {
+  CODEX_REVIEW_OUTAGE_RETRY_MS,
+  JUDGE_UNAVAILABLE_REDRIVE_CAP,
+} from '../domain';
 import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import type {
   LiveVerificationJudge,
@@ -468,13 +471,17 @@ function makeStore(state: StoreState): {
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
     getPendingLegSeed: vi.fn(async (anchorStepId: string) => {
-      const s = state.threads.find((x) => x.id === threadIdForAnchor(anchorStepId));
+      const s = state.threads.find(
+        (x) => x.id === threadIdForAnchor(anchorStepId),
+      );
       const seed = s?.config?.pendingLegSeed;
       return typeof seed === 'string' ? seed : null;
     }),
     completeLegRotation: vi.fn(async () => null),
     builderLegCountForStage: vi.fn(async (anchorThreadId: string) => {
-      const current = state.threads.find((x) => x.id === threadIdForAnchor(anchorThreadId));
+      const current = state.threads.find(
+        (x) => x.id === threadIdForAnchor(anchorThreadId),
+      );
       if (!current) return 0;
       const rootId = current.parentThreadId ?? current.id;
       return state.threads.filter(
@@ -1101,7 +1108,10 @@ function assemble(
       'getSelectedRefreshMeta' | 'markNeedsReauth'
     >;
     /** The manual "Merge PR" click's resolution path — defaults to a no-op resolve unless a test overrides it. */
-    autoMerge?: Pick<import('./auto-merge.service').AutoMergeService, 'mergeNow'>;
+    autoMerge?: Pick<
+      import('./auto-merge.service').AutoMergeService,
+      'mergeNow'
+    >;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1336,7 +1346,9 @@ function assemble(
     new BuildShipService(git, pr, store, brainGateway),
     // AutoMergeService: only `mergeNow` (the manual "Merge PR" click path) is called by the driver; default
     // no-op resolve unless a test overrides it.
-    (opts.autoMerge ?? { mergeNow: async () => false }) as unknown as import('./auto-merge.service').AutoMergeService,
+    (opts.autoMerge ?? {
+      mergeNow: async () => false,
+    }) as unknown as import('./auto-merge.service').AutoMergeService,
     // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
     {
       appendMarker: async () => undefined,
@@ -1454,7 +1466,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     // Both builder threads are done with a handoff; singleton split-pipeline rows may be appended for shipping.
     expect(
-      state.threads.filter((s) => s.kind === 'builder').every((s) => s.status === 'done'),
+      state.threads
+        .filter((s) => s.kind === 'builder')
+        .every((s) => s.status === 'done'),
     ).toBe(true);
     expect(state.threads[1].handoffIn).toContain('Backend');
 
@@ -5577,7 +5591,12 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     const state = masterReviewState();
     const turn = {
       runTurn: vi.fn(async () => {
-        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
+        throw new EngineAuthError(
+          'Codex is unreachable',
+          'sess',
+          'codex',
+          true,
+        );
       }),
       canReattach: () => false,
     } as unknown as TurnRunnerService;
@@ -5609,7 +5628,9 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.halt?.kind === 'codex_review_unavailable');
+      await flushUntil(
+        () => state.job.halt?.kind === 'codex_review_unavailable',
+      );
     });
 
     expect(state.job.halt?.kind).toBe('codex_review_unavailable');
@@ -5627,7 +5648,12 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     };
     const turn = {
       runTurn: vi.fn(async () => {
-        throw new EngineAuthError('Codex is unreachable', 'sess', 'codex', true);
+        throw new EngineAuthError(
+          'Codex is unreachable',
+          'sess',
+          'codex',
+          true,
+        );
       }),
       canReattach: () => false,
     } as unknown as TurnRunnerService;
@@ -5889,10 +5915,15 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     (
       h.store.completeLegRotation as ReturnType<typeof vi.fn>
     ).mockImplementation(
-      async (inp: { anchorStepId: string; handoff: string; seed: string; rotationCapped?: boolean }) => {
+      async (inp: {
+        anchorStepId: string;
+        handoff: string;
+        seed: string;
+        rotationCapped?: boolean;
+      }) => {
         const anchorThreadId =
-          h.state.steps.find((step) => step.id === inp.anchorStepId)?.threadId ??
-          inp.anchorStepId;
+          h.state.steps.find((step) => step.id === inp.anchorStepId)
+            ?.threadId ?? inp.anchorStepId;
         const current = h.state.threads.find((t) => t.id === anchorThreadId);
         if (!current) return null;
         const rootId = current.parentThreadId ?? current.id;
@@ -5905,14 +5936,20 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
               (thread.id === rootId || thread.parentThreadId === rootId),
           )
           .sort((a, b) => a.ordinal - b.ordinal);
-        const fromIndex = siblings.findIndex((thread) => thread.id === current.id);
+        const fromIndex = siblings.findIndex(
+          (thread) => thread.id === current.id,
+        );
         const fromLeg = fromIndex >= 0 ? fromIndex + 1 : siblings.length;
         const toLeg = fromLeg + 1;
         const maxOrdinal = siblings.reduce(
           (max, thread) => Math.max(max, thread.ordinal),
           0,
         );
-        current.config = { ...(current.config ?? {}), stageId, stageKind: 'build' };
+        current.config = {
+          ...(current.config ?? {}),
+          stageId,
+          stageKind: 'build',
+        };
         h.state.threads.push({
           ...current,
           id: `${rootId}-leg-${toLeg}`,
@@ -6139,8 +6176,12 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     let cappedLegSteerable: boolean | undefined;
     const runTurn = vi.fn(
       async (input: {
-        mode: string; stepId?: string | null; jobId: string; task: string;
-        steerable?: boolean; toolBridge?: ToolBridgeOptions;
+        mode: string;
+        stepId?: string | null;
+        jobId: string;
+        task: string;
+        steerable?: boolean;
+        toolBridge?: ToolBridgeOptions;
         onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
       }) => {
         buildLeg += 1;
@@ -6151,18 +6192,28 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         // MAX_LEGS_PER_BATCH (8) Legs so the loop rotates until it hits the cap; the 9th kick IS the capped
         // final Leg (rotation disarmed) — finish it via `complete_thread` and capture its `steerable` flag.
         if (buildLeg <= 8) {
-          input.onEvent?.({ kind: 'usage', contextTokens: 210_000, contextLimit: 1_000_000 });
+          input.onEvent?.({
+            kind: 'usage',
+            contextTokens: 210_000,
+            contextLimit: 1_000_000,
+          });
           await input.toolBridge!.tools!['record_leg_handoff']!({
             handoff: `Leg ${buildLeg}: WIP.\nNext: keep going.`,
           });
           return mkResult(input, `leg ${buildLeg} handed off`);
         }
         cappedLegSteerable = input.steerable;
-        await input.toolBridge?.tools?.['complete_thread']?.({ summary: 'finished on the capped Leg' });
+        await input.toolBridge?.tools?.['complete_thread']?.({
+          summary: 'finished on the capped Leg',
+        });
         return mkResult(input, `leg ${buildLeg} done (capped)`);
       },
     );
-    const turn = { runTurn, canReattach: () => false, canSteer: () => false } as unknown as TurnRunnerService;
+    const turn = {
+      runTurn,
+      canReattach: () => false,
+      canSteer: () => false,
+    } as unknown as TurnRunnerService;
     const h = assemble(state, { turn });
     wireRotationStore(h);
     await h.driver.dispatch(state.job);

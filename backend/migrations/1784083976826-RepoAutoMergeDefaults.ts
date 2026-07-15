@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Move the merge METHOD + DELETE-BRANCH settings from the job to the repo: add the two per-repo
@@ -9,20 +9,35 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * stay on `jobs` (the per-job arm toggle + approver).
  */
 export class RepoAutoMergeDefaults1784030000000 implements MigrationInterface {
-    name = 'RepoAutoMergeDefaults1784030000000'
+  name = 'RepoAutoMergeDefaults1784030000000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "repos" ADD "default_auto_merge_method" text NOT NULL DEFAULT 'squash'`);
-        await queryRunner.query(`ALTER TABLE "repos" ADD "default_auto_merge_delete_branch" boolean NOT NULL DEFAULT true`);
-        await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge_method"`);
-        await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge_delete_branch"`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "repos" ADD "default_auto_merge_method" text NOT NULL DEFAULT 'squash'`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "repos" ADD "default_auto_merge_delete_branch" boolean NOT NULL DEFAULT true`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "jobs" DROP COLUMN "auto_merge_method"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "jobs" DROP COLUMN "auto_merge_delete_branch"`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "jobs" ADD "auto_merge_delete_branch" boolean NOT NULL DEFAULT true`);
-        await queryRunner.query(`ALTER TABLE "jobs" ADD "auto_merge_method" text NOT NULL DEFAULT 'squash'`);
-        await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "default_auto_merge_delete_branch"`);
-        await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "default_auto_merge_method"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "jobs" ADD "auto_merge_delete_branch" boolean NOT NULL DEFAULT true`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "jobs" ADD "auto_merge_method" text NOT NULL DEFAULT 'squash'`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "repos" DROP COLUMN "default_auto_merge_delete_branch"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "repos" DROP COLUMN "default_auto_merge_method"`,
+    );
+  }
 }

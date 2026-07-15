@@ -38,7 +38,10 @@ export class GithubAppStateStore {
   /** Mint a fresh nonce bound to `orgId` + the initiating `userId`, expiring after {@link STATE_TTL_SECONDS}. */
   async stash(orgId: string, userId: string): Promise<string> {
     const nonce = randomBytes(32).toString('hex');
-    const value = JSON.stringify({ orgId, userId } satisfies GithubAppConnectState);
+    const value = JSON.stringify({
+      orgId,
+      userId,
+    } satisfies GithubAppConnectState);
     await this.redis.set(stateKey(nonce), value, 'EX', STATE_TTL_SECONDS);
     return nonce;
   }
@@ -54,7 +57,10 @@ export class GithubAppStateStore {
     try {
       const parsed = JSON.parse(raw) as GithubAppConnectState;
       if (parsed && typeof parsed.orgId === 'string') {
-        return { orgId: parsed.orgId, userId: typeof parsed.userId === 'string' ? parsed.userId : null };
+        return {
+          orgId: parsed.orgId,
+          userId: typeof parsed.userId === 'string' ? parsed.userId : null,
+        };
       }
     } catch {
       // Not JSON — a legacy nonce holding a bare orgId.

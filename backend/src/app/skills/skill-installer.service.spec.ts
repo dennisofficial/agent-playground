@@ -1,5 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -32,20 +39,32 @@ class FakeRepo {
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     if (this.delayMs > 0) await new Promise((r) => setTimeout(r, this.delayMs));
-    const i = this.rows.findIndex((r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name);
+    const i = this.rows.findIndex(
+      (r) =>
+        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+    );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({ where }: { where: Partial<WorkspaceSkillEntity> }): Promise<WorkspaceSkillEntity | null> {
+  async findOne({
+    where,
+  }: {
+    where: Partial<WorkspaceSkillEntity>;
+  }): Promise<WorkspaceSkillEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find(): Promise<WorkspaceSkillEntity[]> {
     return this.rows;
   }
   async delete(): Promise<void> {}
-  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
-    return Object.entries(where).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v);
+  private match(
+    r: WorkspaceSkillEntity,
+    where: Partial<WorkspaceSkillEntity>,
+  ): boolean {
+    return Object.entries(where).every(
+      ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
+    );
   }
 }
 
@@ -89,13 +108,28 @@ function makeMarketplaceRepo(tmp: string): string {
     join(work, '.claude-plugin', 'marketplace.json'),
     JSON.stringify({
       name: 'test-marketplace',
-      plugins: [{ name: 'test-plugin', source: './', skills: ['./skills/alpha', './skills/beta'] }],
+      plugins: [
+        {
+          name: 'test-plugin',
+          source: './',
+          skills: ['./skills/alpha', './skills/beta'],
+        },
+      ],
     }),
   );
-  writeFileSync(join(work, 'skills', 'alpha', 'SKILL.md'), '---\nname: alpha\ndescription: Alpha skill\n---\nBody.\n');
-  writeFileSync(join(work, 'skills', 'beta', 'SKILL.md'), '---\nname: beta\ndescription: Beta skill\n---\nBody.\n');
+  writeFileSync(
+    join(work, 'skills', 'alpha', 'SKILL.md'),
+    '---\nname: alpha\ndescription: Alpha skill\n---\nBody.\n',
+  );
+  writeFileSync(
+    join(work, 'skills', 'beta', 'SKILL.md'),
+    '---\nname: beta\ndescription: Beta skill\n---\nBody.\n',
+  );
   // A binary asset (non-UTF8 bytes) — `cpSync` must carry it through byte-identical.
-  writeFileSync(join(work, 'skills', 'beta', 'asset.bin'), Buffer.from([0, 1, 2, 255, 254, 253, 0, 10]));
+  writeFileSync(
+    join(work, 'skills', 'beta', 'asset.bin'),
+    Buffer.from([0, 1, 2, 255, 254, 253, 0, 10]),
+  );
   return commitAndBare(tmp, work, 'marketplace.git');
 }
 
@@ -110,15 +144,26 @@ function makeMultiPluginMarketplaceRepo(tmp: string): string {
   const skillNames = ['one', 'two', 'three', 'four', 'five', 'six'];
   for (const name of skillNames) {
     mkdirSync(join(work, 'skills', name), { recursive: true });
-    writeFileSync(join(work, 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: Skill ${name}\n---\nBody.\n`);
+    writeFileSync(
+      join(work, 'skills', name, 'SKILL.md'),
+      `---\nname: ${name}\ndescription: Skill ${name}\n---\nBody.\n`,
+    );
   }
   writeFileSync(
     join(work, '.claude-plugin', 'marketplace.json'),
     JSON.stringify({
       name: 'multi-marketplace',
       plugins: [
-        { name: 'plugin-a', source: './', skills: skillNames.slice(0, 3).map((n) => `./skills/${n}`) },
-        { name: 'plugin-b', source: './', skills: skillNames.slice(3).map((n) => `./skills/${n}`) },
+        {
+          name: 'plugin-a',
+          source: './',
+          skills: skillNames.slice(0, 3).map((n) => `./skills/${n}`),
+        },
+        {
+          name: 'plugin-b',
+          source: './',
+          skills: skillNames.slice(3).map((n) => `./skills/${n}`),
+        },
       ],
     }),
   );
@@ -136,10 +181,19 @@ function makeDirScanMarketplaceRepo(tmp: string): string {
   mkdirSync(join(work, 'skills', 'delta'), { recursive: true });
   writeFileSync(
     join(work, '.claude-plugin', 'marketplace.json'),
-    JSON.stringify({ name: 'dirscan-marketplace', plugins: [{ name: 'dirscan-plugin', source: './' }] }),
+    JSON.stringify({
+      name: 'dirscan-marketplace',
+      plugins: [{ name: 'dirscan-plugin', source: './' }],
+    }),
   );
-  writeFileSync(join(work, 'skills', 'gamma', 'SKILL.md'), '---\nname: gamma\ndescription: Gamma skill\n---\nBody.\n');
-  writeFileSync(join(work, 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta skill\n---\nBody.\n');
+  writeFileSync(
+    join(work, 'skills', 'gamma', 'SKILL.md'),
+    '---\nname: gamma\ndescription: Gamma skill\n---\nBody.\n',
+  );
+  writeFileSync(
+    join(work, 'skills', 'delta', 'SKILL.md'),
+    '---\nname: delta\ndescription: Delta skill\n---\nBody.\n',
+  );
   return commitAndBare(tmp, work, 'dirscan.git');
 }
 
@@ -152,10 +206,17 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), 'atlas-skill-installer-'));
     storeRoot = join(tmp, 'store');
-    const env = { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never;
+    const env = {
+      get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined),
+    } as never;
     const git = new LocalGitService({ get: () => undefined } as never); // reposRoot unused — scratch clones use os.tmpdir()
-    const creds = { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver; // local paths need no token
-    store = new WorkspaceSkillStore(new FakeRepo() as unknown as Repository<WorkspaceSkillEntity>);
+    const creds = {
+      githubToken: async () => undefined,
+      hostGithubToken: async () => undefined,
+    } as unknown as CredentialResolver; // local paths need no token
+    store = new WorkspaceSkillStore(
+      new FakeRepo() as unknown as Repository<WorkspaceSkillEntity>,
+    );
     installer = new SkillInstallerService(env, git, creds, store);
   });
 
@@ -165,7 +226,11 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
 
   it('installs a single skill at the repo root — vendors the dir + upserts a git-provenance row', async () => {
     const sourceUrl = makeSingleSkillRepo(tmp);
-    const [skill] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    const [skill] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+    });
 
     expect(skill.name).toBe('my-skill');
     expect(skill.description).toBe('Use when doing the thing');
@@ -177,7 +242,9 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     expect(skill.update_policy).toBe('track-ref'); // default when unspecified
 
     const dest = skillDirHost(storeRoot, 'org1', '*', 'my-skill');
-    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain('Use when doing the thing');
+    expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toContain(
+      'Use when doing the thing',
+    );
     expect(existsSync(join(dest, 'references', 'x.md'))).toBe(true);
 
     // The row is queryable back through the store, same as any other skill.
@@ -186,7 +253,12 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
 
   it('expands a marketplace repo into one vendored skill + row per manifest entry, binaries intact', async () => {
     const sourceUrl = makeMarketplaceRepo(tmp);
-    const skills = await installer.install({ orgId: 'org1', scope: 'repo-1', sourceUrl, updatePolicy: 'pinned' });
+    const skills = await installer.install({
+      orgId: 'org1',
+      scope: 'repo-1',
+      sourceUrl,
+      updatePolicy: 'pinned',
+    });
 
     expect(skills.map((s) => s.name).sort()).toEqual(['alpha', 'beta']);
     for (const s of skills) {
@@ -204,64 +276,129 @@ describe('SkillInstallerService (real git, local fixture repos)', () => {
     expect([...assetBytes]).toEqual([0, 1, 2, 255, 254, 253, 0, 10]); // byte-identical, not mangled as text
   });
 
-  it('expands EVERY skill across multiple plugins even with slow (real-DB-like) per-skill writes — the ' +
-     'scratch-dir-cleanup race regression', async () => {
-    const sourceUrl = makeMultiPluginMarketplaceRepo(tmp);
-    const slowStore = new WorkspaceSkillStore(new FakeRepo(20) as unknown as Repository<WorkspaceSkillEntity>);
-    const slowInstaller = new SkillInstallerService(
-      { get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined) } as never,
-      new LocalGitService({ get: () => undefined } as never),
-      { githubToken: async () => undefined, hostGithubToken: async () => undefined } as unknown as CredentialResolver,
-      slowStore,
-    );
+  it(
+    'expands EVERY skill across multiple plugins even with slow (real-DB-like) per-skill writes — the ' +
+      'scratch-dir-cleanup race regression',
+    async () => {
+      const sourceUrl = makeMultiPluginMarketplaceRepo(tmp);
+      const slowStore = new WorkspaceSkillStore(
+        new FakeRepo(20) as unknown as Repository<WorkspaceSkillEntity>,
+      );
+      const slowInstaller = new SkillInstallerService(
+        {
+          get: (key: string) => (key === 'SKILLS_ROOT' ? storeRoot : undefined),
+        } as never,
+        new LocalGitService({ get: () => undefined } as never),
+        {
+          githubToken: async () => undefined,
+          hostGithubToken: async () => undefined,
+        } as unknown as CredentialResolver,
+        slowStore,
+      );
 
-    const skills = await slowInstaller.install({ orgId: 'org1', scope: '*', sourceUrl });
-    expect(skills.map((s) => s.name).sort()).toEqual(['five', 'four', 'one', 'six', 'three', 'two']);
-  });
+      const skills = await slowInstaller.install({
+        orgId: 'org1',
+        scope: '*',
+        sourceUrl,
+      });
+      expect(skills.map((s) => s.name).sort()).toEqual([
+        'five',
+        'four',
+        'one',
+        'six',
+        'three',
+        'two',
+      ]);
+    },
+  );
 
   it('expands a plugin that omits `skills` — scans its `skills/` subdir for SKILL.md dirs', async () => {
     const sourceUrl = makeDirScanMarketplaceRepo(tmp);
-    const skills = await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    const skills = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+    });
     expect(skills.map((s) => s.name).sort()).toEqual(['delta', 'gamma']);
   });
 
   it('rejects a subpath with neither a SKILL.md nor a marketplace manifest', async () => {
     const sourceUrl = makeSingleSkillRepo(tmp);
-    await expect(installer.install({ orgId: 'org1', scope: '*', sourceUrl, subpath: 'references' })).rejects.toThrow(
-      /no SKILL.md/,
-    );
+    await expect(
+      installer.install({
+        orgId: 'org1',
+        scope: '*',
+        sourceUrl,
+        subpath: 'references',
+      }),
+    ).rejects.toThrow(/no SKILL.md/);
   });
 
-  it('preview() resolves the real frontmatter name/description WITHOUT writing, and flags an overwrite ' +
-     'conflict only once the name already exists', async () => {
-    const sourceUrl = makeSingleSkillRepo(tmp);
+  it(
+    'preview() resolves the real frontmatter name/description WITHOUT writing, and flags an overwrite ' +
+      'conflict only once the name already exists',
+    async () => {
+      const sourceUrl = makeSingleSkillRepo(tmp);
 
-    const before = await installer.preview({ orgId: 'org1', scope: '*', sourceUrl });
-    expect(before).toEqual([{ name: 'my-skill', description: 'Use when doing the thing', overwrites: false }]);
-    // Read-only: nothing landed in the store or the registry.
-    expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(false);
-    expect(await store.get('org1', '*', 'my-skill')).toBeNull();
+      const before = await installer.preview({
+        orgId: 'org1',
+        scope: '*',
+        sourceUrl,
+      });
+      expect(before).toEqual([
+        {
+          name: 'my-skill',
+          description: 'Use when doing the thing',
+          overwrites: false,
+        },
+      ]);
+      // Read-only: nothing landed in the store or the registry.
+      expect(existsSync(skillDirHost(storeRoot, 'org1', '*', 'my-skill'))).toBe(
+        false,
+      );
+      expect(await store.get('org1', '*', 'my-skill')).toBeNull();
 
-    await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
-    const after = await installer.preview({ orgId: 'org1', scope: '*', sourceUrl });
-    expect(after[0]).toMatchObject({ name: 'my-skill', overwrites: true });
-  });
+      await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+      const after = await installer.preview({
+        orgId: 'org1',
+        scope: '*',
+        sourceUrl,
+      });
+      expect(after[0]).toMatchObject({ name: 'my-skill', overwrites: true });
+    },
+  );
 
   it('preview() rejects a marketplace-root subpath — the brain install path is single-skill only', async () => {
     const sourceUrl = makeMarketplaceRepo(tmp);
-    await expect(installer.preview({ orgId: 'org1', scope: '*', sourceUrl })).rejects.toThrow(/marketplace root/);
+    await expect(
+      installer.preview({ orgId: 'org1', scope: '*', sourceUrl }),
+    ).rejects.toThrow(/marketplace root/);
   });
 
   it('re-installing (the update path) re-vendors content and bumps installed_sha on a new commit', async () => {
     const work = join(tmp, 'single-work');
     initRepo(work);
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v1\n---\nBody v1.\n',
+    );
     const sourceUrl = commitAndBare(tmp, work, 'single.git');
-    const [first] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    const [first] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+    });
 
-    writeFileSync(join(work, 'SKILL.md'), '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n');
+    writeFileSync(
+      join(work, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: v2\n---\nBody v2.\n',
+    );
     commitAndBare(tmp, work, 'single.git');
-    const [second] = await installer.install({ orgId: 'org1', scope: '*', sourceUrl });
+    const [second] = await installer.install({
+      orgId: 'org1',
+      scope: '*',
+      sourceUrl,
+    });
 
     expect(second.description).toBe('v2');
     expect(second.installed_sha).not.toBe(first.installed_sha);

@@ -1,11 +1,21 @@
 import { EnvService } from '@core/config/env/env.service';
 import { ChatAnthropic } from '@langchain/anthropic';
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
-import { GithubPrService, parseGithubRepoUrl, WORK_EVENTS, STATE_EVENTS } from '../git';
+import {
+  GithubPrService,
+  parseGithubRepoUrl,
+  WORK_EVENTS,
+  STATE_EVENTS,
+} from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -23,7 +33,12 @@ import { TenantCredentialStore } from './tenant-credential.store';
 export type OrgLifecycle = 'onboarding' | 'active' | 'suspended';
 
 /** The ordered onboarding checklist steps (first-unmet is the next thing to do). */
-export type OnboardingStep = 'repo' | 'llm_key' | 'openai_key' | 'engine_auth' | 'github_pat';
+export type OnboardingStep =
+  | 'repo'
+  | 'llm_key'
+  | 'openai_key'
+  | 'engine_auth'
+  | 'github_pat';
 
 /** The derived onboarding state for an org — computed from rows, never a separate source of truth. */
 export interface OnboardingStatus {
@@ -101,9 +116,15 @@ export function publicBackendBase(env: EnvService): string | null {
   }
   if (u.protocol !== 'https:') return null; // GitHub needs a public https endpoint
   const host = u.hostname.toLowerCase();
-  const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local');
+  const isLoopback =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host.endsWith('.local');
   const isPrivate =
-    /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
   if (isLoopback || isPrivate) return null;
   return u.origin;
 }
@@ -183,14 +204,18 @@ export class OnboardingService {
       },
       ['org_id', 'slug'],
     );
-    const repo = await this.repos.findOneOrFail({ where: { org_id: orgId, slug } });
+    const repo = await this.repos.findOneOrFail({
+      where: { org_id: orgId, slug },
+    });
 
     const validation = await this.validateRepo(orgId, slug);
     await this.repos.update(
       { id: repo.id },
       { access_ok: validation.ok, access_checked_at: new Date() },
     );
-    this.logger.log(`connected repo ${slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
+    this.logger.log(
+      `connected repo ${slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`,
+    );
 
     // Once a repo is reachable AND the org can actually run Atlas, kick a one-off repo-onboarding thread
     // (idempotent — won't re-spawn). Fire-and-forget so connect returns immediately. Covers re-connecting a
@@ -228,7 +253,9 @@ export class OnboardingService {
    * `disconnectRepo` uses — onboarding → brain would otherwise close an ES module cycle).
    */
   async maybeStartRepoOnboarding(orgId: string, repoId: string): Promise<void> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo || !repo.access_ok || repo.onboarding_job_id) return; // gone / not validated / already done
     const status = await this.status(orgId);
     if (
@@ -242,8 +269,10 @@ export class OnboardingService {
       return; // org can't run Atlas yet — tryActivate will re-trigger once the credentials land
     }
 
-    const { BrainStoreService } = await import('../brain/brain-store.service.js');
-    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const { BrainStoreService } =
+      await import('../brain/brain-store.service.js');
+    const { AgentSessionManager } =
+      await import('../brain/agent-session-manager.service.js');
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
@@ -262,11 +291,15 @@ export class OnboardingService {
       { onboarding_job_id: jobId },
     );
     if (!claim.affected) {
-      await this.jobs.delete({ id: jobId, org_id: orgId }).catch(() => undefined);
+      await this.jobs
+        .delete({ id: jobId, org_id: orgId })
+        .catch(() => undefined);
       return;
     }
 
-    this.logger.log(`spawned repo-onboarding thread ${jobId} for ${orgId}/${repo.slug}`);
+    this.logger.log(
+      `spawned repo-onboarding thread ${jobId} for ${orgId}/${repo.slug}`,
+    );
     await sessions.startOnboardingThread(jobId, orgId, repoId);
   }
 
@@ -279,8 +312,13 @@ export class OnboardingService {
    * runnable (keys + engine auth + GitHub PAT) and the repo's access validated. Returns the new thread id
    * so the UI can deep-link straight into it. Org-scoped (404 on a cross-tenant id).
    */
-  async reonboardRepo(orgId: string, repoId: string): Promise<{ jobId: string }> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+  async reonboardRepo(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ jobId: string }> {
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
     if (!repo.access_ok) {
       throw new BadRequestException(
@@ -301,8 +339,10 @@ export class OnboardingService {
       );
     }
 
-    const { BrainStoreService } = await import('../brain/brain-store.service.js');
-    const { AgentSessionManager } = await import('../brain/agent-session-manager.service.js');
+    const { BrainStoreService } =
+      await import('../brain/brain-store.service.js');
+    const { AgentSessionManager } =
+      await import('../brain/agent-session-manager.service.js');
     const store = this.moduleRef.get(BrainStoreService, { strict: false });
     const sessions = this.moduleRef.get(AgentSessionManager, { strict: false });
 
@@ -315,13 +355,22 @@ export class OnboardingService {
     });
     // Explicit operator action — overwrite the marker (no first-time guard); the prior onboarding thread,
     // if any, stays as history.
-    await this.repos.update({ id: repoId, org_id: orgId }, { onboarding_job_id: jobId });
-    this.logger.log(`re-onboarding thread ${jobId} for ${orgId}/${repo.slug} (operator-initiated)`);
+    await this.repos.update(
+      { id: repoId, org_id: orgId },
+      { onboarding_job_id: jobId },
+    );
+    this.logger.log(
+      `re-onboarding thread ${jobId} for ${orgId}/${repo.slug} (operator-initiated)`,
+    );
     // Fire-and-forget: the first turn provisions the sandbox and runs a full brain turn (minutes) — the
     // HTTP caller only needs the job id to deep-link into the thread and watch it live.
-    void sessions.startOnboardingThread(jobId, orgId, repoId).catch((err) =>
-      this.logger.warn(`onboarding first turn failed for job ${jobId}: ${err}`),
-    );
+    void sessions
+      .startOnboardingThread(jobId, orgId, repoId)
+      .catch((err) =>
+        this.logger.warn(
+          `onboarding first turn failed for job ${jobId}: ${err}`,
+        ),
+      );
     return { jobId };
   }
 
@@ -331,7 +380,9 @@ export class OnboardingService {
    * to activate the org in case access just came good. Scoped to the org (404 on a cross-tenant id).
    */
   async revalidateRepo(orgId: string, repoId: string): Promise<ConnectedRepo> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
     const validation = await this.validateRepo(orgId, repo.slug);
     await this.repos.update(
@@ -344,7 +395,9 @@ export class OnboardingService {
       );
     }
     await this.tryActivate(orgId);
-    this.logger.log(`revalidated repo ${repo.slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`);
+    this.logger.log(
+      `revalidated repo ${repo.slug} (${repo.id}) → org ${orgId} (access_ok=${validation.ok})`,
+    );
     return {
       id: repo.id,
       slug: repo.slug,
@@ -374,10 +427,13 @@ export class OnboardingService {
       defaultAutoMergeDeleteBranch?: boolean;
     },
   ): Promise<ConnectedRepo> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
     const next: Partial<RepoEntity> = {};
-    if (patch.name !== undefined && patch.name.trim()) next.name = patch.name.trim();
+    if (patch.name !== undefined && patch.name.trim())
+      next.name = patch.name.trim();
     if (patch.defaultBranch !== undefined && patch.defaultBranch.trim()) {
       next.default_branch = patch.defaultBranch.trim();
     }
@@ -389,9 +445,11 @@ export class OnboardingService {
       next.default_auto_merge_method = patch.defaultAutoMergeMethod;
     }
     if (patch.defaultAutoMergeDeleteBranch !== undefined) {
-      next.default_auto_merge_delete_branch = patch.defaultAutoMergeDeleteBranch;
+      next.default_auto_merge_delete_branch =
+        patch.defaultAutoMergeDeleteBranch;
     }
-    if (Object.keys(next).length) await this.repos.update({ id: repo.id }, next);
+    if (Object.keys(next).length)
+      await this.repos.update({ id: repo.id }, next);
     const fresh = await this.repos.findOneOrFail({ where: { id: repo.id } });
     return {
       id: fresh.id,
@@ -415,15 +473,22 @@ export class OnboardingService {
     orgId: string,
     repoId: string,
   ): Promise<{ branches: string[]; defaultBranch: string }> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
     const parsed = parseGithubRepoUrl(repo.git_url);
-    if (!parsed) throw new BadRequestException(`not an HTTPS GitHub URL: ${repo.git_url}`);
+    if (!parsed)
+      throw new BadRequestException(`not an HTTPS GitHub URL: ${repo.git_url}`);
     const token = await this.creds.hostGithubToken(orgId);
-    if (!token) throw new BadRequestException('no GitHub token set for this org');
+    if (!token)
+      throw new BadRequestException('no GitHub token set for this org');
     const names = await this.pr.listBranches(token, parsed.owner, parsed.repo);
     const def = repo.default_branch || 'main';
-    return { branches: [def, ...names.filter((n) => n !== def)], defaultBranch: def };
+    return {
+      branches: [def, ...names.filter((n) => n !== def)],
+      defaultBranch: def,
+    };
   }
 
   /**
@@ -437,15 +502,23 @@ export class OnboardingService {
    * so the loop converges immediately. The repo row stays present through the drain so each
    * `deleteJobDeep` can still resolve repo metadata for worktree/container teardown.
    */
-  async disconnectRepo(orgId: string, repoId: string): Promise<{ ok: true; threadsDeleted: number }> {
-    const repo = await this.repos.findOne({ where: { id: repoId, org_id: orgId } });
+  async disconnectRepo(
+    orgId: string,
+    repoId: string,
+  ): Promise<{ ok: true; threadsDeleted: number }> {
+    const repo = await this.repos.findOne({
+      where: { id: repoId, org_id: orgId },
+    });
     if (!repo) throw new NotFoundException('repo not found');
 
     // Resolve the driver service lazily (see the constructor note on the module cycle). `strict: false`
     // searches the whole app; the `.js` extension is required for a relative dynamic `import()` under
     // `moduleResolution: nodenext`.
-    const { JobLifecycleService } = await import('../driver/job-lifecycle.service.js');
-    const lifecycle = this.moduleRef.get(JobLifecycleService, { strict: false });
+    const { JobLifecycleService } =
+      await import('../driver/job-lifecycle.service.js');
+    const lifecycle = this.moduleRef.get(JobLifecycleService, {
+      strict: false,
+    });
     let threadsDeleted = 0;
     for (;;) {
       const batch = await this.jobs.find({
@@ -481,7 +554,9 @@ export class OnboardingService {
     }));
 
     const presence = await this.store.presence(orgId);
-    const credRow = await this.orgCreds.findOne({ where: { org_id: orgId, scope: '*' } });
+    const credRow = await this.orgCreds.findOne({
+      where: { org_id: orgId, scope: '*' },
+    });
     const steps = {
       repoConnected,
       // The Anthropic key must be PRESENT and validated (1-token probe) to count.
@@ -517,16 +592,18 @@ export class OnboardingService {
     const repo = await this.repos.findOne({ where: { org_id: orgId, slug } });
     if (!repo?.git_url) return { ok: false, reason: 'no repo configured' };
     const parsed = parseGithubRepoUrl(repo.git_url);
-    if (!parsed) return { ok: false, reason: `not an HTTPS GitHub URL: ${repo.git_url}` };
+    if (!parsed)
+      return { ok: false, reason: `not an HTTPS GitHub URL: ${repo.git_url}` };
     const token = await this.creds.hostGithubToken(orgId);
     if (!token) return { ok: false, reason: 'no GitHub token set' };
-    const info = await this.pr.getRepo(token, parsed.owner, parsed.repo).catch(() => null);
+    const info = await this.pr
+      .getRepo(token, parsed.owner, parsed.repo)
+      .catch(() => null);
     if (!info) {
       const presence = await this.store.presence(orgId);
-      const reason =
-        presence.hasGithubApp
-          ? `Atlas's GitHub App can't access ${parsed.owner}/${parsed.repo} — add this repo under the App installation's repository access`
-          : `repo unreachable or token lacks access: ${parsed.owner}/${parsed.repo}`;
+      const reason = presence.hasGithubApp
+        ? `Atlas's GitHub App can't access ${parsed.owner}/${parsed.repo} — add this repo under the App installation's repository access`
+        : `repo unreachable or token lacks access: ${parsed.owner}/${parsed.repo}`;
       return { ok: false, reason };
     }
     return { ok: true };
@@ -547,7 +624,10 @@ export class OnboardingService {
         temperature: 0,
       });
       await probe.invoke([{ role: 'user', content: 'ping' }]);
-      await this.orgCreds.update({ org_id: orgId, scope: '*' }, { llm_validated_at: new Date() });
+      await this.orgCreds.update(
+        { org_id: orgId, scope: '*' },
+        { llm_validated_at: new Date() },
+      );
       return { ok: true };
     } catch (err) {
       return {
@@ -567,7 +647,9 @@ export class OnboardingService {
       // is the path that covers the FIRST repo, connected before the credentials were in place). Idempotent
       // + fire-and-forget; never blocks activation.
       void this.spawnOnboardingForPendingRepos(orgId).catch((err) =>
-        this.logger.warn(`post-activation onboarding spawn failed for org ${orgId}: ${err}`),
+        this.logger.warn(
+          `post-activation onboarding spawn failed for org ${orgId}: ${err}`,
+        ),
       );
       return { ...status, lifecycle: 'active' };
     }
@@ -597,25 +679,36 @@ export class OnboardingService {
    * Webhooks: Read and write), records a non-fatal `webhook_warning` on the repo row so the operator can
    * grant it.
    */
-  private async ensureRepoWebhook(orgId: string, repo: RepoEntity): Promise<void> {
+  private async ensureRepoWebhook(
+    orgId: string,
+    repo: RepoEntity,
+  ): Promise<void> {
     const base = publicBackendBase(this.env);
     if (!base) {
-      this.logger.debug(`webhook registration skipped for ${repo.slug} — BACKEND_HOST not publicly reachable`);
+      this.logger.debug(
+        `webhook registration skipped for ${repo.slug} — BACKEND_HOST not publicly reachable`,
+      );
       return;
     }
     const parsed = parseGithubRepoUrl(repo.git_url);
     if (!parsed) {
-      this.logger.warn(`webhook registration skipped for ${repo.slug} — not an HTTPS GitHub URL: ${repo.git_url}`);
+      this.logger.warn(
+        `webhook registration skipped for ${repo.slug} — not an HTTPS GitHub URL: ${repo.git_url}`,
+      );
       return;
     }
     const token = await this.creds.hostGithubToken(orgId);
     if (!token) {
-      this.logger.warn(`webhook registration skipped for ${repo.slug} — no GitHub token for org ${orgId}`);
+      this.logger.warn(
+        `webhook registration skipped for ${repo.slug} — no GitHub token for org ${orgId}`,
+      );
       return;
     }
     const secret = this.env.get('GITHUB_WEBHOOK_SECRET');
     if (!secret) {
-      this.logger.warn(`webhook registration skipped for ${repo.slug} — GITHUB_WEBHOOK_SECRET unset`);
+      this.logger.warn(
+        `webhook registration skipped for ${repo.slug} — GITHUB_WEBHOOK_SECRET unset`,
+      );
       return;
     }
 
@@ -627,9 +720,17 @@ export class OnboardingService {
     let allOk = true;
     for (const t of targets) {
       const outcome = await this.pr
-        .ensureWebhook(token, { owner: parsed.owner, repo: parsed.repo, url: t.url, secret, events: t.events })
+        .ensureWebhook(token, {
+          owner: parsed.owner,
+          repo: parsed.repo,
+          url: t.url,
+          secret,
+          events: t.events,
+        })
         .catch((err) => {
-          this.logger.warn(`ensureWebhook error for ${repo.slug} ${t.url}: ${err}`);
+          this.logger.warn(
+            `ensureWebhook error for ${repo.slug} ${t.url}: ${err}`,
+          );
           return 'error' as const;
         });
       this.logger.log(`webhook ${t.url} for ${repo.slug} → ${outcome}`);
@@ -650,7 +751,10 @@ export class OnboardingService {
         this.logger.warn(`webhook prune error for ${repo.slug}: ${err}`);
         return 0;
       });
-    if (pruned > 0) this.logger.log(`pruned ${pruned} stale Atlas webhook(s) for ${repo.slug}`);
+    if (pruned > 0)
+      this.logger.log(
+        `pruned ${pruned} stale Atlas webhook(s) for ${repo.slug}`,
+      );
 
     // Persist/clear the operator-facing warning. On a transient 'error' (neither no-scope nor all-ok) we
     // leave the column untouched so a real prior no-scope warning isn't wiped by a flaky call.
@@ -659,7 +763,7 @@ export class OnboardingService {
         { id: repo.id },
         {
           webhook_warning:
-            "The org GitHub token lacks webhook permission — Atlas could not register the real-time delivery webhook. " +
+            'The org GitHub token lacks webhook permission — Atlas could not register the real-time delivery webhook. ' +
             'Classic tokens need the "repo" (or "admin:repo_hook") scope; fine-grained tokens need "Webhooks: Read and write" on the repo. ' +
             'PR state still syncs via the 30-minute poll; grant the permission to enable real-time sync.',
         },

@@ -20,7 +20,11 @@ export { WorktreeProvisioner } from './worktree-provisioner.service';
 export { WorktreeHydrator } from './worktree-hydrator.service';
 export { type MountSpec, type MountMode } from '../sandbox/container-paths';
 export { resolveSafeTarget, WorktreePathError } from './worktree-path-guard';
-export { BuildShipService, type ShipInput, type ShipOutcome } from './build-ship.service';
+export {
+  BuildShipService,
+  type ShipInput,
+  type ShipOutcome,
+} from './build-ship.service';
 export { PipelineAwarenessStore } from './pipeline-awareness.store';
 export {
   pipelineStateSignature,
@@ -34,7 +38,10 @@ export {
   type DriverRepoResolver,
   type ResolvedRepo,
 } from './repo-resolver';
-export { renderPlan, type PlannedStep } from '../prompt-kit/messages/render-plan';
+export {
+  renderPlan,
+  type PlannedStep,
+} from '../prompt-kit/messages/render-plan';
 export { JOB_TEARDOWN, type JobTeardownPort } from './job-teardown.port';
 export {
   LIVE_VERIFICATION_JUDGE,

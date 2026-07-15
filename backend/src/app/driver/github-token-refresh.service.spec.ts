@@ -30,7 +30,9 @@ function makeRow(overrides: Partial<JobSandboxEntity> = {}): JobSandboxEntity {
 }
 
 function makeService(rows: JobSandboxEntity[]) {
-  const sandboxes = { find: vi.fn().mockResolvedValue(rows) } as unknown as Repository<JobSandboxEntity>;
+  const sandboxes = {
+    find: vi.fn().mockResolvedValue(rows),
+  } as unknown as Repository<JobSandboxEntity>;
   const creds = {
     githubAuthMode: vi.fn(),
     githubToken: vi.fn(),
@@ -47,11 +49,16 @@ describe('GithubTokenRefreshService.tick', () => {
     const row = makeRow({ org_id: 'org-app', job_id: 'job-app' });
     const { service, creds, sandbox } = makeService([row]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'ghs_fresh-token',
+    );
 
     await service.tick();
 
-    expect(sandbox.writeGithubTokenFile).toHaveBeenCalledWith('job-app', 'ghs_fresh-token');
+    expect(sandbox.writeGithubTokenFile).toHaveBeenCalledWith(
+      'job-app',
+      'ghs_fresh-token',
+    );
   });
 
   it('skips a pat-mode active sandbox — no file to refresh', async () => {
@@ -66,10 +73,16 @@ describe('GithubTokenRefreshService.tick', () => {
   });
 
   it('skips an inactive sandbox (no container_id) even if app-mode', async () => {
-    const row = makeRow({ org_id: 'org-app', job_id: 'job-inactive', container_id: null });
+    const row = makeRow({
+      org_id: 'org-app',
+      job_id: 'job-inactive',
+      container_id: null,
+    });
     const { service, creds, sandbox } = makeService([row]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'ghs_fresh-token',
+    );
 
     await service.tick();
 
@@ -82,7 +95,9 @@ describe('GithubTokenRefreshService.tick', () => {
     const ok = makeRow({ org_id: 'org-app', job_id: 'job-ok' });
     const { service, creds, sandbox } = makeService([failing, ok]);
     (creds.githubAuthMode as ReturnType<typeof vi.fn>).mockResolvedValue('app');
-    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue('ghs_fresh-token');
+    (creds.githubToken as ReturnType<typeof vi.fn>).mockResolvedValue(
+      'ghs_fresh-token',
+    );
     (sandbox.writeGithubTokenFile as ReturnType<typeof vi.fn>)
       .mockRejectedValueOnce(new Error('transient mint error'))
       .mockResolvedValueOnce(undefined);
@@ -90,7 +105,15 @@ describe('GithubTokenRefreshService.tick', () => {
     await expect(service.tick()).resolves.toBeUndefined();
 
     expect(sandbox.writeGithubTokenFile).toHaveBeenCalledTimes(2);
-    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(1, 'job-fail', 'ghs_fresh-token');
-    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(2, 'job-ok', 'ghs_fresh-token');
+    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(
+      1,
+      'job-fail',
+      'ghs_fresh-token',
+    );
+    expect(sandbox.writeGithubTokenFile).toHaveBeenNthCalledWith(
+      2,
+      'job-ok',
+      'ghs_fresh-token',
+    );
   });
 });

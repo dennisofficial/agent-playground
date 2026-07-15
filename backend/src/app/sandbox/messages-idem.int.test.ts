@@ -7,7 +7,11 @@ import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER, type EngineEvent } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
-import { BLOCK_SINK, MessageBlockSink, TurnHarnessFactory } from '../surface/turn-harness.service';
+import {
+  BLOCK_SINK,
+  MessageBlockSink,
+  TurnHarnessFactory,
+} from '../surface/turn-harness.service';
 import { JobBootstrapService } from '../job-bootstrap';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -55,7 +59,9 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -70,7 +76,12 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     );
     const [repo] = await dataSource.query(
       `INSERT INTO repos (org_id, slug, name, git_url) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [TEAM_ID, `idem-repo-${randomUUID().slice(0, 8)}`, 'idem-repo', 'https://example.invalid/r.git'],
+      [
+        TEAM_ID,
+        `idem-repo-${randomUUID().slice(0, 8)}`,
+        'idem-repo',
+        'https://example.invalid/r.git',
+      ],
     );
     const [job] = await dataSource.query(
       `INSERT INTO jobs (org_id, repo_id, origin) VALUES ($1,$2,$3) RETURNING id`,
@@ -86,12 +97,15 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
 
   afterAll(async () => {
     if (dataSource) {
-      await dataSource.query(`DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`, [
-        TEAM_ID,
-      ]);
+      await dataSource.query(
+        `DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
+        [TEAM_ID],
+      );
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
-      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
+        TEAM_ID,
+      ]);
     }
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
@@ -102,8 +116,18 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     const key = `${randomUUID()}:0`;
     const text = `idem-${randomUUID()}`;
 
-    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key });
-    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key }); // repeat write ⇒ no-op
+    await sink.appendBlock(jobA, {
+      kind: 'chat',
+      threadId: threadA,
+      text,
+      idemKey: key,
+    });
+    await sink.appendBlock(jobA, {
+      kind: 'chat',
+      threadId: threadA,
+      text,
+      idemKey: key,
+    }); // repeat write ⇒ no-op
 
     const rows = await dataSource.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
@@ -113,7 +137,12 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
 
     // A DIFFERENT key with the SAME text is a distinct message — the key is identity, not content.
     const key2 = `${randomUUID()}:0`;
-    await sink.appendBlock(jobA, { kind: 'chat', threadId: threadA, text, idemKey: key2 });
+    await sink.appendBlock(jobA, {
+      kind: 'chat',
+      threadId: threadA,
+      text,
+      idemKey: key2,
+    });
 
     const row2 = await dataSource.query(
       `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
@@ -133,8 +162,22 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     const text = `dup-${randomUUID()}`;
     const ev: EngineEvent = { kind: 'text', text };
 
-    const a = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main', turnId });
-    const b = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main', turnId });
+    const a = harness.create({
+      jobId: jobA,
+      orgId: TEAM_ID,
+      threadId: threadA,
+      channel: 'repo-guard',
+      lane: 'main',
+      turnId,
+    });
+    const b = harness.create({
+      jobId: jobA,
+      orgId: TEAM_ID,
+      threadId: threadA,
+      channel: 'repo-guard',
+      lane: 'main',
+      turnId,
+    });
     a.onEvent(ev);
     b.onEvent(ev);
 

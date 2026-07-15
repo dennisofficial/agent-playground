@@ -12,7 +12,11 @@ import { TASK_LIST_NOTE } from '../fragments';
 @FragmentGroup()
 export class TaskListGroup {
   /** Task list + Main-row seeding rule. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1270, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1270,
+    condition: notOnboarding,
+  })
   taskListNormal(): string {
     return [
       TASK_LIST_NOTE,
@@ -24,7 +28,11 @@ export class TaskListGroup {
   }
 
   /** Task list + fleet-inventory seeding rule. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2030, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2030,
+    condition: isOnboarding,
+  })
   taskListOnboarding(): string {
     return [
       TASK_LIST_NOTE,

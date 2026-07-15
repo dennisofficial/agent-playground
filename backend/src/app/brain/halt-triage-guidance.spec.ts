@@ -8,8 +8,9 @@ import { haltTriageGuidance } from './agent-session-manager.service';
  * never be told to just decide. A regression here would let Atlas invent product decisions on Dennis's behalf.
  */
 describe('haltTriageGuidance (retrieve-vs-author)', () => {
-  const text = (reason?: 'question' | 'needs_env' | 'decision' | 'unverified') =>
-    haltTriageGuidance(reason).join('\n');
+  const text = (
+    reason?: 'question' | 'needs_env' | 'decision' | 'unverified',
+  ) => haltTriageGuidance(reason).join('\n');
 
   it('needs_env → verify the premise first (is the access actually missing?)', () => {
     const g = text('needs_env');
@@ -39,14 +40,24 @@ describe('haltTriageGuidance (retrieve-vs-author)', () => {
   });
 
   it('every branch keeps the headless-driver caveat', () => {
-    for (const reason of [undefined, 'needs_env', 'question', 'decision'] as const) {
+    for (const reason of [
+      undefined,
+      'needs_env',
+      'question',
+      'decision',
+    ] as const) {
       expect(text(reason)).toMatch(/build driver is headless/i);
       expect(text(reason)).toMatch(/thread's own lane/i);
     }
   });
 
   it('every branch leads with the forensic "read the transcript via atlas-tx" orientation', () => {
-    for (const reason of [undefined, 'needs_env', 'question', 'decision'] as const) {
+    for (const reason of [
+      undefined,
+      'needs_env',
+      'question',
+      'decision',
+    ] as const) {
       const g = text(reason);
       expect(g).toMatch(/READ THE HALTED LANE'S OWN TRANSCRIPT/);
       expect(g).toMatch(/atlas-tx show <sessionId>/);

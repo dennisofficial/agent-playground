@@ -70,7 +70,10 @@ function dbOpts() {
 const ORG_ID = '61111111-1111-4111-8111-111111111111';
 const BASE_BRANCH = 'main';
 const OPERATOR = { id: 'operator-1', displayName: 'Dennis' };
-const SEED_AUTHOR = { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name };
+const SEED_AUTHOR = {
+  id: SYSTEM_SEED_AUTHOR.id,
+  displayName: SYSTEM_SEED_AUTHOR.name,
+};
 
 /** Reach the manager's private pump/sweep/reattach entry points, exactly as the existing specs do. */
 type ManagerInternals = {
@@ -167,17 +170,23 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       // which is all the durable pump needs. Keeps the transcript-side assertions out of scope.
       systemChunk: 'skip',
       ...(target.priority ? { priority: target.priority } : {}),
-      ...(target.seedQuestionId ? { seedQuestionId: target.seedQuestionId } : {}),
+      ...(target.seedQuestionId
+        ? { seedQuestionId: target.seedQuestionId }
+        : {}),
       ...(target.seedSecretId ? { seedSecretId: target.seedSecretId } : {}),
       ...(target.seedFileId ? { seedFileId: target.seedFileId } : {}),
-      ...(target.seedQuestionIds ? { seedQuestionIds: target.seedQuestionIds } : {}),
+      ...(target.seedQuestionIds
+        ? { seedQuestionIds: target.seedQuestionIds }
+        : {}),
       ...(target.seedSecretIds ? { seedSecretIds: target.seedSecretIds } : {}),
       ...(target.seedFileIds ? { seedFileIds: target.seedFileIds } : {}),
     });
   }
 
   /** Real `stimuli` row state for one stimulus id (the durable at-least-once ledger). */
-  async function rowState(id: string): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
+  async function rowState(
+    id: string,
+  ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
     const rows = await ds.query(
       'SELECT delivered_at, attempted_at FROM stimuli WHERE id = $1',
       [id],
@@ -187,7 +196,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
-    await ds.query('UPDATE stimuli SET attempted_at = NULL WHERE job_id = $1', [jobId]);
+    await ds.query('UPDATE stimuli SET attempted_at = NULL WHERE job_id = $1', [
+      jobId,
+    ]);
   }
 
   /**
@@ -204,12 +215,16 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;
-    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null = null;
+    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null =
+      null;
     const run = vi.fn((args: RunEngineArgs): Promise<EngineRunResult> => {
       capturedTask = args.task;
       if (runImpl) return runImpl(args);
       args.onTurnRegistered?.('turn-fresh-1');
-      args.onEvent?.({ kind: 'session', sessionId: 'sess-1' } satisfies EngineEvent);
+      args.onEvent?.({
+        kind: 'session',
+        sessionId: 'sess-1',
+      } satisfies EngineEvent);
       return Promise.resolve({ result: 'ok' });
     });
     // The steer XADDs but emits NO `input_ack` — the very race: the turn dies before acking, so nothing must
@@ -348,7 +363,9 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       setLive: (turnId: string | null) => {
         liveTurn = turnId;
       },
-      setRunImpl: (impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null) => {
+      setRunImpl: (
+        impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null,
+      ) => {
         runImpl = impl;
       },
     };
@@ -356,13 +373,23 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   it('bfe355ae — an ANSWER steered into a mid-turn brain is NOT stamped on the XADD (no ack, no stamp)', async () => {
     const thread = await makeThread('question race thread');
-    const { manager, run, steer, store } = makeManager({ live: true, leader: true });
-    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
-
-    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
-      seedQuestionId: 'q-1',
-      priority: 'now',
+    const { manager, run, steer, store } = makeManager({
+      live: true,
+      leader: true,
     });
+    store.getQuestionCard.mockResolvedValue({
+      answer: 'the answer',
+      deliveredAt: null,
+    });
+
+    const seed = await recordSeed(
+      thread.id,
+      '<system_notice>answer q-1</system_notice>',
+      {
+        seedQuestionId: 'q-1',
+        priority: 'now',
+      },
+    );
 
     // MID-TURN: the pump steers the live turn; the steer XADDs but the turn dies before any `input_ack`.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -381,12 +408,19 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const thread = await makeThread('question race + sweep thread');
     const h = makeManager({ live: true, leader: true });
     const { manager, run, steer, store } = h;
-    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
-
-    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
-      seedQuestionId: 'q-1',
-      priority: 'now',
+    store.getQuestionCard.mockResolvedValue({
+      answer: 'the answer',
+      deliveredAt: null,
     });
+
+    const seed = await recordSeed(
+      thread.id,
+      '<system_notice>answer q-1</system_notice>',
+      {
+        seedQuestionId: 'q-1',
+        priority: 'now',
+      },
+    );
 
     // 1) MID-TURN steer — no ack, nothing stamped.
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -415,8 +449,14 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   it('regression: an operator message + a pending seed answer → the seed delivers SOLO, framed, operator untouched', async () => {
     const thread = await makeThread('seed-solo-vs-operator thread');
-    const { manager, run, store, getCapturedTask } = makeManager({ live: false, leader: true });
-    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
+    const { manager, run, store, getCapturedTask } = makeManager({
+      live: false,
+      leader: true,
+    });
+    store.getQuestionCard.mockResolvedValue({
+      answer: 'the answer',
+      deliveredAt: null,
+    });
 
     const framed = '<system_notice>your question was answered</system_notice>';
     // Seed is the OLDER (head) row; a seed head delivers solo (never coalesced into a `<user>` batch).
@@ -446,8 +486,13 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     // The seed's durable row is stamped (success tail); the operator row is UNAFFECTED — still pending.
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
     expect((await rowState(operator.id)).delivered_at).toBeNull();
-    const stillPending = await stimulusStore.eligiblePendingChat(thread.id, 60_000);
-    expect(stillPending.map((p) => p.body)).toContain('a normal operator reply');
+    const stillPending = await stimulusStore.eligiblePendingChat(
+      thread.id,
+      60_000,
+    );
+    expect(stillPending.map((p) => p.body)).toContain(
+      'a normal operator reply',
+    );
   });
 
   it('secret parity (Codex wedge): a provided-secret steered mid-turn is NOT stamped; the sweep clears the gate', async () => {
@@ -456,12 +501,20 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const { manager, run, steer, store } = h;
     store.awaitingSecretId.mockResolvedValue('sec-1');
     // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear this test exercises.
-    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true });
-
-    const seed = await recordSeed(thread.id, '<system_notice>secret provided</system_notice>', {
-      seedSecretId: 'sec-1',
-      priority: 'now',
+    store.getSecretCard.mockResolvedValue({
+      provided_at: new Date(),
+      delivered_at: null,
+      ephemeral: true,
     });
+
+    const seed = await recordSeed(
+      thread.id,
+      '<system_notice>secret provided</system_notice>',
+      {
+        seedSecretId: 'sec-1',
+        priority: 'now',
+      },
+    );
 
     // 1) MID-TURN steer — no ack. The gate must stay SET and the card undelivered (never wedged half-open).
     await manager.pumpThread(thread.id, ORG_ID, repoId);
@@ -486,12 +539,19 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     const thread = await makeThread('fresh-turn atomicity thread');
     const h = makeManager({ live: false, leader: true });
     const { manager, store } = h;
-    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
-
-    const seed = await recordSeed(thread.id, '<system_notice>answer q-1</system_notice>', {
-      seedQuestionId: 'q-1',
-      priority: 'now',
+    store.getQuestionCard.mockResolvedValue({
+      answer: 'the answer',
+      deliveredAt: null,
     });
+
+    const seed = await recordSeed(
+      thread.id,
+      '<system_notice>answer q-1</system_notice>',
+      {
+        seedQuestionId: 'q-1',
+        priority: 'now',
+      },
+    );
 
     // Register (so the turn is restart-survivable) then die BEFORE the success tail runs.
     h.setRunImpl((args) => {
@@ -518,35 +578,61 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   describe('reattach exactly-once: a seed completed via reattach stamps its card + row and is not re-swept', () => {
     type Variant = {
       name: string;
-      target: { seedQuestionId?: string; seedSecretId?: string; seedFileId?: string };
+      target: {
+        seedQuestionId?: string;
+        seedSecretId?: string;
+        seedFileId?: string;
+      };
       arm: (store: ReturnType<typeof makeManager>['store']) => void;
-      assertCard: (store: ReturnType<typeof makeManager>['store'], jobId: string) => void;
+      assertCard: (
+        store: ReturnType<typeof makeManager>['store'],
+        jobId: string,
+      ) => void;
     };
     const variants: Variant[] = [
       {
         name: 'question',
         target: { seedQuestionId: 'q-1' },
         arm: (store) =>
-          store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null }),
+          store.getQuestionCard.mockResolvedValue({
+            answer: 'the answer',
+            deliveredAt: null,
+          }),
         assertCard: (store, jobId) =>
-          expect(store.markQuestionDelivered).toHaveBeenCalledWith(jobId, 'q-1'),
+          expect(store.markQuestionDelivered).toHaveBeenCalledWith(
+            jobId,
+            'q-1',
+          ),
       },
       {
         name: 'secret',
         target: { seedSecretId: 'sec-1' },
         arm: (store) =>
           // EPHEMERAL: only this lane still uses the single-slot `awaiting_secret_id` pointer/clear.
-          store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null, ephemeral: true }),
+          store.getSecretCard.mockResolvedValue({
+            provided_at: new Date(),
+            delivered_at: null,
+            ephemeral: true,
+          }),
         assertCard: (store, jobId) => {
-          expect(store.markSecretDelivered).toHaveBeenCalledWith(jobId, 'sec-1');
-          expect(store.clearAwaitingSecret).toHaveBeenCalledWith(jobId, 'sec-1');
+          expect(store.markSecretDelivered).toHaveBeenCalledWith(
+            jobId,
+            'sec-1',
+          );
+          expect(store.clearAwaitingSecret).toHaveBeenCalledWith(
+            jobId,
+            'sec-1',
+          );
         },
       },
       {
         name: 'file',
         target: { seedFileId: 'file-1' },
         arm: (store) =>
-          store.getFileCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null }),
+          store.getFileCard.mockResolvedValue({
+            provided_at: new Date(),
+            delivered_at: null,
+          }),
         assertCard: (store, jobId) =>
           expect(store.markFileDelivered).toHaveBeenCalledWith(jobId, 'file-1'),
       },
@@ -600,18 +686,31 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   it('combined answer-batch seed: 3 cards (question + file + durable secret) deliver as ONE turn; the success tail stamps all three', async () => {
     const thread = await makeThread('batch delivery thread');
     const { manager, run, store } = makeManager({ live: false, leader: true });
-    store.getQuestionCard.mockResolvedValue({ answer: 'the answer', deliveredAt: null });
-    store.getFileCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+    store.getQuestionCard.mockResolvedValue({
+      answer: 'the answer',
+      deliveredAt: null,
+    });
+    store.getFileCard.mockResolvedValue({
+      provided_at: new Date(),
+      delivered_at: null,
+    });
     // DURABLE secret (ephemeral omitted) — per-card, like the file lane.
-    store.getSecretCard.mockResolvedValue({ provided_at: new Date(), delivered_at: null });
+    store.getSecretCard.mockResolvedValue({
+      provided_at: new Date(),
+      delivered_at: null,
+    });
 
     // ONE combined seed carrying arrays of ids (never the singular `seed*Id`).
-    const seed = await recordSeed(thread.id, '<system_notice>batch of 3</system_notice>', {
-      seedQuestionIds: ['q-1'],
-      seedFileIds: ['file-1'],
-      seedSecretIds: ['sec-1'],
-      priority: 'now',
-    });
+    const seed = await recordSeed(
+      thread.id,
+      '<system_notice>batch of 3</system_notice>',
+      {
+        seedQuestionIds: ['q-1'],
+        seedFileIds: ['file-1'],
+        seedSecretIds: ['sec-1'],
+        priority: 'now',
+      },
+    );
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
@@ -637,17 +736,25 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     // Each per-card backfill (findUndeliveredAnsweredQuestions/…ProvidedFiles/…ProvidedSecrets → this guard)
     // must see the combined seed as already covering its card — so it skips re-enqueuing a duplicate per-card seed.
     expect(
-      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedQuestionId: 'q-1' }),
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
+        seedQuestionId: 'q-1',
+      }),
     ).toBe(true);
     expect(
-      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedFileId: 'file-1' }),
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
+        seedFileId: 'file-1',
+      }),
     ).toBe(true);
     expect(
-      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedSecretId: 'sec-1' }),
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
+        seedSecretId: 'sec-1',
+      }),
     ).toBe(true);
     // A card NOT in the batch is still uncovered — the backfill would (correctly) enqueue it.
     expect(
-      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, { seedQuestionId: 'q-2' }),
+      await stimulusStore.hasChatStimulusForSeedTarget(thread.id, {
+        seedQuestionId: 'q-2',
+      }),
     ).toBe(false);
   });
 });

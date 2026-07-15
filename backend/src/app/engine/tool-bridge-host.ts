@@ -9,7 +9,11 @@
 import { inspect } from 'node:util';
 
 import { ATLAS_PROD_TOOL_NAMES } from '../sandbox/image/atlas-prod-bridge-options';
-import type { HostFrame, ToolBridgeOptions, ToolRequestFrame } from './engine.types';
+import type {
+  HostFrame,
+  ToolBridgeOptions,
+  ToolRequestFrame,
+} from './engine.types';
 
 /**
  * Tools that LEGITIMATELY carry a foreign `jobId` and are therefore EXEMPT from the per-thread scope
@@ -19,7 +23,9 @@ import type { HostFrame, ToolBridgeOptions, ToolRequestFrame } from './engine.ty
  * exempting it crosses no new data boundary — it just stops the guard from clobbering the connector's
  * entire purpose. Every OTHER (thread-scoped) tool still has its foreign `jobId` denied.
  */
-const CROSS_JOB_TOOL_NAMES: ReadonlySet<string> = new Set(ATLAS_PROD_TOOL_NAMES);
+const CROSS_JOB_TOOL_NAMES: ReadonlySet<string> = new Set(
+  ATLAS_PROD_TOOL_NAMES,
+);
 
 /**
  * Never-empty, BOUNDED error text for a thrown tool value — safe to send back through the sandbox
@@ -74,7 +80,8 @@ export async function dispatchToolRequest(
     // Bounded message rides back to the sandbox; the FULL stack goes only to the host log so a real
     // cause (e.g. a bare `QueryFailedError`) is never swallowed into an empty `Error:` in the UI.
     const message = formatToolError(err);
-    const detail = err instanceof Error ? (err.stack ?? err.message) : inspect(err);
+    const detail =
+      err instanceof Error ? (err.stack ?? err.message) : inspect(err);
     (bridge.onToolError ?? ((l: string) => console.error(l)))(
       `[tool-bridge] tool '${name}' (job ${bridge.jobId}) failed: ${detail}`,
     );

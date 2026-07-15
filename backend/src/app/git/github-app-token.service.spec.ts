@@ -335,9 +335,13 @@ describe('GitHubAppTokenService.appBotIdentity', () => {
     expect(calls.some((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'))).toBe(
       true,
     );
-    const userCall = calls.find((c) => c.url.includes('/users/atlas-bot%5Bbot%5D'));
+    const userCall = calls.find((c) =>
+      c.url.includes('/users/atlas-bot%5Bbot%5D'),
+    );
     expect(userCall).toBeDefined();
-    expect((userCall!.init?.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(
+      (userCall!.init?.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
 
     const callsBefore = calls.length;
     await svc.appBotIdentity();

@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ServiceLivenessProbe } from '../sandbox/sandbox-provider.port';
-import { derivePortState, readServiceMarkers, type ReadServiceMarker } from './service-markers';
+import {
+  derivePortState,
+  readServiceMarkers,
+  type ReadServiceMarker,
+} from './service-markers';
 
 describe('readServiceMarkers', () => {
   let dir: string;

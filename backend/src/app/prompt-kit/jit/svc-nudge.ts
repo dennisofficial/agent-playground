@@ -30,7 +30,10 @@ export function detectLongRunningCommand(command: string): string | null {
     [/\bdocker(-compose|\s+compose)\s+up\b/, 'docker compose up'],
     [/\bdocker\s+run\b(?=[^|&;]*\s(-d|--detach)\b)/, 'docker run -d'],
     // Package-runner dev/serve/watch scripts (NOT test/build/lint/install — those are one-shots).
-    [/\b(pnpm|npm|yarn|bun|npx)\b[^|&;]*\b(dev|serve|watch)\b/, 'dev/serve/watch script'],
+    [
+      /\b(pnpm|npm|yarn|bun|npx)\b[^|&;]*\b(dev|serve|watch)\b/,
+      'dev/serve/watch script',
+    ],
     [/\b(pnpm|npm|yarn|bun)\s+start\b/, 'start script'],
     // Bare dev servers / watchers.
     [/\bnext\s+dev\b/, 'next dev'],
@@ -65,6 +68,10 @@ export function renderSvcNudge(command: string): string {
  * context has grown by at least `delta` tokens since the last nudge. Keeps back-to-back matching commands from
  * spamming the reminder. Pure — the caller latches `last` on a true result.
  */
-export function svcNudgeShouldFire(last: number | null, now: number, delta: number): boolean {
+export function svcNudgeShouldFire(
+  last: number | null,
+  now: number,
+  delta: number,
+): boolean {
   return last === null || now - last >= delta;
 }

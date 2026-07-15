@@ -40,7 +40,11 @@ export class WorkspaceProfileGroup {
    * the current snapshot, and tells the brain that keeping it current is ongoing work, not a one-time
    * ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
    */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1280, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1280,
+    condition: notOnboarding,
+  })
   workspaceProfileNormal(ctx: PromptCtx): string {
     return [
       WORKSPACE_PROFILE_DIMENSIONS,
@@ -83,7 +87,11 @@ export class WorkspaceProfileGroup {
    * identity/sandbox fragments; the deep per-dimension how-to fragments (SECRETS, CONFIG, SETUP SCRIPT,
    * MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
    */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2015, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2015,
+    condition: isOnboarding,
+  })
   workspaceProfileOnboarding(ctx: PromptCtx): string {
     return [
       WORKSPACE_PROFILE_DIMENSIONS,
@@ -98,7 +106,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** SECRETS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2060, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2060,
+    condition: isOnboarding,
+  })
   secrets(): string {
     return [
       'SECRETS — env-file values (DATABASE_URL, API keys, …) are SECRET. NEVER ask for a secret value in chat,',
@@ -121,11 +133,15 @@ export class WorkspaceProfileGroup {
   }
 
   /** DERIVED values. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2070, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2070,
+    condition: isOnboarding,
+  })
   derivedValues(): string {
     return [
       'DERIVED values — some values are NOT operator-provided at all: you COMPUTE them yourself, using a',
-      "credential you already hold. E.g. `stripe listen --print-secret` prints a webhook signing secret from",
+      'credential you already hold. E.g. `stripe listen --print-secret` prints a webhook signing secret from',
       'the granted STRIPE_API_KEY — nobody typed it, so there is nothing for an operator to gate. Call',
       'derive_secret({ name, path, value, description }) to store it durably (same encrypted store + grant as',
       'request_secret, no operator wait) so every future job inherits it instead of re-deriving it from scratch.',
@@ -134,7 +150,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2080, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2080,
+    condition: isOnboarding,
+  })
   authAccess(): string {
     return [
       'AUTH / CAPABILITY ACCESS — if the repo talks to a cloud (gcloud/gsutil, Firebase/Firestore, a real DB),',
@@ -162,7 +182,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** INSTALLING A CLI. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2090, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2090,
+    condition: isOnboarding,
+  })
   installCli(): string {
     return [
       'INSTALLING A CLI — first check whether you even need to: the sandbox already ships a BROAD toolkit (cloud',
@@ -176,7 +200,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** CONFIG (write_workspace_config mounts). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2100, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2100,
+    condition: isOnboarding,
+  })
   config(): string {
     return [
       'CONFIG — non-secret provisioning is DB-backed via write_workspace_config({ mounts }) (no file, no PR).',
@@ -193,7 +221,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2105, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2105,
+    condition: isOnboarding,
+  })
   setupScript(): string {
     return [
       'SETUP SCRIPT — the commands that ARM a cold sandbox: make it START-READY (install deps, build a client/',
@@ -217,10 +249,14 @@ export class WorkspaceProfileGroup {
   }
 
   /** PREVIEW RECIPE (write_preview_instructions; injected into the Spin-up-preview seed). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2106, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2106,
+    condition: isOnboarding,
+  })
   previewRecipe(): string {
     return [
-      'PREVIEW RECIPE — how to stand up THIS repo\'s demo-ready preview stack (envs to set, ports, docker',
+      "PREVIEW RECIPE — how to stand up THIS repo's demo-ready preview stack (envs to set, ports, docker",
       'compose / migrate / seed commands, the deep-link into the changed area). It is injected straight into',
       'the "Spin up preview" seed for every future job on this repo, so a build never has to re-discover the',
       'stack from scratch. Author it via write_preview_instructions({ instructions }) once you have gotten a',
@@ -233,7 +269,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2108, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2108,
+    condition: isOnboarding,
+  })
   mcpServers(): string {
     return [
       'MCP SERVERS — while you have the repo’s stack, dependencies, and infra in front of you, recommend the MCP',
@@ -261,7 +301,7 @@ export class WorkspaceProfileGroup {
       'the server is approved AND every secret slot is filled: call reset_sandbox({ reason: "load the new MCP',
       'server(s)" }) and STOP. On your next (fresh) turn the `mcp__<name>__*` tools attach — invoke ONE',
       'read-only tool to PROVE it actually works end-to-end (e.g. for a github server, `mcp__github__get_me`,',
-      'or list this repo\'s open PRs) and report the raw result. Note: on the VERY FIRST turn right after a',
+      "or list this repo's open PRs) and report the raw result. Note: on the VERY FIRST turn right after a",
       'reset the per-sandbox MCP hub may still be connecting the upstream, so the tools can be briefly absent —',
       'if you do not see them yet, do NOT conclude failure; check once more on your next turn (the hub warms in',
       'a few seconds). Only if they are still absent after that second check do you report it plainly. Never',
@@ -280,7 +320,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** SKILLS — reuse a maintained skill, else author a repo-idiom one; owner-approved. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2112, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2112,
+    condition: isOnboarding,
+  })
   skills(): string {
     return [
       'SKILLS — a skill is a reusable `SKILL.md` (+ optional references/scripts) that a build/brain/review session',
@@ -315,7 +359,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2114, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2114,
+    condition: isOnboarding,
+  })
   houseStyle(): string {
     return [
       'HOUSE STYLE — the org may define reusable "house-style" profiles (a NestJS+Next.js folder-structure',
@@ -332,7 +380,11 @@ export class WorkspaceProfileGroup {
   }
 
   /** RESET / PROVE-IT-COLD-BOOTS. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2116, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2116,
+    condition: isOnboarding,
+  })
   reset(): string {
     return [
       'RESET / PROVE-IT-COLD-BOOTS — a stack that runs right now might only run because of ephemeral container',

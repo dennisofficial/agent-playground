@@ -3,10 +3,7 @@ import { take, toArray } from 'rxjs/operators';
 import { describe, expect, it } from 'vitest';
 import { decisionApprovalBlocks } from '../surface';
 import { agentMessage } from '../prompt-kit/message';
-import {
-  AgentChatSurface,
-  parseApprovalMeta,
-} from './agent-chat-surface';
+import { AgentChatSurface, parseApprovalMeta } from './agent-chat-surface';
 
 describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', () => {
   it('sendFromHuman emits on inbound$ with the right channel + default author', async () => {
@@ -28,7 +25,11 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const surface = new AgentChatSurface();
     const next = firstValueFrom(surface.inbound$.pipe(take(1)));
 
-    surface.sendFromHuman('C1', 'yes, use Postgres', { threadTs: 'root.001', authorId: 'U9', priority: 'queue' });
+    surface.sendFromHuman('C1', 'yes, use Postgres', {
+      threadTs: 'root.001',
+      authorId: 'U9',
+      priority: 'queue',
+    });
 
     const msg = await next;
     expect(msg.threadTs).toBe('root.001');
@@ -40,15 +41,23 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const surface = new AgentChatSurface();
     const next = firstValueFrom(surface.inbound$.pipe(take(1)));
 
-    surface.seedSystemNotification('C1', 'thread-1', agentMessage('answer delivered'), {
-      seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' },
-      deliveredQuestionId: 'q1',
-    });
+    surface.seedSystemNotification(
+      'C1',
+      'thread-1',
+      agentMessage('answer delivered'),
+      {
+        seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' },
+        deliveredQuestionId: 'q1',
+      },
+    );
 
     const msg = await next;
     expect(msg.seed).toBe(true);
     expect(msg.seedQuestionId).toBe('q1');
-    expect(msg.seedRow).toEqual({ label: 'Question answered', chunkKey: 'seed:q:thread-1:q1' });
+    expect(msg.seedRow).toEqual({
+      label: 'Question answered',
+      chunkKey: 'seed:q:thread-1:q1',
+    });
   });
 
   it('post records into the outbox, emits on outbound$, and returns a synthetic ts', async () => {
@@ -71,7 +80,9 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     const wait = surface.waitForReply((m) => m.text.includes('PR ready'), 1000);
 
     await surface.post('C1', 'planning…', { threadTs: 'r.1' });
-    await surface.post('C1', ':tada: PR ready: https://github.com/x/y/pull/1', { threadTs: 'r.1' });
+    await surface.post('C1', ':tada: PR ready: https://github.com/x/y/pull/1', {
+      threadTs: 'r.1',
+    });
 
     const reply = await wait;
     expect(reply.text).toContain('PR ready');
@@ -95,7 +106,9 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
     await surface.post('C1', 'a few questions first…', { threadTs: rootTs });
 
     // 3. Human answers in the SAME thread — passing rootTs continues the conversation.
-    surface.sendFromHuman('C1', 'csv, gated by feature flag', { threadTs: rootTs });
+    surface.sendFromHuman('C1', 'csv, gated by feature flag', {
+      threadTs: rootTs,
+    });
 
     const msgs = await inbound;
     expect(msgs[0].id).toBe(rootTs);
@@ -117,7 +130,10 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
         threads: ['Backend', 'Frontend'],
       });
 
-      await surface.post('C1', 'Plan proposal — CSV export', { threadTs: 'root.1', blocks });
+      await surface.post('C1', 'Plan proposal — CSV export', {
+        threadTs: 'root.1',
+        blocks,
+      });
 
       const card = surface.latestApprovalCard();
       expect(card).toBeDefined();
@@ -162,12 +178,19 @@ describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', ()
         summary: 'S',
         threads: [],
       });
-      expect(parseApprovalMeta(blocks)).toEqual({ jobId: 'j1', decisionRecordId: 'd1' });
+      expect(parseApprovalMeta(blocks)).toEqual({
+        jobId: 'j1',
+        decisionRecordId: 'd1',
+      });
     });
 
     it('returns undefined for missing/non-approval blocks', () => {
       expect(parseApprovalMeta(undefined)).toBeUndefined();
-      expect(parseApprovalMeta([{ type: 'thread', text: { type: 'mrkdwn', text: 'x' } }])).toBeUndefined();
+      expect(
+        parseApprovalMeta([
+          { type: 'thread', text: { type: 'mrkdwn', text: 'x' } },
+        ]),
+      ).toBeUndefined();
     });
   });
 });

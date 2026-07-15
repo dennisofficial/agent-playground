@@ -26,6 +26,7 @@ export class MessageGitShaSubscriber implements EntitySubscriberInterface<Messag
   }
 
   beforeInsert(event: InsertEvent<MessageEntity>): void {
-    if (!event.entity.engine_git_sha) event.entity.engine_git_sha = this.version.sha;
+    if (!event.entity.engine_git_sha)
+      event.entity.engine_git_sha = this.version.sha;
   }
 }

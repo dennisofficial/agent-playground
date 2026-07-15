@@ -11,7 +11,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { TOOL_SHAPES, TOOL_DESCRIPTIONS, toolJsonSchema } from './host-tool-schemas';
+import {
+  TOOL_SHAPES,
+  TOOL_DESCRIPTIONS,
+  toolJsonSchema,
+} from './host-tool-schemas';
 import { WORKSPACE_PROFILE_TOOL_NAMES } from './workspace-profile-bridge-options';
 
 // A single decision, fully populated, reused by every plan-shaped tool.
@@ -34,7 +38,9 @@ const threadItemPayload = {
 };
 
 // One structured verification record, fully populated — the array branch of `verificationField`.
-const verificationPayload = [{ kind: 'test', command: 'npm test', exitCode: 0, outputTail: 'PASS' }];
+const verificationPayload = [
+  { kind: 'test', command: 'npm test', exitCode: 0, outputTail: 'PASS' },
+];
 
 /**
  * One FULL, type-valid payload per `TOOL_SHAPES` entry — every declared field populated, so the
@@ -52,8 +58,14 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     gaps: ['No pagination yet.'],
   },
   request_operator_input: { question: 'Which environment should this target?' },
-  block_thread: { reason: 'question', detail: 'Need operator input to continue.', gaps: ['Missing creds.'] },
-  record_leg_handoff: { handoff: 'Finished the migration; next leg wires the API.' },
+  block_thread: {
+    reason: 'question',
+    detail: 'Need operator input to continue.',
+    gaps: ['Missing creds.'],
+  },
+  record_leg_handoff: {
+    handoff: 'Finished the migration; next leg wires the API.',
+  },
   record_deviation: { note: 'Renamed a var for clarity.' },
   task_create: {
     subject: 'Wire the endpoint',
@@ -77,7 +89,11 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     addBlocks: ['3'],
     removeBlocks: ['4'],
   },
-  report_verification: { passed: true, verification: verificationPayload, remaining: ['Flaky test'] },
+  report_verification: {
+    passed: true,
+    verification: verificationPayload,
+    remaining: ['Flaky test'],
+  },
 
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state: {},
@@ -92,7 +108,14 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   remember: { fact: 'The ledger uses Postgres.', scope: 'repo' },
   ask_question: {
     question: 'Which option should we go with?',
-    options: ['SQLite', { label: 'Postgres', id: 'pg', description: 'Use Postgres for the ledger.' }],
+    options: [
+      'SQLite',
+      {
+        label: 'Postgres',
+        id: 'pg',
+        description: 'Use Postgres for the ledger.',
+      },
+    ],
     decisionClass: 'data_model',
     header: 'Datastore choice',
     allowOther: true,
@@ -137,7 +160,10 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     kind: 'bugfix',
     decisions: [decisionItemPayload],
   },
-  create_job: { firstMessage: 'Please fix the flaky test.', title: 'Fix flaky test' },
+  create_job: {
+    firstMessage: 'Please fix the flaky test.',
+    title: 'Fix flaky test',
+  },
   list_jobs: { status: 'all', query: 'auth', limit: 10 },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
   propose_convention_profile_change: {
@@ -158,7 +184,10 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     deliver_to: 'env',
     mcp: { server: 'stripe', slot: 'header', key: 'Authorization' },
   },
-  request_file: { path: 'config/local.json', description: 'Local override config.' },
+  request_file: {
+    path: 'config/local.json',
+    description: 'Local override config.',
+  },
   withdraw_file_request: { requestId: 'r1', reason: 'No longer needed.' },
   withdraw_secret_request: { requestId: 's1', reason: 'No longer needed.' },
   write_workspace_config: {
@@ -167,7 +196,9 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   write_setup_script: { script: '#!/bin/sh\nnpm ci' },
   read_setup_script: {},
-  write_preview_instructions: { instructions: 'docker compose up -d && pnpm migrate && pnpm seed' },
+  write_preview_instructions: {
+    instructions: 'docker compose up -d && pnpm migrate && pnpm seed',
+  },
   read_preview_instructions: {},
   derive_secret: {
     name: 'DERIVED_KEY',
@@ -177,7 +208,12 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     overwrite: true,
   },
   reset_sandbox: { reason: 'Env drifted.', hard: true },
-  propose_skill: { name: 'deploy-helper', description: 'Automates deploys.', rationale: 'Repeated manual steps.', scope: 'repo' },
+  propose_skill: {
+    name: 'deploy-helper',
+    description: 'Automates deploys.',
+    rationale: 'Repeated manual steps.',
+    scope: 'repo',
+  },
   propose_skill_install: {
     sourceUrl: 'https://github.com/example/skill',
     ref: 'main',
@@ -185,8 +221,15 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     rationale: 'Reuse the shared skill.',
     scope: 'org',
   },
-  request_skill_edit_access: { skill: 'deploy-helper', rationale: 'Need to fix a bug in it.' },
-  propose_skill_removal: { name: 'deploy-helper', rationale: 'No longer used.', scope: 'repo' },
+  request_skill_edit_access: {
+    skill: 'deploy-helper',
+    rationale: 'Need to fix a bug in it.',
+  },
+  propose_skill_removal: {
+    name: 'deploy-helper',
+    rationale: 'No longer used.',
+    scope: 'repo',
+  },
   propose_mcp_servers: {
     servers: [
       {
@@ -205,9 +248,19 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     ],
     scope: 'org',
   },
-  propose_mcp_removal: { name: 'stripe', rationale: 'No longer used.', scope: 'org' },
-  propose_convention_profile: { slug: 'backend-style', rationale: 'Codify the existing convention.' },
-  finish_onboarding: { summary: 'Boots green.', verified: 'Brought up the API and worker; both healthy.' },
+  propose_mcp_removal: {
+    name: 'stripe',
+    rationale: 'No longer used.',
+    scope: 'org',
+  },
+  propose_convention_profile: {
+    slug: 'backend-style',
+    rationale: 'Codify the existing convention.',
+  },
+  finish_onboarding: {
+    summary: 'Boots green.',
+    verified: 'Brought up the API and worker; both healthy.',
+  },
 
   // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query: {
@@ -234,12 +287,16 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   atlas_context_read: { jobId: 'j1', path: 'specs/02-atlas-prod-mcp.md' },
   atlas_worktree_tree: { jobId: 'j1', subpath: 'src' },
   atlas_worktree_file: { jobId: 'j1', path: 'src/index.ts' },
-  propose_prod_write: { sql: "UPDATE threads SET halt_fix_attempts = 0 WHERE id = 't1'" },
+  propose_prod_write: {
+    sql: "UPDATE threads SET halt_fix_attempts = 0 WHERE id = 't1'",
+  },
 };
 
 describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
   it('PAYLOADS covers every TOOL_SHAPES entry (so no tool silently skips the roundtrip guard)', () => {
-    expect(Object.keys(PAYLOADS).sort()).toEqual(Object.keys(TOOL_SHAPES).sort());
+    expect(Object.keys(PAYLOADS).sort()).toEqual(
+      Object.keys(TOOL_SHAPES).sort(),
+    );
   });
 
   const names = Object.keys(TOOL_SHAPES);
@@ -248,15 +305,28 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
 
   beforeAll(async () => {
     const tools = names.map((name) =>
-      tool(name, TOOL_DESCRIPTIONS[name] ?? name, TOOL_SHAPES[name], async (args) => {
-        captured[name] = args;
-        return { content: [{ type: 'text', text: 'ok' }] };
-      }),
+      tool(
+        name,
+        TOOL_DESCRIPTIONS[name] ?? name,
+        TOOL_SHAPES[name],
+        async (args) => {
+          captured[name] = args;
+          return { content: [{ type: 'text', text: 'ok' }] };
+        },
+      ),
     );
-    const { instance } = createSdkMcpServer({ name: 'host-tool-schemas-spec', version: '1.0.0', tools });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const { instance } = createSdkMcpServer({
+      name: 'host-tool-schemas-spec',
+      version: '1.0.0',
+      tools,
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     await instance.connect(serverTransport);
-    client = new Client({ name: 'host-tool-schemas-spec-client', version: '1.0.0' });
+    client = new Client({
+      name: 'host-tool-schemas-spec-client',
+      version: '1.0.0',
+    });
     await client.connect(clientTransport);
   });
 
@@ -264,20 +334,26 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
     await client.close();
   });
 
-  it.each(names)('%s: the FULL declared payload roundtrips untouched (nothing stripped)', async (name) => {
-    const payload = PAYLOADS[name];
-    captured[name] = '(not called)';
-    const res = await client.callTool({ name, arguments: payload });
-    expect(res.isError, `${name} call must not error`).toBeFalsy();
-    expect(captured[name]).toEqual(payload);
-  });
+  it.each(names)(
+    '%s: the FULL declared payload roundtrips untouched (nothing stripped)',
+    async (name) => {
+      const payload = PAYLOADS[name];
+      captured[name] = '(not called)';
+      const res = await client.callTool({ name, arguments: payload });
+      expect(res.isError, `${name} call must not error`).toBeFalsy();
+      expect(captured[name]).toEqual(payload);
+    },
+  );
 
   it('rejects a wrong-typed REQUIRED field before the handler ever sees it', async () => {
     captured['complete_thread'] = '(not called)';
     let res: Awaited<ReturnType<typeof client.callTool>> | undefined;
     let thrown: unknown;
     try {
-      res = await client.callTool({ name: 'complete_thread', arguments: { summary: 123 } });
+      res = await client.callTool({
+        name: 'complete_thread',
+        arguments: { summary: 123 },
+      });
     } catch (err) {
       thrown = err;
     }
@@ -297,15 +373,24 @@ describe('host-tool-schemas — toolJsonSchema', () => {
   }
 
   it('falls back to a permissive object schema for an unknown tool name', () => {
-    expect(toolJsonSchema('__nonexistent__')).toEqual({ type: 'object', additionalProperties: true });
+    expect(toolJsonSchema('__nonexistent__')).toEqual({
+      type: 'object',
+      additionalProperties: true,
+    });
   });
 });
 
 describe('host-tool-schemas — TOOL_DESCRIPTIONS parity', () => {
   it('every TOOL_SHAPES entry has a matching TOOL_DESCRIPTIONS entry', () => {
     for (const name of Object.keys(TOOL_SHAPES)) {
-      expect(typeof TOOL_DESCRIPTIONS[name], `"${name}" is missing a TOOL_DESCRIPTIONS entry`).toBe('string');
-      expect(TOOL_DESCRIPTIONS[name].length, `"${name}" has an empty TOOL_DESCRIPTIONS entry`).toBeGreaterThan(0);
+      expect(
+        typeof TOOL_DESCRIPTIONS[name],
+        `"${name}" is missing a TOOL_DESCRIPTIONS entry`,
+      ).toBe('string');
+      expect(
+        TOOL_DESCRIPTIONS[name].length,
+        `"${name}" has an empty TOOL_DESCRIPTIONS entry`,
+      ).toBeGreaterThan(0);
     }
   });
 });
@@ -313,7 +398,10 @@ describe('host-tool-schemas — TOOL_DESCRIPTIONS parity', () => {
 describe('host-tool-schemas — WORKSPACE_PROFILE_TOOL_NAMES completeness', () => {
   it('every workspace-profile tool name is a real TOOL_SHAPES entry', () => {
     for (const name of WORKSPACE_PROFILE_TOOL_NAMES) {
-      expect(TOOL_SHAPES, `workspace-profile tool "${name}" must have a TOOL_SHAPES entry`).toHaveProperty(name);
+      expect(
+        TOOL_SHAPES,
+        `workspace-profile tool "${name}" must have a TOOL_SHAPES entry`,
+      ).toHaveProperty(name);
     }
   });
 });

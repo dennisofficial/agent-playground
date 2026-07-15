@@ -15,8 +15,16 @@
  */
 import { randomUUID } from 'node:crypto';
 import { EngineCore } from '../../engine/engine-core';
-import type { EngineEvent, RunEngineArgs, TurnSpec } from '../../engine/engine.types';
-import { BRIDGE_SERVER_NAME, buildBridgeClaudeOptions, type BridgeClaudeOptions } from './bridge-options';
+import type {
+  EngineEvent,
+  RunEngineArgs,
+  TurnSpec,
+} from '../../engine/engine.types';
+import {
+  BRIDGE_SERVER_NAME,
+  buildBridgeClaudeOptions,
+  type BridgeClaudeOptions,
+} from './bridge-options';
 import {
   WORKSPACE_PROFILE_BRIDGE_NAME,
   partitionWorkspaceProfileTools,
@@ -45,7 +53,10 @@ import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from './host-tool-schemas';
 async function runOverRedis(turnId: string): Promise<void> {
   const { Redis } = await import('ioredis');
   const url = process.env.REDIS_URL ?? 'redis://redis:6379';
-  const client = new Redis(url, { lazyConnect: true, maxRetriesPerRequest: null });
+  const client = new Redis(url, {
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+  });
   const eventsKey = `turn:${turnId}:events`;
   const toolsKey = `turn:${turnId}:tools`;
   const repliesKey = `turn:${turnId}:replies`;
@@ -54,7 +65,9 @@ async function runOverRedis(turnId: string): Promise<void> {
 
   // A periodic heartbeat so the host watchdog can tell a live (but quiet) turn from a dead engine.
   const heartbeat = setInterval(() => {
-    void xadd(eventsKey, { t: 'heartbeat', ts: Date.now() }).catch(() => undefined);
+    void xadd(eventsKey, { t: 'heartbeat', ts: Date.now() }).catch(
+      () => undefined,
+    );
   }, 5_000);
   if (typeof heartbeat.unref === 'function') heartbeat.unref();
 
@@ -66,12 +79,17 @@ async function runOverRedis(turnId: string): Promise<void> {
 
   try {
     // The spec is a single-entry stream the host XADDed before the kick.
-    const specEntries = (await client.xread('COUNT', 1, 'STREAMS', `turn:${turnId}:spec`, '0')) as
-      | Array<[string, Array<[string, string[]]>]>
-      | null;
+    const specEntries = (await client.xread(
+      'COUNT',
+      1,
+      'STREAMS',
+      `turn:${turnId}:spec`,
+      '0',
+    )) as Array<[string, Array<[string, string[]]>]> | null;
     const fields = specEntries?.[0]?.[1]?.[0]?.[1] ?? [];
     const dataIdx = fields.indexOf('data');
-    if (dataIdx < 0) throw new Error(`engine-entrypoint: no spec for turn ${turnId}`);
+    if (dataIdx < 0)
+      throw new Error(`engine-entrypoint: no spec for turn ${turnId}`);
     const spec = JSON.parse(fields[dataIdx + 1]) as TurnSpec;
 
     const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
@@ -95,10 +113,16 @@ async function runOverRedis(turnId: string): Promise<void> {
     // its OWN reply-reader — so we must NOT also run one here for Codex (two readers would race for the
     // same `turn:{T}:replies` stream).
     let bridge: BridgeClaudeOptions | undefined;
-    let bridgeCall: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
+    let bridgeCall:
+      | ((name: string, args: Record<string, unknown>) => Promise<unknown>)
+      | undefined;
     let workspaceProfileBridge: BridgeClaudeOptions | undefined;
     let atlasProdBridge: BridgeClaudeOptions | undefined;
-    if (spec.engine === 'claude' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0) {
+    if (
+      spec.engine === 'claude' &&
+      spec.toolBridgeTools &&
+      spec.toolBridgeTools.length > 0
+    ) {
       // The shared reader owns its own blocking connection (a blocking read can't share the main
       // client) and swaps it internally on a stall-reset; `makeSub` also assigns the outer `sub` so the
       // `finally` cleanup below always disconnects whichever connection is CURRENT.
@@ -116,7 +140,10 @@ async function runOverRedis(turnId: string): Promise<void> {
       // Round-trip callback for host tools invoked OUTSIDE the model's tool list (e.g. the
       // install-awareness PostToolUse hook). Mirrors makeProxyTool's transport but returns the raw
       // host result instead of an SDK tool-content envelope.
-      bridgeCall = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+      bridgeCall = async (
+        name: string,
+        args: Record<string, unknown>,
+      ): Promise<unknown> => {
         const id = randomUUID();
         const resultPromise = toolReader.register(id);
         try {
@@ -138,37 +165,50 @@ async function runOverRedis(turnId: string): Promise<void> {
           // Fail loud: an empty shape would be wrapped in the SDK's STRICT object and silently strip
           // the whole payload to `{}` before the handler runs. A missing schema is a drift bug (caught
           // by the completeness guard tests) — surface it here rather than at runtime as data loss.
-          throw new Error(`[engine-entrypoint] no TOOL_SHAPES entry for bridged tool '${toolName}'`);
+          throw new Error(
+            `[engine-entrypoint] no TOOL_SHAPES entry for bridged tool '${toolName}'`,
+          );
         }
         return claudeSdk.tool(
           toolName,
-          TOOL_DESCRIPTIONS[toolName] ?? `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
+          TOOL_DESCRIPTIONS[toolName] ??
+            `Host-side tool '${toolName}' proxied via the Atlas tool bridge.`,
           shape,
           async (input: Record<string, unknown>) => {
             const id = randomUUID();
             const resultPromise = toolReader.register(id);
             try {
-              await xadd(toolsKey, { t: 'tool_request', id, name: toolName, args: input ?? {} });
+              await xadd(toolsKey, {
+                t: 'tool_request',
+                id,
+                name: toolName,
+                args: input ?? {},
+              });
             } catch (err) {
               toolReader.cancel(id);
               throw err;
             }
             try {
               const result = await resultPromise;
-              const text = typeof result === 'string' ? result : JSON.stringify(result);
+              const text =
+                typeof result === 'string' ? result : JSON.stringify(result);
               return { content: [{ type: 'text' as const, text }] };
             } catch (err) {
-              const message = (err instanceof Error ? err.message : String(err)) || 'host tool error (no message)';
-              return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
+              const message =
+                (err instanceof Error ? err.message : String(err)) ||
+                'host tool error (no message)';
+              return {
+                content: [{ type: 'text' as const, text: `Error: ${message}` }],
+                isError: true,
+              };
             }
           },
         );
       };
       // Split the flat host tool list into the general host bridge and the dedicated Workspace
       // Profile bridge, so the brain sees the seven provisioning dimensions as one section.
-      const { host: hostToolNames, profile: profileToolNames } = partitionWorkspaceProfileTools(
-        spec.toolBridgeTools,
-      );
+      const { host: hostToolNames, profile: profileToolNames } =
+        partitionWorkspaceProfileTools(spec.toolBridgeTools);
       // Further split the remaining general tools into the dedicated atlas-prod bridge (only
       // ever non-empty on the Atlas repo — `buildTools` omits these tools everywhere else).
       const { rest: generalToolNames, atlasProd: atlasProdToolNames } =
@@ -176,7 +216,8 @@ async function runOverRedis(turnId: string): Promise<void> {
       const server = claudeSdk.createSdkMcpServer({
         name: BRIDGE_SERVER_NAME,
         version: '1.0.0',
-        instructions: 'Atlas host tools. Call these to interact with the host harness.',
+        instructions:
+          'Atlas host tools. Call these to interact with the host harness.',
         tools: generalToolNames.map(makeProxyTool),
         alwaysLoad: true,
       });
@@ -186,12 +227,14 @@ async function runOverRedis(turnId: string): Promise<void> {
           name: WORKSPACE_PROFILE_BRIDGE_NAME,
           version: '1.0.0',
           instructions:
-            'Atlas Workspace Profile — provision and maintain this repo\'s durable workspace: secret files, mounts, setup script, MCP servers, skills, and house style.',
+            "Atlas Workspace Profile — provision and maintain this repo's durable workspace: secret files, mounts, setup script, MCP servers, skills, and house style.",
           tools: profileToolNames.map(makeProxyTool),
           alwaysLoad: true,
         });
         workspaceProfileBridge = {
-          extraClaudeOptions: { mcpServers: { [WORKSPACE_PROFILE_BRIDGE_NAME]: profileServer } },
+          extraClaudeOptions: {
+            mcpServers: { [WORKSPACE_PROFILE_BRIDGE_NAME]: profileServer },
+          },
           bridgeToolNames: qualifyWorkspaceProfileToolNames(profileToolNames),
         };
       }
@@ -205,7 +248,9 @@ async function runOverRedis(turnId: string): Promise<void> {
           alwaysLoad: true,
         });
         atlasProdBridge = {
-          extraClaudeOptions: { mcpServers: { [ATLAS_PROD_BRIDGE_NAME]: atlasProdServer } },
+          extraClaudeOptions: {
+            mcpServers: { [ATLAS_PROD_BRIDGE_NAME]: atlasProdServer },
+          },
           bridgeToolNames: qualifyAtlasProdToolNames(atlasProdToolNames),
         };
       }
@@ -245,18 +290,28 @@ async function runOverRedis(turnId: string): Promise<void> {
           // stale data). BLOCK yields control between polls so the loop unwinds promptly once stopped.
           let lastId = '0-0';
           while (!stopped) {
-            const r = (await conn.xread('BLOCK', 1000, 'STREAMS', inputKey, lastId)) as
-              | Array<[string, Array<[string, string[]]>]>
-              | null;
+            const r = (await conn.xread(
+              'BLOCK',
+              1000,
+              'STREAMS',
+              inputKey,
+              lastId,
+            )) as Array<[string, Array<[string, string[]]>]> | null;
             if (!r) continue;
             for (const [, entries] of r) {
               for (const [eid, f] of entries) {
                 lastId = eid;
                 const di = f.indexOf('data');
                 if (di < 0) continue;
-                const frame = JSON.parse(f[di + 1]) as { id?: string; text?: string };
+                const frame = JSON.parse(f[di + 1]) as {
+                  id?: string;
+                  text?: string;
+                };
                 if (typeof frame.text === 'string' && frame.text.length > 0)
-                  yield { ...(typeof frame.id === 'string' ? { id: frame.id } : {}), text: frame.text };
+                  yield {
+                    ...(typeof frame.id === 'string' ? { id: frame.id } : {}),
+                    text: frame.text,
+                  };
               }
             }
           }
@@ -266,7 +321,8 @@ async function runOverRedis(turnId: string): Promise<void> {
 
     const runArgs: RunEngineArgs = {
       ...spec,
-      onEvent: (e: EngineEvent) => void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
+      onEvent: (e: EngineEvent) =>
+        void xadd(eventsKey, { t: 'event', e }).catch(() => undefined),
       ...(spec.steerable ? { signal: abortController.signal, steerInput } : {}),
       ...(bridgeCall ? { bridgeCall } : {}),
     };
@@ -291,7 +347,9 @@ async function runOverRedis(turnId: string): Promise<void> {
     // config.toml `[mcp_servers.atlasbridge]` block (the Codex tool bridge). Claude uses the merged Claude
     // options above instead; the two engines never both consume the bridge on one turn.
     const codexBridgeTools =
-      spec.engine === 'codex' && spec.toolBridgeTools && spec.toolBridgeTools.length > 0
+      spec.engine === 'codex' &&
+      spec.toolBridgeTools &&
+      spec.toolBridgeTools.length > 0
         ? spec.toolBridgeTools
         : undefined;
     // For a Codex execute turn, the user's stdio MCP servers ride in as config.toml `[mcp_servers.*]`
@@ -304,7 +362,9 @@ async function runOverRedis(turnId: string): Promise<void> {
         : undefined;
     const result = await core.runWithExtras(
       runArgs,
-      Object.keys(mergedMcpServers).length > 0 ? { mcpServers: mergedMcpServers } : undefined,
+      Object.keys(mergedMcpServers).length > 0
+        ? { mcpServers: mergedMcpServers }
+        : undefined,
       mergedToolNames.length > 0 ? mergedToolNames : undefined,
       codexBridgeTools,
       codexExtraMcpServers,
@@ -342,7 +402,8 @@ async function main(): Promise<void> {
   // from `turn:{T}:spec` and write events to `turn:{T}:events` (the tool bridge rides the tools/replies
   // streams). See ADR 0001.
   const turnId = process.env.TURN_ID;
-  if (!turnId) throw new Error('engine-entrypoint: TURN_ID is required (Redis transport)');
+  if (!turnId)
+    throw new Error('engine-entrypoint: TURN_ID is required (Redis transport)');
   await runOverRedis(turnId);
   // Force a clean exit — the SDK/ioredis can leave lingering handles that would hang this one-shot.
   process.exit(process.exitCode ?? 0);

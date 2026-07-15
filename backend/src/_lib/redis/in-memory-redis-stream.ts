@@ -275,7 +275,9 @@ function clone<T>(v: T): T {
 
 /** Minimal Redis-glob → RegExp (only `*` is used by callers here). Escapes all other regex metachars. */
 function globToRegExp(glob: string): RegExp {
-  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  const escaped = glob
+    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
 }
 

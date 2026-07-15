@@ -269,15 +269,33 @@ describe('TenantCredentialStore', () => {
       const store = makeStore();
       await store.write('T1', { anthropicApiKey: 'a1' });
       const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      await store.mergeClaudeUsageWindow('T1', 'fiveHour', { utilization: 100, resetsAt }, Date.now(), 'credA');
-      await store.mergeClaudeUsageWindow('T1', 'sevenDay', { utilization: 50, resetsAt }, Date.now(), 'credA');
+      await store.mergeClaudeUsageWindow(
+        'T1',
+        'fiveHour',
+        { utilization: 100, resetsAt },
+        Date.now(),
+        'credA',
+      );
+      await store.mergeClaudeUsageWindow(
+        'T1',
+        'sevenDay',
+        { utilization: 50, resetsAt },
+        Date.now(),
+        'credA',
+      );
       let snapshot = await store.readClaudeUsageSnapshot('T1');
       expect(snapshot?.credentialId).toBe('credA');
       expect(snapshot?.windows.fiveHour).toBeDefined();
       expect(snapshot?.windows.sevenDay).toBeDefined();
 
       // A harvest from a DIFFERENT credential resets the snapshot — the account-A windows are gone.
-      await store.mergeClaudeUsageWindow('T1', 'fiveHour', { utilization: 21, resetsAt }, Date.now(), 'credB');
+      await store.mergeClaudeUsageWindow(
+        'T1',
+        'fiveHour',
+        { utilization: 21, resetsAt },
+        Date.now(),
+        'credB',
+      );
       snapshot = await store.readClaudeUsageSnapshot('T1');
       expect(snapshot?.credentialId).toBe('credB');
       expect(snapshot?.windows.fiveHour).toEqual({ utilization: 21, resetsAt });
@@ -288,10 +306,23 @@ describe('TenantCredentialStore', () => {
       const store = makeStore();
       await store.write('T1', { anthropicApiKey: 'a1' });
       const resetsAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      await store.mergeClaudeUsageWindow('T1', 'fiveHour', { utilization: 100, resetsAt }, Date.now());
-      expect((await store.readClaudeUsageSnapshot('T1'))?.credentialId).toBeUndefined();
+      await store.mergeClaudeUsageWindow(
+        'T1',
+        'fiveHour',
+        { utilization: 100, resetsAt },
+        Date.now(),
+      );
+      expect(
+        (await store.readClaudeUsageSnapshot('T1'))?.credentialId,
+      ).toBeUndefined();
 
-      await store.mergeClaudeUsageWindow('T1', 'fiveHour', { utilization: 5, resetsAt }, Date.now(), 'credA');
+      await store.mergeClaudeUsageWindow(
+        'T1',
+        'fiveHour',
+        { utilization: 5, resetsAt },
+        Date.now(),
+        'credA',
+      );
       const snapshot = await store.readClaudeUsageSnapshot('T1');
       expect(snapshot?.credentialId).toBe('credA');
       expect(snapshot?.windows.fiveHour).toEqual({ utilization: 5, resetsAt });

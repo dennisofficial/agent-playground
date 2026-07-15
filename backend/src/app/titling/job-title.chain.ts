@@ -1,5 +1,8 @@
 import { SystemMessage } from '@langchain/core/messages';
-import { ChatPromptTemplate, HumanMessagePromptTemplate } from '@langchain/core/prompts';
+import {
+  ChatPromptTemplate,
+  HumanMessagePromptTemplate,
+} from '@langchain/core/prompts';
 import { RunnableSequence, type Runnable } from '@langchain/core/runnables';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
@@ -83,7 +86,8 @@ export type JobTitleChainFactory = (
  * short noun phrase, never a first-person sentence, so we sniff for these shapes and reject them (the
  * caller then falls through to {@link firstLineTitle}). Conservative: only the unmistakable openers.
  */
-const REFUSAL_SHAPE = /^(i\b|i'?m\b|sorry\b|as an?\b|sure[,!. ]|here(?:'s| is)\b|the title\b|okay[,!. ]|unfortunately\b|i appreciate\b|i cannot\b|i can'?t\b)/i;
+const REFUSAL_SHAPE =
+  /^(i\b|i'?m\b|sorry\b|as an?\b|sure[,!. ]|here(?:'s| is)\b|the title\b|okay[,!. ]|unfortunately\b|i appreciate\b|i cannot\b|i can'?t\b)/i;
 
 /** Tidy a raw model title: drop surrounding quotes, collapse whitespace, cap length. Empty/refusal → undefined. */
 export function sanitizeTitle(raw: string): string | undefined {
@@ -106,6 +110,10 @@ export function sanitizeTitle(raw: string): string | undefined {
  * `jobTitle` in the brain — now the single shared source so every fallback looks identical.
  */
 export function firstLineTitle(text: string): string {
-  const firstLine = text.split('\n').map((l) => l.trim()).find(Boolean) ?? text;
+  const firstLine =
+    text
+      .split('\n')
+      .map((l) => l.trim())
+      .find(Boolean) ?? text;
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }

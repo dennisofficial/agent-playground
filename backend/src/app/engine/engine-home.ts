@@ -54,7 +54,12 @@ export function atlasAgentHomeBase(root: string | undefined): string {
  * both so they land under the exact same nested tree for a given key.
  */
 export function engineHomeLeaf(base: string, key: EngineHomeKey): string {
-  const parts = [safeHomeKey(key.orgId), safeHomeKey(key.repoId), safeHomeKey(key.jobId), key.type];
+  const parts = [
+    safeHomeKey(key.orgId),
+    safeHomeKey(key.repoId),
+    safeHomeKey(key.jobId),
+    key.type,
+  ];
   if (key.subId) parts.push(safeHomeKey(key.subId));
   return join(base, ...parts);
 }
@@ -64,7 +69,9 @@ export function engineHomeLeaf(base: string, key: EngineHomeKey): string {
  * client cache), NOT a filesystem path (use {@link engineHomeLeaf} / {@link atlasEngineHomeDir} for that).
  */
 export function engineHomeKeyString(key: EngineHomeKey): string {
-  return [key.orgId, key.repoId, key.jobId, key.type, key.subId ?? ''].join(':');
+  return [key.orgId, key.repoId, key.jobId, key.type, key.subId ?? ''].join(
+    ':',
+  );
 }
 
 /**

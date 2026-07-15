@@ -8,7 +8,9 @@
 /** The Claude `claudeAiOauth.expiresAt` as an epoch (ms), or null when absent/unparseable. */
 export function parseClaudeExpiresAt(secret: string): number | null {
   try {
-    const obj = JSON.parse(secret) as { claudeAiOauth?: { expiresAt?: unknown } };
+    const obj = JSON.parse(secret) as {
+      claudeAiOauth?: { expiresAt?: unknown };
+    };
     const t = obj.claudeAiOauth?.expiresAt;
     return typeof t === 'number' && Number.isFinite(t) ? t : null;
   } catch {
@@ -21,7 +23,10 @@ export function parseClaudeExpiresAt(secret: string): number | null {
  * (both must parse); when either is missing, fall back to "changed at all" so we still persist a genuine
  * refresh but never rewrite an identical blob.
  */
-export function isNewerClaudeCredential(next: string, current: string): boolean {
+export function isNewerClaudeCredential(
+  next: string,
+  current: string,
+): boolean {
   const nw = parseClaudeExpiresAt(next);
   const cur = parseClaudeExpiresAt(current);
   if (nw !== null && cur !== null) return nw > cur;

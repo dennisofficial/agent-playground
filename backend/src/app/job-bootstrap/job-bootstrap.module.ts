@@ -15,7 +15,9 @@ import { JobBootstrapService } from './job-bootstrap.service';
 
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([StageEntity, ThreadEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature([StageEntity, ThreadEntity], DB_CONNECTION),
+  ],
   providers: [JobBootstrapService],
   exports: [JobBootstrapService],
 })

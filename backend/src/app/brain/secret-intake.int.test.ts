@@ -88,7 +88,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
   });
 
   afterAll(async () => {
-    if (ds) await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    if (ds)
+      await ds
+        .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+        .catch(() => undefined);
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
     else process.env.SURFACE = prevSurface;
@@ -100,17 +103,27 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     const requestId = 's-leak-test-1';
     // (1) The brain's request_secret tool opens a value-FREE card + bumps the per-card open counter (this
     // request is DURABLE, not ephemeral — no single-slot `awaiting_secret_id` pointer is touched).
-    const card = webSecretInputCard({ jobId, requestId, name: SECRET_NAME, path: SECRET_PATH, description: 'DB connection string' });
+    const card = webSecretInputCard({
+      jobId,
+      requestId,
+      name: SECRET_NAME,
+      path: SECRET_PATH,
+      description: 'DB connection string',
+    });
     const opened = await store.openSecretRequest(jobId, { requestId, card });
     expect(opened.ok).toBe(true);
     expect(await store.awaitingSecretId(jobId)).toBeNull();
-    expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeUndefined();
+    expect(
+      (await store.getSecretCard(jobId, requestId))?.provided_at,
+    ).toBeUndefined();
 
     // (2) The `provide-secret` endpoint's work: value → encrypted secret file at (repo, path) + stamp
     // provided_at (per-card — also decrements `open_secret_count`). The name rides along as the display label.
     await secrets.write(ORG_ID, repoId, SECRET_PATH, SECRET_VALUE, SECRET_NAME);
     await store.markSecretProvidedPerCard(jobId, requestId);
-    expect((await store.getSecretCard(jobId, requestId))?.provided_at).toBeDefined();
+    expect(
+      (await store.getSecretCard(jobId, requestId))?.provided_at,
+    ).toBeDefined();
 
     // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
     const rows = await ds.query(
@@ -122,7 +135,11 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     // …but the value IS recoverable (encrypted) from the store, and the file ref exists.
     expect(await secrets.read(ORG_ID, repoId, SECRET_PATH)).toBe(SECRET_VALUE);
     const files = await secrets.list(ORG_ID, repoId);
-    expect(files).toContainEqual({ repoId, path: SECRET_PATH, label: SECRET_NAME });
+    expect(files).toContainEqual({
+      repoId,
+      path: SECRET_PATH,
+      label: SECRET_NAME,
+    });
 
     // The encrypted column never contains the plaintext either.
     const enc = await ds.query(
@@ -134,14 +151,24 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     // (4) Crash-safe lifecycle: provided-but-undelivered surfaces for boot re-delivery (name/path only).
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.find((p) => p.requestId === requestId);
-    expect(mine).toMatchObject({ jobId, orgId: ORG_ID, repoId, name: SECRET_NAME, path: SECRET_PATH });
+    expect(mine).toMatchObject({
+      jobId,
+      orgId: ORG_ID,
+      repoId,
+      name: SECRET_NAME,
+      path: SECRET_PATH,
+    });
     expect(JSON.stringify(mine)).not.toContain(SECRET_VALUE);
 
     // (5) Delivery success-tail: stamp delivered + clear gate → no longer pending.
     await store.markSecretDelivered(jobId, requestId);
     await store.clearAwaitingSecret(jobId, requestId);
     expect(await store.awaitingSecretId(jobId)).toBeNull();
-    expect((await store.findUndeliveredProvidedSecrets()).some((p) => p.requestId === requestId)).toBe(false);
+    expect(
+      (await store.findUndeliveredProvidedSecrets()).some(
+        (p) => p.requestId === requestId,
+      ),
+    ).toBe(false);
   });
 
   /** A fresh thread on the same org/repo — isolates the per-card lifecycle tests below from each other. */
@@ -155,7 +182,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
   /** The live `jobs.open_secret_count` counter for a thread. */
   async function openSecretCount(id: string): Promise<number> {
-    const rows = await ds.query(`SELECT open_secret_count FROM jobs WHERE id = $1`, [id]);
+    const rows = await ds.query(
+      `SELECT open_secret_count FROM jobs WHERE id = $1`,
+      [id],
+    );
     return rows[0].open_secret_count;
   }
 
@@ -177,8 +207,14 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     });
 
     const [openedA, openedB] = await Promise.all([
-      store.openSecretRequest(thread, { requestId: 's-concurrent-a', card: cardA }),
-      store.openSecretRequest(thread, { requestId: 's-concurrent-b', card: cardB }),
+      store.openSecretRequest(thread, {
+        requestId: 's-concurrent-a',
+        card: cardA,
+      }),
+      store.openSecretRequest(thread, {
+        requestId: 's-concurrent-b',
+        card: cardB,
+      }),
     ]);
 
     expect(openedA).toEqual({ ok: true });
@@ -187,7 +223,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     expect(openedB.alreadyOpen).toBeUndefined();
 
     const open = await store.openSecretCards(thread);
-    expect(open.map((c) => c.requestId).sort()).toEqual(['s-concurrent-a', 's-concurrent-b']);
+    expect(open.map((c) => c.requestId).sort()).toEqual([
+      's-concurrent-a',
+      's-concurrent-b',
+    ]);
   });
 
   it('(b) an ephemeral open and a durable open on the same thread never block each other, either order', async () => {
@@ -243,7 +282,8 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       requestId: 's-order-durable-2',
       name: 'DURABLE_SECOND',
       path: '.env',
-      description: 'durable opened second, must not be blocked by the ephemeral pointer',
+      description:
+        'durable opened second, must not be blocked by the ephemeral pointer',
     });
     const openedDurableSecond = await store.openSecretRequest(threadB, {
       requestId: 's-order-durable-2',
@@ -268,7 +308,11 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     await store.openSecretRequest(thread, { requestId, card });
     expect(await openSecretCount(thread)).toBe(1);
 
-    const withdrawn = await store.withdrawSecretRequest(thread, requestId, 'no longer needed');
+    const withdrawn = await store.withdrawSecretRequest(
+      thread,
+      requestId,
+      'no longer needed',
+    );
     expect(withdrawn).toEqual({ withdrawn: true });
     expect(await openSecretCount(thread)).toBe(0);
     const afterWithdraw = await store.getSecretCard(thread, requestId);
@@ -278,10 +322,16 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
     // A subsequent provide attempt against the withdrawn card is refused: markSecretProvidedPerCard's
     // conditional update only fires on an open card, so it's a no-op here and provided_at stays unset.
     await store.markSecretProvidedPerCard(thread, requestId);
-    expect((await store.getSecretCard(thread, requestId))?.provided_at).toBeUndefined();
+    expect(
+      (await store.getSecretCard(thread, requestId))?.provided_at,
+    ).toBeUndefined();
 
     // Double-withdraw is idempotent — the second call is not the winner and does not double-decrement.
-    const secondWithdraw = await store.withdrawSecretRequest(thread, requestId, 'again');
+    const secondWithdraw = await store.withdrawSecretRequest(
+      thread,
+      requestId,
+      'again',
+    );
     expect(secondWithdraw).toEqual({ withdrawn: false });
     expect(await openSecretCount(thread)).toBe(0);
   });
@@ -302,8 +352,14 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       path: '.env.two',
       description: 'stuck secret two',
     });
-    await store.openSecretRequest(thread, { requestId: 's-stuck-1', card: cardOne });
-    await store.openSecretRequest(thread, { requestId: 's-stuck-2', card: cardTwo });
+    await store.openSecretRequest(thread, {
+      requestId: 's-stuck-1',
+      card: cardOne,
+    });
+    await store.openSecretRequest(thread, {
+      requestId: 's-stuck-2',
+      card: cardTwo,
+    });
 
     // Simulate the crash window: the operator provided both values (stamped provided_at) but the host died
     // before either delivery turn ran (delivered_at stays null).
@@ -312,7 +368,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
     const pending = await store.findUndeliveredProvidedSecrets();
     const mine = pending.filter((p) => p.jobId === thread);
-    expect(mine.map((p) => p.requestId).sort()).toEqual(['s-stuck-1', 's-stuck-2']);
+    expect(mine.map((p) => p.requestId).sort()).toEqual([
+      's-stuck-1',
+      's-stuck-2',
+    ]);
   });
 
   it('(e) open_secret_count lifecycle: bumped on open, decremented on provide/withdraw, healed by reconcileOpenSecretCounts, unaffected by ephemeral opens', async () => {
@@ -326,7 +385,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       path: '.env',
       description: 'opened then provided',
     });
-    await store.openSecretRequest(thread, { requestId: 's-lifecycle-provided', card: providedCard });
+    await store.openSecretRequest(thread, {
+      requestId: 's-lifecycle-provided',
+      card: providedCard,
+    });
     expect(await openSecretCount(thread)).toBe(1);
 
     await store.markSecretProvidedPerCard(thread, 's-lifecycle-provided');
@@ -339,7 +401,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       path: '.env',
       description: 'opened then withdrawn',
     });
-    await store.openSecretRequest(thread, { requestId: 's-lifecycle-withdrawn', card: withdrawnCard });
+    await store.openSecretRequest(thread, {
+      requestId: 's-lifecycle-withdrawn',
+      card: withdrawnCard,
+    });
     expect(await openSecretCount(thread)).toBe(1);
     await store.withdrawSecretRequest(thread, 's-lifecycle-withdrawn');
     expect(await openSecretCount(thread)).toBe(0);
@@ -353,7 +418,10 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       ephemeral: true,
       deliver_to: '/tmp/atlas-lifecycle',
     });
-    await store.openSecretRequest(thread, { requestId: 's-lifecycle-ephemeral', card: ephemeralCard });
+    await store.openSecretRequest(thread, {
+      requestId: 's-lifecycle-ephemeral',
+      card: ephemeralCard,
+    });
     expect(await openSecretCount(thread)).toBe(0);
 
     // Boot heal: one genuinely-open durable card, but the counter is corrupted — reconcile must restore it.
@@ -364,9 +432,14 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       path: '.env',
       description: 'still open when the counter gets corrupted',
     });
-    await store.openSecretRequest(thread, { requestId: 's-lifecycle-open', card: openCard });
+    await store.openSecretRequest(thread, {
+      requestId: 's-lifecycle-open',
+      card: openCard,
+    });
     expect(await openSecretCount(thread)).toBe(1);
-    await ds.query(`UPDATE jobs SET open_secret_count = 99 WHERE id = $1`, [thread]);
+    await ds.query(`UPDATE jobs SET open_secret_count = 99 WHERE id = $1`, [
+      thread,
+    ]);
     expect(await openSecretCount(thread)).toBe(99);
 
     await store.reconcileOpenSecretCounts();

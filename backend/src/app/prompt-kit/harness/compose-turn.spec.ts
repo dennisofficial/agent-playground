@@ -15,13 +15,19 @@ describe('composeTurn', () => {
       prefixChunks: [],
       userChunks: [userChunk('Dennis', 'ship it', '2026-07-04T00:00:00.000Z')],
     });
-    expect(turn).toBe('<user name="Dennis" at="2026-07-04T00:00:00.000Z">ship it</user>');
+    expect(turn).toBe(
+      '<user name="Dennis" at="2026-07-04T00:00:00.000Z">ship it</user>',
+    );
   });
 
   it('(b) coalesces a batch of 3 into 3 chronological <user> chunks after any prefixes', () => {
     const turn = composeTurn({
       prefixChunks: [
-        { kind: 'system_reminder', body: 'awareness: build is green', attrs: { reminderKind: 'awareness' } },
+        {
+          kind: 'system_reminder',
+          body: 'awareness: build is green',
+          attrs: { reminderKind: 'awareness' },
+        },
       ],
       userChunks: [
         userChunk('Dennis', 'first', '2026-07-04T00:00:01.000Z'),
@@ -45,9 +51,15 @@ describe('composeTurn', () => {
   it('(c) renders a memory turn-prefix chunk (the JIT rail) before the <user> bubble', () => {
     const turn = composeTurn({
       prefixChunks: [
-        { kind: 'system_reminder', body: 'memory: prefers pnpm', attrs: { reminderKind: 'memory' } },
+        {
+          kind: 'system_reminder',
+          body: 'memory: prefers pnpm',
+          attrs: { reminderKind: 'memory' },
+        },
       ],
-      userChunks: [userChunk('Dennis', 'how do we build?', '2026-07-04T00:00:00.000Z')],
+      userChunks: [
+        userChunk('Dennis', 'how do we build?', '2026-07-04T00:00:00.000Z'),
+      ],
     });
     expect(turn).toBe(
       [
@@ -61,7 +73,11 @@ describe('composeTurn', () => {
   it('orders notices → reminders → <user> regardless of input order (byte-identical to renderTurn framing)', () => {
     const turn = composeTurn({
       prefixChunks: [
-        { kind: 'system_reminder', body: 'a reminder', attrs: { reminderKind: 'awareness' } },
+        {
+          kind: 'system_reminder',
+          body: 'a reminder',
+          attrs: { reminderKind: 'awareness' },
+        },
         { kind: 'system_notice', body: 'a notice' },
       ],
       userChunks: [userChunk('Dennis', 'hi', '2026-07-04T00:00:00.000Z')],

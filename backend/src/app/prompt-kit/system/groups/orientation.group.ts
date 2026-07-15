@@ -7,12 +7,20 @@
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import { DOCS_BEFORE_GREP, SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
+import {
+  DOCS_BEFORE_GREP,
+  SUBAGENT_NUDGE_NOTE,
+  VERIFY_CURRENCY,
+} from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {
   /** Investigate first / docs before grep / delegate / other subagents / web access. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1080, condition: notOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1080,
+    condition: notOnboarding,
+  })
   investigate(): string {
     return [
       'INVESTIGATE FIRST: before proposing anything, ground yourself in the repo with Read/Glob/Grep (stack,',
@@ -49,7 +57,11 @@ export class OrientationGroup {
   }
 
   /** The onboarding grounding gate + bring-up Loop. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2020, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2020,
+    condition: isOnboarding,
+  })
   onboardingLoop(): string {
     return [
       'You work in /workspace (a real checkout) with your native tools (Bash, Read, Glob, Grep). For any',
@@ -131,7 +143,11 @@ export class OrientationGroup {
   }
 
   /** Dev logins for validation. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2040, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2040,
+    condition: isOnboarding,
+  })
   devLogins(): string {
     return [
       'DEV LOGINS — validation needs accounts. Find them the way the repo intends: seed scripts/fixtures,',

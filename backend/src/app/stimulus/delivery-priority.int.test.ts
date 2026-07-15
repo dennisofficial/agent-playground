@@ -128,7 +128,11 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
     );
     expect(raw).toHaveLength(1);
     expect(raw[0].priority_text).toBe('later');
-    expect(raw[0].reply_route).toMatchObject({ surfaceId: 'web', jobRef: thread.id, priority: 'later' });
+    expect(raw[0].reply_route).toMatchObject({
+      surfaceId: 'web',
+      jobRef: thread.id,
+      priority: 'later',
+    });
 
     // The read path (rowToChatStimulus, exercised via eligiblePendingChat) round-trips priority.
     const pending = await store.eligiblePendingChat(thread.id, 60_000);

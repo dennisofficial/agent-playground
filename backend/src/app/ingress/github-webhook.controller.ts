@@ -1,7 +1,11 @@
 import { Controller, HttpCode, Logger, Post, Req } from '@nestjs/common';
 import { Public } from '@workspace/auth/server';
 import { GithubNotificationSource } from './github-notification.source';
-import { runPrWebhook, runWorkEvent, type RawBodyRequest } from './ingress-http';
+import {
+  runPrWebhook,
+  runWorkEvent,
+  type RawBodyRequest,
+} from './ingress-http';
 import { StimulusIntake } from '../stimulus';
 import {
   BaseMoveMergeabilitySync,
@@ -40,7 +44,14 @@ export class GithubEventsWebhookController {
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runWorkEvent(this.logger, this.adapter, this.intake, this.ciSync, this.reconciler, req);
+    return runWorkEvent(
+      this.logger,
+      this.adapter,
+      this.intake,
+      this.ciSync,
+      this.reconciler,
+      req,
+    );
   }
 }
 
@@ -69,6 +80,13 @@ export class GithubStateWebhookController {
   @Post()
   @HttpCode(202)
   async receive(@Req() req: RawBodyRequest): Promise<Record<string, unknown>> {
-    return runPrWebhook(this.logger, this.adapter, req, this.prSync, this.reconciler, this.baseMove);
+    return runPrWebhook(
+      this.logger,
+      this.adapter,
+      req,
+      this.prSync,
+      this.reconciler,
+      this.baseMove,
+    );
   }
 }

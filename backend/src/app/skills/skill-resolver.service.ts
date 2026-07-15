@@ -7,9 +7,17 @@ import type { ResolvedSkill } from '../engine/engine.types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
 import type { ThreadType } from '../thread-kind/thread-types';
 import { stripSkillFrontmatter } from './skill-frontmatter';
-import { managedGitSkillRelativeDir, managedGitSkillsRootHost, orgSkillsRootHost, skillRelativeDir } from './skill-store-paths';
+import {
+  managedGitSkillRelativeDir,
+  managedGitSkillsRootHost,
+  orgSkillsRootHost,
+  skillRelativeDir,
+} from './skill-store-paths';
 import { buildSystemSkills } from './system-skill-registry';
-import { managedSkillRelativeDir, managedSkillsRootHost } from './system-skill-store-paths';
+import {
+  managedSkillRelativeDir,
+  managedSkillsRootHost,
+} from './system-skill-store-paths';
 import { WorkspaceSkillStore } from './workspace-skill.store';
 
 /**
@@ -79,7 +87,8 @@ export class SkillResolver {
       if (!r.surfaces.includes(surface)) continue;
       const winner = winners.get(r.name);
       // A repo-scoped row (scope !== '*') always beats an org-scoped one; otherwise first-seen org wins.
-      if (!winner || (winner.scope === '*' && r.scope !== '*')) winners.set(r.name, r);
+      if (!winner || (winner.scope === '*' && r.scope !== '*'))
+        winners.set(r.name, r);
     }
     for (const r of winners.values()) {
       byName.set(r.name, {
@@ -113,7 +122,9 @@ export class SkillResolver {
     for (const s of resolved) {
       const types = s.reviewForTypes ?? [];
       const globs = s.reviewForGlobs ?? [];
-      const applies = types.includes(type) || globs.some((g) => changedFiles.some((f) => picomatch.isMatch(f, g)));
+      const applies =
+        types.includes(type) ||
+        globs.some((g) => changedFiles.some((f) => picomatch.isMatch(f, g)));
       if (!applies) continue;
 
       const rootForSkill = s.managed
@@ -126,7 +137,9 @@ export class SkillResolver {
         const md = readFileSync(join(abs, 'SKILL.md'), 'utf8');
         out.push({ name: s.name, body: stripSkillFrontmatter(md) });
       } catch (err) {
-        this.logger.warn(`skipping review skill '${s.name}' — failed to read SKILL.md at ${abs}: ${err}`);
+        this.logger.warn(
+          `skipping review skill '${s.name}' — failed to read SKILL.md at ${abs}: ${err}`,
+        );
       }
     }
     return out;

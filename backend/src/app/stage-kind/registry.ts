@@ -67,12 +67,15 @@ export const STAGE_KIND_SPECS: readonly StageKindSpec[] = [
   },
 ];
 
-const BY_KIND = new Map<string, StageKindSpec>(STAGE_KIND_SPECS.map((s) => [s.kind, s]));
+const BY_KIND = new Map<string, StageKindSpec>(
+  STAGE_KIND_SPECS.map((s) => [s.kind, s]),
+);
 
 /** Resolve a stage kind's spec, or throw (an unknown kind is a bug — every row's kind is registry-backed). */
 export function stageKindSpec(kind: string): StageKindSpec {
   const spec = BY_KIND.get(kind);
-  if (!spec) throw new Error(`stage-kind: unknown kind "${kind}" (no StageKindSpec).`);
+  if (!spec)
+    throw new Error(`stage-kind: unknown kind "${kind}" (no StageKindSpec).`);
   return spec;
 }
 
@@ -92,7 +95,9 @@ export function coerceStageKind(raw: unknown): StageKind {
  * Fail LOUDLY on a misconfigured stage-kind set (twin of `validateThreadKinds`): a duplicate kind, and a
  * role reference that names a kind with no `ThreadKindSpec` (so every declared role always resolves).
  */
-export function validateStageKinds(specs: readonly StageKindSpec[] = STAGE_KIND_SPECS): void {
+export function validateStageKinds(
+  specs: readonly StageKindSpec[] = STAGE_KIND_SPECS,
+): void {
   const validRoles = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
   const seen = new Set<string>();
   for (const s of specs) {
@@ -105,10 +110,14 @@ export function validateStageKinds(specs: readonly StageKindSpec[] = STAGE_KIND_
     }
     for (const r of s.roles) {
       if (!validRoles.has(r.role)) {
-        throw new Error(`stage-kind: kind "${s.kind}" references unknown role "${r.role}".`);
+        throw new Error(
+          `stage-kind: kind "${s.kind}" references unknown role "${r.role}".`,
+        );
       }
       if (r.max !== null && r.max < r.min) {
-        throw new Error(`stage-kind: kind "${s.kind}" role "${r.role}" has max < min.`);
+        throw new Error(
+          `stage-kind: kind "${s.kind}" role "${r.role}" has max < min.`,
+        );
       }
     }
   }

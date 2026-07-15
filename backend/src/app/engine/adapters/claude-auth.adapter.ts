@@ -7,14 +7,22 @@ import { isNewerClaudeCredential } from '../../onboarding/claude-credential-fres
 
 const CREDENTIALS_FILENAME = '.credentials.json';
 
-function credentialsFile(homeRoot: string | undefined, key: EngineHomeKey): string {
-  return join(atlasEngineHomeDir(homeRoot, 'claude', key), CREDENTIALS_FILENAME);
+function credentialsFile(
+  homeRoot: string | undefined,
+  key: EngineHomeKey,
+): string {
+  return join(
+    atlasEngineHomeDir(homeRoot, 'claude', key),
+    CREDENTIALS_FILENAME,
+  );
 }
 
 function validate(secret: string): void {
   let accessToken: unknown;
   try {
-    accessToken = (JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }).claudeAiOauth?.accessToken;
+    accessToken = (
+      JSON.parse(secret) as { claudeAiOauth?: { accessToken?: unknown } }
+    ).claudeAiOauth?.accessToken;
   } catch {
     throw new Error(
       'Claude personal credential is invalid: not valid JSON (expected {claudeAiOauth:{accessToken,...}}).',

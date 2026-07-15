@@ -41,25 +41,47 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
   });
 
   it('keeps two jobs separate', () => {
-    const a = atlasEngineHomeDir(root, 'claude', { ...brainKey, jobId: 'feat-a' });
-    const b = atlasEngineHomeDir(root, 'claude', { ...brainKey, jobId: 'feat-b' });
+    const a = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      jobId: 'feat-a',
+    });
+    const b = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      jobId: 'feat-b',
+    });
     expect(a).not.toBe(b);
   });
 
   it('keeps two surfaces of the SAME job separate (brain vs build vs autofix)', () => {
-    const brain = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'brain' });
-    const build = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'build' });
+    const brain = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      type: 'brain',
+    });
+    const build = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      type: 'build',
+    });
     expect(brain).not.toBe(build);
   });
 
   it('keeps two subId sub-sessions of the same (org,repo,job,type) separate', () => {
-    const lensA = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'autofix', subId: 'review-l1' });
-    const lensB = atlasEngineHomeDir(root, 'claude', { ...brainKey, type: 'autofix', subId: 'review-l2' });
+    const lensA = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      type: 'autofix',
+      subId: 'review-l1',
+    });
+    const lensB = atlasEngineHomeDir(root, 'claude', {
+      ...brainKey,
+      type: 'autofix',
+      subId: 'review-l2',
+    });
     expect(lensA).not.toBe(lensB);
   });
 
   it('atlasAgentHomeBase defaults under the repo-relative .atlas-state when no root', () => {
-    expect(atlasAgentHomeBase(undefined)).toContain(join('.atlas-state', 'agent-home'));
+    expect(atlasAgentHomeBase(undefined)).toContain(
+      join('.atlas-state', 'agent-home'),
+    );
     expect(atlasAgentHomeBase(undefined)).not.toContain('.agent-playground');
     expect(atlasAgentHomeBase('/custom')).toBe('/custom');
   });
@@ -67,13 +89,21 @@ describe('atlasEngineHomeDir (isolated agent home, never ~/.claude)', () => {
 
 describe('engineHomeKeyString (cache-key stringification, not a filesystem path)', () => {
   it('is stable for the same key and distinct for different jobs', () => {
-    expect(engineHomeKeyString(brainKey)).toBe(engineHomeKeyString({ ...brainKey }));
-    expect(engineHomeKeyString(brainKey)).not.toBe(engineHomeKeyString({ ...brainKey, jobId: 'feat-y' }));
+    expect(engineHomeKeyString(brainKey)).toBe(
+      engineHomeKeyString({ ...brainKey }),
+    );
+    expect(engineHomeKeyString(brainKey)).not.toBe(
+      engineHomeKeyString({ ...brainKey, jobId: 'feat-y' }),
+    );
   });
 
   it('distinguishes a subId sub-session from its parent', () => {
     const parent = engineHomeKeyString({ ...brainKey, type: 'autofix' });
-    const child = engineHomeKeyString({ ...brainKey, type: 'autofix', subId: 'fix' });
+    const child = engineHomeKeyString({
+      ...brainKey,
+      type: 'autofix',
+      subId: 'fix',
+    });
     expect(parent).not.toBe(child);
   });
 });

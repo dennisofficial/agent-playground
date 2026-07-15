@@ -75,7 +75,10 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
       repoId: 'web',
       author: { id: 'U1', displayName: 'Dennis' },
     });
-    expect(intaken[0].replyRoute).toEqual({ surfaceId: 'web', jobRef: threadRows[0].id });
+    expect(intaken[0].replyRoute).toEqual({
+      surfaceId: 'web',
+      jobRef: threadRows[0].id,
+    });
   });
 
   it('a message addressing an existing thread CONTINUES it (no new thread)', async () => {
@@ -89,9 +92,15 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
     } as JobEntity;
     const { bridge, intaken, threadRows } = makeBridge([existing]);
 
-    await bridge.onInbound(msg({ threadTs: 'thread-7', text: "I'm on it", priority: 'queue' }));
+    await bridge.onInbound(
+      msg({ threadTs: 'thread-7', text: "I'm on it", priority: 'queue' }),
+    );
     expect(threadRows).toHaveLength(1); // no new thread created
-    expect(intaken[0]).toMatchObject({ jobId: 'thread-7', body: "I'm on it", priority: 'queue' });
+    expect(intaken[0]).toMatchObject({
+      jobId: 'thread-7',
+      body: "I'm on it",
+      priority: 'queue',
+    });
     expect(intaken[0].replyRoute.jobRef).toBe('thread-7');
   });
 });

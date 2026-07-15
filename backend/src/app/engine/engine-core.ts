@@ -1,13 +1,43 @@
-import type { CanUseTool, HookCallback, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  HookCallback,
+  Options,
+  PermissionResult,
+  SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
+import {
+  join,
+  relative as relativePath,
+  resolve as resolvePath,
+} from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
-import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
-import { atlasEngineHomeDir, engineHomeKeyString, type EngineHomeKey } from './engine-home';
-import { type CodexExtraMcpServers, type CodexMcpBridge, ensureCodexAuthHome } from './codex-auth-home';
+import {
+  detectSessionLimitText,
+  limitFromRateEvent,
+  parseResetAt,
+  type SessionLimitHit,
+} from './session-limit';
+import {
+  atlasEngineHomeDir,
+  engineHomeKeyString,
+  type EngineHomeKey,
+} from './engine-home';
+import {
+  type CodexExtraMcpServers,
+  type CodexMcpBridge,
+  ensureCodexAuthHome,
+} from './codex-auth-home';
 import { getEngineAuthAdapter } from './engine-auth-adapter';
 
 /** In-container path of the bundled Codex MCP tool-bridge server (baked by the Dockerfile, bind-mounted
@@ -19,7 +49,11 @@ import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
 import type { PromptCtx } from '../prompt-kit/system/prompt-ctx';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
-import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
+import {
+  LSP_NAV_TOOL_NAMES,
+  LSP_TOOL_NAMES,
+  qualifyLspToolNames,
+} from './lsp-tools';
 import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
@@ -52,7 +86,11 @@ import {
   resolveContextLimit,
   INTERNAL_PROFILE_AWARENESS_TOOL,
 } from './engine.types';
-import type { AdapterRunArgs, EngineCapability, EngineLocalHooks } from '@workspace/agent-engine';
+import type {
+  AdapterRunArgs,
+  EngineCapability,
+  EngineLocalHooks,
+} from '@workspace/agent-engine';
 import {
   buildEngineLocalHooks,
   CodexAppServerAdapter,
@@ -68,7 +106,9 @@ const requireFromHere = createRequire(__filename);
  * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
  * Returns undefined for any other tool, or when the shape doesn't match — so the caller simply omits it.
  */
-function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] | undefined {
+function extractStructuredPatch(
+  toolUseResult: unknown,
+): StructuredPatchHunk[] | undefined {
   if (!toolUseResult || typeof toolUseResult !== 'object') return undefined;
   const raw = (toolUseResult as { structuredPatch?: unknown }).structuredPatch;
   if (!Array.isArray(raw)) return undefined;
@@ -77,7 +117,8 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
     if (!h || typeof h !== 'object') continue;
     const r = h as Record<string, unknown>;
     if (!Array.isArray(r.lines)) continue;
-    const num = (v: unknown, fallback: number): number => (typeof v === 'number' ? v : fallback);
+    const num = (v: unknown, fallback: number): number =>
+      typeof v === 'number' ? v : fallback;
     hunks.push({
       oldStart: num(r.oldStart, 1),
       oldLines: num(r.oldLines, 0),
@@ -90,11 +131,15 @@ function extractStructuredPatch(toolUseResult: unknown): StructuredPatchHunk[] |
 }
 
 function containsStreamClosed(content: unknown): boolean {
-  if (typeof content === 'string') return content.toLowerCase().includes('stream closed');
-  if (Array.isArray(content)) return content.some((item) => containsStreamClosed(item));
+  if (typeof content === 'string')
+    return content.toLowerCase().includes('stream closed');
+  if (Array.isArray(content))
+    return content.some((item) => containsStreamClosed(item));
   if (!content || typeof content !== 'object') return false;
   const block = content as { text?: unknown; content?: unknown };
-  return containsStreamClosed(block.text) || containsStreamClosed(block.content);
+  return (
+    containsStreamClosed(block.text) || containsStreamClosed(block.content)
+  );
 }
 
 /**
@@ -104,11 +149,18 @@ function containsStreamClosed(content: unknown): boolean {
  * HEAD:path`) stands in for "before" and the current on-disk file for "after". This is a `HEAD`-relative
  * diff, not a per-edit one — fine as long as the worktree isn't committed mid-turn (it isn't).
  */
-function computeCodexStructuredPatch(cwd: string, path: string, kind: FileChangeItem['changes'][number]['kind']): StructuredPatchHunk[] | undefined {
+function computeCodexStructuredPatch(
+  cwd: string,
+  path: string,
+  kind: FileChangeItem['changes'][number]['kind'],
+): StructuredPatchHunk[] | undefined {
   let oldContent = '';
   if (kind !== 'add') {
     try {
-      oldContent = execFileSync('git', ['show', `HEAD:${path}`], { cwd, encoding: 'utf8' });
+      oldContent = execFileSync('git', ['show', `HEAD:${path}`], {
+        cwd,
+        encoding: 'utf8',
+      });
     } catch {
       oldContent = '';
     }
@@ -123,12 +175,23 @@ function computeCodexStructuredPatch(cwd: string, path: string, kind: FileChange
     }
   }
   if (!oldContent && !newContent) return undefined;
-  const patch = diffStructuredPatch(path, path, oldContent, newContent, undefined, undefined, { context: 3 });
+  const patch = diffStructuredPatch(
+    path,
+    path,
+    oldContent,
+    newContent,
+    undefined,
+    undefined,
+    { context: 3 },
+  );
   return patch.hunks.length ? patch.hunks : undefined;
 }
 
 /** A user message the SDK's streaming input accepts (mid-turn steering uses `priority:'now'`). */
-function steerUserMessage(content: AgentMessage, priority?: 'now' | 'next' | 'later'): SDKUserMessage {
+function steerUserMessage(
+  content: AgentMessage,
+  priority?: 'now' | 'next' | 'later',
+): SDKUserMessage {
   return {
     type: 'user',
     message: { role: 'user', content },
@@ -179,8 +242,13 @@ function makeManualInput(): {
       [Symbol.asyncIterator]() {
         return {
           next(): Promise<IteratorResult<SDKUserMessage>> {
-            if (queue.length) return Promise.resolve({ value: queue.shift() as SDKUserMessage, done: false });
-            if (done) return Promise.resolve({ value: undefined as never, done: true });
+            if (queue.length)
+              return Promise.resolve({
+                value: queue.shift() as SDKUserMessage,
+                done: false,
+              });
+            if (done)
+              return Promise.resolve({ value: undefined as never, done: true });
             return new Promise((res) => {
               resolveNext = res;
             });
@@ -209,19 +277,26 @@ const STEER_IDLE_GRACE_MS = 350;
  * sdk 0.3.201: a genuinely-completed turn — even one that calls a host tool mid-turn — emits exactly one
  * result with terminal_reason 'completed' + stop_reason 'end_turn', so gating here still ends normal turns.
  */
-function isTurnGenuinelyDone(m: { terminal_reason?: string; stop_reason?: string | null }): boolean {
+function isTurnGenuinelyDone(m: {
+  terminal_reason?: string;
+  stop_reason?: string | null;
+}): boolean {
   if (m.terminal_reason === 'completed') return true;
   if (m.terminal_reason == null && m.stop_reason === 'end_turn') return true;
   return false;
 }
 
 // Claude's Options.effort has no 'minimal'; map it to the nearest ('low'). Others pass through.
-export function toClaudeEffort(e?: ReasoningEffort): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
+export function toClaudeEffort(
+  e?: ReasoningEffort,
+): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
   if (!e) return undefined;
   return e === 'minimal' ? 'low' : e;
 }
 // Codex's effort has no 'max'; clamp to its ceiling ('xhigh'). Others pass through.
-export function toCodexEffort(e?: ReasoningEffort): CodexReasoningEffort | undefined {
+export function toCodexEffort(
+  e?: ReasoningEffort,
+): CodexReasoningEffort | undefined {
   if (!e) return undefined;
   return e === 'max' ? 'xhigh' : e;
 }
@@ -278,14 +353,16 @@ const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
 // pin a Codex model — we leave it unset and let the Codex SDK use the account's own default model.
 
-
 /**
  * Whether a resumable Claude session transcript exists under this config dir. The SDK stores it at
  * `<configDir>/projects/<cwd-slug>/<sessionId>.jsonl`; we scan the project dirs rather than recompute
  * the slug. Passing `resume` for a session whose transcript ISN'T here makes the SDK end the turn with a
  * generic `error_during_execution` — so we check first and raise a specific error instead.
  */
-export function claudeSessionExists(configDir: string, sessionId: string): boolean {
+export function claudeSessionExists(
+  configDir: string,
+  sessionId: string,
+): boolean {
   const projects = join(configDir, 'projects');
   let dirs: string[];
   try {
@@ -323,7 +400,19 @@ const SUBAGENT_MGMT_TOOLS = ['SendMessage', 'TaskOutput', 'TaskStop'];
 // 'Skill' loads a discovered skill's body — read-only in itself (the SDK's `skills: 'all'` option auto-
 // approves it into `allowedTools`, but `tools` below RESTRICTS the available set independent of that, so it
 // must still be named here or the SDK's own enablement gets stripped).
-const WORKER_TOOLS = ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'Task', 'Skill', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS];
+const WORKER_TOOLS = [
+  'Read',
+  'Glob',
+  'Grep',
+  'Write',
+  'Edit',
+  'Bash',
+  'Task',
+  'Skill',
+  ...SUBAGENT_MGMT_TOOLS,
+  ...TASK_TOOLS,
+  ...WEB_TOOLS,
+];
 // A plan turn adds ExitPlanMode — native plan mode's turn-ender and the one place the FULL plan text
 // reaches canUseTool headlessly (the CLI auto-writes the plan file, then calls ExitPlanMode with the
 // plan in its input).
@@ -334,7 +423,13 @@ const REVIEW_TOOLS = ['Read', 'Glob', 'Grep', 'Bash', 'Skill', ...WEB_TOOLS];
 // Auto-approve safe reads, web, and subagent spawning; writes/bash fall through to canUseTool where the
 // boundary is re-applied.
 const AUTO_APPROVE = [
-  'Read', 'Glob', 'Grep', 'Task', ...SUBAGENT_MGMT_TOOLS, ...TASK_TOOLS, ...WEB_TOOLS,
+  'Read',
+  'Glob',
+  'Grep',
+  'Task',
+  ...SUBAGENT_MGMT_TOOLS,
+  ...TASK_TOOLS,
+  ...WEB_TOOLS,
 ];
 
 // LSP navigation/rename (`atlas-lsp-ts`, registered per-turn — see sandbox/image/lsp-bridge-options.ts).
@@ -362,7 +457,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
     description:
       'Read-only CODE explorer. Delegate investigation here — locating files, tracing how a ' +
       'feature works, mapping conventions — to keep the main context clean and save tokens. Returns a ' +
-      'concise findings summary, not raw file dumps. Also handles the repo\'s OWN docs (CLAUDE.md, ' +
+      "concise findings summary, not raw file dumps. Also handles the repo's OWN docs (CLAUDE.md, " +
       'README, ARCHITECTURE.md, docs/). State the search breadth you want: "quick" (one targeted ' +
       'lookup), "medium" (moderate exploration), or "very thorough" (sweep multiple locations and ' +
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
@@ -375,7 +470,7 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
   docs: {
     description:
       'External library/framework/API documentation researcher — answers "how do I use X" / "what\'s the ' +
-      'current API for Y" from the LIBRARY\'S OWN docs on the web, not from this repo\'s source. Returns a ' +
+      "current API for Y\" from the LIBRARY'S OWN docs on the web, not from this repo's source. Returns a " +
       'synthesized, cited, version-aware answer. Use `explore` for how THIS codebase (and its own docs) ' +
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
@@ -430,7 +525,14 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
 // orchestrator owns the decomposition and runs writers ONE AT A TIME; file ownership between writers is
 // by serialization, not a hard lock (see ORCHESTRATE_EXECUTE_SYSTEM in the driver).
 const WRITER_TOOLS = [
-  'Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', ...WEB_TOOLS, ...LSP_WRITE_TOOLS,
+  'Read',
+  'Glob',
+  'Grep',
+  'Write',
+  'Edit',
+  'Bash',
+  ...WEB_TOOLS,
+  ...LSP_WRITE_TOOLS,
 ];
 const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
   implement: {
@@ -475,8 +577,8 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
     description:
       'LIVE validation + evidence capture (Sonnet). Delegate END-TO-END validation here to keep your ' +
       'context clean: it BOOTS the change and exercises it as a real caller would (atlas-svc services, ' +
-      'curl, Playwright UI drives, the repo\'s own e2e/smoke), then leaves the PROOF under ' +
-      '`$ATLAS_EVIDENCE_DIR` (logs, screenshots, a `RESULTS.md` index) that renders in the operator\'s ' +
+      "curl, Playwright UI drives, the repo's own e2e/smoke), then leaves the PROOF under " +
+      "`$ATLAS_EVIDENCE_DIR` (logs, screenshots, a `RESULTS.md` index) that renders in the operator's " +
       'EVIDENCE panel. Returns a verdict + the observed behavior + the exact evidence paths it wrote — reference those instead of ' +
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
@@ -496,7 +598,7 @@ const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
   prototype: {
     description:
       'Design-fidelity PROTOTYPE subagent (Sonnet) — a lightweight in-house claude.ai/design. Delegate a UI ' +
-      'MOCKUP here, NAMING the exact `/context/artifacts/<file>.html` for it to write. It DISCOVERS the app\'s ' +
+      "MOCKUP here, NAMING the exact `/context/artifacts/<file>.html` for it to write. It DISCOVERS the app's " +
       'real design system (tokens, theme, fonts, components) and reproduces it faithfully — no invented ' +
       'palette — then renders + screenshots the result to self-check before returning a tight summary (the ' +
       'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
@@ -537,22 +639,31 @@ const PREVIEW_FACING_SUBAGENTS: Record<string, Agent> = {
  */
 export function applyPerRunCtxToAgents(
   agents: NonNullable<Options['agents']>,
-  args: { repoConventions: RunEngineArgs['repoConventions']; previewInstructions?: string | null },
+  args: {
+    repoConventions: RunEngineArgs['repoConventions'];
+    previewInstructions?: string | null;
+  },
 ): NonNullable<Options['agents']> {
-  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
+  const preview = args.previewInstructions?.trim()
+    ? args.previewInstructions
+    : null;
   if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
   const targets = new Map<string, Agent>();
   if (args.repoConventions) {
-    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) targets.set(name, agent);
+    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS))
+      targets.set(name, agent);
   }
   if (preview) {
-    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS))
+      targets.set(name, agent);
   }
   for (const [name, agent] of targets) {
     if (!out[name]) continue;
     const ctx: PromptCtx = {
-      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
+      ...(args.repoConventions
+        ? { settings: { repoConventions: args.repoConventions } }
+        : {}),
       ...(preview ? { previewInstructions: preview } : {}),
     };
     out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
@@ -584,12 +695,21 @@ export function composeSkillsDir(
 ): void {
   const skillsDir = join(claudeConfigDir, 'skills');
   rmSync(skillsDir, { recursive: true, force: true });
-  if (!skills || skills.length === 0 || (!skillsRoot && !managedSkillsRoot && !managedGitSkillsRoot)) return;
+  if (
+    !skills ||
+    skills.length === 0 ||
+    (!skillsRoot && !managedSkillsRoot && !managedGitSkillsRoot)
+  )
+    return;
   mkdirSync(skillsDir, { recursive: true });
   for (const skill of skills) {
     // Defensive: skill names are validated kebab at authoring time, but never let one escape skillsDir.
     const safeName = skill.name.replace(/[^a-z0-9_-]/gi, '-') || 'skill';
-    const root = skill.managedGit ? managedGitSkillsRoot : skill.managed ? managedSkillsRoot : skillsRoot;
+    const root = skill.managedGit
+      ? managedGitSkillsRoot
+      : skill.managed
+        ? managedSkillsRoot
+        : skillsRoot;
     if (!root) continue;
     const source = join(root, skill.dirPath);
     if (!existsSync(source)) continue;
@@ -636,7 +756,10 @@ export class EngineCore {
    * There is NO env/config fallback and NO api_key path — a missing secret THROWS so the turn fails
    * loudly instead of silently billing the API or borrowing an ambient credential.
    */
-  private resolveAuth(engine: 'claude' | 'codex', explicit: EngineAuth | undefined): EngineAuth {
+  private resolveAuth(
+    engine: 'claude' | 'codex',
+    explicit: EngineAuth | undefined,
+  ): EngineAuth {
     if (explicit) return explicit;
     // Classify as an auth halt (marker → clean, resumable credentials halt at the driver) rather than a
     // plain Error that fails the job opaquely: a missing credential is fixable by connecting an account.
@@ -655,7 +778,9 @@ export class EngineCore {
         ? appserver
           ? this.runCodexAppServer(args)
           : this.runCodex(args)
-        : new ClaudeAdapter(this.runClaude.bind(this), args).run(this.toAdapterArgs(args))),
+        : new ClaudeAdapter(this.runClaude.bind(this), args).run(
+            this.toAdapterArgs(args),
+          )),
       args,
       appserver,
     );
@@ -671,7 +796,11 @@ export class EngineCore {
    * the Claude branch) MUST hand the port a resolved secret: `CodexAppServerAdapter.run` throws on a
    * missing `auth`, whereas `args.auth` alone may be undefined (resolved lazily inside legacy `runCodex`).
    */
-  private toAdapterArgs(args: RunEngineArgs, authOverride?: EngineAuth, hooks?: EngineLocalHooks): AdapterRunArgs {
+  private toAdapterArgs(
+    args: RunEngineArgs,
+    authOverride?: EngineAuth,
+    hooks?: EngineLocalHooks,
+  ): AdapterRunArgs {
     return {
       engine: args.engine,
       task: args.task,
@@ -680,12 +809,20 @@ export class EngineCore {
       mode: args.mode,
       sandboxKey: args.sandboxKey,
       ...(args.sessionId ? { sessionId: args.sessionId } : {}),
-      ...(authOverride ? { auth: authOverride } : args.auth ? { auth: args.auth } : {}),
+      ...(authOverride
+        ? { auth: authOverride }
+        : args.auth
+          ? { auth: args.auth }
+          : {}),
       ...(args.model ? { model: args.model } : {}),
-      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
+      ...(args.modelReasoningEffort
+        ? { modelReasoningEffort: args.modelReasoningEffort }
+        : {}),
       ...(args.writableRoots ? { writableRoots: args.writableRoots } : {}),
       ...(args.richStream !== undefined ? { richStream: args.richStream } : {}),
-      ...(args.persistAuthRefresh !== undefined ? { persistAuthRefresh: args.persistAuthRefresh } : {}),
+      ...(args.persistAuthRefresh !== undefined
+        ? { persistAuthRefresh: args.persistAuthRefresh }
+        : {}),
       ...(args.signal ? { signal: args.signal } : {}),
       ...(args.onEvent ? { onEvent: args.onEvent } : {}),
       ...(hooks ? { hooks } : {}),
@@ -699,7 +836,10 @@ export class EngineCore {
    * nudge). {@link guardHooksAgainstCapabilities} then drops any field the adapter's declared capability set
    * can't honor, so a future capability change here degrades honestly instead of silently no-op-ing mid-turn.
    */
-  private buildCodexHooks(args: RunEngineArgs, capabilities: ReadonlySet<EngineCapability>): EngineLocalHooks {
+  private buildCodexHooks(
+    args: RunEngineArgs,
+    capabilities: ReadonlySet<EngineCapability>,
+  ): EngineLocalHooks {
     const readOnly = args.mode !== 'execute';
     const hooks = buildEngineLocalHooks({
       svcNudge: svcNudgeRule.enabled
@@ -710,7 +850,10 @@ export class EngineCore {
             render: (command) => svcNudgeRule.render({ command }),
           }
         : undefined,
-      writeGuard: { readOnly, roots: [args.cwd, ...(args.writableRoots ?? [])] },
+      writeGuard: {
+        readOnly,
+        roots: [args.cwd, ...(args.writableRoots ?? [])],
+      },
       rotation: legRotationRule.enabled
         ? {
             softTokens: ROTATION_SOFT_TOKENS,
@@ -732,7 +875,10 @@ export class EngineCore {
    * Codex path until the two review roles cut over (see the locked decision record).
    */
   private codexAppServerEnabled(): boolean {
-    return process.env.CODEX_APPSERVER_ENABLED === 'true' || process.env.CODEX_APPSERVER_ENABLED === '1';
+    return (
+      process.env.CODEX_APPSERVER_ENABLED === 'true' ||
+      process.env.CODEX_APPSERVER_ENABLED === '1'
+    );
   }
 
   /**
@@ -740,10 +886,16 @@ export class EngineCore {
    * already carry `@openai/codex` for the CLI binary. Resolve that direct dependency here,
    * at the Atlas-owned adapter boundary, instead of adding monorepo coupling to `@workspace/codex-sdk`.
    */
-  private codexAppServerSpawnOptions(): { codexPathOverride?: string; args?: string[] } {
+  private codexAppServerSpawnOptions(): {
+    codexPathOverride?: string;
+    args?: string[];
+  } {
     try {
       const codexBin = requireFromHere.resolve('@openai/codex/bin/codex.js');
-      return { codexPathOverride: process.execPath, args: [codexBin, 'app-server'] };
+      return {
+        codexPathOverride: process.execPath,
+        args: [codexBin, 'app-server'],
+      };
     } catch {
       return {};
     }
@@ -755,13 +907,21 @@ export class EngineCore {
    * {@link CodexAppServerAdapter}. A fresh {@link BackendCodexHomeProvisioner} per call mirrors how
    * `ClaudeAdapter` is constructed fresh per turn — no cross-turn state.
    */
-  private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
+  private async runCodexAppServer(
+    args: RunEngineArgs,
+  ): Promise<EngineRunResult> {
     const auth = this.resolveAuth('codex', args.auth);
     const adapter = new CodexAppServerAdapter(
       new BackendCodexHomeProvisioner(this.homeRoot()),
       this.codexAppServerSpawnOptions(),
     );
-    return adapter.run(this.toAdapterArgs(args, auth, this.buildCodexHooks(args, adapter.capabilities)));
+    return adapter.run(
+      this.toAdapterArgs(
+        args,
+        auth,
+        this.buildCodexHooks(args, adapter.capabilities),
+      ),
+    );
   }
 
   /**
@@ -773,10 +933,15 @@ export class EngineCore {
    * is covered without touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site.
    * `??=` so a path that ever populates these itself wins. No-op when the run produced no usage.
    */
-  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs, appserver?: boolean): EngineRunResult {
+  private stampUsageProvenance(
+    res: EngineRunResult,
+    args: RunEngineArgs,
+    appserver?: boolean,
+  ): EngineRunResult {
     if (res.usage) {
       res.usage.engine ??= args.engine;
-      if (args.modelReasoningEffort) res.usage.reasoningEffort ??= args.modelReasoningEffort;
+      if (args.modelReasoningEffort)
+        res.usage.reasoningEffort ??= args.modelReasoningEffort;
       if (args.engine === 'codex') res.usage.appserver ??= !!appserver;
     }
     return res;
@@ -806,16 +971,23 @@ export class EngineCore {
     codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
     const hasCodexBridgeExtras =
-      (codexBridgeTools?.length ?? 0) > 0 || Object.keys(codexExtraMcpServers ?? {}).length > 0;
-    const appserver = args.engine === 'codex' && this.codexAppServerEnabled() && !hasCodexBridgeExtras;
+      (codexBridgeTools?.length ?? 0) > 0 ||
+      Object.keys(codexExtraMcpServers ?? {}).length > 0;
+    const appserver =
+      args.engine === 'codex' &&
+      this.codexAppServerEnabled() &&
+      !hasCodexBridgeExtras;
     return this.stampUsageProvenance(
       await (args.engine === 'codex'
         ? appserver
           ? this.runCodexAppServer(args)
           : this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
-        : new ClaudeAdapter(this.runClaude.bind(this), args, extraClaudeOptions, bridgeToolNames).run(
-            this.toAdapterArgs(args),
-          )),
+        : new ClaudeAdapter(
+            this.runClaude.bind(this),
+            args,
+            extraClaudeOptions,
+            bridgeToolNames,
+          ).run(this.toAdapterArgs(args))),
       args,
       appserver,
     );
@@ -829,13 +1001,28 @@ export class EngineCore {
     bridgeToolNames?: string[],
     hooks?: EngineLocalHooks,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge, bridgeCall } =
-      args;
+    const {
+      task,
+      cwd,
+      systemPrompt,
+      sandboxKey,
+      sessionId,
+      mode,
+      onEvent,
+      signal,
+      richStream,
+      steerInput,
+      rotationNudge,
+      bridgeCall,
+    } = args;
 
     const abortController = new AbortController();
     if (signal) {
       if (signal.aborted) abortController.abort();
-      else signal.addEventListener('abort', () => abortController.abort(), { once: true });
+      else
+        signal.addEventListener('abort', () => abortController.abort(), {
+          once: true,
+        });
     }
 
     // STREAMING-INPUT mode (the steerable brain turn): feed the SDK a live async-iterable that yields the
@@ -846,11 +1033,13 @@ export class EngineCore {
     const input = streaming ? makeManualInput() : undefined;
     let turnEnded = false;
     let endTimer: ReturnType<typeof setTimeout> | undefined;
-    const STREAM_CLOSED_THRESHOLD = Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) > 0
-      ? Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) : 3;   // consecutive control-channel failures ⇒ breaker trips
-    let streamClosedRun = 0;      // consecutive "Stream closed" tool_results in the live run (any healthy result resets)
-    let streamClosedTotal = 0;    // per-turn total (instrumentation)
-    let streamClosedTripped = false;   // latched right before the breaker throw so the catch never swallows it as a cooperative abort
+    const STREAM_CLOSED_THRESHOLD =
+      Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD) > 0
+        ? Number(process.env.ENGINE_STREAM_CLOSED_THRESHOLD)
+        : 3; // consecutive control-channel failures ⇒ breaker trips
+    let streamClosedRun = 0; // consecutive "Stream closed" tool_results in the live run (any healthy result resets)
+    let streamClosedTotal = 0; // per-turn total (instrumentation)
+    let streamClosedTripped = false; // latched right before the breaker throw so the catch never swallows it as a cooperative abort
     const cancelEnd = (): void => {
       if (endTimer) {
         clearTimeout(endTimer);
@@ -872,9 +1061,12 @@ export class EngineCore {
     // nothing is ever killed, and the stream is NEVER severed by the cap. Closing stdin under a still-active
     // turn makes every subsequent host-tool call throw a bare "Stream closed" (prod incident b30616d2), so the
     // cap never does it. HOLD_CAP_MS is read LIVE from the JIT catalog each run (so a spec can mutate the rule).
-    const HOLD_CAP_MS = bgTaskCapRule.trigger.kind === 'hold-timer' ? bgTaskCapRule.trigger.holdMs : BG_TASK_HOLD_CAP_MS;
+    const HOLD_CAP_MS =
+      bgTaskCapRule.trigger.kind === 'hold-timer'
+        ? bgTaskCapRule.trigger.holdMs
+        : BG_TASK_HOLD_CAP_MS;
     const liveBgTasks = new Set<string>();
-    const liveSubagentTasks = new Set<string>();   // task_ids whose task_started carried subagent_type (a Task subagent, not a bare bg Bash)
+    const liveSubagentTasks = new Set<string>(); // task_ids whose task_started carried subagent_type (a Task subagent, not a bare bg Bash)
     let holdTimer: ReturnType<typeof setTimeout> | undefined;
     let capping = false;
     const clearHold = (): void => {
@@ -888,9 +1080,13 @@ export class EngineCore {
     // the stream is never severed and no task is killed.
     const onCap = (): void => {
       if (!input || turnEnded || capping) return;
-      if (liveSubagentTasks.size > 0) return;   // safety: never cap while a subagent is live
-      capping = true;                           // the model's NEXT natural result ends the turn (no forced kill)
-      onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)` });
+      if (liveSubagentTasks.size > 0) return; // safety: never cap while a subagent is live
+      capping = true; // the model's NEXT natural result ends the turn (no forced kill)
+      onEvent?.({
+        kind: 'bg_task',
+        status: 'capped',
+        detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)`,
+      });
       cancelEnd();
       if (bgTaskCapRule.enabled) hooks?.steer?.push(bgTaskCapRule.render({}));
       // NO capKillTimer / NO input.end() — the cap is purely advisory; stdin is never severed.
@@ -903,7 +1099,9 @@ export class EngineCore {
       if (liveBgTasks.size > 0 && liveSubagentTasks.size === 0) armHoldTimer();
       else clearHold();
     };
-    const steerIter = streaming ? steerInput![Symbol.asyncIterator]() : undefined;
+    const steerIter = streaming
+      ? steerInput![Symbol.asyncIterator]()
+      : undefined;
     // A priority:'now' steer pushed BEFORE the model commits its first assistant message makes the SDK
     // abort the whole turn (result_type=user, terminal_reason=aborted_streaming, subtype=error_during_
     // execution) — the startup-race red box. So a steer that arrives while the turn is still spinning up is
@@ -929,7 +1127,10 @@ export class EngineCore {
       // leaves the message pending (delivered_at null) for the sweep — no acked-but-dropped message.
       const injectedSteerIds = new Set<string>();
       const bufferedIds = new Set<string>();
-      const injectSteer = (id: string | undefined, text: AgentMessage): void => {
+      const injectSteer = (
+        id: string | undefined,
+        text: AgentMessage,
+      ): void => {
         cancelEnd(); // a steer is in flight to the model — don't close input under it
         input.push(steerUserMessage(text, 'now'));
         if (typeof id === 'string') {
@@ -984,7 +1185,11 @@ export class EngineCore {
     const model = args.model ?? DEFAULT_WORKER_MODEL;
 
     // Pin the SDK subprocess to Atlas's ISOLATED config/state home — never ~/.claude.
-    const claudeConfigDir = atlasEngineHomeDir(this.homeRoot(), 'claude', sandboxKey);
+    const claudeConfigDir = atlasEngineHomeDir(
+      this.homeRoot(),
+      'claude',
+      sandboxKey,
+    );
 
     // A stored sessionId whose transcript isn't in THIS config dir can't be resumed — the SDK would end
     // the turn with an opaque `error_during_execution`. Detect it up front and fail with a SPECIFIC,
@@ -1038,7 +1243,8 @@ export class EngineCore {
     // Install-awareness (PostToolUse hook, added to `options` below): a Bash install is detected in-container
     // (cheap regex gate) and round-tripped to the reserved `__profile_awareness` host tool via `bridgeCall`.
     // Only wired when this turn carries a tool bridge — otherwise the round-trip has no transport (fail-silent).
-    const installAwarenessEnabled = installAwarenessRule.enabled && !!bridgeCall;
+    const installAwarenessEnabled =
+      installAwarenessRule.enabled && !!bridgeCall;
 
     // Bound the host round-trip so a slow host / Haiku call never delays the model's next step.
     const INSTALL_AWARENESS_TIMEOUT_MS = 5_000;
@@ -1068,17 +1274,33 @@ export class EngineCore {
     }
     if (installAwarenessEnabled) {
       bashPostToolUseHooks.push(async (input) => {
-        const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+        const inp = input as {
+          tool_name?: string;
+          tool_input?: { command?: unknown };
+        };
         if (inp.tool_name !== 'Bash') return {};
-        const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+        const cmd =
+          typeof inp.tool_input?.command === 'string'
+            ? inp.tool_input.command
+            : '';
         if (!detectInstallCommand(cmd)) return {};
         try {
           const text = await Promise.race([
-            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, { command: cmd, sessionType: sandboxKey.type }),
-            new Promise<null>((r) => setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS)),
+            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, {
+              command: cmd,
+              sessionType: sandboxKey.type,
+            }),
+            new Promise<null>((r) =>
+              setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS),
+            ),
           ]);
           if (typeof text !== 'string' || !text) return {};
-          return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: text } };
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PostToolUse' as const,
+              additionalContext: text,
+            },
+          };
         } catch {
           return {};
         }
@@ -1091,10 +1313,12 @@ export class EngineCore {
     // chrome, not content. Pure/local (no host round-trip), so no timeout guard is needed.
     const fetchPostToolUseHooks: HookCallback[] = [];
     const githubGuard = githubFetchGuardRule.trigger;
-    const fetchToolMatcher = githubGuard.kind === 'url-match' ? githubGuard.toolMatcher : '';
+    const fetchToolMatcher =
+      githubGuard.kind === 'url-match' ? githubGuard.toolMatcher : '';
     if (githubFetchGuardRule.enabled && githubGuard.kind === 'url-match') {
       fetchPostToolUseHooks.push(async (input) => {
-        const url = (input as { tool_input?: { url?: unknown } }).tool_input?.url;
+        const url = (input as { tool_input?: { url?: unknown } }).tool_input
+          ?.url;
         const fetched = typeof url === 'string' ? url : '';
         if (!githubGuard.match(fetched)) return {};
         return {
@@ -1131,9 +1355,17 @@ export class EngineCore {
       // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
       agents: applyPerRunCtxToAgents(
         mode === 'execute'
-          ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
+          ? {
+              ...SUBAGENTS,
+              ...WRITER_SUBAGENTS,
+              ...VALIDATE_SUBAGENT,
+              ...PROTOTYPE_SUBAGENT,
+            }
           : SUBAGENTS,
-        { repoConventions: args.repoConventions, previewInstructions: args.previewInstructions },
+        {
+          repoConventions: args.repoConventions,
+          previewInstructions: args.previewInstructions,
+        },
       ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
@@ -1183,7 +1415,12 @@ export class EngineCore {
                   ? [{ matcher: 'Bash', hooks: bashPostToolUseHooks }]
                   : []),
                 ...(fetchPostToolUseHooks.length > 0
-                  ? [{ matcher: fetchToolMatcher, hooks: fetchPostToolUseHooks }]
+                  ? [
+                      {
+                        matcher: fetchToolMatcher,
+                        hooks: fetchPostToolUseHooks,
+                      },
+                    ]
                   : []),
               ],
             },
@@ -1199,7 +1436,10 @@ export class EngineCore {
             // `display: 'summarized'` is load-bearing: without it the adaptive default is `omitted`, which
             // streams thinking blocks with EMPTY text — the `&& block.thinking` guards below then drop them,
             // so nothing is ever emitted or persisted. Summarized surfaces the reasoning for debugging.
-            thinking: { type: 'adaptive' as const, display: 'summarized' as const },
+            thinking: {
+              type: 'adaptive' as const,
+              display: 'summarized' as const,
+            },
             forwardSubagentText: true,
           }
         : {}),
@@ -1232,15 +1472,20 @@ export class EngineCore {
         if (message.type === 'system' && message.subtype === 'init') {
           resolvedSession = message.session_id;
           // Surface the resume handle the instant the session exists, so a mid-turn halt is recoverable.
-          if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
-        } else if (message.type === 'system' && message.subtype === 'task_started') {
+          if (resolvedSession)
+            onEvent?.({ kind: 'session', sessionId: resolvedSession });
+        } else if (
+          message.type === 'system' &&
+          message.subtype === 'task_started'
+        ) {
           // An SDK run_in_background Bash task began — track it so the turn holds its input open until the
           // task settles (its `task_notification`) instead of closing on the immediate first `result`. A Task
           // SUBAGENT's task_started carries `subagent_type` (task_type "local_agent"); a bare bg Bash does not
           // (task_type "local_bash") — a live subagent runs uncapped, so track it separately.
           if (message.task_id) {
             liveBgTasks.add(message.task_id);
-            if ((message as { subagent_type?: string }).subagent_type) liveSubagentTasks.add(message.task_id);
+            if ((message as { subagent_type?: string }).subagent_type)
+              liveSubagentTasks.add(message.task_id);
           }
           onEvent?.({
             kind: 'bg_task',
@@ -1254,7 +1499,10 @@ export class EngineCore {
               ? { parentToolUseId: message.tool_use_id }
               : {}),
           });
-        } else if (message.type === 'system' && message.subtype === 'task_notification') {
+        } else if (
+          message.type === 'system' &&
+          message.subtype === 'task_notification'
+        ) {
           // The task settled (completed/failed/stopped). Drop it from the live set; a settlement +
           // auto-continuation is imminent, so restart the hold window (or clear it if none remain).
           if (message.task_id) {
@@ -1273,7 +1521,10 @@ export class EngineCore {
               : {}),
           });
           resetHoldTimer();
-        } else if (message.type === 'system' && message.subtype === 'api_retry') {
+        } else if (
+          message.type === 'system' &&
+          message.subtype === 'api_retry'
+        ) {
           // The SDK hit a retryable API error (overloaded/5xx/gateway/rate-limit) and is retrying NATIVELY
           // with its own backoff — surface it (we do NOT host-retry these) so the live indicator can show the
           // SDK's own countdown. Mid-turn: no turn end, the turn continues once a retry succeeds.
@@ -1294,8 +1545,12 @@ export class EngineCore {
             kind: 'rate_limit',
             status: info.status,
             ...(info.resetsAt != null ? { resetsAt: info.resetsAt } : {}),
-            ...(info.rateLimitType ? { rateLimitType: info.rateLimitType } : {}),
-            ...(info.utilization != null ? { utilization: info.utilization } : {}),
+            ...(info.rateLimitType
+              ? { rateLimitType: info.rateLimitType }
+              : {}),
+            ...(info.utilization != null
+              ? { utilization: info.utilization }
+              : {}),
           });
           const hit = limitFromRateEvent(info);
           if (hit) sessionLimit = hit;
@@ -1305,7 +1560,10 @@ export class EngineCore {
           // the subagent parent id (same as the authoritative blocks) so live nested rendering matches.
           const sev = message as {
             parent_tool_use_id?: string | null;
-            event?: { type?: string; delta?: { type?: string; text?: string; thinking?: string } };
+            event?: {
+              type?: string;
+              delta?: { type?: string; text?: string; thinking?: string };
+            };
           };
           const parent = sev.parent_tool_use_id ?? undefined;
           const sub = parent ? { parentToolUseId: parent } : {};
@@ -1314,7 +1572,11 @@ export class EngineCore {
             if (ev.delta?.type === 'text_delta' && ev.delta.text)
               onEvent?.({ kind: 'text_delta', text: ev.delta.text, ...sub });
             else if (ev.delta?.type === 'thinking_delta' && ev.delta.thinking)
-              onEvent?.({ kind: 'thinking_delta', text: ev.delta.thinking, ...sub });
+              onEvent?.({
+                kind: 'thinking_delta',
+                text: ev.delta.thinking,
+                ...sub,
+              });
           }
         } else if (message.type === 'assistant') {
           // First committed assistant message ⇒ the turn is genuinely streaming: a held steer can now inject
@@ -1333,15 +1595,24 @@ export class EngineCore {
           // usage is the single-call input size (NOT the cumulative turn total) — keep the latest as
           // the turn-end occupancy, with the call's model so the ring resolves the right window.
           if (!parent) {
-            const amsg = (message as { message?: { model?: string; usage?: {
-              input_tokens?: number;
-              cache_read_input_tokens?: number;
-              cache_creation_input_tokens?: number;
-            } } }).message;
+            const amsg = (
+              message as {
+                message?: {
+                  model?: string;
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                  };
+                };
+              }
+            ).message;
             const cu = amsg?.usage;
             if (cu) {
               contextTokens =
-                (cu.input_tokens ?? 0) + (cu.cache_read_input_tokens ?? 0) + (cu.cache_creation_input_tokens ?? 0);
+                (cu.input_tokens ?? 0) +
+                (cu.cache_read_input_tokens ?? 0) +
+                (cu.cache_creation_input_tokens ?? 0);
               if (amsg?.model) contextModel = amsg.model;
               // Emit the occupancy LIVE so the composer ring fills mid-turn (a turn can run for minutes). Fires
               // once per main-agent round-trip; the turn-end `turn_meta` remains the durable authority.
@@ -1360,14 +1631,23 @@ export class EngineCore {
               // by the driver from `ROTATION_SOFT_NUDGE`/`ROTATION_REMINDER_NUDGE`). The `leg-rotation` JIT rule
               // is the catalog SOURCE of those thresholds (see `resolveRotationThresholds`) and mirrors the same
               // payload text — kept as the injectable per-turn field so a caller can distinguish the phases.
-              if (rotationNudge && legRotationRule.enabled && contextTokens >= rotationNudge.softTokens) {
+              if (
+                rotationNudge &&
+                legRotationRule.enabled &&
+                contextTokens >= rotationNudge.softTokens
+              ) {
                 const level = Math.floor(
-                  (contextTokens - rotationNudge.softTokens) / rotationNudge.reminderDeltaTokens,
+                  (contextTokens - rotationNudge.softTokens) /
+                    rotationNudge.reminderDeltaTokens,
                 );
                 if (level > firedNudgeLevel) {
                   const isFirst = firedNudgeLevel < 0;
                   firedNudgeLevel = level;
-                  injectRotationNudge(isFirst ? rotationNudge.softText : rotationNudge.reminderText);
+                  injectRotationNudge(
+                    isFirst
+                      ? rotationNudge.softText
+                      : rotationNudge.reminderText,
+                  );
                 }
               }
             }
@@ -1376,15 +1656,24 @@ export class EngineCore {
             // the subagent card renders its own context ring + real model. Kept strictly separate from the
             // main-agent `contextTokens`/`contextModel` above — a subagent must NEVER overwrite the
             // orchestrator's ring or the turn's `usage.contextModel`. Live-only, like the main-agent emit.
-            const samsg = (message as { message?: { model?: string; usage?: {
-              input_tokens?: number;
-              cache_read_input_tokens?: number;
-              cache_creation_input_tokens?: number;
-            } } }).message;
+            const samsg = (
+              message as {
+                message?: {
+                  model?: string;
+                  usage?: {
+                    input_tokens?: number;
+                    cache_read_input_tokens?: number;
+                    cache_creation_input_tokens?: number;
+                  };
+                };
+              }
+            ).message;
             const scu = samsg?.usage;
             if (scu) {
               const subTokens =
-                (scu.input_tokens ?? 0) + (scu.cache_read_input_tokens ?? 0) + (scu.cache_creation_input_tokens ?? 0);
+                (scu.input_tokens ?? 0) +
+                (scu.cache_read_input_tokens ?? 0) +
+                (scu.cache_creation_input_tokens ?? 0);
               const subModel = samsg?.model;
               onEvent?.({
                 kind: 'usage',
@@ -1408,17 +1697,25 @@ export class EngineCore {
               // structured frame hasn't already latched the hit, latch it here from the text.
               const isLimitLine = detectSessionLimitText(block.text);
               if (isLimitLine) {
-                if (!sessionLimit) sessionLimit = { resetAt: parseResetAt(block.text) };
+                if (!sessionLimit)
+                  sessionLimit = { resetAt: parseResetAt(block.text) };
               } else {
                 onEvent?.({ kind: 'text', text: block.text, ...sub });
               }
             } else if (block.type === 'thinking' && block.thinking) {
-              if (richStream) onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
+              if (richStream)
+                onEvent?.({ kind: 'thinking', text: block.thinking, ...sub });
             } else if (block.type === 'tool_use' && block.name) {
               // Rich turns get the full tool call (id + input) so the UI can render it; coarse turns keep
               // the legacy name-only `tool` event.
               if (richStream)
-                onEvent?.({ kind: 'tool_use', id: block.id ?? '', name: block.name, input: block.input, ...sub });
+                onEvent?.({
+                  kind: 'tool_use',
+                  id: block.id ?? '',
+                  name: block.name,
+                  input: block.input,
+                  ...sub,
+                });
               else onEvent?.({ kind: 'tool', name: block.name });
             }
           }
@@ -1444,8 +1741,10 @@ export class EngineCore {
               is_error?: boolean;
             }>) {
               if (block.type === 'tool_result') {
-                const isStreamClosed = block.is_error === true && containsStreamClosed(block.content);
-                streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0;   // any healthy result resets the run
+                const isStreamClosed =
+                  block.is_error === true &&
+                  containsStreamClosed(block.content);
+                streamClosedRun = isStreamClosed ? streamClosedRun + 1 : 0; // any healthy result resets the run
                 if (isStreamClosed) streamClosedTotal++;
                 onEvent?.({
                   kind: 'tool_result',
@@ -1457,8 +1756,10 @@ export class EngineCore {
                 });
                 if (streamClosedRun >= STREAM_CLOSED_THRESHOLD) {
                   streamClosedTripped = true;
-                  abortController.abort();   // stop the orphaned CLI child
-                  throw new Error('engine stream closed: control channel severed mid-turn (circuit-breaker)');
+                  abortController.abort(); // stop the orphaned CLI child
+                  throw new Error(
+                    'engine stream closed: control channel severed mid-turn (circuit-breaker)',
+                  );
                 }
               }
             }
@@ -1472,18 +1773,31 @@ export class EngineCore {
           // limit line as the turn result (or letting the thrown exit-error fail the build). The structured
           // `rate_limit_event` path keeps its existing success handling below (its result carries no limit text).
           const errResult = message as { is_error?: boolean; result?: string };
-          if (errResult.is_error === true && errResult.result && detectSessionLimitText(errResult.result)) {
+          if (
+            errResult.is_error === true &&
+            errResult.result &&
+            detectSessionLimitText(errResult.result)
+          ) {
             sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
             break;
           }
           if (message.subtype === 'success') {
             result = message.result;
-            onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
+            onEvent?.({
+              kind: 'turn_debug',
+              terminalReason: (message as { terminal_reason?: string })
+                .terminal_reason,
+              stopReason: (message as { stop_reason?: string | null })
+                .stop_reason,
+            });
             // A background-task hold produces ≥2 results per turn (the immediate first result + the
             // auto-continuation after the task settles). SUM the billing tokens across results; the
             // contextTokens/contextModel/model/modelUsage below all reflect the LATEST result (turn-end
             // occupancy). The `result` string keeps the last result too — the final answer.
-            const u = extractClaudeUsage(message as Record<string, unknown>, model);
+            const u = extractClaudeUsage(
+              message as Record<string, unknown>,
+              model,
+            );
             usage = usage ? addClaudeUsage(usage, u) : u;
             // Attach the per-call context occupancy (+ its model) onto the billing usage. The cumulative
             // `inputTokens` stays the billing number; `contextTokens` is the real window occupancy. Runs for
@@ -1500,7 +1814,12 @@ export class EngineCore {
                 if (liveSubagentTasks.size > 0) cancelEnd();
                 else scheduleEnd();
               } else if (
-                !isTurnGenuinelyDone(message as { terminal_reason?: string; stop_reason?: string | null })
+                !isTurnGenuinelyDone(
+                  message as {
+                    terminal_reason?: string;
+                    stop_reason?: string | null;
+                  },
+                )
               ) {
                 // A paused/interrupted success result (rate-limit / retry / budget) is NOT the end of the
                 // turn — keep input OPEN so the CLI can resume and may still call host tools (closing stdin
@@ -1510,11 +1829,11 @@ export class EngineCore {
                 if (sessionLimit) scheduleEnd();
                 else cancelEnd();
               } else if (liveBgTasks.size === 0) {
-                scheduleEnd();                 // genuinely done, nothing in flight — close after the steer grace
+                scheduleEnd(); // genuinely done, nothing in flight — close after the steer grace
               } else if (liveSubagentTasks.size > 0) {
-                cancelEnd();                   // a live SUBAGENT — hold input open with NO timer (may run for hours; bounded only by PHASE_TIMEOUT / Stop)
+                cancelEnd(); // a live SUBAGENT — hold input open with NO timer (may run for hours; bounded only by PHASE_TIMEOUT / Stop)
               } else {
-                armHoldTimer();                // only bare bg Bash left → the advisory cap
+                armHoldTimer(); // only bare bg Bash left → the advisory cap
               }
             }
           } else {
@@ -1531,9 +1850,13 @@ export class EngineCore {
             const parts = [
               `Claude engine ended: ${r.subtype}`,
               r.stop_reason ? `stop_reason=${r.stop_reason}` : '',
-              r.terminal_reason ? `terminal_reason=${JSON.stringify(r.terminal_reason)}` : '',
+              r.terminal_reason
+                ? `terminal_reason=${JSON.stringify(r.terminal_reason)}`
+                : '',
               r.errors?.length ? `errors=${r.errors.join(' | ')}` : '',
-              stderrTail.length ? `stderr(tail)=${stderrTail.join('').slice(-2000)}` : '',
+              stderrTail.length
+                ? `stderr(tail)=${stderrTail.join('').slice(-2000)}`
+                : '',
             ].filter(Boolean);
             const errorMessage = parts.join('; ');
             // A non-success end that is really a subscription session-limit wall must NOT throw the generic
@@ -1551,8 +1874,9 @@ export class EngineCore {
       // A 401 / expired token / "not logged in" → a RESUMABLE auth error carrying the live session,
       // so the driver pauses (not fails) and a re-ping continues this same session. Else re-throw.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
-      if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
+      if (isAuthErrorMessage(msg))
+        throw new EngineAuthError(msg, resolvedSession, 'claude');
+      if (streamClosedTripped) throw err; // circuit-breaker: never treat as a cooperative abort
       // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
       // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
       // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
@@ -1579,7 +1903,8 @@ export class EngineCore {
     const planText = (planMode && capturedPlan) || undefined;
     const summary = planText || result || '(no summary)';
     onEvent?.({ kind: 'result', text: summary });
-    if (streamClosedTotal > 0) onEvent?.({ kind: 'turn_debug', streamClosedCount: streamClosedTotal });
+    if (streamClosedTotal > 0)
+      onEvent?.({ kind: 'turn_debug', streamClosedCount: streamClosedTotal });
 
     // Auth-refresh write-back: a personal credential's `.credentials.json` is rewritten in place when the
     // SDK self-refreshes it. Read it back and relay it so the host can persist the fresh blob. Gated on
@@ -1599,7 +1924,9 @@ export class EngineCore {
       ...(planText ? { planText } : {}),
       ...(usage ? { usage } : {}),
       ...(sessionLimit ? { sessionLimit } : {}),
-      ...(streamClosedTotal > 0 ? { streamClosedCount: streamClosedTotal } : {}),
+      ...(streamClosedTotal > 0
+        ? { streamClosedCount: streamClosedTotal }
+        : {}),
       ...(refreshedAuthSecret ? { refreshedAuthSecret } : {}),
     };
   }
@@ -1616,12 +1943,21 @@ export class EngineCore {
     // Subscription-only: an overlay home owning its own auth.json (refreshed each turn) + — for an execute
     // turn — a config.toml with the host tool bridge (`[mcp_servers.atlasbridge]`) plus any user-defined
     // stdio MCP servers. The cache key keeps separate sandboxes apart. NO apiKey is ever passed.
-    const codexHome = ensureCodexAuthHome(root, sandboxKey, auth.secret, bridge, extraMcpServers);
+    const codexHome = ensureCodexAuthHome(
+      root,
+      sandboxKey,
+      auth.secret,
+      bridge,
+      extraMcpServers,
+    );
     const cacheKey = `sub:${engineHomeKeyString(sandboxKey)}`;
     let client = this.codexClients.get(cacheKey);
     if (!client) {
       // The SDK's `env` REPLACES inheritance — pass process.env through and override CODEX_HOME.
-      const env = { ...process.env, CODEX_HOME: codexHome } as Record<string, string>;
+      const env = { ...process.env, CODEX_HOME: codexHome } as Record<
+        string,
+        string
+      >;
       client = new this.codexSdk.Codex({ env });
       this.codexClients.set(cacheKey, client);
     }
@@ -1660,7 +1996,16 @@ export class EngineCore {
     bridgeTools?: string[],
     extraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, onEvent, signal, richStream } = args;
+    const {
+      task,
+      cwd,
+      systemPrompt,
+      sandboxKey,
+      sessionId,
+      onEvent,
+      signal,
+      richStream,
+    } = args;
     const auth = this.resolveAuth('codex', args.auth);
     // Pass through ONLY an explicit caller override (none today); otherwise leave unset so
     // `codexThreadOptions` omits `model` and the subscription account's default is used (see note above).
@@ -1675,13 +2020,22 @@ export class EngineCore {
         ? {
             serverPath: CONTAINER_MCP_BRIDGE_PATH,
             toolNames: bridgeTools,
-            env: { TURN_ID: turnId, REDIS_URL: process.env.REDIS_URL ?? 'redis://redis:6379' },
+            env: {
+              TURN_ID: turnId,
+              REDIS_URL: process.env.REDIS_URL ?? 'redis://redis:6379',
+            },
           }
         : undefined;
 
     const client = this.getCodex(sandboxKey, auth, bridge, extraMcpServers);
-    const opts = this.codexThreadOptions(cwd, model, toCodexEffort(args.modelReasoningEffort));
-    const thread = sessionId ? client.resumeThread(sessionId, opts) : client.startThread(opts);
+    const opts = this.codexThreadOptions(
+      cwd,
+      model,
+      toCodexEffort(args.modelReasoningEffort),
+    );
+    const thread = sessionId
+      ? client.resumeThread(sessionId, opts)
+      : client.startThread(opts);
 
     // Codex has no systemPrompt option — seed the persona as a first-turn preamble. Resumes already
     // carry it in thread history.
@@ -1698,106 +2052,141 @@ export class EngineCore {
     const { events } = await thread.runStreamed(input, { signal });
     try {
       for await (const event of events) {
-      switch (event.type) {
-        case 'thread.started':
-          // NB: SDK session field — `thread.started` is the Agent SDK's own event and `thread_id` is its
-          // session id (NOT our domain Job/Thread), so it is out of scope for the domain rename.
-          resolvedSession = event.thread_id;
-          // Surface the resume handle immediately (turn start) for mid-turn halt recovery.
-          if (resolvedSession) onEvent?.({ kind: 'session', sessionId: resolvedSession });
-          break;
-        case 'item.completed': {
-          const item = event.item;
-          // Codex reports each item ONCE, already completed (with full command output / patch status), so
-          // under `richStream` we emit the authoritative tool_use→tool_result pair back-to-back (the shared
-          // TurnHarness pairs them by id) instead of the coarse `tool` event, which the durable transcript
-          // drops. Without `richStream` (every current Codex caller) the coarse behavior is preserved.
-          switch (item.type) {
-            case 'agent_message':
-              onEvent?.({ kind: 'text', text: item.text });
-              result = item.text;
-              break;
-            case 'reasoning':
-              onEvent?.(
-                richStream
-                  ? { kind: 'thinking', text: item.text }
-                  : { kind: 'text', text: item.text },
-              );
-              break;
-            case 'command_execution':
-              if (richStream) {
-                const isError =
-                  item.status === 'failed' ||
-                  (item.exit_code != null && item.exit_code !== 0);
-                onEvent?.({ kind: 'tool_use', id: item.id, name: 'bash', input: { command: item.command } });
-                onEvent?.({ kind: 'tool_result', id: item.id, result: item.aggregated_output, isError });
-              } else {
-                onEvent?.({ kind: 'tool', name: 'bash', detail: item.command });
-              }
-              break;
-            case 'file_change':
-              if (richStream) {
-                // Codex bundles every file a patch touched into ONE item — split it into one
-                // tool_use/tool_result pair per file (mirroring Claude's one-file-per-Edit shape) so each
-                // gets its own diff card instead of a single card with no renderable content.
-                const multi = item.changes.length > 1;
-                for (const [idx, change] of item.changes.entries()) {
-                  const id = multi ? `${item.id}:${idx}` : item.id;
+        switch (event.type) {
+          case 'thread.started':
+            // NB: SDK session field — `thread.started` is the Agent SDK's own event and `thread_id` is its
+            // session id (NOT our domain Job/Thread), so it is out of scope for the domain rename.
+            resolvedSession = event.thread_id;
+            // Surface the resume handle immediately (turn start) for mid-turn halt recovery.
+            if (resolvedSession)
+              onEvent?.({ kind: 'session', sessionId: resolvedSession });
+            break;
+          case 'item.completed': {
+            const item = event.item;
+            // Codex reports each item ONCE, already completed (with full command output / patch status), so
+            // under `richStream` we emit the authoritative tool_use→tool_result pair back-to-back (the shared
+            // TurnHarness pairs them by id) instead of the coarse `tool` event, which the durable transcript
+            // drops. Without `richStream` (every current Codex caller) the coarse behavior is preserved.
+            switch (item.type) {
+              case 'agent_message':
+                onEvent?.({ kind: 'text', text: item.text });
+                result = item.text;
+                break;
+              case 'reasoning':
+                onEvent?.(
+                  richStream
+                    ? { kind: 'thinking', text: item.text }
+                    : { kind: 'text', text: item.text },
+                );
+                break;
+              case 'command_execution':
+                if (richStream) {
+                  const isError =
+                    item.status === 'failed' ||
+                    (item.exit_code != null && item.exit_code !== 0);
                   onEvent?.({
                     kind: 'tool_use',
-                    id,
-                    name: 'edit',
-                    input: { file_path: change.path, kind: change.kind },
+                    id: item.id,
+                    name: 'bash',
+                    input: { command: item.command },
                   });
                   onEvent?.({
                     kind: 'tool_result',
-                    id,
-                    result: item.status,
-                    isError: item.status === 'failed',
-                    structuredPatch: computeCodexStructuredPatch(cwd, change.path, change.kind),
+                    id: item.id,
+                    result: item.aggregated_output,
+                    isError,
+                  });
+                } else {
+                  onEvent?.({
+                    kind: 'tool',
+                    name: 'bash',
+                    detail: item.command,
                   });
                 }
-              } else {
-                onEvent?.({
-                  kind: 'tool',
-                  name: 'edit',
-                  detail: item.changes.map((c) => `${c.kind} ${c.path}`).join(', '),
-                });
-              }
-              break;
-            case 'web_search':
-              if (richStream) {
-                onEvent?.({ kind: 'tool_use', id: item.id, name: 'web_search', input: { query: item.query } });
-                onEvent?.({ kind: 'tool_result', id: item.id, result: 'completed' });
-              } else {
-                onEvent?.({ kind: 'tool', name: 'web_search', detail: item.query });
-              }
-              break;
-            case 'error':
-              onEvent?.({ kind: 'text', text: `error: ${item.message}` });
-              break;
+                break;
+              case 'file_change':
+                if (richStream) {
+                  // Codex bundles every file a patch touched into ONE item — split it into one
+                  // tool_use/tool_result pair per file (mirroring Claude's one-file-per-Edit shape) so each
+                  // gets its own diff card instead of a single card with no renderable content.
+                  const multi = item.changes.length > 1;
+                  for (const [idx, change] of item.changes.entries()) {
+                    const id = multi ? `${item.id}:${idx}` : item.id;
+                    onEvent?.({
+                      kind: 'tool_use',
+                      id,
+                      name: 'edit',
+                      input: { file_path: change.path, kind: change.kind },
+                    });
+                    onEvent?.({
+                      kind: 'tool_result',
+                      id,
+                      result: item.status,
+                      isError: item.status === 'failed',
+                      structuredPatch: computeCodexStructuredPatch(
+                        cwd,
+                        change.path,
+                        change.kind,
+                      ),
+                    });
+                  }
+                } else {
+                  onEvent?.({
+                    kind: 'tool',
+                    name: 'edit',
+                    detail: item.changes
+                      .map((c) => `${c.kind} ${c.path}`)
+                      .join(', '),
+                  });
+                }
+                break;
+              case 'web_search':
+                if (richStream) {
+                  onEvent?.({
+                    kind: 'tool_use',
+                    id: item.id,
+                    name: 'web_search',
+                    input: { query: item.query },
+                  });
+                  onEvent?.({
+                    kind: 'tool_result',
+                    id: item.id,
+                    result: 'completed',
+                  });
+                } else {
+                  onEvent?.({
+                    kind: 'tool',
+                    name: 'web_search',
+                    detail: item.query,
+                  });
+                }
+                break;
+              case 'error':
+                onEvent?.({ kind: 'text', text: `error: ${item.message}` });
+                break;
+            }
+            break;
           }
-          break;
+          case 'turn.completed': {
+            const u = event.usage;
+            accInput += u.input_tokens ?? 0;
+            accCached += u.cached_input_tokens ?? 0;
+            accOutput += u.output_tokens ?? 0;
+            accReasoning += u.reasoning_output_tokens ?? 0;
+            usageSeen = true;
+            break;
+          }
+          case 'turn.failed':
+            throw new Error(event.error.message);
+          case 'error':
+            throw new Error(event.message);
         }
-        case 'turn.completed': {
-          const u = event.usage;
-          accInput += u.input_tokens ?? 0;
-          accCached += u.cached_input_tokens ?? 0;
-          accOutput += u.output_tokens ?? 0;
-          accReasoning += u.reasoning_output_tokens ?? 0;
-          usageSeen = true;
-          break;
-        }
-        case 'turn.failed':
-          throw new Error(event.error.message);
-        case 'error':
-          throw new Error(event.message);
-      }
       }
     } catch (err) {
       // 401 / expired creds mid-Codex-turn → resumable auth error carrying the live thread id.
       const msg = err instanceof Error ? err.message : String(err);
-      if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'codex');
+      if (isAuthErrorMessage(msg))
+        throw new EngineAuthError(msg, resolvedSession, 'codex');
       throw err;
     }
 
@@ -1864,15 +2253,22 @@ export interface SkillGuardCtx {
 /** Which skill (if any) `filePath` belongs to — the composed symlink dir first (structural: the first path
  *  segment under it IS the skill name), then a match against a resolved skill's store dir (the model
  *  resolved the symlink and is addressing the real path). Undefined → not a skill path at all. */
-function skillNameForPath(filePath: string, ctx: SkillGuardCtx): string | undefined {
+function skillNameForPath(
+  filePath: string,
+  ctx: SkillGuardCtx,
+): string | undefined {
   if (isInsideRoot(filePath, ctx.composedSkillsDir)) {
-    const rel = relativePath(resolvePath(ctx.composedSkillsDir), resolvePath(ctx.composedSkillsDir, filePath));
+    const rel = relativePath(
+      resolvePath(ctx.composedSkillsDir),
+      resolvePath(ctx.composedSkillsDir, filePath),
+    );
     const name = rel.split(/[/\\]/)[0];
     if (name) return name;
   }
   if (ctx.skillsStoreRoot) {
     for (const skill of ctx.skills ?? []) {
-      if (isInsideRoot(filePath, join(ctx.skillsStoreRoot, skill.dirPath))) return skill.name;
+      if (isInsideRoot(filePath, join(ctx.skillsStoreRoot, skill.dirPath)))
+        return skill.name;
     }
   }
   return undefined;
@@ -1883,13 +2279,19 @@ export function makeCanUseTool(
   roots: string | string[],
   onPlan: (plan: string) => void,
   skillGuard?: SkillGuardCtx,
-  writeGuard?: (toolName: string, input: unknown) => { allow: boolean; reason?: string },
+  writeGuard?: (
+    toolName: string,
+    input: unknown,
+  ) => { allow: boolean; reason?: string },
 ): CanUseTool {
   const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
     if (toolName === 'ExitPlanMode') {
       if (typeof input.plan === 'string') onPlan(input.plan);
-      return { behavior: 'deny', message: 'Plan recorded — ending the planning turn.' };
+      return {
+        behavior: 'deny',
+        message: 'Plan recorded — ending the planning turn.',
+      };
     }
     const readOnlyVerdict = evaluateWriteGuard(toolName, input, {
       readOnly,
@@ -1898,14 +2300,17 @@ export function makeCanUseTool(
     if (!readOnlyVerdict.allow) {
       return {
         behavior: 'deny',
-        message: readOnlyVerdict.reason ?? 'This is a read-only turn — no file writes.',
+        message:
+          readOnlyVerdict.reason ??
+          'This is a read-only turn — no file writes.',
       };
     }
     if (skillGuard && SKILL_MUTATING_TOOLS.has(toolName)) {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
       const skillName = path ? skillNameForPath(path, skillGuard) : undefined;
       if (skillName) {
-        if (skillGuard.granted.has(skillName)) return { behavior: 'allow', updatedInput: input };
+        if (skillGuard.granted.has(skillName))
+          return { behavior: 'allow', updatedInput: input };
         return {
           behavior: 'deny',
           message:
@@ -1921,12 +2326,18 @@ export function makeCanUseTool(
     if (!rootVerdict.allow) {
       return {
         behavior: 'deny',
-        message: rootVerdict.reason ?? 'Write outside the allowed roots is not allowed.',
+        message:
+          rootVerdict.reason ??
+          'Write outside the allowed roots is not allowed.',
       };
     }
     if (writeGuard) {
       const verdict = writeGuard(toolName, input);
-      if (!verdict.allow) return { behavior: 'deny', message: verdict.reason ?? 'Denied by write guard.' };
+      if (!verdict.allow)
+        return {
+          behavior: 'deny',
+          message: verdict.reason ?? 'Denied by write guard.',
+        };
     }
     return { behavior: 'allow', updatedInput: input };
   };
@@ -1939,15 +2350,24 @@ export function makeCanUseTool(
  * (`contextTokens`/`contextModel`/`model`) reflect the LATEST result (the turn-end window), so `next`
  * overwrites when it carries them. `next` undefined (a result with no usage) leaves `acc` unchanged.
  */
-export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined): EngineUsage {
+export function addClaudeUsage(
+  acc: EngineUsage,
+  next: EngineUsage | undefined,
+): EngineUsage {
   if (!next) return acc;
   const inputTokens = (acc.inputTokens ?? 0) + (next.inputTokens ?? 0);
   const outputTokens = (acc.outputTokens ?? 0) + (next.outputTokens ?? 0);
-  const cacheReadTokens = (acc.cacheReadTokens ?? 0) + (next.cacheReadTokens ?? 0);
-  const cacheWriteTokens = (acc.cacheWriteTokens ?? 0) + (next.cacheWriteTokens ?? 0);
-  const reasoningTokens = (acc.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0);
-  const bothCostAbsent = acc.costUsd === undefined && next.costUsd === undefined;
-  const costUsd = bothCostAbsent ? undefined : (acc.costUsd ?? 0) + (next.costUsd ?? 0);
+  const cacheReadTokens =
+    (acc.cacheReadTokens ?? 0) + (next.cacheReadTokens ?? 0);
+  const cacheWriteTokens =
+    (acc.cacheWriteTokens ?? 0) + (next.cacheWriteTokens ?? 0);
+  const reasoningTokens =
+    (acc.reasoningTokens ?? 0) + (next.reasoningTokens ?? 0);
+  const bothCostAbsent =
+    acc.costUsd === undefined && next.costUsd === undefined;
+  const costUsd = bothCostAbsent
+    ? undefined
+    : (acc.costUsd ?? 0) + (next.costUsd ?? 0);
   const modelUsage = addClaudeModelUsage(acc.modelUsage, next.modelUsage);
   return {
     ...acc,
@@ -1959,7 +2379,9 @@ export function addClaudeUsage(acc: EngineUsage, next: EngineUsage | undefined):
     ...(costUsd !== undefined ? { costUsd } : {}),
     // Occupancy + labels track the LATEST result.
     ...(next.model ? { model: next.model } : {}),
-    ...(next.contextTokens !== undefined ? { contextTokens: next.contextTokens } : {}),
+    ...(next.contextTokens !== undefined
+      ? { contextTokens: next.contextTokens }
+      : {}),
     ...(next.contextModel ? { contextModel: next.contextModel } : {}),
     ...(modelUsage ? { modelUsage } : {}),
   };
@@ -1971,10 +2393,12 @@ function addClaudeModelUsage(
 ): Record<string, ModelUsageBreakdown> | undefined {
   if (!acc && !next) return undefined;
   const out: Record<string, ModelUsageBreakdown> = {};
-  for (const [model, usage] of Object.entries(acc ?? {})) out[model] = { ...usage };
+  for (const [model, usage] of Object.entries(acc ?? {}))
+    out[model] = { ...usage };
   for (const [model, usage] of Object.entries(next ?? {})) {
     const prior = out[model];
-    const webSearchRequests = (prior?.webSearchRequests ?? 0) + (usage.webSearchRequests ?? 0);
+    const webSearchRequests =
+      (prior?.webSearchRequests ?? 0) + (usage.webSearchRequests ?? 0);
     out[model] = {
       inputTokens: (prior?.inputTokens ?? 0) + usage.inputTokens,
       outputTokens: (prior?.outputTokens ?? 0) + usage.outputTokens,
@@ -2018,21 +2442,24 @@ export function extractClaudeUsage(
         }
       >
     | undefined;
-  const modelUsage: Record<string, ModelUsageBreakdown> | undefined = rawModelUsage
-    ? Object.fromEntries(
-        Object.entries(rawModelUsage).map(([m, mu]) => [
-          m,
-          {
-            inputTokens: mu.inputTokens ?? 0,
-            outputTokens: mu.outputTokens ?? 0,
-            cacheReadTokens: mu.cacheReadInputTokens ?? 0,
-            cacheWriteTokens: mu.cacheCreationInputTokens ?? 0,
-            costUsd: mu.costUSD ?? 0,
-            ...(mu.webSearchRequests ? { webSearchRequests: mu.webSearchRequests } : {}),
-          },
-        ]),
-      )
-    : undefined;
+  const modelUsage: Record<string, ModelUsageBreakdown> | undefined =
+    rawModelUsage
+      ? Object.fromEntries(
+          Object.entries(rawModelUsage).map(([m, mu]) => [
+            m,
+            {
+              inputTokens: mu.inputTokens ?? 0,
+              outputTokens: mu.outputTokens ?? 0,
+              cacheReadTokens: mu.cacheReadInputTokens ?? 0,
+              cacheWriteTokens: mu.cacheCreationInputTokens ?? 0,
+              costUsd: mu.costUSD ?? 0,
+              ...(mu.webSearchRequests
+                ? { webSearchRequests: mu.webSearchRequests }
+                : {}),
+            },
+          ]),
+        )
+      : undefined;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
   const inputTokens = (u.input_tokens ?? 0) + cacheRead + cacheWrite;
@@ -2041,7 +2468,8 @@ export function extractClaudeUsage(
   // whole-turn billing rollup (orchestrator + subagents + SDK-internal helper calls) and object-key order
   // isn't guaranteed, so a subagent/internal model (e.g. a Haiku housekeeping call) could sort first and
   // mislabel the turn. modelUsage stays the authoritative per-model breakdown below; this is only the label.
-  const usedModel = model ?? (modelUsage ? Object.keys(modelUsage)[0] : undefined);
+  const usedModel =
+    model ?? (modelUsage ? Object.keys(modelUsage)[0] : undefined);
   return {
     inputTokens,
     ...(u.output_tokens !== undefined ? { outputTokens: u.output_tokens } : {}),

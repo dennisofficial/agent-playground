@@ -1,12 +1,21 @@
 import { EnvService } from '@core/config/env/env.service';
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 import type { AutoApproveMode } from '@workspace/shared';
 // Leaf port path (NOT the '../driver' barrel) — a zero-import token file, so injecting it forms no
 // org ↔ driver ES module cycle. The @Global DriverModule binds it to JobLifecycleService.
-import { JOB_TEARDOWN, type JobTeardownPort } from '../driver/job-teardown.port';
+import {
+  JOB_TEARDOWN,
+  type JobTeardownPort,
+} from '../driver/job-teardown.port';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   OrgInviteEntity,
@@ -134,12 +143,14 @@ export class OrganizationService {
     if (patch.name !== undefined) org.name = patch.name;
     if (patch.slug !== undefined) {
       const desired = slugifyName(patch.slug);
-      if (desired !== org.slug) org.slug = await this.uniqueSlug(desired, orgId);
+      if (desired !== org.slug)
+        org.slug = await this.uniqueSlug(desired, orgId);
     }
     if (patch.defaultAutoApproveMode !== undefined) {
       org.default_auto_approve_mode = patch.defaultAutoApproveMode;
     }
-    if (patch.defaultAutoMerge !== undefined) org.default_auto_merge = patch.defaultAutoMerge;
+    if (patch.defaultAutoMerge !== undefined)
+      org.default_auto_merge = patch.defaultAutoMerge;
     const saved = await this.orgs.save(org);
     return {
       id: saved.id,
@@ -190,7 +201,9 @@ export class OrganizationService {
     const memberships = await this.members.find({ where: { user_id: userId } });
     if (memberships.length === 0) return [];
     const roleById = new Map(memberships.map((m) => [m.org_id, m.role]));
-    const orgs = await this.orgs.find({ where: { id: In([...roleById.keys()]) } });
+    const orgs = await this.orgs.find({
+      where: { id: In([...roleById.keys()]) },
+    });
     return orgs.map((o) => ({
       id: o.id,
       slug: o.slug,
@@ -203,7 +216,10 @@ export class OrganizationService {
   }
 
   /** The membership row (or null) — the guard's authorization check. */
-  async membership(userId: string, orgId: string): Promise<OrganizationMemberEntity | null> {
+  async membership(
+    userId: string,
+    orgId: string,
+  ): Promise<OrganizationMemberEntity | null> {
     return this.members.findOne({ where: { org_id: orgId, user_id: userId } });
   }
 
@@ -225,7 +241,9 @@ export class OrganizationService {
   async membersOf(orgId: string): Promise<MemberView[]> {
     const rows = await this.members.find({ where: { org_id: orgId } });
     if (rows.length === 0) return [];
-    const users = await this.users.find({ where: { id: In(rows.map((m) => m.user_id)) } });
+    const users = await this.users.find({
+      where: { id: In(rows.map((m) => m.user_id)) },
+    });
     const byId = new Map(users.map((u) => [u.id, u]));
     return rows.map((m) => ({
       userId: m.user_id,
@@ -239,7 +257,11 @@ export class OrganizationService {
 
   /** Create a copy-paste invite for `email`. Invites always grant `member` (the only invitable role —
    *  `owner` is the creator). Returns the link the operator shares. */
-  async createInvite(orgId: string, email: string, invitedBy: string): Promise<InviteView> {
+  async createInvite(
+    orgId: string,
+    email: string,
+    invitedBy: string,
+  ): Promise<InviteView> {
     const token = randomUUID();
     const row = await this.invites.save(
       this.invites.create({
@@ -279,7 +301,10 @@ export class OrganizationService {
   }
 
   /** Redeem an invite as `userId` — creates the membership (idempotent). Returns the org id. */
-  async acceptInvite(token: string, userId: string): Promise<{ orgId: string }> {
+  async acceptInvite(
+    token: string,
+    userId: string,
+  ): Promise<{ orgId: string }> {
     const invite = await this.invites.findOne({ where: { token } });
     if (!invite) throw new NotFoundException('Invite not found');
     if (invite.accepted_at && invite.accepted_by !== userId) {
@@ -291,7 +316,11 @@ export class OrganizationService {
     });
     if (!existing) {
       await this.members.save(
-        this.members.create({ org_id: invite.org_id, user_id: userId, role: invite.role }),
+        this.members.create({
+          org_id: invite.org_id,
+          user_id: userId,
+          role: invite.role,
+        }),
       );
     }
     if (!invite.accepted_at) {

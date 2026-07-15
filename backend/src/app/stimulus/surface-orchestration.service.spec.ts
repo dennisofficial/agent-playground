@@ -21,7 +21,10 @@ const INPUT = {
 describe('SurfaceOrchestration.announceEvent (repo-addressed, real thread id)', () => {
   it('posts the headline into the thread and returns the thread id', async () => {
     const surface = new AgentChatSurface();
-    const svc = new SurfaceOrchestration(surface, threadsRepo({ id: 'thread-1', repo_id: 'web' }));
+    const svc = new SurfaceOrchestration(
+      surface,
+      threadsRepo({ id: 'thread-1', repo_id: 'web' }),
+    );
 
     const ts = await svc.announceEvent(INPUT);
 

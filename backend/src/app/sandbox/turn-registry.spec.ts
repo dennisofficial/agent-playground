@@ -57,7 +57,10 @@ describe('TurnRegistry', () => {
 
   it('register persists steerable:true when the caller passes it', async () => {
     const repo = makeRepo();
-    await new TurnRegistry(repo, makeRepo() as never).register({ ...REGISTER, steerable: true });
+    await new TurnRegistry(repo, makeRepo() as never).register({
+      ...REGISTER,
+      steerable: true,
+    });
     const saved = repo.save.mock.calls[0][0];
     expect(saved).toMatchObject({ steerable: true });
   });
@@ -100,21 +103,38 @@ describe('TurnRegistry', () => {
   it('heartbeat stamps last_heartbeat_at and advances the cursor when an id is given', async () => {
     const repo = makeRepo();
     const at = new Date('2026-06-29T00:00:00Z');
-    await new TurnRegistry(repo, makeRepo() as never).heartbeat('t1', '5-0', at);
-    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at, events_last_id: '5-0' });
+    await new TurnRegistry(repo, makeRepo() as never).heartbeat(
+      't1',
+      '5-0',
+      at,
+    );
+    expect(repo.update).toHaveBeenCalledWith(
+      { turn_id: 't1' },
+      { last_heartbeat_at: at, events_last_id: '5-0' },
+    );
   });
 
   it('heartbeat without an id only stamps liveness (cursor untouched)', async () => {
     const repo = makeRepo();
     const at = new Date('2026-06-29T00:00:00Z');
-    await new TurnRegistry(repo, makeRepo() as never).heartbeat('t1', undefined, at);
-    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { last_heartbeat_at: at });
+    await new TurnRegistry(repo, makeRepo() as never).heartbeat(
+      't1',
+      undefined,
+      at,
+    );
+    expect(repo.update).toHaveBeenCalledWith(
+      { turn_id: 't1' },
+      { last_heartbeat_at: at },
+    );
   });
 
   it('finalize stamps the terminal status then deletes the live row', async () => {
     const repo = makeRepo();
     await new TurnRegistry(repo, makeRepo() as never).finalize('t1', 'done');
-    expect(repo.update).toHaveBeenCalledWith({ turn_id: 't1' }, { status: 'done' });
+    expect(repo.update).toHaveBeenCalledWith(
+      { turn_id: 't1' },
+      { status: 'done' },
+    );
     expect(repo.delete).toHaveBeenCalledWith({ turn_id: 't1' });
   });
 
@@ -126,11 +146,25 @@ describe('TurnRegistry', () => {
   });
 
   it('runningSteerableTurn queries the running+steerable row for (job_id, lane)', async () => {
-    const row = { turn_id: 't1', job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true } as const;
+    const row = {
+      turn_id: 't1',
+      job_id: 'th1',
+      lane: 'thread:sec-be',
+      status: 'running',
+      steerable: true,
+    } as const;
     const repo = makeRepo([row]);
-    const out = await new TurnRegistry(repo, makeRepo() as never).runningSteerableTurn('th1', 'thread:sec-be');
+    const out = await new TurnRegistry(
+      repo,
+      makeRepo() as never,
+    ).runningSteerableTurn('th1', 'thread:sec-be');
     expect(repo.findOne).toHaveBeenCalledWith({
-      where: { job_id: 'th1', lane: 'thread:sec-be', status: 'running', steerable: true },
+      where: {
+        job_id: 'th1',
+        lane: 'thread:sec-be',
+        status: 'running',
+        steerable: true,
+      },
     });
     expect(out).toEqual(row);
   });
@@ -140,7 +174,11 @@ describe('TurnRegistry', () => {
     const execs = makeRepo();
     const reg = new TurnRegistry(turns, execs as never);
 
-    await reg.recordToolReply('t1', 'call-1', 'submit_plan', { t: 'tool_response', id: 'call-1', result: { ok: true } });
+    await reg.recordToolReply('t1', 'call-1', 'submit_plan', {
+      t: 'tool_response',
+      id: 'call-1',
+      result: { ok: true },
+    });
     expect(execs.save).toHaveBeenCalledOnce();
     expect(execs.save.mock.calls[0][0]).toMatchObject({
       turn_id: 't1',
@@ -150,24 +188,39 @@ describe('TurnRegistry', () => {
     });
 
     // getToolReply returns the row's reply when present, else null.
-    execs.findOne.mockResolvedValueOnce({ reply: { t: 'tool_response', id: 'call-1', result: 42 } } as never);
-    expect(await reg.getToolReply('t1', 'call-1')).toEqual({ t: 'tool_response', id: 'call-1', result: 42 });
+    execs.findOne.mockResolvedValueOnce({
+      reply: { t: 'tool_response', id: 'call-1', result: 42 },
+    } as never);
+    expect(await reg.getToolReply('t1', 'call-1')).toEqual({
+      t: 'tool_response',
+      id: 'call-1',
+      result: 42,
+    });
     execs.findOne.mockResolvedValueOnce(null as never);
     expect(await reg.getToolReply('t1', 'nope')).toBeNull();
   });
 
-  it('failRunningForJob deletes only that job\'s running rows and reports how many were dropped', async () => {
+  it("failRunningForJob deletes only that job's running rows and reports how many were dropped", async () => {
     const repo = makeRepo();
     repo.delete.mockResolvedValueOnce({ affected: 2 } as never);
-    const out = await new TurnRegistry(repo, makeRepo() as never).failRunningForJob('th1');
-    expect(repo.delete).toHaveBeenCalledWith({ job_id: 'th1', status: 'running' });
+    const out = await new TurnRegistry(
+      repo,
+      makeRepo() as never,
+    ).failRunningForJob('th1');
+    expect(repo.delete).toHaveBeenCalledWith({
+      job_id: 'th1',
+      status: 'running',
+    });
     expect(out).toBe(2);
   });
 
   it('failRunningForJob returns 0 when nothing was running for that job', async () => {
     const repo = makeRepo();
     repo.delete.mockResolvedValueOnce({ affected: undefined } as never);
-    const out = await new TurnRegistry(repo, makeRepo() as never).failRunningForJob('th-idle');
+    const out = await new TurnRegistry(
+      repo,
+      makeRepo() as never,
+    ).failRunningForJob('th-idle');
     expect(out).toBe(0);
   });
 
@@ -175,9 +228,17 @@ describe('TurnRegistry', () => {
     const repo = makeRepo();
     // First find() = stale-heartbeat rows; second = never-beat rows (one overlaps t1).
     repo.find
-      .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't2' }] as ActiveTurnEntity[])
-      .mockResolvedValueOnce([{ turn_id: 't1' }, { turn_id: 't3' }] as ActiveTurnEntity[]);
-    const out = await new TurnRegistry(repo, makeRepo() as never).findStale(60_000);
+      .mockResolvedValueOnce([
+        { turn_id: 't1' },
+        { turn_id: 't2' },
+      ] as ActiveTurnEntity[])
+      .mockResolvedValueOnce([
+        { turn_id: 't1' },
+        { turn_id: 't3' },
+      ] as ActiveTurnEntity[]);
+    const out = await new TurnRegistry(repo, makeRepo() as never).findStale(
+      60_000,
+    );
     expect(out.map((t) => t.turn_id).sort()).toEqual(['t1', 't2', 't3']); // t1 not duplicated
   });
 });

@@ -121,12 +121,18 @@ export class GithubCiStateSync {
     )
       await this.jobs.update(
         { id: job.id },
-        { ci_status: sum.status, ci_counts: sum.counts, pr_mergeable: detail.mergeableState },
+        {
+          ci_status: sum.status,
+          ci_counts: sum.counts,
+          pr_mergeable: detail.mergeableState,
+        },
       );
     // Unconditional: a redelivered stable-clean CI webhook must still trigger a merge a prior tick skipped
     // for brain-not-idle (fire-and-forget — never blocks/throws this recompute).
     void this.autoMerge
       ?.maybeAutoMerge(job.id)
-      .catch((err) => this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`));
+      .catch((err) =>
+        this.logger.warn(`maybeAutoMerge failed for job ${job.id}: ${err}`),
+      );
   }
 }

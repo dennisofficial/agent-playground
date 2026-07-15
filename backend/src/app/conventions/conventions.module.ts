@@ -14,7 +14,12 @@ import { ConventionProfilesController } from './convention-profiles.controller';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([ConventionProfileEntity, RepoEntity], DB_CONNECTION)],
+  imports: [
+    TypeOrmModule.forFeature(
+      [ConventionProfileEntity, RepoEntity],
+      DB_CONNECTION,
+    ),
+  ],
   controllers: [ConventionProfilesController],
   providers: [ConventionProfileResolver],
   exports: [ConventionProfileResolver],

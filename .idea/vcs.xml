@@ -2,9 +2,9 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/packages/ai-testing" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/packages/jwt-auth" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/packages/nestjs-ai-essentials" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/packages/nestjs-core-essentials" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/submodules/ai-testing" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/submodules/jwt-auth" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/submodules/nestjs-ai-essentials" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/submodules/nestjs-core-essentials" vcs="Git" />
   </component>
 </project>

@@ -1,4 +1,8 @@
-import { Injectable, Logger, type BeforeApplicationShutdown } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type BeforeApplicationShutdown,
+} from '@nestjs/common';
 import { LeaderElectionService } from '../cluster';
 import { AgentSessionManager } from './agent-session-manager.service';
 
@@ -36,7 +40,9 @@ export class DrainService implements BeforeApplicationShutdown {
       this.logger.log('drained cleanly — releasing leadership');
       await this.election.releaseLeadership();
     } else {
-      this.logger.warn('drain grace exceeded — exiting; lock releases on disconnect, turns cold-resume');
+      this.logger.warn(
+        'drain grace exceeded — exiting; lock releases on disconnect, turns cold-resume',
+      );
     }
   }
 }

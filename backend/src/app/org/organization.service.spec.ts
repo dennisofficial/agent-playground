@@ -33,7 +33,13 @@ function makeSvc(
       ]
     : [];
   const memberRows: OrganizationMemberEntity[] = opts.alreadyMember
-    ? [{ org_id: 'O1', user_id: 'B', role: 'member' } as OrganizationMemberEntity]
+    ? [
+        {
+          org_id: 'O1',
+          user_id: 'B',
+          role: 'member',
+        } as OrganizationMemberEntity,
+      ]
     : [];
 
   const invites = {
@@ -49,11 +55,18 @@ function makeSvc(
   } as unknown as Repository<OrgInviteEntity>;
 
   const members = {
-    findOne: async ({ where }: { where: { org_id: string; user_id: string } }) =>
-      memberRows.find((m) => m.org_id === where.org_id && m.user_id === where.user_id) ?? null,
+    findOne: async ({
+      where,
+    }: {
+      where: { org_id: string; user_id: string };
+    }) =>
+      memberRows.find(
+        (m) => m.org_id === where.org_id && m.user_id === where.user_id,
+      ) ?? null,
     find: async ({ where }: { where: { user_id: string } }) =>
       memberRows.filter((m) => m.user_id === where.user_id),
-    create: (x: Partial<OrganizationMemberEntity>) => x as OrganizationMemberEntity,
+    create: (x: Partial<OrganizationMemberEntity>) =>
+      x as OrganizationMemberEntity,
     save: async (x: OrganizationMemberEntity) => {
       memberRows.push(x);
       return x;
@@ -61,13 +74,20 @@ function makeSvc(
   } as unknown as Repository<OrganizationMemberEntity>;
 
   const orgRows: OrganizationEntity[] = opts.orgRows ?? [
-    { id: 'O1', name: 'HannibalAI', slug: 'hannibalai', status: 'onboarding' } as OrganizationEntity,
+    {
+      id: 'O1',
+      name: 'HannibalAI',
+      slug: 'hannibalai',
+      status: 'onboarding',
+    } as OrganizationEntity,
   ];
   const orgDeletes: Array<Record<string, unknown>> = [];
   const orgs = {
     findOne: async ({ where }: { where: { id?: string; slug?: string } }) => {
-      if (where.id !== undefined) return orgRows.find((o) => o.id === where.id) ?? null;
-      if (where.slug !== undefined) return orgRows.find((o) => o.slug === where.slug) ?? null;
+      if (where.id !== undefined)
+        return orgRows.find((o) => o.id === where.id) ?? null;
+      if (where.slug !== undefined)
+        return orgRows.find((o) => o.slug === where.slug) ?? null;
       return null;
     },
     find: async ({ where }: { where: { id: { value: string[] } } }) => {
@@ -98,9 +118,13 @@ function makeSvc(
     },
   };
 
-  const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> = [];
+  const deletes: Array<{ entity: string; criteria: Record<string, unknown> }> =
+    [];
   const manager = {
-    delete: async (entity: { name: string }, criteria: Record<string, unknown>) => {
+    delete: async (
+      entity: { name: string },
+      criteria: Record<string, unknown>,
+    ) => {
       deletes.push({ entity: entity.name, criteria });
       return { affected: 1 };
     },
@@ -122,7 +146,15 @@ function makeSvc(
     jobTeardown,
     env,
   );
-  return { svc, inviteRows, memberRows, orgRows, deepDeleted, deletes, orgDeletes };
+  return {
+    svc,
+    inviteRows,
+    memberRows,
+    orgRows,
+    deepDeleted,
+    deletes,
+    orgDeletes,
+  };
 }
 
 describe('OrganizationService create', () => {
@@ -135,7 +167,7 @@ describe('OrganizationService create', () => {
 });
 
 describe('OrganizationService listForUser', () => {
-  it('carries each org row\'s automation defaults alongside the caller role', async () => {
+  it("carries each org row's automation defaults alongside the caller role", async () => {
     const { svc } = makeSvc({
       orgRows: [
         {
@@ -176,7 +208,9 @@ describe('OrganizationService invites', () => {
     const { svc, inviteRows, memberRows } = makeSvc({ invite: {} });
     const { orgId } = await svc.acceptInvite('t1', 'B');
     expect(orgId).toBe('O1');
-    expect(memberRows).toContainEqual(expect.objectContaining({ org_id: 'O1', user_id: 'B', role: 'member' }));
+    expect(memberRows).toContainEqual(
+      expect.objectContaining({ org_id: 'O1', user_id: 'B', role: 'member' }),
+    );
     expect(inviteRows[0].accepted_by).toBe('B');
     expect(inviteRows[0].accepted_at).not.toBeNull();
   });
@@ -189,8 +223,12 @@ describe('OrganizationService invites', () => {
   });
 
   it('acceptInvite rejects a different user once redeemed', async () => {
-    const { svc } = makeSvc({ invite: { accepted_at: new Date(), accepted_by: 'B' } });
-    await expect(svc.acceptInvite('t1', 'C')).rejects.toBeInstanceOf(ConflictException);
+    const { svc } = makeSvc({
+      invite: { accepted_at: new Date(), accepted_by: 'B' },
+    });
+    await expect(svc.acceptInvite('t1', 'C')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
   });
 });
 
@@ -268,8 +306,18 @@ describe('OrganizationService rename', () => {
   it('slugifies a new slug and keeps it unique against OTHER orgs', async () => {
     const { svc } = makeSvc({
       orgRows: [
-        { id: 'O1', name: 'A', slug: 'a', status: 'onboarding' } as OrganizationEntity,
-        { id: 'O2', name: 'Taken', slug: 'taken', status: 'active' } as OrganizationEntity,
+        {
+          id: 'O1',
+          name: 'A',
+          slug: 'a',
+          status: 'onboarding',
+        } as OrganizationEntity,
+        {
+          id: 'O2',
+          name: 'Taken',
+          slug: 'taken',
+          status: 'active',
+        } as OrganizationEntity,
       ],
     });
     const out = await svc.rename('O1', { slug: 'Taken!!' }, 'owner');
@@ -278,7 +326,9 @@ describe('OrganizationService rename', () => {
 
   it('throws NotFound when the org is gone', async () => {
     const { svc } = makeSvc();
-    await expect(svc.rename('NOPE', { name: 'x' }, 'owner')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      svc.rename('NOPE', { name: 'x' }, 'owner'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
@@ -287,7 +337,9 @@ describe('OrganizationService deleteOrg', () => {
   // deletes the org ROW — the database cascades every remaining org-scoped row. There is no explicit
   // per-table app-side sweep anymore.
   it('tears down every thread, then deletes the org row (FK cascade sweeps the rest)', async () => {
-    const { svc, deepDeleted, deletes, orgDeletes } = makeSvc({ threadIds: ['T1', 'T2'] });
+    const { svc, deepDeleted, deletes, orgDeletes } = makeSvc({
+      threadIds: ['T1', 'T2'],
+    });
     await svc.deleteOrg('O1');
 
     // Each thread is deep-deleted (container + worktree teardown; its rows cascade) before the org row.

@@ -22,8 +22,14 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES } from '../persistence/entities';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { ProfileAwarenessService } from '../workspace-profile/profile-awareness.service';
-import { WorkspaceProfileService, type WorkspaceProfileSnapshot } from '../workspace-profile/workspace-profile.service';
-import { INSTALL_AWARENESS_FILTER, AnthropicInstallAwarenessFilter } from '../workspace-profile/install-awareness-filter';
+import {
+  WorkspaceProfileService,
+  type WorkspaceProfileSnapshot,
+} from '../workspace-profile/workspace-profile.service';
+import {
+  INSTALL_AWARENESS_FILTER,
+  AnthropicInstallAwarenessFilter,
+} from '../workspace-profile/install-awareness-filter';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
 import { RedisEngineRunner } from './redis-engine-runner';
 import { turnKeys } from './redis-turn-keys';
@@ -57,7 +63,9 @@ function dbOpts() {
 }
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
-const fakeActivity = { thread: (_id: string, fn: () => unknown) => fn() } as unknown as SandboxActivityRegistry;
+const fakeActivity = {
+  thread: (_id: string, fn: () => unknown) => fn(),
+} as unknown as SandboxActivityRegistry;
 
 function fakeRegistry() {
   return {
@@ -75,7 +83,12 @@ function baseArgs(onEvent: (e: EngineEvent) => void): RunEngineArgs {
     task: agentMessage('do the thing'),
     cwd: '/wt',
     systemPrompt: agentMessage('SYS'),
-    sandboxKey: { orgId: ORG_ID, repoId: 'repo-1', jobId: 'job-1', type: 'build' },
+    sandboxKey: {
+      orgId: ORG_ID,
+      repoId: 'repo-1',
+      jobId: 'job-1',
+      type: 'build',
+    },
     mode: 'execute',
     onEvent,
     target: { containerId: 'c1', worktreeHost: '/wt' },
@@ -94,34 +107,63 @@ const BARE_SNAPSHOT: WorkspaceProfileSnapshot = {
 };
 
 /** Mirrors `fakeContainersWithProfileAwarenessCall` from the Stage-1 round-trip test verbatim. */
-function fakeContainersWithProfileAwarenessCall(redis: InMemoryRedisStream, command: string) {
+function fakeContainersWithProfileAwarenessCall(
+  redis: InMemoryRedisStream,
+  command: string,
+) {
   return {
-    execDetached: vi.fn(async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
-      const turnId = opts?.env?.TURN_ID;
-      if (!turnId) return {};
-      const k = turnKeys(turnId);
-      void (async () => {
-        const callId = `call-${turnId}`;
-        await redis.xadd(k.tools, { t: 'tool_request', id: callId, name: '__profile_awareness', args: { command } });
-        let lastId = '0-0';
-        let done = false;
-        for (let i = 0; i < 50 && !done; i++) {
-          const r = await redis.xread({ stream: k.replies, lastId, count: 10, blockMs: 50 });
-          for (const entry of r) {
-            const d = entry.data as { id?: string; t?: string; result?: unknown };
-            if (d.id !== callId) continue;
-            if (d.t === 'tool_progress') continue;
-            const text = d.t === 'tool_response' && typeof d.result === 'string' ? d.result : '';
-            await redis.xadd(k.events, { t: 'event', e: { kind: 'text', text } });
-            done = true;
-            break;
+    execDetached: vi.fn(
+      async (
+        _id: string,
+        _argv: string[],
+        opts?: { env?: Record<string, string> },
+      ) => {
+        const turnId = opts?.env?.TURN_ID;
+        if (!turnId) return {};
+        const k = turnKeys(turnId);
+        void (async () => {
+          const callId = `call-${turnId}`;
+          await redis.xadd(k.tools, {
+            t: 'tool_request',
+            id: callId,
+            name: '__profile_awareness',
+            args: { command },
+          });
+          let lastId = '0-0';
+          let done = false;
+          for (let i = 0; i < 50 && !done; i++) {
+            const r = await redis.xread({
+              stream: k.replies,
+              lastId,
+              count: 10,
+              blockMs: 50,
+            });
+            for (const entry of r) {
+              const d = entry.data as {
+                id?: string;
+                t?: string;
+                result?: unknown;
+              };
+              if (d.id !== callId) continue;
+              if (d.t === 'tool_progress') continue;
+              const text =
+                d.t === 'tool_response' && typeof d.result === 'string'
+                  ? d.result
+                  : '';
+              await redis.xadd(k.events, {
+                t: 'event',
+                e: { kind: 'text', text },
+              });
+              done = true;
+              break;
+            }
+            if (r.length) lastId = r[r.length - 1].id;
           }
-          if (r.length) lastId = r[r.length - 1].id;
-        }
-        await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
-      })();
-      return {};
-    }),
+          await redis.xadd(k.events, { t: 'final', r: { result: 'DONE' } });
+        })();
+        return {};
+      },
+    ),
   } as unknown as ContainerEngine;
 }
 
@@ -135,12 +177,24 @@ describeLive(
 
     beforeAll(async () => {
       mod = await Test.createTestingModule({
-        imports: [TypeOrmModule.forRoot(dbOpts()), TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION)],
+        imports: [
+          TypeOrmModule.forRoot(dbOpts()),
+          TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
+        ],
         providers: [
           WorkspaceConfigStore,
           ProfileAwarenessService,
-          { provide: WorkspaceProfileService, useValue: { describe: async () => BARE_SNAPSHOT, render: () => '- Mounts: none' } },
-          { provide: INSTALL_AWARENESS_FILTER, useValue: new AnthropicInstallAwarenessFilter(async () => API_KEY) },
+          {
+            provide: WorkspaceProfileService,
+            useValue: {
+              describe: async () => BARE_SNAPSHOT,
+              render: () => '- Mounts: none',
+            },
+          },
+          {
+            provide: INSTALL_AWARENESS_FILTER,
+            useValue: new AnthropicInstallAwarenessFilter(async () => API_KEY),
+          },
         ],
       }).compile();
 
@@ -162,13 +216,20 @@ describeLive(
     });
 
     afterAll(async () => {
-      await ds?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID]).catch(() => undefined);
-      await ds?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+      await ds
+        ?.query(`DELETE FROM repos WHERE org_id = $1`, [ORG_ID])
+        .catch(() => undefined);
+      await ds
+        ?.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+        .catch(() => undefined);
       await mod?.close();
     });
 
     async function ledger(): Promise<Array<{ key: string }>> {
-      const rows = await ds.query(`SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`, [repoId]);
+      const rows = await ds.query(
+        `SELECT profile_seen_tooling AS t FROM repos WHERE id = $1`,
+        [repoId],
+      );
       return rows[0].t ?? [];
     }
 
@@ -192,7 +253,13 @@ describeLive(
       const redis = new InMemoryRedisStream();
       const events: EngineEvent[] = [];
       const containers = fakeContainersWithProfileAwarenessCall(redis, command);
-      const runner = new RedisEngineRunner(containers, redis, fakeEnv, fakeActivity, fakeRegistry());
+      const runner = new RedisEngineRunner(
+        containers,
+        redis,
+        fakeEnv,
+        fakeActivity,
+        fakeRegistry(),
+      );
 
       await runner.run({
         ...baseArgs((e) => events.push(e)),
@@ -200,9 +267,9 @@ describeLive(
         toolBridge: makeBridge() as never,
       });
 
-      const replyText = events.find((e) => (e as { kind?: string }).kind === 'text') as
-        | { kind: 'text'; text: string }
-        | undefined;
+      const replyText = events.find(
+        (e) => (e as { kind?: string }).kind === 'text',
+      ) as { kind: 'text'; text: string } | undefined;
       return replyText?.text ?? '';
     }
 
@@ -210,21 +277,29 @@ describeLive(
       const text = await roundTrip('pnpm add stage2-live-eslint');
 
       // eslint-disable-next-line no-console
-      console.log('[stage2-roundtrip] enrich case reply text:', JSON.stringify(text));
+      console.log(
+        '[stage2-roundtrip] enrich case reply text:',
+        JSON.stringify(text),
+      );
       expect(text).toContain('[profile-awareness]');
       expect(text).toContain('pnpm:stage2-live-eslint');
       // The real model must not merely echo Stage 1 — Stage 2 attaches a concrete suggestion when it
       // decides to keep a genuinely-new, uncovered tool (system prompt's "canonical KEEP" case).
       expect(text).toContain('Suggestion:');
 
-      expect((await ledger()).map((t) => t.key)).toContain('pnpm:stage2-live-eslint');
+      expect((await ledger()).map((t) => t.key)).toContain(
+        'pnpm:stage2-live-eslint',
+      );
     });
 
     it('a transient npx ad-hoc run: the REAL Stage-2 filter suppresses the reply over the real transport (ledger still records it)', async () => {
       const text = await roundTrip('npx stage2-live-create-foo');
 
       // eslint-disable-next-line no-console
-      console.log('[stage2-roundtrip] suppress case reply text:', JSON.stringify(text));
+      console.log(
+        '[stage2-roundtrip] suppress case reply text:',
+        JSON.stringify(text),
+      );
       // Suppressed → `service.handle` returns null → the tool-bridge result is null → the fake
       // container's text extraction (only a STRING result becomes text) yields an empty string, exactly
       // like the Stage-1 dedup case in `redis-engine-runner.profile-awareness.int.test.ts`.
@@ -232,7 +307,9 @@ describeLive(
 
       // The ledger transition still committed (record-then-filter, decision d2) even though the text
       // shown to the agent was suppressed.
-      expect((await ledger()).map((t) => t.key)).toContain('npx:stage2-live-create-foo');
+      expect((await ledger()).map((t) => t.key)).toContain(
+        'npx:stage2-live-create-foo',
+      );
     });
   },
 );

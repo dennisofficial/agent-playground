@@ -33,7 +33,10 @@ import { SANDBOX_PROVIDER } from './sandbox-provider.port';
 @Module({
   imports: [
     EngineModule,
-    TypeOrmModule.forFeature([ActiveTurnEntity, ToolExecutionEntity], DB_CONNECTION),
+    TypeOrmModule.forFeature(
+      [ActiveTurnEntity, ToolExecutionEntity],
+      DB_CONNECTION,
+    ),
   ],
   providers: [
     { provide: CONTAINER_ENGINE, useClass: DockerodeContainerEngine },

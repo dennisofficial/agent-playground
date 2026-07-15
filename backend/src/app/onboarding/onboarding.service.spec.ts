@@ -14,13 +14,21 @@ import type {
 } from '../persistence/entities';
 import { CredentialResolver } from './credential-resolver.service';
 import { OnboardingService } from './onboarding.service';
-import type { CredentialPresence, TenantCredentialStore } from './tenant-credential.store';
+import type {
+  CredentialPresence,
+  TenantCredentialStore,
+} from './tenant-credential.store';
 
 // ── in-memory fake repositories ───────────────────────────────────────────────────────────────────
 
 function makeOrgs() {
   const map = new Map<string, OrganizationEntity>();
-  map.set('T1', { id: 'T1', name: 'T1', slug: 't1', status: 'onboarding' } as OrganizationEntity);
+  map.set('T1', {
+    id: 'T1',
+    name: 'T1',
+    slug: 't1',
+    status: 'onboarding',
+  } as OrganizationEntity);
   const repo = {
     async findOne({ where }: { where: { id: string } }) {
       return map.get(where.id) ?? null;
@@ -38,23 +46,41 @@ function makeRepos() {
   const k = (o: string, s: string) => `${o}:${s}`;
   let seq = 0;
   const repo = {
-    async findOne({ where }: { where: { id?: string; org_id?: string; slug?: string; access_ok?: boolean } }) {
+    async findOne({
+      where,
+    }: {
+      where: {
+        id?: string;
+        org_id?: string;
+        slug?: string;
+        access_ok?: boolean;
+      };
+    }) {
       if (where.id !== undefined) {
         for (const v of map.values()) {
           // Honor the org scope when both are given (so cross-tenant ids resolve to null → 404).
-          if (v.id === where.id && (where.org_id === undefined || v.org_id === where.org_id)) return v;
+          if (
+            v.id === where.id &&
+            (where.org_id === undefined || v.org_id === where.org_id)
+          )
+            return v;
         }
         return null;
       }
       if (where.access_ok !== undefined) {
         for (const v of map.values()) {
-          if (v.org_id === where.org_id && v.access_ok === where.access_ok) return v;
+          if (v.org_id === where.org_id && v.access_ok === where.access_ok)
+            return v;
         }
         return null;
       }
       return map.get(k(where.org_id as string, where.slug as string)) ?? null;
     },
-    async findOneOrFail({ where }: { where: { id?: string; org_id?: string; slug?: string } }) {
+    async findOneOrFail({
+      where,
+    }: {
+      where: { id?: string; org_id?: string; slug?: string };
+    }) {
       if (where.id !== undefined) {
         for (const v of map.values()) if (v.id === where.id) return v;
         throw new Error('repo not found');
@@ -66,14 +92,19 @@ function makeRepos() {
     async upsert(obj: Partial<RepoEntity>) {
       const key = k(obj.org_id as string, obj.slug as string);
       const prev = map.get(key);
-      map.set(key, { id: prev?.id ?? `repo-${++seq}`, ...(prev ?? {}), ...obj } as RepoEntity);
+      map.set(key, {
+        id: prev?.id ?? `repo-${++seq}`,
+        ...(prev ?? {}),
+        ...obj,
+      } as RepoEntity);
     },
     async update(
       where: { id?: string; org_id?: string; slug?: string },
       patch: Partial<RepoEntity>,
     ) {
       if (where.id !== undefined) {
-        for (const [key, v] of map) if (v.id === where.id) map.set(key, { ...v, ...patch });
+        for (const [key, v] of map)
+          if (v.id === where.id) map.set(key, { ...v, ...patch });
         return;
       }
       const key = k(where.org_id as string, where.slug as string);
@@ -115,11 +146,17 @@ function makeTable<T extends Record<string, unknown>>(seed: T[] = []) {
     async count({ where }: { where: Record<string, unknown> }) {
       return rows.filter((r) => matches(r, where)).length;
     },
-    async find({ where }: { where: Record<string, unknown>; select?: unknown }) {
+    async find({
+      where,
+    }: {
+      where: Record<string, unknown>;
+      select?: unknown;
+    }) {
       return rows.filter((r) => matches(r, where)).map((r) => ({ ...r }));
     },
     async delete(where: Record<string, unknown>) {
-      for (let i = rows.length - 1; i >= 0; i--) if (matches(rows[i], where)) rows.splice(i, 1);
+      for (let i = rows.length - 1; i >= 0; i--)
+        if (matches(rows[i], where)) rows.splice(i, 1);
       return { affected: 0 };
     },
   } as unknown as Repository<T>;
@@ -129,21 +166,33 @@ function makeTable<T extends Record<string, unknown>>(seed: T[] = []) {
 function makeOrgCreds(llmValidated = false) {
   const map = new Map<string, OrgCredentialsEntity>();
   if (llmValidated) {
-    map.set('T1:*', { org_id: 'T1', scope: '*', llm_validated_at: new Date() } as OrgCredentialsEntity);
+    map.set('T1:*', {
+      org_id: 'T1',
+      scope: '*',
+      llm_validated_at: new Date(),
+    } as OrgCredentialsEntity);
   }
   const repo = {
     async findOne({ where }: { where: { org_id: string; scope: string } }) {
       return map.get(`${where.org_id}:${where.scope}`) ?? null;
     },
-    async update({ org_id, scope }: { org_id: string; scope: string }, patch: Partial<OrgCredentialsEntity>) {
+    async update(
+      { org_id, scope }: { org_id: string; scope: string },
+      patch: Partial<OrgCredentialsEntity>,
+    ) {
       const key = `${org_id}:${scope}`;
-      map.set(key, { ...(map.get(key) ?? ({ org_id, scope } as OrgCredentialsEntity)), ...patch });
+      map.set(key, {
+        ...(map.get(key) ?? ({ org_id, scope } as OrgCredentialsEntity)),
+        ...patch,
+      });
     },
   } as unknown as Repository<OrgCredentialsEntity>;
   return { repo, map };
 }
 
-function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): CredentialResolver {
+function fakeCreds(
+  over: Partial<Record<'anthropic' | 'github', string>> = {},
+): CredentialResolver {
   return {
     async anthropicKey() {
       return over.anthropic;
@@ -157,7 +206,9 @@ function fakeCreds(over: Partial<Record<'anthropic' | 'github', string>> = {}): 
   } as unknown as CredentialResolver;
 }
 
-function fakeStore(presence: Partial<CredentialPresence> = {}): TenantCredentialStore {
+function fakeStore(
+  presence: Partial<CredentialPresence> = {},
+): TenantCredentialStore {
   return {
     async presence() {
       return {
@@ -189,7 +240,9 @@ function fakeEnv(over: Record<string, string | undefined> = {}): EnvService {
 
 function fakePr(
   repoInfo: RepoInfo | null,
-  opts: { ensureWebhookOutcome?: 'created' | 'updated' | 'no-scope' | 'error' } = {},
+  opts: {
+    ensureWebhookOutcome?: 'created' | 'updated' | 'no-scope' | 'error';
+  } = {},
 ): GithubPrService & { ensureWebhookCalls: number } {
   let ensureWebhookCalls = 0;
   return {
@@ -237,7 +290,9 @@ function assemble(
     },
   };
   const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
-  const pr = fakePr(opts.repoInfo ?? null, { ensureWebhookOutcome: opts.ensureWebhookOutcome });
+  const pr = fakePr(opts.repoInfo ?? null, {
+    ensureWebhookOutcome: opts.ensureWebhookOutcome,
+  });
 
   const svc = new OnboardingService(
     orgs.repo,
@@ -253,7 +308,19 @@ function assemble(
     moduleRef,
     fakeEnv(opts.env),
   );
-  return { svc, orgs, repos, orgCreds, threads, stimuli, decisionRecords, sandboxes, threadLifecycle, deepDeleted, pr };
+  return {
+    svc,
+    orgs,
+    repos,
+    orgCreds,
+    threads,
+    stimuli,
+    decisionRecords,
+    sandboxes,
+    threadLifecycle,
+    deepDeleted,
+    pr,
+  };
 }
 
 const REPO = 'https://github.com/acme/web';
@@ -261,8 +328,15 @@ const REPO = 'https://github.com/acme/web';
 describe('OnboardingService', () => {
   describe('connectRepo', () => {
     it('connects a repo (slug from the url) and validates access', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const result = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect(result.slug).toBe('web');
       expect(result.accessOk).toBe(true);
@@ -279,7 +353,10 @@ describe('OnboardingService', () => {
 
     it('rejects a non-GitHub url', async () => {
       const { svc } = assemble();
-      const result = await svc.connectRepo({ orgId: 'T1', repoUrl: 'not-a-url' });
+      const result = await svc.connectRepo({
+        orgId: 'T1',
+        repoUrl: 'not-a-url',
+      });
       expect(result.accessOk).toBe(false);
       expect(result.reason).toContain('not an HTTPS GitHub URL');
     });
@@ -296,12 +373,22 @@ describe('OnboardingService', () => {
         engineAuth: false,
         githubPat: false,
       });
-      expect(status.missing).toEqual(['repo', 'llm_key', 'openai_key', 'engine_auth', 'github_pat']);
+      expect(status.missing).toEqual([
+        'repo',
+        'llm_key',
+        'openai_key',
+        'engine_auth',
+        'github_pat',
+      ]);
       expect(status.lifecycle).toBe('onboarding');
     });
 
     it('marks repoConnected once a validated repo exists', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       const status = await svc.status('T1');
@@ -310,9 +397,18 @@ describe('OnboardingService', () => {
     });
 
     it('reflects credential presence + validated llm key → complete', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
       const { svc } = assemble({
-        presence: { hasAnthropic: true, hasOpenai: true, hasGithub: true, engineAuthSet: true },
+        presence: {
+          hasAnthropic: true,
+          hasOpenai: true,
+          hasGithub: true,
+          engineAuthSet: true,
+        },
         creds: { github: 'ghp_x' },
         repoInfo: info,
         llmValidated: true,
@@ -342,13 +438,23 @@ describe('OnboardingService', () => {
   });
 
   describe('revalidateRepo', () => {
-    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+    const info = {
+      fullName: 'acme/web',
+      owner: 'acme',
+      name: 'web',
+    } as RepoInfo;
 
     it('re-probes access and persists access_ok + a fresh checked time', async () => {
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       // Simulate access having gone stale, then prove revalidate restores it.
-      await repos.repo.update({ id: connected.id }, { access_ok: false, access_checked_at: null });
+      await repos.repo.update(
+        { id: connected.id },
+        { access_ok: false, access_checked_at: null },
+      );
 
       const res = await svc.revalidateRepo('T1', connected.id);
       expect(res.accessOk).toBe(true);
@@ -356,50 +462,74 @@ describe('OnboardingService', () => {
       expect(repos.map.get('T1:web')?.access_checked_at).toBeInstanceOf(Date);
     });
 
-    it("404s on a repo id from another org (cross-tenant)", async () => {
+    it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.revalidateRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
+      await expect(svc.revalidateRepo('OTHER', connected.id)).rejects.toThrow(
+        /not found/i,
+      );
     });
   });
 
   describe('updateRepo', () => {
-    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+    const info = {
+      fullName: 'acme/web',
+      owner: 'acme',
+      name: 'web',
+    } as RepoInfo;
 
     it('updates display name + default branch (metadata only)', async () => {
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
 
-      const res = await svc.updateRepo('T1', connected.id, { name: 'Web App', defaultBranch: 'develop' });
+      const res = await svc.updateRepo('T1', connected.id, {
+        name: 'Web App',
+        defaultBranch: 'develop',
+      });
       expect(res.name).toBe('Web App');
       expect(res.defaultBranch).toBe('develop');
       expect(repos.map.get('T1:web')?.default_branch).toBe('develop');
     });
 
     it('persists a branch prefix and clears it back to null on empty string', async () => {
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
 
-      const configured = await svc.updateRepo('T1', connected.id, { branchPrefix: 'feat/' });
+      const configured = await svc.updateRepo('T1', connected.id, {
+        branchPrefix: 'feat/',
+      });
       expect(configured.branchPrefix).toBe('feat/');
       expect(repos.map.get('T1:web')?.branch_prefix).toBe('feat/');
 
-      const cleared = await svc.updateRepo('T1', connected.id, { branchPrefix: '' });
+      const cleared = await svc.updateRepo('T1', connected.id, {
+        branchPrefix: '',
+      });
       expect(cleared.branchPrefix).toBeNull();
       expect(repos.map.get('T1:web')?.branch_prefix).toBeNull();
     });
 
-    it("404s on a repo id from another org (cross-tenant)", async () => {
+    it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.updateRepo('OTHER', connected.id, { name: 'x' })).rejects.toThrow(/not found/i);
+      await expect(
+        svc.updateRepo('OTHER', connected.id, { name: 'x' }),
+      ).rejects.toThrow(/not found/i);
     });
 
     it('persists repo-level merge default updates (method + delete-branch)', async () => {
       // The 'squash'/true DB column defaults themselves are real-Postgres behavior (this in-memory fake
       // doesn't model `@Column({ default: ... })`) — covered by the int test's connect-then-read assertion.
       // This exercises the write/read-back path the fake CAN model: `updateRepo` persisting new values.
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
 
       const res = await svc.updateRepo('T1', connected.id, {
@@ -409,38 +539,60 @@ describe('OnboardingService', () => {
       expect(res.defaultAutoMergeMethod).toBe('rebase');
       expect(res.defaultAutoMergeDeleteBranch).toBe(false);
       expect(repos.map.get('T1:web')?.default_auto_merge_method).toBe('rebase');
-      expect(repos.map.get('T1:web')?.default_auto_merge_delete_branch).toBe(false);
+      expect(repos.map.get('T1:web')?.default_auto_merge_delete_branch).toBe(
+        false,
+      );
     });
   });
 
   describe('reonboardRepo (operator-initiated re-onboard)', () => {
-    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+    const info = {
+      fullName: 'acme/web',
+      owner: 'acme',
+      name: 'web',
+    } as RepoInfo;
 
     it('404s when the repo does not exist', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
-      await expect(svc.reonboardRepo('T1', 'nope')).rejects.toThrow(/not found/i);
+      await expect(svc.reonboardRepo('T1', 'nope')).rejects.toThrow(
+        /not found/i,
+      );
     });
 
     it('rejects when the repo access is not validated', async () => {
-      const { svc, repos } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       await repos.repo.update({ id: connected.id }, { access_ok: false });
-      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/validated/i);
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(
+        /validated/i,
+      );
     });
 
     it('rejects when the org cannot run Atlas yet (missing credentials)', async () => {
       // access_ok repo, but the org has no LLM key / engine auth → not runnable.
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(/finish org setup/i);
+      await expect(svc.reonboardRepo('T1', connected.id)).rejects.toThrow(
+        /finish org setup/i,
+      );
     });
   });
 
   describe('disconnectRepo', () => {
-    const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+    const info = {
+      fullName: 'acme/web',
+      owner: 'acme',
+      name: 'web',
+    } as RepoInfo;
 
     it('cascade-deletes the repo’s threads, then disconnects', async () => {
-      const { svc, repos, threads, deepDeleted } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, repos, threads, deepDeleted } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
       threads.rows.push({ id: 't2', repo_id: connected.id, org_id: 'T1' });
@@ -454,7 +606,10 @@ describe('OnboardingService', () => {
     });
 
     it('drains a thread created mid-cascade (no orphan left behind)', async () => {
-      const { svc, threads, threadLifecycle } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
+      const { svc, threads, threadLifecycle } = assemble({
+        creds: { github: 'ghp_x' },
+        repoInfo: info,
+      });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
 
@@ -492,10 +647,12 @@ describe('OnboardingService', () => {
       expect(sandboxes.rows).toHaveLength(0);
     });
 
-    it("404s on a repo id from another org (cross-tenant)", async () => {
+    it('404s on a repo id from another org (cross-tenant)', async () => {
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       const connected = await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
-      await expect(svc.disconnectRepo('OTHER', connected.id)).rejects.toThrow(/not found/i);
+      await expect(svc.disconnectRepo('OTHER', connected.id)).rejects.toThrow(
+        /not found/i,
+      );
     });
   });
 
@@ -507,7 +664,11 @@ describe('OnboardingService', () => {
     });
 
     it('passes when the repo is reachable', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.validateRepo('T1', 'web')).ok).toBe(true);
@@ -523,9 +684,18 @@ describe('OnboardingService', () => {
 
   describe('tryActivate', () => {
     it('flips to active once every step is met', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
       const { svc, orgs } = assemble({
-        presence: { hasAnthropic: true, hasOpenai: true, hasGithub: true, engineAuthSet: true },
+        presence: {
+          hasAnthropic: true,
+          hasOpenai: true,
+          hasGithub: true,
+          engineAuthSet: true,
+        },
         creds: { github: 'ghp_x' },
         repoInfo: info,
         llmValidated: true,
@@ -537,7 +707,11 @@ describe('OnboardingService', () => {
     });
 
     it('is a no-op while steps remain', async () => {
-      const info = { fullName: 'acme/web', owner: 'acme', name: 'web' } as RepoInfo;
+      const info = {
+        fullName: 'acme/web',
+        owner: 'acme',
+        name: 'web',
+      } as RepoInfo;
       const { svc } = assemble({ creds: { github: 'ghp_x' }, repoInfo: info });
       await svc.connectRepo({ orgId: 'T1', repoUrl: REPO });
       expect((await svc.tryActivate('T1')).lifecycle).toBe('onboarding');
@@ -596,7 +770,9 @@ describe('OnboardingService', () => {
       });
       seedActiveRepo(repos);
       await svc.ensureWebhooksForActiveRepos();
-      expect(repos.map.get('T1:web')?.webhook_warning).toContain('admin:repo_hook');
+      expect(repos.map.get('T1:web')?.webhook_warning).toContain(
+        'admin:repo_hook',
+      );
     });
 
     it('clears the warning when both hooks register cleanly', async () => {

@@ -32,10 +32,14 @@ export async function writeForbiddenPaths(
 ): Promise<void> {
   const file = hydrationSidecarPath(worktreePath);
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, JSON.stringify({ worktreePath, forbiddenPaths }, null, 2), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  await writeFile(
+    file,
+    JSON.stringify({ worktreePath, forbiddenPaths }, null, 2),
+    {
+      encoding: 'utf8',
+      mode: 0o600,
+    },
+  );
 }
 
 /**
@@ -47,9 +51,13 @@ export function readForbiddenPaths(worktreePath: string): string[] {
   const file = hydrationSidecarPath(worktreePath);
   if (!existsSync(file)) return [];
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8')) as { forbiddenPaths?: unknown };
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
+      forbiddenPaths?: unknown;
+    };
     if (!Array.isArray(parsed.forbiddenPaths)) return [];
-    return parsed.forbiddenPaths.filter((p): p is string => typeof p === 'string');
+    return parsed.forbiddenPaths.filter(
+      (p): p is string => typeof p === 'string',
+    );
   } catch {
     return [];
   }

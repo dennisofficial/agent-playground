@@ -49,7 +49,9 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
   });
 
   it('frames onboarding as the bulk pass and a normal job as incremental upkeep', () => {
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'onboarding',
+    });
     const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
     expect(onboarding).toContain('FIRST, BULK pass');
     expect(normal).toContain('KEEPING IT CURRENT IS YOUR JOB TOO');
@@ -57,7 +59,9 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
 
   it('surfaces org vs repo scope for skills + MCP in a NORMAL job (not just onboarding)', () => {
     const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    expect(normal).toContain('the skill tools (propose_skill_install / propose_skill / propose_skill_removal)');
+    expect(normal).toContain(
+      'the skill tools (propose_skill_install / propose_skill / propose_skill_removal)',
+    );
     expect(normal).toContain('propose_mcp_servers each take scope:"repo"');
     expect(normal).toContain('scope:"org"');
     // The anti-pattern the fix targets: a normal job must not be steered to decline org-wide requests.

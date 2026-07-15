@@ -24,7 +24,10 @@ import { WorkspaceSkillStore } from './workspace-skill.store';
  */
 @Global()
 @Module({
-  imports: [TypeOrmModule.forFeature([WorkspaceSkillEntity, RepoEntity], DB_CONNECTION), GitModule],
+  imports: [
+    TypeOrmModule.forFeature([WorkspaceSkillEntity, RepoEntity], DB_CONNECTION),
+    GitModule,
+  ],
   controllers: [SkillsController],
   providers: [
     WorkspaceSkillStore,

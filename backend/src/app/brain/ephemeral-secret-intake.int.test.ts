@@ -39,9 +39,15 @@ const DELIVER_TO = '/tmp/atlas-login-in';
 class FakeSandboxProvider {
   public delivered: { jobId: string; path: string; value: string }[] = [];
   public nextOk = true;
-  async writeToJobContainerPath(input: { jobId: string; path: string; value: string }) {
+  async writeToJobContainerPath(input: {
+    jobId: string;
+    path: string;
+    value: string;
+  }) {
     this.delivered.push(input);
-    return this.nextOk ? { ok: true } : { ok: false, reason: 'the target process is not reading' };
+    return this.nextOk
+      ? { ok: true }
+      : { ok: false, reason: 'the target process is not reading' };
   }
   // Unused by this test — present so the object is a plausible provider.
   contextDirHost() {
@@ -117,7 +123,10 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
   });
 
   afterAll(async () => {
-    if (ds) await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]).catch(() => undefined);
+    if (ds)
+      await ds
+        .query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID])
+        .catch(() => undefined);
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
     else process.env.SURFACE = prevSurface;
@@ -140,16 +149,19 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     expect(opened.ok).toBe(true);
 
     // The real controller path (guards bypassed by direct call — they gate identity, not this logic).
-    const res = await controller.provideSecret(
-      { id: ORG_ID } as never,
-      jobId,
-      { requestId, value: CODE_VALUE },
-    );
+    const res = await controller.provideSecret({ id: ORG_ID } as never, jobId, {
+      requestId,
+      value: CODE_VALUE,
+    });
     expect(res.ok).toBe(true);
 
     // Delivered into the running container over the delivery lane, normalized to a single trailing newline.
     expect(provider.delivered).toHaveLength(1);
-    expect(provider.delivered[0]).toMatchObject({ jobId, path: DELIVER_TO, value: `${CODE_VALUE}\n` });
+    expect(provider.delivered[0]).toMatchObject({
+      jobId,
+      path: DELIVER_TO,
+      value: `${CODE_VALUE}\n`,
+    });
 
     // NOTHING durable: no encrypted secret-file row at the delivery path, none for the repo at all.
     expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
@@ -187,7 +199,9 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       ephemeral: true,
       deliver_to: DELIVER_TO,
     });
-    expect((await store.openSecretRequest(jobId, { requestId, card })).ok).toBe(true);
+    expect((await store.openSecretRequest(jobId, { requestId, card })).ok).toBe(
+      true,
+    );
 
     const res = await controller.provideSecret({ id: ORG_ID } as never, jobId, {
       requestId,

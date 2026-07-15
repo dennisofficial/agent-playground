@@ -2,10 +2,7 @@ import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ChatStimulus, ParsedEvent, SeedRow } from '../domain';
 import { EventFilterService } from './event-filter.service';
-import {
-  BRAIN_SINK,
-  type BrainSink,
-} from './stimulus-consumer';
+import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
 import {
   DuplicateStimulusError,
   StimulusStoreService,
@@ -14,7 +11,11 @@ import {
 /** Outcome of pushing an event through intake — for the controller to map to a status / log. */
 export type IntakeOutcome =
   | { admitted: true; stimulusId: string; jobId: string }
-  | { admitted: false; reason: 'duplicate' | 'rate-limited' | 'no-owner'; detail: string };
+  | {
+      admitted: false;
+      reason: 'duplicate' | 'rate-limited' | 'no-owner';
+      detail: string;
+    };
 
 /**
  * The STIMULUS INTAKE SEAM — the single entry point normalized stimuli flow through:
@@ -60,7 +61,11 @@ export class StimulusIntake {
       this.logger.log(
         `event dropped (${verdict.reason}): source=${event.source} key=${event.dedupeKey} — ${verdict.detail}`,
       );
-      return { admitted: false, reason: verdict.reason, detail: verdict.detail };
+      return {
+        admitted: false,
+        reason: verdict.reason,
+        detail: verdict.detail,
+      };
     }
 
     // ROUTE-ONLY (decision d6): an event is delivered ONLY to the brain of the job that already OWNS its
@@ -72,7 +77,11 @@ export class StimulusIntake {
       this.logger.log(
         `event dropped (no-owner): source=${event.source} key=${event.dedupeKey} — nothing owns this branch/PR`,
       );
-      return { admitted: false, reason: 'no-owner', detail: 'no job owns this event’s branch/PR' };
+      return {
+        admitted: false,
+        reason: 'no-owner',
+        detail: 'no job owns this event’s branch/PR',
+      };
     }
 
     try {
@@ -90,7 +99,9 @@ export class StimulusIntake {
       // owns the untrusted fence (so it + the boot sweep fence identically).
       void this.sink
         .deliverEvent(stimulus)
-        .catch((err) => this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`));
+        .catch((err) =>
+          this.logger.error(`event delivery failed for ${stimulus.id}: ${err}`),
+        );
       this.logger.log(
         `event admitted: ${stimulus.id} routed to owning job ${owner.id} ` +
           `(project ${event.repoId}, severity ${event.severity})`,
@@ -103,7 +114,11 @@ export class StimulusIntake {
         this.logger.log(
           `event dropped (db-duplicate on owning job ${owner.id}): source=${event.source} key=${event.dedupeKey}`,
         );
-        return { admitted: false, reason: 'duplicate', detail: 'db unique backstop' };
+        return {
+          admitted: false,
+          reason: 'duplicate',
+          detail: 'db unique backstop',
+        };
       }
       throw err;
     }
@@ -117,11 +132,19 @@ export class StimulusIntake {
     const corr = event.correlation;
     if (!corr) return null;
     if (corr.prNumber != null) {
-      const byPr = await this.store.findOwningJobByPrNumber(event.orgId, event.repoId, corr.prNumber);
+      const byPr = await this.store.findOwningJobByPrNumber(
+        event.orgId,
+        event.repoId,
+        corr.prNumber,
+      );
       if (byPr) return byPr;
     }
     if (corr.branch) {
-      return this.store.findOwningJobByBranch(event.orgId, event.repoId, corr.branch);
+      return this.store.findOwningJobByBranch(
+        event.orgId,
+        event.repoId,
+        corr.branch,
+      );
     }
     return null;
   }

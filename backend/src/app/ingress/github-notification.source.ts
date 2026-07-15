@@ -137,9 +137,7 @@ export class GithubNotificationSource implements NotificationSource {
    * read, `ProjectRoutingService.routeGithubRepo`. Both front doors call this so verification/routing
    * behavior can never drift between them.
    */
-  private async verifyAndRoute(
-    raw: RawNotification,
-  ): Promise<
+  private async verifyAndRoute(raw: RawNotification): Promise<
     | IngressResult
     | {
         eventType: string;
@@ -270,11 +268,18 @@ export class GithubNotificationSource implements NotificationSource {
    * PR's own head moving — GitHub recomputes + the ~45s cadence already catches those). Deletes
    * (`ref` gone / no default_branch) are ignored.
    */
-  private parsePush(route: { orgId: string; repoId: string }, body: GithubWebhookBody): IngressResult {
+  private parsePush(
+    route: { orgId: string; repoId: string },
+    body: GithubWebhookBody,
+  ): IngressResult {
     const ref = body.ref;
     const defaultBranch = body.repository?.default_branch;
     if (!ref || !defaultBranch || ref !== `refs/heads/${defaultBranch}`) {
-      return { outcome: 'ignored', reason: 'unsupported', detail: `github push to non-default ref ${ref ?? '?'}` };
+      return {
+        outcome: 'ignored',
+        reason: 'unsupported',
+        detail: `github push to non-default ref ${ref ?? '?'}`,
+      };
     }
     return { outcome: 'repo-push', orgId: route.orgId, repoId: route.repoId };
   }

@@ -15,14 +15,24 @@
  * subject — not just that fake spies were called.
  */
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity, ThreadEntity, DecisionRecordEntity, MessageEntity } from '../persistence/entities';
+import {
+  ENTITIES,
+  JobEntity,
+  ThreadEntity,
+  DecisionRecordEntity,
+  MessageEntity,
+} from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
@@ -30,10 +40,19 @@ import { BuildShipService } from './build-ship.service';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
-import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
+import type {
+  GithubPrService,
+  LocalGitService,
+  FeatureSandbox,
+  ProjectRepo,
+} from '../git';
 import type { TurnRunnerService } from '../runner';
 import type { ChatSurface, TaskEventSink } from '../surface';
-import { LiveTurnStore, MessageBlockSink, TurnHarnessFactory } from '../surface';
+import {
+  LiveTurnStore,
+  MessageBlockSink,
+  TurnHarnessFactory,
+} from '../surface';
 import type { AppVersionService } from '../cluster/app-version.service';
 import type { ToolBridgeOptions } from '../engine';
 import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '../engine';
@@ -107,7 +126,12 @@ function makeTransientTurn(remainingFailuresAtStart: number): {
           await input.toolBridge.tools['complete_thread']({
             summary: `built step ${input.stepId}`,
             verification: [
-              { kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' },
+              {
+                kind: 'test',
+                command: 'pnpm test',
+                exitCode: 0,
+                outputTail: 'ok',
+              },
             ],
           });
         }
@@ -135,13 +159,15 @@ function makeTransientTurn(remainingFailuresAtStart: number): {
  *  REAL (live Postgres + the real in-memory RxJS subject). */
 function makeGit(): { git: LocalGitService } {
   const git = {
-    createFeatureSandbox: vi.fn(async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
-      repoId: REPO.repoId,
-      branch,
-      worktreePath: `/wt/${branch}`,
-      gitUrl: REPO.gitUrl,
-      token: 'ghtok',
-    })),
+    createFeatureSandbox: vi.fn(
+      async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
+        repoId: REPO.repoId,
+        branch,
+        worktreePath: `/wt/${branch}`,
+        gitUrl: REPO.gitUrl,
+        token: 'ghtok',
+      }),
+    ),
     headSha: vi.fn(async () => 'sha0'),
     currentBranch: vi.fn(async () => null),
     hasChanges: vi.fn(async () => false),
@@ -159,11 +185,13 @@ function makePr(): { pr: GithubPrService } {
       number: 1,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
-      url: 'https://github.com/acme/host-retry-backstop/pull/1',
-      number: 1,
-      head: args.head,
-    })),
+    findOpenPullByHead: vi.fn(
+      async (_token: string, args: { head: string }) => ({
+        url: 'https://github.com/acme/host-retry-backstop/pull/1',
+        number: 1,
+        head: args.head,
+      }),
+    ),
   } as unknown as GithubPrService;
   return { pr };
 }
@@ -175,8 +203,16 @@ function clampHostRetryBackoff(): { restore: () => void } {
   const realSetTimeout = globalThis.setTimeout;
   const spy = vi
     .spyOn(globalThis, 'setTimeout')
-    .mockImplementation(((cb: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
-      realSetTimeout(cb, delay === HOST_RETRY_BACKOFF_MS ? 0 : delay, ...args)) as unknown as typeof setTimeout);
+    .mockImplementation(((
+      cb: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) =>
+      realSetTimeout(
+        cb,
+        delay === HOST_RETRY_BACKOFF_MS ? 0 : delay,
+        ...args,
+      )) as unknown as typeof setTimeout);
   return { restore: () => spy.mockRestore() };
 }
 
@@ -197,7 +233,10 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       ],
       providers: [
         DriverStoreService,
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
     // See `stream-closed-recovery.int.test.ts` — `.compile()` silences Nest's `Logger`; restore a real one so
@@ -253,7 +292,8 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           repo_id: repoId,
           job_id: job.id,
           status: 'approved',
-          overview: 'Prove the host backstop self-heals a 3x transient error and instruments both retry channels.',
+          overview:
+            'Prove the host backstop self-heals a 3x transient error and instruments both retry channels.',
           decisions: [],
           thread_titles: ['Backend'],
           approved_at: new Date(),
@@ -297,7 +337,8 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
-        get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
+        get: (k: string) =>
+          k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined,
       } as unknown as EnvService;
       // REAL live-turn store — the actual RxJS subject the retry loop fans `turn_retry` frames onto.
       const liveTurns = new LiveTurnStore();
@@ -325,12 +366,19 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION)),
         version,
       );
-      const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
+      const taskSink = {
+        applyTaskEvent: vi.fn(async () => undefined),
+      } as unknown as TaskEventSink;
       const usage = {
         getResetAt: () => undefined,
         applyHarvest: vi.fn().mockResolvedValue(undefined),
       } as unknown as OauthUsageService;
-      const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
+      const turnHarness = new TurnHarnessFactory(
+        liveTurns,
+        blockSink,
+        taskSink,
+        usage,
+      );
       const brainGateway = {
         openPrAtShip: vi.fn(async () => undefined),
         notifyThreadHalted: vi.fn(async () => undefined),
@@ -340,7 +388,11 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       const judge = {
         async judge() {
           judgeCalls++;
-          return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'test verdict' };
+          return {
+            runtimeSurfaceTouched: false,
+            liveVerificationAdequate: true,
+            reason: 'test verdict',
+          };
         },
       } as unknown as LiveVerificationJudge;
       let staticJudgeCalls = 0;
@@ -358,16 +410,28 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         git,
         pr,
         turn,
-        { postSectionPlan: vi.fn(async () => 'vis-ts') } as unknown as PlanVisibilityService,
+        {
+          postSectionPlan: vi.fn(async () => 'vis-ts'),
+        } as unknown as PlanVisibilityService,
         {
           autofixThread: vi.fn(),
           autofixPullRequest: vi.fn(),
           runReviewLens: vi.fn(async () => []),
-          applyReviewFindings: vi.fn(async () => ({ fixReport: '', commits: [] })),
-          ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({ ...ctx, diff: 'x', changedFiles: ['f.ts'] })),
+          applyReviewFindings: vi.fn(async () => ({
+            fixReport: '',
+            commits: [],
+          })),
+          ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({
+            ...ctx,
+            diff: 'x',
+            changedFiles: ['f.ts'],
+          })),
           emitReviewNotice: vi.fn(async () => undefined),
         } as unknown as AutoFixStage,
-        { name: 'agent', post: vi.fn(async () => 'ts') } as unknown as ChatSurface,
+        {
+          name: 'agent',
+          post: vi.fn(async () => 'ts'),
+        } as unknown as ChatSurface,
         env,
         {
           attach: async ({ sandbox }: { sandbox: FeatureSandbox }) => sandbox,
@@ -392,9 +456,15 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           engineAuth: async () => ({ secret: 'test-secret' }),
         } as unknown as CredentialResolver,
         usage,
-        { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
+        {
+          resolveForTurn: async () => [],
+          resolveForSandbox: async () => [],
+        } as never,
         { refreshForSandbox: async () => ({ rotated: false }) } as never,
-        { resolveForTurn: async () => [], resolveReviewSkillsForThread: async () => [] } as never,
+        {
+          resolveForTurn: async () => [],
+          resolveReviewSkillsForThread: async () => [],
+        } as never,
         {
           ensureContainer: async () => ({
             sandbox: {
@@ -412,7 +482,9 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           supervisorDirHost: () => null,
         } as unknown as import('./job-lifecycle.service').JobLifecycleService,
         new BuildShipService(git, pr, store, brainGateway),
-        { mergeNow: async () => false } as unknown as import('./auto-merge.service').AutoMergeService,
+        {
+          mergeNow: async () => false,
+        } as unknown as import('./auto-merge.service').AutoMergeService,
         {
           appendMarker: async () => undefined,
           drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
@@ -424,7 +496,9 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         turnHarness,
         blockSink,
         liveTurns,
-        { listRunning: async () => [] } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
+        {
+          listRunning: async () => [],
+        } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
         brainGateway,
         judge,
         staticJudge,
@@ -437,7 +511,11 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         undefined, // jit
         {
           planningThreadId: async (jid: string) =>
-            (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+            (
+              await threads.findOneOrFail({
+                where: { job_id: jid, role: 'planning' },
+              })
+            ).id,
         } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
@@ -486,7 +564,9 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       expect(finalRow.halt).toBeNull();
       expect(finalRow.pr_url).toBeTruthy();
 
-      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, role: 'builder' } });
+      const threadRow = await threads.findOneOrFail({
+        where: { job_id: job.id, role: 'builder' },
+      });
       expect(threadRow.status).toBe('done');
 
       // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.
@@ -496,20 +576,36 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       );
       expect(noticeRows.length).toBeGreaterThanOrEqual(3);
       const noticeTexts = noticeRows.map((r) => r.text);
-      expect(noticeTexts.some((t) => t.includes(`auto-retry 1/${MAX_HOST_RETRIES}`))).toBe(true);
-      expect(noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`))).toBe(true);
-      expect(noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`))).toBe(true);
+      expect(
+        noticeTexts.some((t) => t.includes(`auto-retry 1/${MAX_HOST_RETRIES}`)),
+      ).toBe(true);
+      expect(
+        noticeTexts.some((t) => t.includes(`auto-retry 2/${MAX_HOST_RETRIES}`)),
+      ).toBe(true);
+      expect(
+        noticeTexts.some((t) => t.includes(`auto-retry 3/${MAX_HOST_RETRIES}`)),
+      ).toBe(true);
 
       // The best-effort live `turn_retry` indicator — fanned on the REAL `LiveTurnStore` subject.
       expect(retryFrames.length).toBeGreaterThanOrEqual(3);
       expect(retryFrames.slice(0, 3).map((f) => f.attempt)).toEqual([1, 2, 3]);
       expect(retryFrames.every((f) => f.max === MAX_HOST_RETRIES)).toBe(true);
-      expect(retryFrames.slice(0, 3).every((f) => f.lane === `thread:${threadRow.id}`)).toBe(true);
+      expect(
+        retryFrames
+          .slice(0, 3)
+          .every((f) => f.lane === `thread:${threadRow.id}`),
+      ).toBe(true);
 
       // eslint-disable-next-line no-console
-      console.log('OBSERVED system_notice texts (live Postgres `messages`):', noticeTexts);
+      console.log(
+        'OBSERVED system_notice texts (live Postgres `messages`):',
+        noticeTexts,
+      );
       // eslint-disable-next-line no-console
-      console.log('OBSERVED turn_retry frames (live LiveTurnStore.stream$):', retryFrames);
+      console.log(
+        'OBSERVED turn_retry frames (live LiveTurnStore.stream$):',
+        retryFrames,
+      );
     },
     90_000,
   );

@@ -62,21 +62,32 @@ let ds: DataSource;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
-async function register(email: string): Promise<{ cookie: string; id: string }> {
+async function register(
+  email: string,
+): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie =
+    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds.query(`DELETE FROM jobs WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM repos WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG]).catch(() => undefined);
-  await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM jobs WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM repos WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organization_members WHERE org_id = $1`, [ORG])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organizations WHERE id = $1`, [ORG])
+    .catch(() => undefined);
   await ds
     .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
     .catch(() => undefined);
@@ -101,7 +112,9 @@ beforeAll(async () => {
     .useValue(new FakeThreadTitler())
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.use(cookieParser());
   app.enableShutdownHooks();
   await app.init();
@@ -117,10 +130,10 @@ beforeAll(async () => {
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Shipping Wire Org', 'shipping-wire-org', 'active')`,
     [ORG],
   );
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [
-    ORG,
-    owner.id,
-  ]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [ORG, owner.id],
+  );
   await ds.query(
     `INSERT INTO repos (id, org_id, slug, name, git_url, default_branch, access_ok)
      VALUES ($1, $2, 'shipping-wire-repo', 'Shipping Wire Repo', 'https://github.com/atlas-it/shipping-wire.git', 'main', true)`,
@@ -161,7 +174,9 @@ afterAll(async () => {
 
 describe('shipping wire — GET /web/jobs (live Postgres, real HTTP)', () => {
   it('projects shipping=true only for a ship-approved running job, false for a plain build and a done job', async () => {
-    const res = await request(server).get('/web/jobs').set('Cookie', ownerCookie);
+    const res = await request(server)
+      .get('/web/jobs')
+      .set('Cookie', ownerCookie);
     expect(res.status).toBe(200);
     const rows = res.body as Array<Record<string, unknown>>;
 
@@ -180,10 +195,19 @@ describe('shipping wire — GET /web/jobs (live Postgres, real HTTP)', () => {
     expect(done).toMatchObject({ status: 'done', shipping: false });
 
     // eslint-disable-next-line no-console -- evidence: dump the OBSERVED live rows verbatim.
-    console.log('OBSERVED GET /web/jobs [shipping]:', JSON.stringify(shipping, null, 2));
+    console.log(
+      'OBSERVED GET /web/jobs [shipping]:',
+      JSON.stringify(shipping, null, 2),
+    );
     // eslint-disable-next-line no-console
-    console.log('OBSERVED GET /web/jobs [building]:', JSON.stringify(building, null, 2));
+    console.log(
+      'OBSERVED GET /web/jobs [building]:',
+      JSON.stringify(building, null, 2),
+    );
     // eslint-disable-next-line no-console
-    console.log('OBSERVED GET /web/jobs [done]:', JSON.stringify(done, null, 2));
+    console.log(
+      'OBSERVED GET /web/jobs [done]:',
+      JSON.stringify(done, null, 2),
+    );
   });
 });

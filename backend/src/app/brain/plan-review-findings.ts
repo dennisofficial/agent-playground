@@ -13,7 +13,9 @@ export function parsePlanFindings(reviewerOutput: string): ReviewFinding[] {
   const out: ReviewFinding[] = [];
   for (const raw of reviewerOutput.split('\n')) {
     const line = raw.trim();
-    const tagged = line.match(/^FINDING\s*\[\s*(BLOCKING|ADVISORY)\s*\]\s*:\s*(.+)$/i);
+    const tagged = line.match(
+      /^FINDING\s*\[\s*(BLOCKING|ADVISORY)\s*\]\s*:\s*(.+)$/i,
+    );
     if (tagged) {
       out.push({
         severity: tagged[1].toUpperCase() as ReviewFinding['severity'],
@@ -39,7 +41,12 @@ export function deserializeFindings(stored: string | null): ReviewFinding[] {
   return parsePlanFindings(
     stored
       .split('\n')
-      .map((l) => l.replace(/^\[(BLOCKING|ADVISORY)\]\s*/i, (_m, s) => `FINDING [${s}]: `))
+      .map((l) =>
+        l.replace(
+          /^\[(BLOCKING|ADVISORY)\]\s*/i,
+          (_m, s) => `FINDING [${s}]: `,
+        ),
+      )
       .join('\n'),
   );
 }

@@ -18,14 +18,23 @@
  * reaches `done`, all readable from the live `jobs`/`threads`/`steps` tables.
  */
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ENTITIES, JobEntity, ThreadEntity, DecisionRecordEntity } from '../persistence/entities';
+import {
+  ENTITIES,
+  JobEntity,
+  ThreadEntity,
+  DecisionRecordEntity,
+} from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
@@ -33,9 +42,19 @@ import { BuildShipService } from './build-ship.service';
 import type { DriverRepoResolver, ResolvedRepo } from './repo-resolver';
 import type { PlanVisibilityService } from '../decision-gate';
 import type { AutoFixStage } from '../autofix';
-import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from '../git';
+import type {
+  GithubPrService,
+  LocalGitService,
+  FeatureSandbox,
+  ProjectRepo,
+} from '../git';
 import type { TurnRunnerService } from '../runner';
-import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from '../surface';
+import type {
+  BlockSink,
+  ChatSurface,
+  LiveTurnStore,
+  TaskEventSink,
+} from '../surface';
 import { TurnHarnessFactory } from '../surface';
 import type { ToolBridgeOptions } from '../engine';
 import type { CredentialResolver } from '../onboarding';
@@ -107,7 +126,12 @@ function makeStreamClosedTurn(): {
           await input.toolBridge.tools['complete_thread']({
             summary: `built step ${input.stepId}`,
             verification: [
-              { kind: 'test', command: 'pnpm test', exitCode: 0, outputTail: 'ok' },
+              {
+                kind: 'test',
+                command: 'pnpm test',
+                exitCode: 0,
+                outputTail: 'ok',
+              },
             ],
           });
         }
@@ -134,13 +158,15 @@ function makeStreamClosedTurn(): {
  *  `thread-driver.service.spec.ts`'s `assemble()` fakes verbatim; only `store` is REAL (live Postgres). */
 function makeGit(): { git: LocalGitService } {
   const git = {
-    createFeatureSandbox: vi.fn(async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
-      repoId: REPO.repoId,
-      branch,
-      worktreePath: `/wt/${branch}`,
-      gitUrl: REPO.gitUrl,
-      token: 'ghtok',
-    })),
+    createFeatureSandbox: vi.fn(
+      async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
+        repoId: REPO.repoId,
+        branch,
+        worktreePath: `/wt/${branch}`,
+        gitUrl: REPO.gitUrl,
+        token: 'ghtok',
+      }),
+    ),
     headSha: vi.fn(async () => 'sha0'),
     currentBranch: vi.fn(async () => null),
     hasChanges: vi.fn(async () => false),
@@ -158,11 +184,13 @@ function makePr(): { pr: GithubPrService } {
       number: 1,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
-      url: 'https://github.com/acme/stream-closed/pull/1',
-      number: 1,
-      head: args.head,
-    })),
+    findOpenPullByHead: vi.fn(
+      async (_token: string, args: { head: string }) => ({
+        url: 'https://github.com/acme/stream-closed/pull/1',
+        number: 1,
+        head: args.head,
+      }),
+    ),
   } as unknown as GithubPrService;
   return { pr };
 }
@@ -184,7 +212,10 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       ],
       providers: [
         DriverStoreService,
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
     // `Test.createTestingModule(...).compile()` globally silences Nest's `Logger` (routes every
@@ -287,7 +318,8 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       const { git } = makeGit();
       const { pr } = makePr();
       const env = {
-        get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
+        get: (k: string) =>
+          k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined,
       } as unknown as EnvService;
       const liveTurns = {
         push: vi.fn(),
@@ -299,12 +331,19 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         appendBlock: vi.fn(async () => undefined),
         appendBlockOnce: vi.fn(async () => undefined),
       } as unknown as BlockSink;
-      const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
+      const taskSink = {
+        applyTaskEvent: vi.fn(async () => undefined),
+      } as unknown as TaskEventSink;
       const usage = {
         getResetAt: () => undefined,
         applyHarvest: vi.fn().mockResolvedValue(undefined),
       } as unknown as OauthUsageService;
-      const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
+      const turnHarness = new TurnHarnessFactory(
+        liveTurns,
+        blockSink,
+        taskSink,
+        usage,
+      );
       const brainGateway = {
         openPrAtShip: vi.fn(async () => undefined),
         notifyThreadHalted: vi.fn(async () => undefined),
@@ -314,7 +353,11 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       const judge = {
         async judge() {
           judgeCalls++;
-          return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'test verdict' };
+          return {
+            runtimeSurfaceTouched: false,
+            liveVerificationAdequate: true,
+            reason: 'test verdict',
+          };
         },
       } as unknown as LiveVerificationJudge;
       let staticJudgeCalls = 0;
@@ -332,16 +375,28 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         git,
         pr,
         turn,
-        { postSectionPlan: vi.fn(async () => 'vis-ts') } as unknown as PlanVisibilityService,
+        {
+          postSectionPlan: vi.fn(async () => 'vis-ts'),
+        } as unknown as PlanVisibilityService,
         {
           autofixThread: vi.fn(),
           autofixPullRequest: vi.fn(),
           runReviewLens: vi.fn(async () => []),
-          applyReviewFindings: vi.fn(async () => ({ fixReport: '', commits: [] })),
-          ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({ ...ctx, diff: 'x', changedFiles: ['f.ts'] })),
+          applyReviewFindings: vi.fn(async () => ({
+            fixReport: '',
+            commits: [],
+          })),
+          ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({
+            ...ctx,
+            diff: 'x',
+            changedFiles: ['f.ts'],
+          })),
           emitReviewNotice: vi.fn(async () => undefined),
         } as unknown as AutoFixStage,
-        { name: 'agent', post: vi.fn(async () => 'ts') } as unknown as ChatSurface,
+        {
+          name: 'agent',
+          post: vi.fn(async () => 'ts'),
+        } as unknown as ChatSurface,
         env,
         {
           attach: async ({ sandbox }: { sandbox: FeatureSandbox }) => sandbox,
@@ -366,9 +421,15 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           engineAuth: async () => ({ secret: 'test-secret' }),
         } as unknown as CredentialResolver,
         usage,
-        { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
+        {
+          resolveForTurn: async () => [],
+          resolveForSandbox: async () => [],
+        } as never,
         { refreshForSandbox: async () => ({ rotated: false }) } as never,
-        { resolveForTurn: async () => [], resolveReviewSkillsForThread: async () => [] } as never,
+        {
+          resolveForTurn: async () => [],
+          resolveReviewSkillsForThread: async () => [],
+        } as never,
         {
           ensureContainer: async () => ({
             sandbox: {
@@ -401,7 +462,9 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         turnHarness,
         blockSink,
         liveTurns,
-        { listRunning: async () => [] } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
+        {
+          listRunning: async () => [],
+        } as unknown as import('../sandbox/turn-registry.service').TurnRegistry,
         brainGateway,
         judge,
         staticJudge,
@@ -414,7 +477,11 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         undefined, // jit
         {
           planningThreadId: async (jid: string) =>
-            (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+            (
+              await threads.findOneOrFail({
+                where: { job_id: jid, role: 'planning' },
+              })
+            ).id,
         } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
@@ -459,7 +526,9 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       expect(finalRow.halt).toBeNull();
       expect(finalRow.pr_url).toBeTruthy();
 
-      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, role: 'builder' } });
+      const threadRow = await threads.findOneOrFail({
+        where: { job_id: job.id, role: 'builder' },
+      });
       expect(threadRow.status).toBe('done');
     },
     90_000,

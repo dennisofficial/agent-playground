@@ -25,10 +25,17 @@ type Mocks = {
   del: ReturnType<typeof vi.fn>;
   validate: ReturnType<typeof vi.fn>;
   rehydrateThread: ReturnType<typeof vi.fn>;
-  messages: { findOne: ReturnType<typeof vi.fn>; save: ReturnType<typeof vi.fn> };
+  messages: {
+    findOne: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+  };
 };
 
-function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCard?: unknown }) {
+function makeController(opts?: {
+  threadRepoId?: string;
+  card?: unknown;
+  secretCard?: unknown;
+}) {
   const threadRepoId = opts?.threadRepoId ?? 'repo-1';
   const m: Mocks = {
     seedSystemNotification: vi.fn(() => 'ts-1'),
@@ -38,24 +45,31 @@ function makeController(opts?: { threadRepoId?: string; card?: unknown; secretCa
     withdrawSecretRequest: vi.fn(async () => ({ withdrawn: true })),
     markSecretProvidedPerCard: vi.fn(async () => undefined),
     write: vi.fn(async () => undefined),
-    rawRow: vi.fn(async () => ({ transport: 'http', config: { url: 'https://x' } })),
+    rawRow: vi.fn(async () => ({
+      transport: 'http',
+      config: { url: 'https://x' },
+    })),
     recordValidation: vi.fn(async () => undefined),
     setSecret: vi.fn(async () => true),
     del: vi.fn(async () => undefined),
     validate: vi.fn(async () => ({ discoveredTools: ['t'] })),
     rehydrateThread: vi.fn(async () => undefined),
     messages: {
-      findOne: vi.fn(async () => (opts?.secretCard ? { card: opts.secretCard } : null)),
+      findOne: vi.fn(async () =>
+        opts?.secretCard ? { card: opts.secretCard } : null,
+      ),
       save: vi.fn(async () => undefined),
     },
   };
   const threads = {
-    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) => ({
-      id: where.id,
-      org_id: where.org_id,
-      repo_id: threadRepoId,
-      awaiting_secret_id: 's-1',
-    })),
+    findOne: vi.fn(
+      async ({ where }: { where: { id: string; org_id: string } }) => ({
+        id: where.id,
+        org_id: where.org_id,
+        repo_id: threadRepoId,
+        awaiting_secret_id: 's-1',
+      }),
+    ),
   };
   const controller = new WebSurfaceController(
     { seedSystemNotification: m.seedSystemNotification, name: 'web' } as never, // surface
@@ -121,7 +135,11 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
           url: 'https://api.githubcopilot.com/mcp/',
           headers: [{ name: 'Authorization', secret: true }],
         },
-        { name: 'deepwiki', transport: 'http', url: 'https://mcp.deepwiki.com/mcp' },
+        {
+          name: 'deepwiki',
+          transport: 'http',
+          url: 'https://mcp.deepwiki.com/mcp',
+        },
       ],
     };
     const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
@@ -136,17 +154,28 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     }
     // github's Authorization is committed as an EMPTY secret placeholder (value collected later).
     const githubInput = m.write.mock.calls.find((c) => c[2] === 'github')![3];
-    expect(githubInput.headers).toEqual([{ name: 'Authorization', value: '', secret: true }]);
+    expect(githubInput.headers).toEqual([
+      { name: 'Authorization', value: '', secret: true },
+    ]);
     // deepwiki has no secret slot → probed now so its tool list populates; github (secret) is NOT probed.
     expect(m.validate).toHaveBeenCalledTimes(1);
-    expect(m.markMcpProposalApproved).toHaveBeenCalledWith('job-1', 'mcp-1', ['github', 'deepwiki']);
+    expect(m.markMcpProposalApproved).toHaveBeenCalledWith('job-1', 'mcp-1', [
+      'github',
+      'deepwiki',
+    ]);
   });
 
   it('commits ORG-wide (the "*" sentinel) when the card scope is "org"', async () => {
     const card = {
       type: 'mcp_proposal_card',
       scope: 'org',
-      servers: [{ name: 'linear', transport: 'http', url: 'https://mcp.linear.app/sse' }],
+      servers: [
+        {
+          name: 'linear',
+          transport: 'http',
+          url: 'https://mcp.linear.app/sse',
+        },
+      ],
     };
     const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
     await controller.approveMcpProposal(OWNER, 'job-1', 'mcp-1');
@@ -176,7 +205,12 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     const card = {
       type: 'mcp_proposal_card',
       servers: [
-        { name: 'jira', transport: 'sse', url: 'https://mcp.atlassian.com/v1/sse', authKind: 'oauth' },
+        {
+          name: 'jira',
+          transport: 'sse',
+          url: 'https://mcp.atlassian.com/v1/sse',
+          authKind: 'oauth',
+        },
       ],
     };
     const { controller, m } = makeController({ threadRepoId: 'repo-1', card });
@@ -208,9 +242,9 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
 
   it('404s (BadRequest) when there is no such proposal on the thread', async () => {
     const { controller } = makeController({ card: null });
-    await expect(controller.approveMcpProposal(OWNER, 'job-1', 'nope')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      controller.approveMcpProposal(OWNER, 'job-1', 'nope'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('defensively skips a reserved system name even if a stale card carries one', async () => {
@@ -243,7 +277,14 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
 
     expect(res).toMatchObject({ ok: true });
     // 'header' maps to the store's 'headers' slot; scope is the thread repo.
-    expect(m.setSecret).toHaveBeenCalledWith('orgA', 'repo-1', 'github', 'headers', 'Authorization', 'Bearer ghp_x');
+    expect(m.setSecret).toHaveBeenCalledWith(
+      'orgA',
+      'repo-1',
+      'github',
+      'headers',
+      'Authorization',
+      'Bearer ghp_x',
+    );
     // MCP secrets are resolved per-turn → no worktree rehydration.
     expect(m.rehydrateThread).not.toHaveBeenCalled();
     // Best-effort re-probe after the key lands.
@@ -264,14 +305,25 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     };
     const { controller, m } = makeController({ secretCard });
     // The target row is an oauth server — the authoritative guard must refuse before setSecret.
-    m.rawRow.mockResolvedValueOnce({ auth_kind: 'oauth', transport: 'sse', config: { url: 'https://x' } });
-    const res = await controller.provideSecret(OWNER, 'job-1', { requestId: 's-1', value: 'Bearer x' });
+    m.rawRow.mockResolvedValueOnce({
+      auth_kind: 'oauth',
+      transport: 'sse',
+      config: { url: 'https://x' },
+    });
+    const res = await controller.provideSecret(OWNER, 'job-1', {
+      requestId: 's-1',
+      value: 'Bearer x',
+    });
 
     expect(res.ok).toBe(false);
     expect(m.setSecret).not.toHaveBeenCalled();
     expect(m.validate).not.toHaveBeenCalled();
     // Per-card lane: no single-slot pointer to clear — stamp the card terminal (withdrawn) instead.
-    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith(
+      'job-1',
+      's-1',
+      expect.any(String),
+    );
     const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
     expect(notice).toContain('OAuth');
     expect(notice).not.toContain('Bearer x');
@@ -285,8 +337,15 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     };
     const { controller, m } = makeController({ secretCard });
     m.setSecret.mockResolvedValueOnce(false);
-    const res = await controller.provideSecret(OWNER, 'job-1', { requestId: 's-1', value: 'v' });
+    const res = await controller.provideSecret(OWNER, 'job-1', {
+      requestId: 's-1',
+      value: 'v',
+    });
     expect(res.ok).toBe(false);
-    expect(m.withdrawSecretRequest).toHaveBeenCalledWith('job-1', 's-1', expect.any(String));
+    expect(m.withdrawSecretRequest).toHaveBeenCalledWith(
+      'job-1',
+      's-1',
+      expect.any(String),
+    );
   });
 });

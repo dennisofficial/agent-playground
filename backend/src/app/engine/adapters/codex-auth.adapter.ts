@@ -1,4 +1,8 @@
-import { assertValidCodexAuthJson, ensureCodexAuthHome, readCodexAuthHome } from '../codex-auth-home';
+import {
+  assertValidCodexAuthJson,
+  ensureCodexAuthHome,
+  readCodexAuthHome,
+} from '../codex-auth-home';
 import type { EngineAuthAdapter } from '../engine-auth-adapter';
 
 /**

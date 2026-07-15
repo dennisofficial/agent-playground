@@ -44,7 +44,11 @@ function realDockerExecContainers(
 ) {
   return {
     execDetached: vi.fn(
-      async (_id: string, _argv: string[], opts?: { env?: Record<string, string> }) => {
+      async (
+        _id: string,
+        _argv: string[],
+        opts?: { env?: Record<string, string> },
+      ) => {
         const env = opts?.env ?? {};
         const dockerArgs = [
           'exec',
@@ -54,7 +58,9 @@ function realDockerExecContainers(
           'ATLAS_EVIDENCE_DIR',
         ];
         try {
-          seen.value = execFileSync('docker', dockerArgs, { encoding: 'utf8' }).trim();
+          seen.value = execFileSync('docker', dockerArgs, {
+            encoding: 'utf8',
+          }).trim();
         } catch {
           // `printenv` exits 1 when the var is unset — that is the "absent" signal.
           seen.value = null;
@@ -71,16 +77,28 @@ function realDockerExecContainers(
   } as unknown as ContainerEngine;
 }
 
-function baseArgs(onEvent: (e: EngineEvent) => void, evidenceDir?: string): RunEngineArgs {
+function baseArgs(
+  onEvent: (e: EngineEvent) => void,
+  evidenceDir?: string,
+): RunEngineArgs {
   return {
     engine: 'claude',
     task: agentMessage('do the thing'),
     cwd: '/wt',
     systemPrompt: agentMessage('SYS'),
-    sandboxKey: { orgId: 'org-1', repoId: 'repo-1', jobId: 'job-1', type: 'build' },
+    sandboxKey: {
+      orgId: 'org-1',
+      repoId: 'repo-1',
+      jobId: 'job-1',
+      type: 'build',
+    },
     mode: 'execute',
     onEvent,
-    target: { containerId: 'c1', worktreeHost: '/wt', ...(evidenceDir ? { evidenceDir } : {}) },
+    target: {
+      containerId: 'c1',
+      worktreeHost: '/wt',
+      ...(evidenceDir ? { evidenceDir } : {}),
+    },
   };
 }
 
@@ -89,18 +107,25 @@ describe('RedisEngineRunner — ATLAS_EVIDENCE_DIR reaches a running container',
 
   beforeAll(() => {
     execFileSync('docker', ['pull', '-q', IMAGE], { stdio: 'ignore' });
-    containerId = execFileSync('docker', ['run', '-d', '--rm', IMAGE, 'sleep', '180'], {
-      encoding: 'utf8',
-    }).trim();
+    containerId = execFileSync(
+      'docker',
+      ['run', '-d', '--rm', IMAGE, 'sleep', '180'],
+      {
+        encoding: 'utf8',
+      },
+    ).trim();
   });
 
   afterAll(() => {
-    if (containerId) execFileSync('docker', ['rm', '-f', containerId], { stdio: 'ignore' });
+    if (containerId)
+      execFileSync('docker', ['rm', '-f', containerId], { stdio: 'ignore' });
   });
 
   it('emits a thread leg evidenceDir as ATLAS_EVIDENCE_DIR visible inside the container', async () => {
     const redis = new InMemoryRedisStream();
-    const seen: { value: string | null } = { value: undefined as unknown as string };
+    const seen: { value: string | null } = {
+      value: undefined as unknown as string,
+    };
     const runner = new RedisEngineRunner(
       realDockerExecContainers(redis, containerId, seen),
       redis,

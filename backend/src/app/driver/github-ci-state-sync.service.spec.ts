@@ -79,8 +79,17 @@ function make(over: {
   } as unknown as Repository<RepoEntity>;
 
   // Fire-and-forget re-evaluation on every recompute — never asserted here, just must not throw.
-  const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as import('./auto-merge.service').AutoMergeService;
-  const sync = new GithubCiStateSync(stimStore, creds, pr, repos, jobs, autoMerge);
+  const autoMerge = {
+    maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+  } as unknown as import('./auto-merge.service').AutoMergeService;
+  const sync = new GithubCiStateSync(
+    stimStore,
+    creds,
+    pr,
+    repos,
+    jobs,
+    autoMerge,
+  );
   return {
     sync,
     stimStore,
@@ -160,7 +169,14 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
   it('writes ci_status=failure with per-category counts (2 failing, 1 skipped, 3 success)', async () => {
     const { sync, update } = make({
       detail: detail(),
-      runs: [run('failure'), run('failure'), run('skipped'), run('success'), run('success'), run('success')],
+      runs: [
+        run('failure'),
+        run('failure'),
+        run('skipped'),
+        run('success'),
+        run('success'),
+        run('success'),
+      ],
     });
     sync.schedule(DELTA);
     await vi.advanceTimersByTimeAsync(5_000);
@@ -272,7 +288,10 @@ describe('GithubCiStateSync recompute (via schedule)', () => {
   });
 
   it('no-op (no getPullDetail, no update) when rate-limited', async () => {
-    const { sync, update, pr, getPullDetail } = make({ detail: detail(), runs: [run('success')] });
+    const { sync, update, pr, getPullDetail } = make({
+      detail: detail(),
+      runs: [run('success')],
+    });
     (pr.isRateLimited as ReturnType<typeof vi.fn>).mockReturnValue(true);
     sync.schedule(DELTA);
     await vi.advanceTimersByTimeAsync(5_000);

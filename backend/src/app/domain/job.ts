@@ -17,7 +17,12 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type { JobStatus, JobHalt, JobActivity, AutoApproveMode } from '@workspace/shared';
+import type {
+  JobStatus,
+  JobHalt,
+  JobActivity,
+  AutoApproveMode,
+} from '@workspace/shared';
 import { JOB_ACTIVITIES } from '@workspace/shared';
 // Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
 // registry imports from `autofix`, which imports domain types.
@@ -240,11 +245,7 @@ export interface Thread {
 }
 
 /** A step's lifecycle — explicit, resumable; the driver re-enters at the correct step on restart. */
-export type StepStatus =
-  | 'pending'
-  | 'building'
-  | 'reviewing'
-  | 'done';
+export type StepStatus = 'pending' | 'building' | 'reviewing' | 'done';
 
 /**
  * One PHASE of a thread's locked plan — runs as a fresh session on the feature branch (fresh context

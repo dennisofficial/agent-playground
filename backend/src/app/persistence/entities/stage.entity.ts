@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
@@ -86,7 +93,10 @@ export class StageEntity extends TimestampedEntity {
   @Index()
   decision_record_id!: string | null;
 
-  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'CASCADE', nullable: true })
+  @ManyToOne(() => DecisionRecordEntity, {
+    onDelete: 'CASCADE',
+    nullable: true,
+  })
   @JoinColumn({ name: 'decision_record_id' })
   decisionRecord?: DecisionRecordEntity | null;
 

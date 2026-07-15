@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Add the passive pipeline-milestone awareness buffer to `threads` — a durable per-thread record of build
@@ -10,14 +10,17 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * `decision_records.decisions` default — both removed so this migration only adds the column.
  */
 export class AddThreadPipelineAwareness1782492856423 implements MigrationInterface {
-    name = 'AddThreadPipelineAwareness1782492856423'
+  name = 'AddThreadPipelineAwareness1782492856423';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "threads" ADD "pipeline_awareness" jsonb NOT NULL DEFAULT '{"markerQueue":[],"conveyedStateSig":null}'::jsonb`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" ADD "pipeline_awareness" jsonb NOT NULL DEFAULT '{"markerQueue":[],"conveyedStateSig":null}'::jsonb`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "pipeline_awareness"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" DROP COLUMN "pipeline_awareness"`,
+    );
+  }
 }

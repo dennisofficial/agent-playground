@@ -36,7 +36,9 @@ import { StimulusIntake } from './stimulus-intake.service';
  * `../ARCHITECTURE.md` §7.
  */
 @Injectable()
-export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplicationShutdown {
+export class ChatStimulusBridge
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(ChatStimulusBridge.name);
   private sub?: Subscription;
 
@@ -68,7 +70,9 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       try {
         await connectable.connect();
       } catch (err) {
-        this.logger.warn(`surface connect failed (inbound may be inert): ${err}`);
+        this.logger.warn(
+          `surface connect failed (inbound may be inert): ${err}`,
+        );
       }
     }
   }
@@ -105,9 +109,13 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       ...(msg.seedQuestionId ? { seedQuestionId: msg.seedQuestionId } : {}),
       ...(msg.seedFileId ? { seedFileId: msg.seedFileId } : {}),
       ...(msg.seedSecretId ? { seedSecretId: msg.seedSecretId } : {}),
-      ...(msg.seedQuestionIds?.length ? { seedQuestionIds: msg.seedQuestionIds } : {}),
+      ...(msg.seedQuestionIds?.length
+        ? { seedQuestionIds: msg.seedQuestionIds }
+        : {}),
       ...(msg.seedFileIds?.length ? { seedFileIds: msg.seedFileIds } : {}),
-      ...(msg.seedSecretIds?.length ? { seedSecretIds: msg.seedSecretIds } : {}),
+      ...(msg.seedSecretIds?.length
+        ? { seedSecretIds: msg.seedSecretIds }
+        : {}),
       ...(msg.seedRow ? { seedRow: msg.seedRow } : {}),
       ...(msg.priority ? { priority: msg.priority } : {}),
       ...(msg.card ? { card: msg.card } : {}),
@@ -120,7 +128,9 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
    * caller addresses an existing thread (the web operator path always does). Otherwise open a fresh
    * chat-origin thread on the repo (`msg.channel` = repo_id).
    */
-  private async resolveThread(msg: InboundChatMessage): Promise<JobEntity | null> {
+  private async resolveThread(
+    msg: InboundChatMessage,
+  ): Promise<JobEntity | null> {
     if (msg.threadTs) {
       const existing = await this.jobs.findOne({ where: { id: msg.threadTs } });
       if (existing) return existing;

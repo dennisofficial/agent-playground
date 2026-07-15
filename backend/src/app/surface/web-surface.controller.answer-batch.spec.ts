@@ -50,12 +50,14 @@ function freshCards(): Record<string, Record<string, unknown>> {
 function makeController() {
   const cards = freshCards();
   const threads = {
-    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) => ({
-      id: where.id,
-      org_id: where.org_id,
-      repo_id: 'repo-1',
-      awaiting_secret_id: null,
-    })),
+    findOne: vi.fn(
+      async ({ where }: { where: { id: string; org_id: string } }) => ({
+        id: where.id,
+        org_id: where.org_id,
+        repo_id: 'repo-1',
+        awaiting_secret_id: null,
+      }),
+    ),
   };
   const messages = {
     findOne: vi.fn(async ({ where }: { where: { ts: string } }) => {
@@ -73,10 +75,17 @@ function makeController() {
   const threadLifecycle = { rehydrateThread: vi.fn(async () => undefined) };
   const seedCalls: Array<{ body: string; opts: Record<string, unknown> }> = [];
   const surface = {
-    seedSystemNotification: vi.fn((_channel: string, _jobId: string, body: string, opts: Record<string, unknown>) => {
-      seedCalls.push({ body, opts });
-      return 'ts-batch';
-    }),
+    seedSystemNotification: vi.fn(
+      (
+        _channel: string,
+        _jobId: string,
+        body: string,
+        opts: Record<string, unknown>,
+      ) => {
+        seedCalls.push({ body, opts });
+        return 'ts-batch';
+      },
+    ),
   };
   const election = { isLeader: () => true };
 
@@ -108,7 +117,15 @@ function makeController() {
     {} as never, // jobDeps
     {} as never, // moduleRef
   );
-  return { controller, cards, store, secrets, surface, seedCalls, threadLifecycle };
+  return {
+    controller,
+    cards,
+    store,
+    secrets,
+    surface,
+    seedCalls,
+    threadLifecycle,
+  };
 }
 
 const owner: CurrentOrgCtx = { id: 'org-1', role: 'owner' };
@@ -120,7 +137,12 @@ describe('WebSurfaceController — answer-batch', () => {
     const res = await controller.answerBatch(owner, 'job-1', {
       items: [
         { kind: 'question', questionId: 'q-1', answer: 'Postgres' },
-        { kind: 'file', requestId: 'f-1', filename: 'keys.env', content: 'A=1' },
+        {
+          kind: 'file',
+          requestId: 'f-1',
+          filename: 'keys.env',
+          content: 'A=1',
+        },
         { kind: 'secret', requestId: 's-1', value: 'sk-live-123' },
       ],
       message: 'thanks!',
@@ -154,9 +176,9 @@ describe('WebSurfaceController — answer-batch', () => {
 
   it('rejects an empty items array with 400', async () => {
     const { controller } = makeController();
-    await expect(controller.answerBatch(owner, 'job-1', { items: [] })).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      controller.answerBatch(owner, 'job-1', { items: [] }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects malformed batch items before any per-card write', async () => {
@@ -168,7 +190,14 @@ describe('WebSurfaceController — answer-batch', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       controller.answerBatch(owner, 'job-1', {
-        items: [{ kind: 'file', requestId: 'f-1', filename: 'empty.env', content: '' }],
+        items: [
+          {
+            kind: 'file',
+            requestId: 'f-1',
+            filename: 'empty.env',
+            content: '',
+          },
+        ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
@@ -199,7 +228,9 @@ describe('WebSurfaceController — answer-batch', () => {
     // A file item requires owner.
     await expect(
       controller.answerBatch(member, 'job-1', {
-        items: [{ kind: 'file', requestId: 'f-1', filename: 'k', content: 'A=1' }],
+        items: [
+          { kind: 'file', requestId: 'f-1', filename: 'k', content: 'A=1' },
+        ],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -237,7 +268,9 @@ describe('WebSurfaceController — answer-batch', () => {
     const tooBig = 'a'.repeat(4 * 1024 * 1024 + 1);
     await expect(
       controller.answerBatch(owner, 'job-1', {
-        items: [{ kind: 'file', requestId: 'f-1', filename: 'big', content: tooBig }],
+        items: [
+          { kind: 'file', requestId: 'f-1', filename: 'big', content: tooBig },
+        ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // Rejected before any write.

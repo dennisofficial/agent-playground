@@ -26,12 +26,16 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   private readonly clients = new Map<string, OpenAIEmbeddings>();
 
   /** @param apiKey resolves the active OpenAI key for a tenant (e.g. CredentialResolver.openaiKey). */
-  constructor(private readonly apiKey: (orgId?: string) => Promise<string | undefined>) {}
+  constructor(
+    private readonly apiKey: (orgId?: string) => Promise<string | undefined>,
+  ) {}
 
   private async client(orgId?: string): Promise<OpenAIEmbeddings> {
     const key = await this.apiKey(orgId);
     if (!key) {
-      throw new Error('No OpenAI key (OPENAI_API_KEY) — Atlas memory embeddings unavailable.');
+      throw new Error(
+        'No OpenAI key (OPENAI_API_KEY) — Atlas memory embeddings unavailable.',
+      );
     }
     let c = this.clients.get(key);
     if (!c) {

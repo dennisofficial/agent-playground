@@ -16,19 +16,32 @@ const election = {} as unknown as LeaderElectionService;
 const redisWithIdle = (idleByKey: Record<string, number | null> = {}) =>
   ({
     objectIdleTime: vi.fn(async (key: string) => idleByKey[key] ?? null),
-  }) as unknown as RedisStreamPort & { objectIdleTime: ReturnType<typeof vi.fn> };
+  }) as unknown as RedisStreamPort & {
+    objectIdleTime: ReturnType<typeof vi.fn>;
+  };
 
 describe('TurnWatchdogService.sweep', () => {
   it('finalizes every stale turn as failed', async () => {
     const registry = {
-      findStale: vi.fn(async () => [
-        { turn_id: 't1', job_id: 'th1' },
-        { turn_id: 't2', job_id: 'th2' },
-      ] as ActiveTurnEntity[]),
+      findStale: vi.fn(
+        async () =>
+          [
+            { turn_id: 't1', job_id: 'th1' },
+            { turn_id: 't2', job_id: 'th2' },
+          ] as ActiveTurnEntity[],
+      ),
       finalize: vi.fn(async () => undefined),
-    } as unknown as TurnRegistry & { findStale: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
+    } as unknown as TurnRegistry & {
+      findStale: ReturnType<typeof vi.fn>;
+      finalize: ReturnType<typeof vi.fn>;
+    };
 
-    await new TurnWatchdogService(registry, election, env({ TURN_STALE_MS: 5000 }), redisWithIdle()).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env({ TURN_STALE_MS: 5000 }),
+      redisWithIdle(),
+    ).sweep();
 
     expect(registry.findStale).toHaveBeenCalledWith(5000);
     expect(registry.finalize).toHaveBeenCalledTimes(2);
@@ -38,10 +51,13 @@ describe('TurnWatchdogService.sweep', () => {
 
   it('spares a DB-stale turn whose events stream is recently active (alive but unattached), freshening its heartbeat', async () => {
     const registry = {
-      findStale: vi.fn(async () => [
-        { turn_id: 't-live', job_id: 'th1' },
-        { turn_id: 't-dead', job_id: 'th2' },
-      ] as ActiveTurnEntity[]),
+      findStale: vi.fn(
+        async () =>
+          [
+            { turn_id: 't-live', job_id: 'th1' },
+            { turn_id: 't-dead', job_id: 'th2' },
+          ] as ActiveTurnEntity[],
+      ),
       finalize: vi.fn(async () => undefined),
       heartbeat: vi.fn(async () => undefined),
     } as unknown as TurnRegistry & {
@@ -64,7 +80,9 @@ describe('TurnWatchdogService.sweep', () => {
 
   it('a liveness-probe failure falls back to finalizing (fail towards cleanup, as before)', async () => {
     const registry = {
-      findStale: vi.fn(async () => [{ turn_id: 't1', job_id: 'th1' }] as ActiveTurnEntity[]),
+      findStale: vi.fn(
+        async () => [{ turn_id: 't1', job_id: 'th1' }] as ActiveTurnEntity[],
+      ),
       finalize: vi.fn(async () => undefined),
     } as unknown as TurnRegistry & { finalize: ReturnType<typeof vi.fn> };
     const redis = {
@@ -82,9 +100,17 @@ describe('TurnWatchdogService.sweep', () => {
     const registry = {
       findStale: vi.fn(async () => [] as ActiveTurnEntity[]),
       finalize: vi.fn(async () => undefined),
-    } as unknown as TurnRegistry & { findStale: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
+    } as unknown as TurnRegistry & {
+      findStale: ReturnType<typeof vi.fn>;
+      finalize: ReturnType<typeof vi.fn>;
+    };
 
-    await new TurnWatchdogService(registry, election, env(), redisWithIdle()).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env(),
+      redisWithIdle(),
+    ).sweep();
 
     expect(registry.findStale).toHaveBeenCalledWith(90_000); // default
     expect(registry.finalize).not.toHaveBeenCalled();
@@ -96,10 +122,18 @@ describe('TurnWatchdogService.sweep', () => {
         throw new Error('db down');
       }),
       finalize: vi.fn(async () => undefined),
-    } as unknown as TurnRegistry & { findStale: ReturnType<typeof vi.fn>; finalize: ReturnType<typeof vi.fn> };
+    } as unknown as TurnRegistry & {
+      findStale: ReturnType<typeof vi.fn>;
+      finalize: ReturnType<typeof vi.fn>;
+    };
 
     await expect(
-      new TurnWatchdogService(registry, election, env(), redisWithIdle()).sweep(),
+      new TurnWatchdogService(
+        registry,
+        election,
+        env(),
+        redisWithIdle(),
+      ).sweep(),
     ).resolves.toBeUndefined();
     expect(registry.finalize).not.toHaveBeenCalled();
   });
@@ -107,7 +141,12 @@ describe('TurnWatchdogService.sweep', () => {
 
 describe('TurnWatchdogService reattach trigger', () => {
   const liveTurn = (over: Partial<ActiveTurnEntity> = {}) =>
-    ({ turn_id: 't-live', job_id: 'job1', kind: 'step', ...over }) as ActiveTurnEntity;
+    ({
+      turn_id: 't-live',
+      job_id: 'job1',
+      kind: 'step',
+      ...over,
+    }) as ActiveTurnEntity;
 
   it('routes a live-but-unattached turn to its kind handler and keeps it alive (never finalizes)', async () => {
     const registry = {
@@ -120,9 +159,18 @@ describe('TurnWatchdogService reattach trigger', () => {
     };
     const redis = redisWithIdle({ [turnKeys('t-live').events]: 2 }); // engine wrote 2s ago → alive
     const handler = vi.fn(async () => 'attached' as const);
-    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+    const reattach = {
+      handlerFor: vi.fn(() => handler),
+    } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env(),
+      redis,
+      undefined,
+      reattach,
+    ).sweep();
 
     expect(reattach.handlerFor).toHaveBeenCalledWith('step'); // routed by kind
     expect(handler).toHaveBeenCalledTimes(1);
@@ -141,9 +189,18 @@ describe('TurnWatchdogService reattach trigger', () => {
     };
     const redis = redisWithIdle({ [turnKeys('t-live').events]: 1 });
     const handler = vi.fn(async () => 'deferred' as const);
-    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+    const reattach = {
+      handlerFor: vi.fn(() => handler),
+    } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env(),
+      redis,
+      undefined,
+      reattach,
+    ).sweep();
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
@@ -163,10 +220,19 @@ describe('TurnWatchdogService reattach trigger', () => {
     const handler = vi.fn(async () => {
       throw new Error('driver down');
     });
-    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+    const reattach = {
+      handlerFor: vi.fn(() => handler),
+    } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
     await expect(
-      new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep(),
+      new TurnWatchdogService(
+        registry,
+        election,
+        env(),
+        redis,
+        undefined,
+        reattach,
+      ).sweep(),
     ).resolves.toBeUndefined();
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
     expect(registry.finalize).not.toHaveBeenCalled();
@@ -182,9 +248,18 @@ describe('TurnWatchdogService reattach trigger', () => {
       heartbeat: ReturnType<typeof vi.fn>;
     };
     const redis = redisWithIdle({ [turnKeys('t-live').events]: 1 });
-    const reattach = { handlerFor: vi.fn(() => undefined) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+    const reattach = {
+      handlerFor: vi.fn(() => undefined),
+    } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env(),
+      redis,
+      undefined,
+      reattach,
+    ).sweep();
 
     expect(reattach.handlerFor).toHaveBeenCalledWith('rotation');
     expect(registry.heartbeat).toHaveBeenCalledWith('t-live');
@@ -202,9 +277,18 @@ describe('TurnWatchdogService reattach trigger', () => {
     };
     const redis = redisWithIdle({ [turnKeys('t-dead').events]: 600 }); // stream idle 10min → engine dead
     const handler = vi.fn(async () => 'attached' as const);
-    const reattach = { handlerFor: vi.fn(() => handler) } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
+    const reattach = {
+      handlerFor: vi.fn(() => handler),
+    } as unknown as import('./turn-reattach.registry').TurnReattachRegistry;
 
-    await new TurnWatchdogService(registry, election, env(), redis, undefined, reattach).sweep();
+    await new TurnWatchdogService(
+      registry,
+      election,
+      env(),
+      redis,
+      undefined,
+      reattach,
+    ).sweep();
 
     expect(handler).not.toHaveBeenCalled(); // dead → not a reattach candidate
     expect(registry.finalize).toHaveBeenCalledWith('t-dead', 'failed');

@@ -410,7 +410,7 @@ export const TOOL_DEFS: Tool[] = [
   {
     name: 'atlas_query',
     description:
-      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON\'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c "SELECT ... FROM \'<file>\'"`, or Read a line-range (offset/limit).',
+      "Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c \"SELECT ... FROM '<file>'\"`, or Read a line-range (offset/limit).",
     inputSchema: {
       type: 'object',
       properties: {

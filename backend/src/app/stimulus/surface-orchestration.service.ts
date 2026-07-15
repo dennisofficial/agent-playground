@@ -59,7 +59,9 @@ export class SurfaceOrchestration {
       this.logger.warn(`announcement post failed (continuing): ${err}`);
       return undefined;
     }
-    this.logger.log(`announced event thread ${input.jobId} on repo ${thread.repo_id}`);
+    this.logger.log(
+      `announced event thread ${input.jobId} on repo ${thread.repo_id}`,
+    );
     return thread.id;
   }
 }

@@ -13,17 +13,29 @@ import { jobKindFragment } from '../job-kind';
 
 @FragmentGroup()
 export class JobKindGroup {
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1900, condition: jobKindIs('feature') })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1900,
+    condition: jobKindIs('feature'),
+  })
   feature(): string {
     return jobKindFragment('feature');
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1901, condition: jobKindIs('bugfix') })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1901,
+    condition: jobKindIs('bugfix'),
+  })
   bugfix(): string {
     return jobKindFragment('bugfix');
   }
 
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1902, condition: jobKindIs('event') })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1902,
+    condition: jobKindIs('event'),
+  })
   event(): string {
     return jobKindFragment('event');
   }

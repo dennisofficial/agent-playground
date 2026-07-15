@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
-import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
+import {
+  type EngineEvent,
+  type EngineUsage,
+  resolveContextLimit,
+} from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -50,7 +54,13 @@ export interface BlockSink {
   appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: {
+      kind: string;
+      threadId: string;
+      text?: string;
+      meta?: Record<string, unknown> | null;
+      createdAt?: Date;
+    },
   ): Promise<void>;
 }
 
@@ -101,13 +111,19 @@ export class MessageBlockSink implements BlockSink {
       const result = await this.messages
         .createQueryBuilder()
         .insert()
-        .values({ ...row, idem_key: block.idemKey } as QueryDeepPartialEntity<MessageEntity>)
+        .values({
+          ...row,
+          idem_key: block.idemKey,
+        } as QueryDeepPartialEntity<MessageEntity>)
         .orIgnore()
         .execute();
       const insertedId = result.identifiers?.[0]?.id as string | undefined;
       if (insertedId) return insertedId;
       // A conflict (ON CONFLICT DO NOTHING) may not report an id — look up the existing row by its key.
-      const existing = await this.messages.findOne({ where: { idem_key: block.idemKey }, select: { id: true } });
+      const existing = await this.messages.findOne({
+        where: { idem_key: block.idemKey },
+        select: { id: true },
+      });
       return existing?.id;
     }
     const saved = await this.messages.save(this.messages.create(row));
@@ -117,7 +133,13 @@ export class MessageBlockSink implements BlockSink {
   async appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: {
+      kind: string;
+      threadId: string;
+      text?: string;
+      meta?: Record<string, unknown> | null;
+      createdAt?: Date;
+    },
   ): Promise<void> {
     // A job accumulates only a handful of `agent_prompt` rows (one per brain turn / review round / gate
     // iteration / lens), so loading them and filtering by `meta.promptKey` in JS is cheap and avoids
@@ -126,12 +148,21 @@ export class MessageBlockSink implements BlockSink {
       where: { job_id: jobId, kind: 'agent_prompt' },
       select: { id: true, meta: true },
     });
-    if (existing.some((m) => (m.meta as { promptKey?: string } | null)?.promptKey === promptKey)) {
+    if (
+      existing.some(
+        (m) =>
+          (m.meta as { promptKey?: string } | null)?.promptKey === promptKey,
+      )
+    ) {
       return;
     }
     // Stamp the key into meta so the dedup read above finds it on the NEXT call — the single source of
     // truth, whether the caller went through the harness's `emitPrompt` or wrote the block directly.
-    await this.appendBlock(jobId, { ...block, threadId: block.threadId, meta: { ...(block.meta ?? {}), promptKey } });
+    await this.appendBlock(jobId, {
+      ...block,
+      threadId: block.threadId,
+      meta: { ...(block.meta ?? {}), promptKey },
+    });
   }
 }
 
@@ -211,16 +242,20 @@ export class EntityTaskEventSink implements TaskEventSink {
       this.apply(key, scope, toolName, input, result),
     );
     // Keep the chain alive past a rejection, and drop the map entry once this tail settles (no growth).
-    const tail = run.catch(() => undefined).finally(() => {
-      if (this.chains.get(key) === tail) this.chains.delete(key);
-    });
+    const tail = run
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.chains.get(key) === tail) this.chains.delete(key);
+      });
     this.chains.set(key, tail);
     return run;
   }
 
   /** Resolve the stage that owns this scope's shared checklist: a `thread` scope's own `stage_id`, or a
    *  `main` scope's job's `planning` stage (mirrors `DriverStoreService.planningThreadId`'s lookup). */
-  private async resolveStageId(scope: TaskScope): Promise<{ stageId: string; orgId: string } | null> {
+  private async resolveStageId(
+    scope: TaskScope,
+  ): Promise<{ stageId: string; orgId: string } | null> {
     if (scope.kind === 'thread') {
       const thread = await this.threads.findOne({
         where: { id: scope.id },
@@ -237,10 +272,16 @@ export class EntityTaskEventSink implements TaskEventSink {
     return stage ? { stageId: stage.id, orgId: stage.org_id } : null;
   }
 
-  private async seedCache(key: string, stageId: string): Promise<TaskFoldCache> {
+  private async seedCache(
+    key: string,
+    stageId: string,
+  ): Promise<TaskFoldCache> {
     const existing = this.cache.get(key);
     if (existing) return existing;
-    const rows = await this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+    const rows = await this.tasks.find({
+      where: { stage_id: stageId },
+      order: { ordinal: 'ASC' },
+    });
     const rowIdBySdkId = new Map<string, string>();
     const items = rows.map((row) => {
       rowIdBySdkId.set(row.id, row.id); // identity seed — see TaskFoldCache's doc comment
@@ -271,7 +312,8 @@ export class EntityTaskEventSink implements TaskEventSink {
 
     // Resolve an item's DB row id (blockedBy edges reference OTHER items by their sdk/pseudo id) — an
     // edge that doesn't resolve within this scope's known rows is dropped rather than left dangling.
-    const resolveRowId = (sdkId: string): string | undefined => rowIdBySdkId.get(sdkId);
+    const resolveRowId = (sdkId: string): string | undefined =>
+      rowIdBySdkId.get(sdkId);
 
     // Deletions: an id that fell out of the fold is gone from the checklist (foldTaskEvent's `deleted`
     // semantics) — remove its row.
@@ -455,7 +497,11 @@ export interface TurnHarness {
    * asked (the `task` is a plain engine param, never an event, so nothing else persists it). Insert-once by
    * `promptKey` (survives restart/re-kick/re-drive). Best-effort — never throws into the turn.
    */
-  emitPrompt(task: string, promptKey: string, extraMeta?: Record<string, unknown>): Promise<void>;
+  emitPrompt(
+    task: string,
+    promptKey: string,
+    extraMeta?: Record<string, unknown>,
+  ): Promise<void>;
   /**
    * Persist the accumulated transcript (+ a text fallback if none emitted), append a `turn_meta` block when
    * `turnMeta.usage` is present, then end the live lane.
@@ -516,7 +562,8 @@ export class TurnHarnessFactory {
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
     private readonly usage: OauthUsageService,
-    @Inject(SUBAGENT_STORE) private readonly subagentStore: SubagentStore = NOOP_SUBAGENT_STORE,
+    @Inject(SUBAGENT_STORE)
+    private readonly subagentStore: SubagentStore = NOOP_SUBAGENT_STORE,
   ) {}
 
   /**
@@ -574,7 +621,9 @@ export class TurnHarnessFactory {
     };
     // Merge the per-role tag into a block's meta WITHOUT clobbering the block's own fields (the spread order
     // below always puts `metaTag` first). Returns undefined when there's nothing to attach (brain text).
-    const tagMeta = (extra?: Record<string, unknown>): Record<string, unknown> | undefined => {
+    const tagMeta = (
+      extra?: Record<string, unknown>,
+    ): Record<string, unknown> | undefined => {
       const merged = { ...(metaTag ?? {}), ...(extra ?? {}) };
       return Object.keys(merged).length > 0 ? merged : undefined;
     };
@@ -591,7 +640,9 @@ export class TurnHarnessFactory {
         const b = blocks[i];
         const idemKey = persistTurnId ? `${persistTurnId}:${i}` : undefined;
         const parentToolUseId = b.meta?.parentToolUseId as string | undefined;
-        const subagentId = parentToolUseId ? subagentsByToolUse.get(parentToolUseId)?.id : undefined;
+        const subagentId = parentToolUseId
+          ? subagentsByToolUse.get(parentToolUseId)?.id
+          : undefined;
         const messageId = await this.sink
           .appendBlock(jobId, {
             kind: b.kind,
@@ -603,14 +654,19 @@ export class TurnHarnessFactory {
             ...(subagentId ? { subagentId } : {}),
           })
           .catch((err) => {
-            this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`);
+            this.logger.warn(
+              `appendBlock failed for thread=${jobId} lane=${lane}: ${err}`,
+            );
             return undefined;
           });
 
         // This block IS a subagent's spawning anchor (a tracked Task tool_use) — now that its own message
         // row is persisted, upsert the `subagents` row with a real `parent_message_id`. Best-effort/
         // fire-and-forget: never blocks or fails the turn.
-        const pending = b.kind === 'tool' && b.toolId ? subagentsByToolUse.get(b.toolId) : undefined;
+        const pending =
+          b.kind === 'tool' && b.toolId
+            ? subagentsByToolUse.get(b.toolId)
+            : undefined;
         if (pending && messageId) {
           void this.subagentStore.upsert({
             id: pending.id,
@@ -629,7 +685,11 @@ export class TurnHarnessFactory {
     };
 
     return {
-      emitPrompt: async (task: string, promptKey: string, extraMeta?: Record<string, unknown>) => {
+      emitPrompt: async (
+        task: string,
+        promptKey: string,
+        extraMeta?: Record<string, unknown>,
+      ) => {
         if (!task.trim()) return;
         await this.sink
           .appendBlockOnce(jobId, promptKey, {
@@ -638,10 +698,17 @@ export class TurnHarnessFactory {
             text: task,
             // `metaTag` (the lane's peel keys — codexReviewId / phaseId / autofixId) FIRST so the web routes
             // this block into the right sub-lane; `agentPrompt` + `promptKey` mark it + dedup it.
-            meta: { ...(metaTag ?? {}), ...(extraMeta ?? {}), agentPrompt: true, promptKey },
+            meta: {
+              ...(metaTag ?? {}),
+              ...(extraMeta ?? {}),
+              agentPrompt: true,
+              promptKey,
+            },
           })
           .catch((err) =>
-            this.logger.warn(`emitPrompt failed for thread=${jobId} lane=${lane}: ${err}`),
+            this.logger.warn(
+              `emitPrompt failed for thread=${jobId} lane=${lane}: ${err}`,
+            ),
           );
       },
 
@@ -654,14 +721,32 @@ export class TurnHarnessFactory {
             // `parentToolUseId` (set only for subagent blocks) is stamped into meta so the web can peel
             // subagent activity out of the transcript into its own sub-page.
             if (!e.text.trim()) break;
-            const meta = tagMeta(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : undefined);
-            blocks.push({ kind: 'chat', text: e.text, emittedAt: stamp(), ...(meta ? { meta } : {}) });
+            const meta = tagMeta(
+              e.parentToolUseId
+                ? { parentToolUseId: e.parentToolUseId }
+                : undefined,
+            );
+            blocks.push({
+              kind: 'chat',
+              text: e.text,
+              emittedAt: stamp(),
+              ...(meta ? { meta } : {}),
+            });
             break;
           }
           case 'thinking': {
             if (!e.text.trim()) break;
-            const meta = tagMeta(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : undefined);
-            blocks.push({ kind: 'thinking', text: e.text, emittedAt: stamp(), ...(meta ? { meta } : {}) });
+            const meta = tagMeta(
+              e.parentToolUseId
+                ? { parentToolUseId: e.parentToolUseId }
+                : undefined,
+            );
+            blocks.push({
+              kind: 'thinking',
+              text: e.text,
+              emittedAt: stamp(),
+              ...(meta ? { meta } : {}),
+            });
             break;
           }
           case 'tool_use': {
@@ -679,7 +764,9 @@ export class TurnHarnessFactory {
                 input: e.input ?? null,
                 result: null,
                 isError: false,
-                ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}),
+                ...(e.parentToolUseId
+                  ? { parentToolUseId: e.parentToolUseId }
+                  : {}),
               },
               emittedAt: stamp(),
             });
@@ -687,8 +774,13 @@ export class TurnHarnessFactory {
             // subagent spawning a subagent is out of scope). Track it so its children can be tagged with
             // `subagent_id` and its `subagents` row created once its own anchor message is persisted (persistAll).
             if (e.name === 'Task' && !e.parentToolUseId) {
-              const rawInput = e.input as { subagent_type?: unknown } | undefined;
-              const agentType = typeof rawInput?.subagent_type === 'string' ? rawInput.subagent_type : null;
+              const rawInput = e.input as
+                | { subagent_type?: unknown }
+                | undefined;
+              const agentType =
+                typeof rawInput?.subagent_type === 'string'
+                  ? rawInput.subagent_type
+                  : null;
               subagentsByToolUse.set(toolId, {
                 id: randomUUID(),
                 toolUseId: toolId,
@@ -705,28 +797,44 @@ export class TurnHarnessFactory {
             // Pair with the newest still-open tool block (preserving interleaved order with text/thinking).
             for (let i = blocks.length - 1; i >= 0; i--) {
               const b = blocks[i];
-              if (b.kind === 'tool' && !b.done && (b.toolId === e.id || !e.id)) {
+              if (
+                b.kind === 'tool' &&
+                !b.done &&
+                (b.toolId === e.id || !e.id)
+              ) {
                 b.done = true;
                 b.meta = {
                   ...b.meta,
                   result: e.result ?? null,
                   isError: e.isError ?? false,
-                  ...(e.structuredPatch ? { structuredPatch: e.structuredPatch } : {}),
+                  ...(e.structuredPatch
+                    ? { structuredPatch: e.structuredPatch }
+                    : {}),
                 };
                 // LLM-authored task list: fold TaskCreate/TaskUpdate into the owning thread's/job's `tasks`
                 // column. Excludes a writer subagent's own calls (`parentToolUseId` set) — only the
                 // orchestrating session's task list is tracked. Best-effort: never blocks/sinks the turn.
-                const toolName = typeof b.meta.name === 'string' ? b.meta.name.toLowerCase() : '';
+                const toolName =
+                  typeof b.meta.name === 'string'
+                    ? b.meta.name.toLowerCase()
+                    : '';
                 if (
                   (toolName === 'taskcreate' || toolName === 'taskupdate') &&
                   !b.meta.parentToolUseId
                 ) {
                   const scope = this.taskScopeFor(lane, jobId);
                   if (scope) {
-                    const input = (b.meta.input ?? {}) as Record<string, unknown>;
+                    const input = (b.meta.input ?? {}) as Record<
+                      string,
+                      unknown
+                    >;
                     void this.taskSink
                       .applyTaskEvent(scope, toolName, input, e.result ?? null)
-                      .catch((err) => this.logger.warn(`task-event apply failed (ignored): ${err}`));
+                      .catch((err) =>
+                        this.logger.warn(
+                          `task-event apply failed (ignored): ${err}`,
+                        ),
+                      );
                   }
                 }
                 break;
@@ -741,7 +849,8 @@ export class TurnHarnessFactory {
             // stays live-only — the turn-end `turn_meta` already carries the orchestrator's occupancy.
             if (e.parentToolUseId) {
               const pendingUsage = subagentsByToolUse.get(e.parentToolUseId);
-              if (pendingUsage && e.contextModel) pendingUsage.model = e.contextModel;
+              if (pendingUsage && e.contextModel)
+                pendingUsage.model = e.contextModel;
               for (let i = blocks.length - 1; i >= 0; i--) {
                 const b = blocks[i];
                 if (b.kind === 'tool' && b.meta?.id === e.parentToolUseId) {
@@ -749,7 +858,9 @@ export class TurnHarnessFactory {
                     ...b.meta,
                     subContextTokens: e.contextTokens,
                     subContextLimit: e.contextLimit,
-                    ...(e.contextModel ? { subContextModel: e.contextModel } : {}),
+                    ...(e.contextModel
+                      ? { subContextModel: e.contextModel }
+                      : {}),
                   };
                   break;
                 }
@@ -761,7 +872,12 @@ export class TurnHarnessFactory {
             // Settlement of a backgrounded Task SUBAGENT (not a bare bg Bash task, which carries no
             // `parentToolUseId`). 'stopped' (operator/host cancel) is folded into 'failed' — the subagents
             // lifecycle is a 3-state (running|done|failed), not a superset of the SDK's task states.
-            if (e.parentToolUseId && (e.status === 'completed' || e.status === 'failed' || e.status === 'stopped')) {
+            if (
+              e.parentToolUseId &&
+              (e.status === 'completed' ||
+                e.status === 'failed' ||
+                e.status === 'stopped')
+            ) {
               const pending = subagentsByToolUse.get(e.parentToolUseId);
               if (pending) {
                 pending.status = e.status === 'completed' ? 'done' : 'failed';
@@ -789,7 +905,8 @@ export class TurnHarnessFactory {
           case 'turn_debug': {
             if ('terminalReason' in e) terminalReason = e.terminalReason;
             if ('stopReason' in e) stopReason = e.stopReason;
-            if (typeof e.streamClosedCount === 'number') streamClosedCount = e.streamClosedCount;
+            if (typeof e.streamClosedCount === 'number')
+              streamClosedCount = e.streamClosedCount;
             break;
           }
           default:
@@ -801,7 +918,11 @@ export class TurnHarnessFactory {
         if (closed) return;
         closed = true;
         // Fallback: a turn that emitted NO text block — keep the final summary so the reply isn't lost.
-        if (!blocks.some((b) => b.kind === 'chat') && finalText && finalText.trim()) {
+        if (
+          !blocks.some((b) => b.kind === 'chat') &&
+          finalText &&
+          finalText.trim()
+        ) {
           blocks.push({
             kind: 'chat',
             text: finalText.trim(),
@@ -833,28 +954,42 @@ export class TurnHarnessFactory {
           const codexOccupancy =
             u?.engine === 'codex'
               ? (u.contextTokens ??
-                  (u.inputTokens != null
-                    ? Math.max(0, u.inputTokens - (u.cacheReadTokens ?? 0))
-                    : null))
+                (u.inputTokens != null
+                  ? Math.max(0, u.inputTokens - (u.cacheReadTokens ?? 0))
+                  : null))
               : null;
-          const ctxTokens = turnMeta?.contextTokens ?? u?.contextTokens ?? codexOccupancy;
+          const ctxTokens =
+            turnMeta?.contextTokens ?? u?.contextTokens ?? codexOccupancy;
           const ctxLimit =
             turnMeta?.contextLimit ??
-            (ctxTokens != null ? resolveContextLimit(u?.contextModel ?? u?.model, u?.engine) : null);
+            (ctxTokens != null
+              ? resolveContextLimit(u?.contextModel ?? u?.model, u?.engine)
+              : null);
           // How long the turn actually worked: `now − startedAt`, read from the still-live turn state (the
           // SAME clock that drove the "Atlas is working… 19m 24s" indicator, so the footer matches the last
           // reading). `snapshot` is valid here — `persistAll()` ends the live lane only afterwards; a turn
           // that pushed no events (no snapshot) simply carries no duration.
-          const startedAt = this.liveTurns.snapshot(channel, jobId, lane)?.startedAt;
-          const workedMs = startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
+          const startedAt = this.liveTurns.snapshot(
+            channel,
+            jobId,
+            lane,
+          )?.startedAt;
+          const workedMs =
+            startedAt != null ? Math.max(0, Date.now() - startedAt) : undefined;
           blocks.push({
             kind: 'turn_meta',
             emittedAt: stamp(),
             meta: {
               ...(metaTag ?? {}),
               ...(u ? { usage: u as unknown as Record<string, unknown> } : {}),
-              ...(turnMeta?.credentialId ? { credentialId: turnMeta.credentialId } : {}),
-              ...(u ? { contextTokens: ctxTokens ?? null } : ctxTokens != null ? { contextTokens: ctxTokens } : {}),
+              ...(turnMeta?.credentialId
+                ? { credentialId: turnMeta.credentialId }
+                : {}),
+              ...(u
+                ? { contextTokens: ctxTokens ?? null }
+                : ctxTokens != null
+                  ? { contextTokens: ctxTokens }
+                  : {}),
               ...(ctxLimit != null ? { contextLimit: ctxLimit } : {}),
               ...(terminalReason !== undefined ? { terminalReason } : {}),
               ...(stopReason !== undefined ? { stopReason } : {}),

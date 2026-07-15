@@ -59,7 +59,11 @@ function seedRow(id: string, receivedAt: Date): ChatStimulus {
 
 /** An operator-authored chat stimulus (a real human message), ChatStimulus-shaped. */
 function operatorRow(id: string, receivedAt: Date): ChatStimulus {
-  return pendingRow(id, undefined as unknown as ChatStimulus['priority'], receivedAt);
+  return pendingRow(
+    id,
+    undefined as unknown as ChatStimulus['priority'],
+    receivedAt,
+  );
 }
 
 /** A manager wired with only the deps `collectPendingForTurn` touches; everything else inert. */
@@ -69,20 +73,38 @@ function makeManager(pending: ChatStimulus[]) {
   };
   const turnRegistry = {} as unknown as TurnRegistry;
   const engineRunner = { run: vi.fn() } as unknown as EngineRunnerPort;
-  const election = { getState: () => 'follower' } as unknown as LeaderElectionService;
+  const election = {
+    getState: () => 'follower',
+  } as unknown as LeaderElectionService;
   const inert = {} as never;
   return new AgentSessionManager(
-    inert, inert, inert, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+    inert,
+    inert,
+    inert,
+    inert,
+    inert,
+    inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
     engineRunner, // engineRunner (7)
     turnRegistry, // turnRegistry (8)
-    inert, inert, inert, // planReview, dispatcher, surface (11)
+    inert,
+    inert,
+    inert, // planReview, dispatcher, surface (11)
     inert, // sandboxRows (12)
     inert, // stimulusRows (13)
     stimulusStore as never, // stimulusStore (14)
-    inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+    inert,
+    inert,
+    inert,
+    inert,
+    inert,
+    inert,
+    inert, // turnHarness…creds (21)
     inert, // mcp (McpResolver, 22)
     election, // election (23)
-    inert, inert, inert, inert, // turnRecovery…git (27)
+    inert,
+    inert,
+    inert,
+    inert, // turnRecovery…git (27)
     { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
     { register: () => undefined } as never, // threadInput (ThreadInputService)
     { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -103,7 +125,9 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
     const manager = makeManager(pending);
 
     const collected = await (
-      manager as unknown as { collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null> }
+      manager as unknown as {
+        collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null>;
+      }
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
@@ -115,11 +139,15 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
   });
 
   it('a thread whose ONLY pending row is `later`: composes it (ride-along) but does not wake', async () => {
-    const pending = [pendingRow('only-later', 'later', new Date('2026-07-02T12:00:00Z'))];
+    const pending = [
+      pendingRow('only-later', 'later', new Date('2026-07-02T12:00:00Z')),
+    ];
     const manager = makeManager(pending);
 
     const collected = await (
-      manager as unknown as { collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null> }
+      manager as unknown as {
+        collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null>;
+      }
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
@@ -131,7 +159,9 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
     const manager = makeManager([]);
 
     const collected = await (
-      manager as unknown as { collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null> }
+      manager as unknown as {
+        collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null>;
+      }
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).toBeNull();
@@ -146,7 +176,9 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
     const manager = makeManager(pending);
 
     const collected = await (
-      manager as unknown as { collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null> }
+      manager as unknown as {
+        collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null>;
+      }
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
@@ -157,11 +189,17 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
     const t0 = new Date('2026-07-02T12:00:00Z');
     const t1 = new Date('2026-07-02T12:00:01Z');
     const t2 = new Date('2026-07-02T12:00:02Z');
-    const pending = [operatorRow('a', t0), operatorRow('b', t1), seedRow('s', t2)];
+    const pending = [
+      operatorRow('a', t0),
+      operatorRow('b', t1),
+      seedRow('s', t2),
+    ];
     const manager = makeManager(pending);
 
     const collected = await (
-      manager as unknown as { collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null> }
+      manager as unknown as {
+        collectPendingForTurn: (jobId: string) => Promise<CollectedLike | null>;
+      }
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();

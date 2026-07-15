@@ -70,7 +70,8 @@ function judgeUnavailableRecord(
 ): ThreadTerminalRecord {
   return {
     status: 'blocked',
-    summary: 'Backend recovery mechanics — work complete, held on judge outage.',
+    summary:
+      'Backend recovery mechanics — work complete, held on judge outage.',
     blocked: {
       reason: 'judge_unavailable',
       detail: 'the live-verification judge is temporarily unavailable',
@@ -102,7 +103,10 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
       ],
       providers: [
         DriverStoreService,
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
 
@@ -130,7 +134,9 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE');
+    await ds.query(
+      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+    );
   });
 
   async function seedJob(): Promise<JobEntity> {
@@ -165,7 +171,11 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
       haltFixAttempts?: number;
     },
   ): Promise<ThreadEntity> {
-    const stage = await store.createStage({ jobId, orgId: ORG_ID, kind: 'build' });
+    const stage = await store.createStage({
+      jobId,
+      orgId: ORG_ID,
+      kind: 'build',
+    });
     const thread = await store.createThreadInStage({
       stageId: stage.id,
       jobId,
@@ -178,10 +188,15 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     const patch = {
       ...(opts.status !== undefined ? { status: opts.status } : {}),
       ...(opts.condition !== undefined ? { condition: opts.condition } : {}),
-      ...(opts.terminalRecord !== undefined ? { terminal_record: opts.terminalRecord } : {}),
-      ...(opts.haltFixAttempts !== undefined ? { halt_fix_attempts: opts.haltFixAttempts } : {}),
+      ...(opts.terminalRecord !== undefined
+        ? { terminal_record: opts.terminalRecord }
+        : {}),
+      ...(opts.haltFixAttempts !== undefined
+        ? { halt_fix_attempts: opts.haltFixAttempts }
+        : {}),
     };
-    if (Object.keys(patch).length) await threads.update({ id: thread.id }, patch);
+    if (Object.keys(patch).length)
+      await threads.update({ id: thread.id }, patch);
     return threads.findOneOrFail({ where: { id: thread.id } });
   }
 
@@ -257,7 +272,9 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     const readBack = await store.getTerminalRecord(thread.id);
     expect(readBack?.acceptRequested).toBe(true);
     expect(readBack?.blocked?.reason).toBe('judge_unavailable');
-    expect(readBack?.staticVerification?.verdict?.staticChecksAdequate).toBe(true);
+    expect(readBack?.staticVerification?.verdict?.staticChecksAdequate).toBe(
+      true,
+    );
   });
 
   it('setHaltBudgetReason persists the judge budget owner without clobbering other thread config', async () => {
@@ -304,7 +321,9 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     });
 
     // From halt_fix_attempts=0, the first claim succeeds and increments.
-    expect(await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP)).toEqual({
+    expect(
+      await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP),
+    ).toEqual({
       ok: true,
       used: 1,
     });
@@ -312,19 +331,30 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
     // Drive the budget to the cap (already used 1 above → 19 more claims land us at 20).
     for (let i = 2; i <= JUDGE_UNAVAILABLE_REDRIVE_CAP; i++) {
-      expect(await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP)).toEqual({
+      expect(
+        await store.claimHaltFixAttempt(
+          thread.id,
+          JUDGE_UNAVAILABLE_REDRIVE_CAP,
+        ),
+      ).toEqual({
         ok: true,
         used: i,
       });
     }
-    expect(await store.haltFixAttempts(thread.id)).toBe(JUDGE_UNAVAILABLE_REDRIVE_CAP);
+    expect(await store.haltFixAttempts(thread.id)).toBe(
+      JUDGE_UNAVAILABLE_REDRIVE_CAP,
+    );
 
     // At the cap → refused, budget unchanged (the patient loop stops and rests for the operator).
-    expect(await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP)).toEqual({
+    expect(
+      await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP),
+    ).toEqual({
       ok: false,
       used: JUDGE_UNAVAILABLE_REDRIVE_CAP,
     });
-    expect(await store.haltFixAttempts(thread.id)).toBe(JUDGE_UNAVAILABLE_REDRIVE_CAP);
+    expect(await store.haltFixAttempts(thread.id)).toBe(
+      JUDGE_UNAVAILABLE_REDRIVE_CAP,
+    );
   });
 
   it('rearmHaltedThreads resets halt_fix_attempts to 0 (what "Retry now" calls)', async () => {
@@ -358,7 +388,9 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
     const reloaded = await jobs.findOne({ where: { id: job.id } });
     expect(reloaded?.halt?.kind).toBe('incomplete');
-    expect(reloaded?.halt?.reason).toBe('judge_unavailable redrive budget exhausted');
+    expect(reloaded?.halt?.reason).toBe(
+      'judge_unavailable redrive budget exhausted',
+    );
     expect(reloaded?.halt?.at).toBe(at);
     // The halt clears `activity` to idle so a stale phase can't mask it (deriveNeedsYou).
     expect(reloaded?.activity).toBe('idle');

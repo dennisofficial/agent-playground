@@ -32,7 +32,11 @@ export function gitAuthEnv(
   if (!isHttpsGithub(gitUrl)) return {};
   if (!token) {
     // No per-org token → disable all credential helpers so git can't reach host ambient GitHub creds.
-    return { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'credential.helper', GIT_CONFIG_VALUE_0: '' };
+    return {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+    };
   }
   const basic = Buffer.from(`x-access-token:${token}`).toString('base64');
   return {
@@ -68,8 +72,13 @@ export function gitCredHelperEnv(
 }
 
 /** Owner/repo from an HTTPS GitHub URL (`.git` suffix tolerated). Throws on anything else. */
-export function parseGithubRepo(gitUrl: string): { owner: string; repo: string } {
-  const m = gitUrl.match(/^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/);
+export function parseGithubRepo(gitUrl: string): {
+  owner: string;
+  repo: string;
+} {
+  const m = gitUrl.match(
+    /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/,
+  );
   if (!m) throw new Error(`Not an HTTPS GitHub repo URL: ${gitUrl}`);
   return { owner: m[1], repo: m[2] };
 }

@@ -216,7 +216,11 @@ import type {
   ApprovalVerdict,
 } from './decision-approval.service';
 import { JOB_DISPATCHER, type JobDispatcher } from './job-dispatcher';
-import { PlanReviewService, deserializeFindings, type PlanReviewRow } from './plan-review.service';
+import {
+  PlanReviewService,
+  deserializeFindings,
+  type PlanReviewRow,
+} from './plan-review.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 import { JitHostExecutor } from './jit-host-executor';
 
@@ -503,7 +507,8 @@ export class AgentSessionManager
   /** The job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are stamped
    *  onto. Wired in prod via DI; throws loudly if the @Optional dependency is somehow absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
-    if (!this.jobBootstrap) throw new Error('agent-session-manager: JobBootstrapService not wired');
+    if (!this.jobBootstrap)
+      throw new Error('agent-session-manager: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
@@ -922,15 +927,22 @@ export class AgentSessionManager
    * whenever `handleChatTurn` early-returns (draining / blocked job), and a body mutation would then be lost
    * right alongside a premature delivered-stamp — re-keying is durable on its own and needs no wake to succeed.
    */
-  private async escalateBuildLaneLeftovers(jobId: string, threadId: string): Promise<void> {
+  private async escalateBuildLaneLeftovers(
+    jobId: string,
+    threadId: string,
+  ): Promise<void> {
     const leftovers = await this.stimulusStore
       .undeliveredChatForLane(jobId, laneFor('builder', threadId))
       .catch(() => [] as ChatStimulus[]);
     for (const s of leftovers) {
       const labeled = `Undelivered host seed from build thread ${threadId}: ${s.body}`;
-      await this.stimulusStore.rekeyLaneToMain(s.id, labeled).catch((err) =>
-        this.logger.warn(`build-lane escalation re-key for ${s.id} failed (thread=${threadId}): ${err}`),
-      );
+      await this.stimulusStore
+        .rekeyLaneToMain(s.id, labeled)
+        .catch((err) =>
+          this.logger.warn(
+            `build-lane escalation re-key for ${s.id} failed (thread=${threadId}): ${err}`,
+          ),
+        );
     }
   }
 
@@ -1335,7 +1347,9 @@ export class AgentSessionManager
         await this.store
           .markQuestionDelivered(stimulus.jobId, questionId)
           .catch((err) =>
-            this.logger.warn(`markQuestionDelivered (batch steer) failed: ${err}`),
+            this.logger.warn(
+              `markQuestionDelivered (batch steer) failed: ${err}`,
+            ),
           );
       }
     }
@@ -1348,7 +1362,9 @@ export class AgentSessionManager
           await this.store
             .markSecretDelivered(stimulus.jobId, secretId)
             .catch((err) =>
-              this.logger.warn(`markSecretDelivered (batch legacy seed) failed: ${err}`),
+              this.logger.warn(
+                `markSecretDelivered (batch legacy seed) failed: ${err}`,
+              ),
             );
         }
         // Unconditional compare-and-clear — a no-op for durable/mcp per-card secrets (no pointer), same as
@@ -1356,7 +1372,9 @@ export class AgentSessionManager
         await this.store
           .clearAwaitingSecret(stimulus.jobId, secretId)
           .catch((err) =>
-            this.logger.warn(`clearAwaitingSecret (batch legacy seed) failed: ${err}`),
+            this.logger.warn(
+              `clearAwaitingSecret (batch legacy seed) failed: ${err}`,
+            ),
           );
       }
     }
@@ -1587,7 +1605,14 @@ export class AgentSessionManager
     // FAST PATH: a live brain turn is steered directly (the pump core resolves + steers `now`-priority
     // pending; `queue`/`later` stay pending for turn-end / ride-along).
     const lane = this.mainDeliveryLane(jobId, orgId, repoId);
-    if (await trySteerLive(this.stimulusStore, lane, AgentSessionManager.CHAT_DELIVERY_LEASE_MS, this.logger)) {
+    if (
+      await trySteerLive(
+        this.stimulusStore,
+        lane,
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        this.logger,
+      )
+    ) {
       return;
     }
 
@@ -1612,7 +1637,11 @@ export class AgentSessionManager
    * (its exact live-turn + compaction semantics), steering stays the engine `steer`, body framing stays
    * `engineBody`, and a fresh-turn drain coalesces the pending batch into ONE brain turn.
    */
-  private mainDeliveryLane(jobId: string, orgId: string, repoId: string): DeliveryLane {
+  private mainDeliveryLane(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): DeliveryLane {
     return {
       jobId,
       orgId,
@@ -1646,9 +1675,13 @@ export class AgentSessionManager
           onRegistered: () => {
             if (deferStimulusStamp) return;
             for (const id of ids) {
-              void this.stimulusStore.markChatDelivered(id).catch((err) =>
-                this.logger.debug(`markChatDelivered ${id} failed (sweep will retry): ${err}`),
-              );
+              void this.stimulusStore
+                .markChatDelivered(id)
+                .catch((err) =>
+                  this.logger.debug(
+                    `markChatDelivered ${id} failed (sweep will retry): ${err}`,
+                  ),
+                );
             }
           },
         });
@@ -1666,7 +1699,9 @@ export class AgentSessionManager
    * `<user>` chunks (one per batched message), the id set to stamp delivered, and the wake flag. Returns null
    * when nothing is pending.
    */
-  private async collectPendingForTurn(jobId: string): Promise<CollectedPending | null> {
+  private async collectPendingForTurn(
+    jobId: string,
+  ): Promise<CollectedPending | null> {
     const pending = await this.stimulusStore
       .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
       .catch((err) => {
@@ -1709,7 +1744,14 @@ export class AgentSessionManager
     const live = await lane.resolveLiveTurn().catch(() => null);
     if (live?.turn_id && lane.canSteer()) {
       const nowOnly = collected.pending.filter(isNowPriority);
-      if (nowOnly.length) await steerPending(this.stimulusStore, lane, live.turn_id, nowOnly, this.logger);
+      if (nowOnly.length)
+        await steerPending(
+          this.stimulusStore,
+          lane,
+          live.turn_id,
+          nowOnly,
+          this.logger,
+        );
       return;
     }
 
@@ -2097,8 +2139,12 @@ export class AgentSessionManager
         ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
         ...(ctx.seedSecretId ? { seedSecretId: ctx.seedSecretId } : {}),
         ...(ctx.seedFileId ? { seedFileId: ctx.seedFileId } : {}),
-        ...(ctx.seedQuestionIds?.length ? { seedQuestionIds: ctx.seedQuestionIds } : {}),
-        ...(ctx.seedSecretIds?.length ? { seedSecretIds: ctx.seedSecretIds } : {}),
+        ...(ctx.seedQuestionIds?.length
+          ? { seedQuestionIds: ctx.seedQuestionIds }
+          : {}),
+        ...(ctx.seedSecretIds?.length
+          ? { seedSecretIds: ctx.seedSecretIds }
+          : {}),
         ...(ctx.seedFileIds?.length ? { seedFileIds: ctx.seedFileIds } : {}),
         // Preserve the halt-wake key so a reattached wake turn still stamps `halt_waked_at` on success — else
         // the halt stays owed and the sweeps re-wake it forever (Codex review Medium-1).
@@ -2459,7 +2505,8 @@ export class AgentSessionManager
       where: { job_id: stimulus.jobId, org_id: stimulus.orgId },
     });
     const sessionId = stimulus.resumeThreadId
-      ? ((await this.driverStore.threadSessionId(stimulus.resumeThreadId)) ?? undefined)
+      ? ((await this.driverStore.threadSessionId(stimulus.resumeThreadId)) ??
+        undefined)
       : (sandboxRow?.session_id ?? undefined);
 
     // COMPACTION turn: summarize the fat session into a lean handoff, null the session id (abandon the heavy
@@ -3189,7 +3236,10 @@ export class AgentSessionManager
     // onto the job sandbox.
     if (result.sessionId && stimulus.resumeThreadId) {
       this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
-      await this.driverStore.setThreadSessionId(stimulus.resumeThreadId, result.sessionId);
+      await this.driverStore.setThreadSessionId(
+        stimulus.resumeThreadId,
+        result.sessionId,
+      );
     } else if (result.sessionId && sandboxRow) {
       this.bindInjectedMemorySession(stimulus.jobId, result.sessionId);
       sandboxRow.session_id = result.sessionId;
@@ -4706,7 +4756,8 @@ export class AgentSessionManager
     // the build/plan/ship tools is enforced (un-callable, not just discouraged).
     if (review) {
       return {
-        [INTERNAL_PROFILE_AWARENESS_TOOL]: tools[INTERNAL_PROFILE_AWARENESS_TOOL],
+        [INTERNAL_PROFILE_AWARENESS_TOOL]:
+          tools[INTERNAL_PROFILE_AWARENESS_TOOL],
         ask_question: tools.ask_question,
         withdraw_question: tools.withdraw_question,
         set_job_kind: tools.set_job_kind,
@@ -4882,7 +4933,7 @@ export class AgentSessionManager
           requestId,
           message:
             `Secure secret card posted for MCP server "${server}" (${slot}:${key}). The operator's value goes ` +
-            "straight into the encrypted MCP store and activates the server; you only see a masked " +
+            'straight into the encrypted MCP store and activates the server; you only see a masked ' +
             'confirmation. Never ask for the value in chat. You may open several secret requests at once.',
         };
       }
@@ -5147,9 +5198,7 @@ export class AgentSessionManager
             'secrets do not go in workspace config — use request_secret instead',
         };
       }
-      const { mounts: newMounts, warnings } = normalizeMounts(
-        args['mounts'],
-      );
+      const { mounts: newMounts, warnings } = normalizeMounts(args['mounts']);
 
       // A DB hiccup here must never crash the turn — warn, tell Atlas the real error via `reason` (its
       // next tool call is retryable), don't leave it silently believing the write landed.

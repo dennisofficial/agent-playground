@@ -24,7 +24,9 @@ async function currentHash(): Promise<string> {
 describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', () => {
   it('skips the build when the image label matches the current context hash', async () => {
     const hash = await currentHash();
-    const { engine, buildImage, imageLabels } = engineWith({ 'atlas.context-hash': hash });
+    const { engine, buildImage, imageLabels } = engineWith({
+      'atlas.context-hash': hash,
+    });
 
     await new SandboxImageBuilder(env(), engine).ensureImage();
 
@@ -33,7 +35,9 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
   });
 
   it('rebuilds with the fresh hash as a build arg when the image label is stale', async () => {
-    const { engine, buildImage } = engineWith({ 'atlas.context-hash': 'stale0000000' });
+    const { engine, buildImage } = engineWith({
+      'atlas.context-hash': 'stale0000000',
+    });
 
     await new SandboxImageBuilder(env(), engine).ensureImage();
 
@@ -55,7 +59,11 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     const { engine, buildImage } = engineWith(null);
     const builder = new SandboxImageBuilder(env(), engine);
 
-    await Promise.all([builder.ensureImage(), builder.ensureImage(), builder.ensureImage()]);
+    await Promise.all([
+      builder.ensureImage(),
+      builder.ensureImage(),
+      builder.ensureImage(),
+    ]);
 
     expect(buildImage).toHaveBeenCalledOnce();
   });
@@ -88,13 +96,16 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
     expect(onBuildStart).not.toHaveBeenCalled();
   });
 
-  it('only the FIRST concurrent caller\'s onBuildStart fires (best-effort, not exactly-once-per-caller)', async () => {
+  it("only the FIRST concurrent caller's onBuildStart fires (best-effort, not exactly-once-per-caller)", async () => {
     const { engine, buildImage } = engineWith(null);
     const builder = new SandboxImageBuilder(env(), engine);
     const first = vi.fn();
     const second = vi.fn();
 
-    await Promise.all([builder.ensureImage(first), builder.ensureImage(second)]);
+    await Promise.all([
+      builder.ensureImage(first),
+      builder.ensureImage(second),
+    ]);
 
     expect(buildImage).toHaveBeenCalledOnce();
     expect(first).toHaveBeenCalledOnce();
@@ -105,8 +116,16 @@ describe('SandboxImageBuilder.ensureImage — auto-rebuild on context change', (
 describe('SandboxImageBuilder.onApplicationBootstrap', () => {
   it('resolves without waiting for the background image warm-up to finish', async () => {
     let resolveBuild!: () => void;
-    const buildImage = vi.fn(() => new Promise<void>((resolve) => { resolveBuild = resolve; }));
-    const engine = { imageLabels: vi.fn(async () => null), buildImage } as unknown as ContainerEngine;
+    const buildImage = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveBuild = resolve;
+        }),
+    );
+    const engine = {
+      imageLabels: vi.fn(async () => null),
+      buildImage,
+    } as unknown as ContainerEngine;
     const builder = new SandboxImageBuilder(env(), engine);
 
     // If the hook AWAITED ensureImage(), this would hang past Vitest's default test timeout, since
@@ -129,7 +148,10 @@ describe('SandboxImageBuilder.onApplicationBootstrap', () => {
     const buildImage = vi.fn(async () => {
       throw new Error('boom');
     });
-    const engine = { imageLabels: vi.fn(async () => null), buildImage } as unknown as ContainerEngine;
+    const engine = {
+      imageLabels: vi.fn(async () => null),
+      buildImage,
+    } as unknown as ContainerEngine;
     const builder = new SandboxImageBuilder(env(), engine);
 
     await expect(builder.onApplicationBootstrap()).resolves.toBeUndefined();

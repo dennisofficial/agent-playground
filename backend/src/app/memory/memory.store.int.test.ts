@@ -23,7 +23,8 @@ import { MemoryStore } from './memory.store';
 const ORG_A = '2b111111-1111-4111-8111-111111111111';
 const ORG_B = '2b222222-2222-4222-8222-222222222222';
 const SHARED_SCOPE = 'team:cross-tenant-isolation';
-const FACT = 'The deploy pipeline runs on GitHub Actions with a manual approval gate.';
+const FACT =
+  'The deploy pipeline runs on GitHub Actions with a manual approval gate.';
 
 /** Deterministic embedder: identical text → identical unit vector (cosine 1 to itself). */
 class FakeEmbedder implements EmbeddingProvider {
@@ -31,7 +32,8 @@ class FakeEmbedder implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
     const v = new Array<number>(EMBED_DIM).fill(0);
     let h = 0;
-    for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+    for (let i = 0; i < text.length; i++)
+      h = (h * 31 + text.charCodeAt(i)) >>> 0;
     v[h % EMBED_DIM] = 1;
     return v;
   }
@@ -54,7 +56,11 @@ function dbOpts() {
   };
 }
 
-async function seedOrg(ds: DataSource, id: string, slug: string): Promise<void> {
+async function seedOrg(
+  ds: DataSource,
+  id: string,
+  slug: string,
+): Promise<void> {
   await ds.query(
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
      ON CONFLICT (id) DO NOTHING`,
@@ -64,7 +70,9 @@ async function seedOrg(ds: DataSource, id: string, slug: string): Promise<void> 
 
 async function purge(ds: DataSource): Promise<void> {
   await ds.query(`DELETE FROM memory WHERE org_id = ANY($1)`, [[ORG_A, ORG_B]]);
-  await ds.query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG_A, ORG_B]]);
+  await ds.query(`DELETE FROM organizations WHERE id = ANY($1)`, [
+    [ORG_A, ORG_B],
+  ]);
 }
 
 describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
@@ -92,14 +100,25 @@ describe('MemoryStore cross-tenant isolation (live Postgres)', () => {
 
   it('recall returns only the querying tenant’s fact, never the other org’s identical fact', async () => {
     // Same fact text, same scope, two different tenants.
-    const a = await store.remember({ fact: FACT, scope: SHARED_SCOPE, orgId: ORG_A });
-    const b = await store.remember({ fact: FACT, scope: SHARED_SCOPE, orgId: ORG_B });
+    const a = await store.remember({
+      fact: FACT,
+      scope: SHARED_SCOPE,
+      orgId: ORG_A,
+    });
+    const b = await store.remember({
+      fact: FACT,
+      scope: SHARED_SCOPE,
+      orgId: ORG_B,
+    });
     expect(a.action).toBe('inserted');
     expect(b.action).toBe('inserted');
     // Cross-org: no dedup merge — the two orgs hold distinct rows.
     expect(a.id).not.toBe(b.id);
 
-    const hits = await store.recall(FACT, { scopes: [SHARED_SCOPE], orgId: ORG_A });
+    const hits = await store.recall(FACT, {
+      scopes: [SHARED_SCOPE],
+      orgId: ORG_A,
+    });
 
     // Exactly org A's row — org B's identical fact never fell through.
     expect(hits).toHaveLength(1);

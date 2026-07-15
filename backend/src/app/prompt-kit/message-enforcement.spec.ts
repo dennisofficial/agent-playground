@@ -60,7 +60,9 @@ function backendRelative(file: string): string {
 /** A `src/app/foo/**` glob matches any file under that prefix; anything else is an exact file path. */
 function isSanctioned(relPath: string): boolean {
   return SANCTIONED_SEAM_GLOBS.some((glob) =>
-    glob.endsWith('/**') ? relPath.startsWith(glob.slice(0, -2)) : relPath === glob,
+    glob.endsWith('/**')
+      ? relPath.startsWith(glob.slice(0, -2))
+      : relPath === glob,
   );
 }
 
@@ -71,7 +73,9 @@ function isCommentLine(line: string): boolean {
 }
 
 /** Non-comment lines of `content` that contain any sealed primitive, with the primitive that hit. */
-function sealedHits(content: string): Array<{ primitive: string; line: string }> {
+function sealedHits(
+  content: string,
+): Array<{ primitive: string; line: string }> {
   const hits: Array<{ primitive: string; line: string }> = [];
   for (const line of content.split('\n')) {
     if (isCommentLine(line)) continue;
@@ -106,7 +110,9 @@ describe('message-enforcement / every sealed delivery primitive lives inside the
         isSanctioned(rel),
         `${rel} calls a sealed delivery primitive (${hits
           .map((h) => h.primitive)
-          .join(', ')}) but is NOT in SANCTIONED_SEAM_GLOBS. Route the message through a prompt-kit factory — do not hand-build a delivery path here.\n  ${hits
+          .join(
+            ', ',
+          )}) but is NOT in SANCTIONED_SEAM_GLOBS. Route the message through a prompt-kit factory — do not hand-build a delivery path here.\n  ${hits
           .map((h) => `${h.primitive} → ${h.line}`)
           .join('\n  ')}`,
       ).toBe(true);
@@ -121,7 +127,8 @@ describe('message-enforcement / inverse coverage — the seam actually exercises
   for (const primitive of SEALED_DELIVERY_PRIMITIVES) {
     it(`${primitive} is present in a sanctioned file`, () => {
       const present = FILES_WITH_SEALED_CALLS.some(
-        (f) => isSanctioned(f.rel) && f.hits.some((h) => h.primitive === primitive),
+        (f) =>
+          isSanctioned(f.rel) && f.hits.some((h) => h.primitive === primitive),
       );
       expect(
         present,

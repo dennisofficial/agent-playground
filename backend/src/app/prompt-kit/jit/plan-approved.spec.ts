@@ -7,7 +7,10 @@ import { planApprovedRule, renderPlanApprovedSeed } from './plan-approved';
 
 describe('renderPlanApprovedSeed', () => {
   it('full plan: instructs rebase + auto-resolve conflicts, dispatch_build, hold_build, and names the base', () => {
-    const body = renderPlanApprovedSeed({ buildPath: 'plan', baseBranch: 'main' });
+    const body = renderPlanApprovedSeed({
+      buildPath: 'plan',
+      baseBranch: 'main',
+    });
     expect(body).toContain('git fetch origin');
     expect(body).toContain('main');
     expect(body).toContain('ALWAYS resolve any git-level merge conflict');
@@ -16,7 +19,10 @@ describe('renderPlanApprovedSeed', () => {
   });
 
   it('direct build: same instruction — still says dispatch_build (the tool branches internally)', () => {
-    const body = renderPlanApprovedSeed({ buildPath: 'direct', baseBranch: 'main' });
+    const body = renderPlanApprovedSeed({
+      buildPath: 'direct',
+      baseBranch: 'main',
+    });
     expect(body).toContain('dispatch_build');
     expect(body).toContain('hold_build');
     expect(body).toContain('git fetch origin');
@@ -30,7 +36,10 @@ describe('renderPlanApprovedSeed', () => {
 
 describe('planApprovedRule', () => {
   it('is a lifecycle plan-approved rule delivered as a host seed notice', () => {
-    expect(planApprovedRule.trigger).toEqual({ kind: 'lifecycle', event: 'plan-approved' });
+    expect(planApprovedRule.trigger).toEqual({
+      kind: 'lifecycle',
+      event: 'plan-approved',
+    });
     expect(planApprovedRule.delivery).toBe('host-seed-notice');
     expect(planApprovedRule.seed).toBeDefined();
   });
@@ -41,8 +50,12 @@ describe('planApprovedRule', () => {
   });
 
   it('seed chunkKey is keyed by decisionRecordId, falling back to jobId', () => {
-    expect(planApprovedRule.seed?.chunkKey({ decisionRecordId: 'dr-1' })).toBe('seed:plan-approved:dr-1');
-    expect(planApprovedRule.seed?.chunkKey({ jobId: 'J' })).toBe('seed:plan-approved:J');
+    expect(planApprovedRule.seed?.chunkKey({ decisionRecordId: 'dr-1' })).toBe(
+      'seed:plan-approved:dr-1',
+    );
+    expect(planApprovedRule.seed?.chunkKey({ jobId: 'J' })).toBe(
+      'seed:plan-approved:J',
+    );
   });
 
   it('findLifecycleRule resolves plan-approved to planApprovedRule', () => {

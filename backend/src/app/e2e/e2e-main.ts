@@ -1,5 +1,9 @@
 import { Logger } from '@nestjs/common';
-import { E2eHarness, type E2eConfig, type E2eResult } from './e2e-harness.service';
+import {
+  E2eHarness,
+  type E2eConfig,
+  type E2eResult,
+} from './e2e-harness.service';
 
 /**
  * The W9 end-to-end verification runner (`pnpm e2e`). DEFAULTS TO OFFLINE/DETERMINISTIC — it boots
@@ -26,7 +30,7 @@ function parseArgs(argv: string[]): E2eConfig {
   const has = (flag: string): boolean => argv.includes(flag);
   return {
     live: has('--live'),
-    ...(get('--repo') ?? process.env.E2E_REPO
+    ...((get('--repo') ?? process.env.E2E_REPO)
       ? { gitUrl: get('--repo') ?? process.env.E2E_REPO }
       : {}),
     ...(get('--base') ? { baseBranch: get('--base') } : {}),
@@ -39,7 +43,8 @@ function printResult(result: E2eResult): void {
   out('══ Atlas v2 e2e result ══');
   for (const scenario of result.scenarios) {
     out(`── ${scenario.name} ── ${scenario.ok ? 'PASS' : 'FAIL'}`);
-    for (const s of scenario.steps) out(`   ${s.ok ? '✓' : '✗'} ${s.name}: ${s.detail}`);
+    for (const s of scenario.steps)
+      out(`   ${s.ok ? '✓' : '✗'} ${s.name}: ${s.detail}`);
   }
   out(`e2e ${result.ok ? 'PASSED' : 'FAILED'}.`);
 }
@@ -49,11 +54,15 @@ async function main(): Promise<void> {
   const config = parseArgs(process.argv.slice(2));
 
   if (config.live && !config.gitUrl) {
-    log.error('--live requires --repo https://github.com/<owner>/<repo> (or E2E_REPO).');
+    log.error(
+      '--live requires --repo https://github.com/<owner>/<repo> (or E2E_REPO).',
+    );
     process.exit(2);
   }
 
-  log.log(`Running Atlas v2 e2e (${config.live ? 'LIVE' : 'OFFLINE'})${config.gitUrl ? ` repo=${config.gitUrl}` : ''}`);
+  log.log(
+    `Running Atlas v2 e2e (${config.live ? 'LIVE' : 'OFFLINE'})${config.gitUrl ? ` repo=${config.gitUrl}` : ''}`,
+  );
 
   const harness = new E2eHarness(config);
   try {
@@ -63,7 +72,9 @@ async function main(): Promise<void> {
     await harness.close();
     process.exit(result.ok ? 0 : 1);
   } catch (err) {
-    log.error(`e2e crashed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    log.error(
+      `e2e crashed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+    );
     await harness.close().catch(() => undefined);
     process.exit(1);
   }

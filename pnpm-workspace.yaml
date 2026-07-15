@@ -1,9 +1,10 @@
 packages:
+  - submodules/**
   - packages/**
   - backend
   - shared
   - web
-# Submodule packages (e.g. @workspace/nestjs-core) live under packages/ and resolve via the glob above.
+# Submodule packages (e.g. @workspace/nestjs-core) live under submodules/ and resolve via the glob above.
 # pnpm 11 also uses this file as the workspace settings store:
 #   - injectWorkspacePackages + nodeLinker: isolated — inject workspace packages the way `pnpm install`
 #     would for external packages, so peerDependencies don't get duplicate runtime instances

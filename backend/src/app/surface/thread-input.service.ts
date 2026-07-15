@@ -43,23 +43,36 @@ export class ThreadInputService {
   /** Whether a lane's thread can currently accept a message (a registered, non-read-only handler exists). */
   canPost(lane: string): boolean {
     const hit = descriptorForLane(lane);
-    return Boolean(hit && hit.descriptor.input !== 'none' && this.handlers.has(hit.descriptor.kind));
+    return Boolean(
+      hit &&
+      hit.descriptor.input !== 'none' &&
+      this.handlers.has(hit.descriptor.kind),
+    );
   }
 
   /**
    * Deliver `message` into whatever thread owns `lane`. Throws for an unknown lane, a read-only kind
    * (`input: 'none'`), or an input-accepting kind whose handler hasn't registered yet (a boot-order bug).
    */
-  async postToThread(lane: string, ctx: PostCtx, message: string): Promise<void> {
+  async postToThread(
+    lane: string,
+    ctx: PostCtx,
+    message: string,
+  ): Promise<void> {
     const hit = descriptorForLane(lane);
-    if (!hit) throw new Error(`postToThread: no thread kind owns lane "${lane}"`);
+    if (!hit)
+      throw new Error(`postToThread: no thread kind owns lane "${lane}"`);
     const { descriptor, ids } = hit;
     if (descriptor.input === 'none') {
-      throw new Error(`postToThread: ${descriptor.kind} threads are read-only (lane "${lane}")`);
+      throw new Error(
+        `postToThread: ${descriptor.kind} threads are read-only (lane "${lane}")`,
+      );
     }
     const handler = this.handlers.get(descriptor.kind);
     if (!handler) {
-      throw new Error(`postToThread: no input handler registered for ${descriptor.kind}`);
+      throw new Error(
+        `postToThread: no input handler registered for ${descriptor.kind}`,
+      );
     }
     await handler.post({ ...ctx, ids }, message);
   }

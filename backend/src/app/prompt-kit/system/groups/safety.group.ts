@@ -11,7 +11,11 @@ import { isBuildBrain, isOnboarding } from '../conditions';
 @FragmentGroup()
 export class SafetyGroup {
   /** Act with care, report truthfully. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1290, condition: isBuildBrain })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 1290,
+    condition: isBuildBrain,
+  })
   actWithCare(): string {
     return [
       'ACT WITH CARE, REPORT TRUTHFULLY: the approval gate is your safety net, not a substitute for judgment.',
@@ -27,7 +31,11 @@ export class SafetyGroup {
   }
 
   /** FINISH (only when the fleet is green). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2120, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2120,
+    condition: isOnboarding,
+  })
   finish(): string {
     return [
       'FINISH — only when the FULL fleet inventory is GREEN: every entry booted AND validated in use (authed',
@@ -53,7 +61,11 @@ export class SafetyGroup {
   }
 
   /** You do NOT plan/grill/build here. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 2130, condition: isOnboarding })
+  @Fragment({
+    usedBy: [Agent.ATLAS_MAIN],
+    order: 2130,
+    condition: isOnboarding,
+  })
   noPlanHere(): string {
     return 'You do NOT plan, grill for decisions, or build features here — this session only makes the repo runnable.';
   }

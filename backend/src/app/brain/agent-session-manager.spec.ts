@@ -1953,7 +1953,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const tools = manager.buildTools(fakeStimulus, 'onboarding');
 
     // Happy path: a still-open card is withdrawn (the store decrements open_secret_count).
-    (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (
+      mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({
       withdrawn: true,
     });
     const ok = await tools['withdraw_secret_request']({
@@ -1974,10 +1976,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockStore.withdrawSecretRequest).not.toHaveBeenCalled();
 
     // Already provided/withdrawn → the store reports no winner → the tool surfaces a no-op.
-    (mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (
+      mockStore.withdrawSecretRequest as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({
       withdrawn: false,
     });
-    const raced = await tools['withdraw_secret_request']({ requestId: 's-123' });
+    const raced = await tools['withdraw_secret_request']({
+      requestId: 's-123',
+    });
     expect(raced).toMatchObject({ ok: false });
   });
 
@@ -3281,7 +3287,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       .invocationCallOrder[0];
     expect(withdrawOrder).toBeLessThan(cancelOrder);
   });
-
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
@@ -4835,7 +4840,9 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
-      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
+      {
+        maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+      } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       {} as unknown as JobLifecycleService,
@@ -4968,8 +4975,12 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       expect.stringContaining('kick off the follow-up'),
     );
     expect(turn).toHaveBeenCalledOnce();
-    const ran = (turn.mock.calls[0][0] as ChatStimulus);
-    expect(ran).toMatchObject({ jobId: 'th-followup', orgId: ORG, repoId: REPO });
+    const ran = turn.mock.calls[0][0] as ChatStimulus;
+    expect(ran).toMatchObject({
+      jobId: 'th-followup',
+      orgId: ORG,
+      repoId: REPO,
+    });
     // The engine-facing seed is FRAMED with the spawning job's provenance (title + id) so the child brain
     // knows another Atlas job created it, and still carries the opening intent verbatim.
     expect(ran.body).toContain('spawned by ANOTHER Atlas job');
@@ -5049,7 +5060,9 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const manager = new AgentSessionManager(
       store,
       {} as unknown as DriverStoreService,
-      { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService,
+      {
+        maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+      } as unknown as AutoMergeService,
       {} as unknown as MemoryStore,
       {} as unknown as DecisionApprovalService,
       lifecycle,
@@ -5234,19 +5247,37 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     const getState = vi.fn().mockReturnValue('leader');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
-    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
+    const autoMerge = {
+      maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      inert, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      inert,
+      inert,
+      autoMerge,
+      inert,
+      inert,
+      inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
       engineRunner, // engineRunner (7)
       turnRegistry, // turnRegistry (8)
-      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert,
+      inert,
+      inert, // planReview, dispatcher, surface (11)
       inert, // sandboxRows (12)
       stimulusRows as never, // stimulusRows (13)
       stimulusStore as never, // stimulusStore (14)
-      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      inert,
+      inert,
+      inert,
+      inert,
+      inert,
+      inert,
+      inert, // turnHarness…creds (21)
       inert, // mcp (McpResolver, 22)
       election, // election (23)
-      inert, inert, inert, inert, // turnRecovery, secretStore, configStore, git (27)
+      inert,
+      inert,
+      inert,
+      inert, // turnRecovery, secretStore, configStore, git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
@@ -5487,19 +5518,37 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const getState = vi.fn().mockReturnValue('follower');
     const election = { getState } as unknown as LeaderElectionService;
     const inert = {} as never;
-    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) } as unknown as AutoMergeService;
+    const autoMerge = {
+      maybeAutoMerge: vi.fn().mockResolvedValue(undefined),
+    } as unknown as AutoMergeService;
     const manager = new AgentSessionManager(
-      store as never, inert, autoMerge, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+      store as never,
+      inert,
+      autoMerge,
+      inert,
+      inert,
+      inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
       engineRunner, // engineRunner (7)
       turnRegistry, // turnRegistry (8)
-      inert, inert, inert, // planReview, dispatcher, surface (11)
+      inert,
+      inert,
+      inert, // planReview, dispatcher, surface (11)
       inert, // sandboxRows (12)
       stimulusRows as never, // stimulusRows (13)
       stimulusStore as never, // stimulusStore (14)
-      inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+      inert,
+      inert,
+      inert,
+      inert,
+      inert,
+      inert,
+      inert, // turnHarness…creds (21)
       inert, // mcp (McpResolver, 22)
       election, // election (23)
-      inert, inert, inert, inert, // turnRecovery…git (27)
+      inert,
+      inert,
+      inert,
+      inert, // turnRecovery…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
@@ -5775,17 +5824,33 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       const election = { getState } as unknown as LeaderElectionService;
       const inert = {} as never;
       const manager = new AgentSessionManager(
-        store as never, inert, inert, inert, inert, inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
+        store as never,
+        inert,
+        inert,
+        inert,
+        inert,
+        inert, // store, driverStore, autoMerge, memory, approvals, lifecycle (6)
         inert, // engineRunner (7)
         turnRegistry, // turnRegistry (8)
-        planReview as never, inert, inert, // planReview, dispatcher, surface (11)
+        planReview as never,
+        inert,
+        inert, // planReview, dispatcher, surface (11)
         inert, // sandboxRows (12)
         inert, // stimulusRows (13)
         stimulusStore as never, // stimulusStore (14)
-        inert, inert, inert, inert, inert, inert, inert, // turnHarness…creds (21)
+        inert,
+        inert,
+        inert,
+        inert,
+        inert,
+        inert,
+        inert, // turnHarness…creds (21)
         inert, // mcp (McpResolver, 22)
         election, // election (23)
-        inert, inert, inert, inert, // turnRecovery…git (27)
+        inert,
+        inert,
+        inert,
+        inert, // turnRecovery…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)

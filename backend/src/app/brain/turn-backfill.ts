@@ -39,22 +39,30 @@ export async function backfillThreadFromTurns(
 
   for (const turn of turns) {
     // A turn already durable — skip it whole (final-reply fingerprint; see doc comment).
-    const finalReply = [...turn.blocks].reverse().find((b) => b.kind === 'chat')?.text;
-    if (finalReply && (await finalReplyPersisted(messages, jobId, finalReply))) continue;
+    const finalReply = [...turn.blocks]
+      .reverse()
+      .find((b) => b.kind === 'chat')?.text;
+    if (finalReply && (await finalReplyPersisted(messages, jobId, finalReply)))
+      continue;
 
-    const fresh = turn.blocks.filter((b) => isFresh(b, seenSdkUuids, seenToolIds));
+    const fresh = turn.blocks.filter((b) =>
+      isFresh(b, seenSdkUuids, seenToolIds),
+    );
     if (fresh.length === 0) continue;
 
     for (const b of fresh) {
       // Strictly-monotonic created_at (mirrors TurnHarnessFactory.stamp) so recovered rows sort in transcript
       // order even when SDK line timestamps tie; the real timestamp keeps them positioned in true history.
       const base =
-        b.emittedAt instanceof Date && !Number.isNaN(b.emittedAt.getTime()) ? b.emittedAt.getTime() : Date.now();
+        b.emittedAt instanceof Date && !Number.isNaN(b.emittedAt.getTime())
+          ? b.emittedAt.getTime()
+          : Date.now();
       lastMs = Math.max(base, lastMs + 1);
       await appendBlock(messages, jobId, threadId, b, new Date(lastMs));
       // Track in-memory so a duplicate later in the SAME run (a re-issued call) is also deduped.
       if (typeof b.meta.sdkUuid === 'string') seenSdkUuids.add(b.meta.sdkUuid);
-      if (b.kind === 'tool' && typeof b.meta.id === 'string' && b.meta.id) seenToolIds.add(b.meta.id);
+      if (b.kind === 'tool' && typeof b.meta.id === 'string' && b.meta.id)
+        seenToolIds.add(b.meta.id);
       inserted++;
     }
   }
@@ -63,7 +71,11 @@ export async function backfillThreadFromTurns(
 }
 
 /** Whether a recovered block should be back-filled: not an interrupted tool call, not already persisted. */
-function isFresh(b: RecoveredBlock, seenSdkUuids: Set<string>, seenToolIds: Set<string>): boolean {
+function isFresh(
+  b: RecoveredBlock,
+  seenSdkUuids: Set<string>,
+  seenToolIds: Set<string>,
+): boolean {
   // Interrupted (unpaired) tool call — the next turn re-issues it; recovering it would duplicate the card.
   if (b.kind === 'tool' && b.toolPaired !== true) return false;
   // Recovery re-run guard: same JSONL line already back-filled.
@@ -118,19 +130,27 @@ async function finalReplyPersisted(
 }
 
 /** The set of SDK `uuid`s already represented in this thread's durable messages — recovery-re-run guard. */
-async function persistedSdkUuids(messages: Repository<MessageEntity>, jobId: string): Promise<Set<string>> {
+async function persistedSdkUuids(
+  messages: Repository<MessageEntity>,
+  jobId: string,
+): Promise<Set<string>> {
   const rows: Array<{ u: string | null }> = await messages
     .createQueryBuilder('m')
     .select("m.meta ->> 'sdkUuid'", 'u')
     .where('m.job_id = :jobId', { jobId })
     .andWhere("m.meta ->> 'sdkUuid' IS NOT NULL")
     .getRawMany();
-  return new Set(rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'));
+  return new Set(
+    rows.map((r) => r.u).filter((u): u is string => typeof u === 'string'),
+  );
 }
 
 /** The set of SDK tool_use ids (`meta.id`) already persisted for this thread — dedup vs a normal turn's
  *  tool blocks (the live turn-harness path stamps `meta.id` = the SDK tool_use id). */
-async function persistedToolIds(messages: Repository<MessageEntity>, jobId: string): Promise<Set<string>> {
+async function persistedToolIds(
+  messages: Repository<MessageEntity>,
+  jobId: string,
+): Promise<Set<string>> {
   const rows: Array<{ id: string | null }> = await messages
     .createQueryBuilder('m')
     .select("m.meta ->> 'id'", 'id')
@@ -138,5 +158,7 @@ async function persistedToolIds(messages: Repository<MessageEntity>, jobId: stri
     .andWhere("m.kind = 'tool'")
     .andWhere("m.meta ->> 'id' IS NOT NULL")
     .getRawMany();
-  return new Set(rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'));
+  return new Set(
+    rows.map((r) => r.id).filter((id): id is string => typeof id === 'string'),
+  );
 }

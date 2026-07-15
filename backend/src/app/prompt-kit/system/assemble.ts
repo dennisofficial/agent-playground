@@ -12,7 +12,9 @@ import { FRAGMENT_GROUPS } from './groups';
 import { agentMessage, type AgentMessage } from '../message';
 
 /** Reflect every `@Fragment` method off the given group instances into a flat, render-bound list. */
-export function loadFragmentsFromInstances(instances: unknown[]): LoadedFragment[] {
+export function loadFragmentsFromInstances(
+  instances: unknown[],
+): LoadedFragment[] {
   const loaded: LoadedFragment[] = [];
   for (const instance of instances) {
     if (!instance || typeof instance !== 'object') continue;
@@ -22,12 +24,15 @@ export function loadFragmentsFromInstances(instances: unknown[]): LoadedFragment
     for (const [method, meta] of Object.entries(metaMap)) {
       const fn = obj[method];
       if (typeof fn !== 'function') {
-        throw new Error(`prompt-kit: @Fragment "${obj.constructor.name}.${method}" is not a method.`);
+        throw new Error(
+          `prompt-kit: @Fragment "${obj.constructor.name}.${method}" is not a method.`,
+        );
       }
       loaded.push({
         id: `${obj.constructor.name}.${method}`,
         meta,
-        render: (ctx: PromptCtx) => (fn as (c: PromptCtx) => string).call(obj, ctx),
+        render: (ctx: PromptCtx) =>
+          (fn as (c: PromptCtx) => string).call(obj, ctx),
       });
     }
   }
@@ -60,7 +65,9 @@ export function validateFragments(fragments: LoadedFragment[]): void {
       throw new Error(`prompt-kit: fragment "${f.id}" has an empty usedBy.`);
     }
     if (!Number.isFinite(f.meta.order)) {
-      throw new Error(`prompt-kit: fragment "${f.id}" has a non-finite order (${f.meta.order}).`);
+      throw new Error(
+        `prompt-kit: fragment "${f.id}" has a non-finite order (${f.meta.order}).`,
+      );
     }
     for (const agent of f.meta.usedBy) {
       const seen = perAgentOrders.get(agent) ?? new Map<number, string>();
@@ -75,7 +82,11 @@ export function validateFragments(fragments: LoadedFragment[]): void {
     }
   }
   // Best-effort smoke render across every agent × representative ctx — surfaces a throwing fragment early.
-  const probes: PromptCtx[] = [{}, { jobKind: 'feature' }, { jobKind: 'onboarding' }];
+  const probes: PromptCtx[] = [
+    {},
+    { jobKind: 'feature' },
+    { jobKind: 'onboarding' },
+  ];
   for (const agent of new Set(fragments.flatMap((f) => f.meta.usedBy))) {
     for (const ctx of probes) {
       try {
@@ -97,7 +108,9 @@ let cached: LoadedFragment[] | null = null;
 /** Build + validate the fragment set once (memoized). Call at boot to fail loudly on a misconfiguration. */
 export function primeFragments(): LoadedFragment[] {
   if (!cached) {
-    const loaded = loadFragmentsFromInstances(FRAGMENT_GROUPS.map((G) => new G()));
+    const loaded = loadFragmentsFromInstances(
+      FRAGMENT_GROUPS.map((G) => new G()),
+    );
     validateFragments(loaded);
     cached = loaded;
   }
@@ -109,7 +122,10 @@ export function primeFragments(): LoadedFragment[] {
  * it works identically in the host process, in scripts, and bundled into the in-container engine. This is THE
  * assembly entry point; `PromptService.generate` just delegates here after priming at boot.
  */
-export function renderAgentPrompt(agent: Agent, ctx: PromptCtx = {}): AgentMessage {
+export function renderAgentPrompt(
+  agent: Agent,
+  ctx: PromptCtx = {},
+): AgentMessage {
   return agentMessage(assembleFragments(primeFragments(), agent, ctx));
 }
 

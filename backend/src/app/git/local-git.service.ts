@@ -15,7 +15,8 @@ const execFileAsync = promisify(execFile);
  *  concurrent external git process (e.g. the sandbox's own engine turn running `git commit`) holding the OS-
  *  level index lock. The in-process `withLock` mutex can't see this: it only serializes calls made by THIS
  *  Node process. A short retry is the standard remedy — the lock is almost always released within seconds. */
-const INDEX_LOCK_RE = /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
+const INDEX_LOCK_RE =
+  /index\.lock['"]?:?\s*file exists|another git process seems to be running/i;
 
 /**
  * `git diff --numstat` renders a rename either as `old => new` or, for a shared path prefix, the brace
@@ -132,7 +133,12 @@ export class LocalGitService {
    */
   private async git(
     args: string[],
-    opts: { cwd?: string; gitUrl?: string; token?: string; trim?: boolean } = {},
+    opts: {
+      cwd?: string;
+      gitUrl?: string;
+      token?: string;
+      trim?: boolean;
+    } = {},
   ): Promise<string> {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -143,21 +149,31 @@ export class LocalGitService {
     };
     // These -c flags are prepended BEFORE the subcommand so they apply to every git op.
     const safetyFlags = [
-      '-c', 'core.hooksPath=/dev/null',
-      '-c', 'core.fsmonitor=false',
-      '-c', 'filter.lfs.clean=',
-      '-c', 'filter.lfs.smudge=',
-      '-c', 'filter.lfs.process=',
-      '-c', 'filter.lfs.required=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'filter.lfs.clean=',
+      '-c',
+      'filter.lfs.smudge=',
+      '-c',
+      'filter.lfs.process=',
+      '-c',
+      'filter.lfs.required=false',
     ];
     const maxAttempts = 5;
     for (let attempt = 1; ; attempt++) {
       try {
-        const { stdout } = await execFileAsync('git', [...safetyFlags, ...args], {
-          cwd: opts.cwd,
-          env,
-          maxBuffer: 64 * 1024 * 1024,
-        });
+        const { stdout } = await execFileAsync(
+          'git',
+          [...safetyFlags, ...args],
+          {
+            cwd: opts.cwd,
+            env,
+            maxBuffer: 64 * 1024 * 1024,
+          },
+        );
         return opts.trim === false ? stdout : stdout.trim();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -179,7 +195,9 @@ export class LocalGitService {
    */
   async isIgnored(worktreePath: string, relPath: string): Promise<boolean> {
     try {
-      await this.git(['check-ignore', '-q', '--', relPath], { cwd: worktreePath });
+      await this.git(['check-ignore', '-q', '--', relPath], {
+        cwd: worktreePath,
+      });
       return true;
     } catch (err) {
       if ((err as { code?: number }).code === 1) return false;
@@ -203,13 +221,23 @@ export class LocalGitService {
    * hard-blocks the ship on a non-empty result. FAILS CLOSED: a git error (can't enumerate the branch)
    * throws rather than returning "clean" — an unprovable branch must not be waved through a security gate.
    */
-  async scanBranchForForbidden(worktreePath: string, baseRef: string): Promise<string[]> {
+  async scanBranchForForbidden(
+    worktreePath: string,
+    baseRef: string,
+  ): Promise<string[]> {
     const forbidden = readForbiddenPaths(worktreePath);
     if (!forbidden.length) return [];
     const forbiddenSet = new Set(forbidden);
 
-    const revs = await this.git(['rev-list', `${baseRef}..HEAD`], { cwd: worktreePath });
-    const shas = revs ? revs.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+    const revs = await this.git(['rev-list', `${baseRef}..HEAD`], {
+      cwd: worktreePath,
+    });
+    const shas = revs
+      ? revs
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
 
     const leaked = new Set<string>();
     for (const sha of shas) {
@@ -217,7 +245,10 @@ export class LocalGitService {
         ['diff-tree', '--no-commit-id', '--name-only', '-r', sha],
         { cwd: worktreePath },
       );
-      for (const name of out.split('\n').map((s) => s.trim()).filter(Boolean)) {
+      for (const name of out
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)) {
         if (forbiddenSet.has(name)) leaked.add(name);
       }
     }
@@ -227,7 +258,9 @@ export class LocalGitService {
     // commit would otherwise slip past the per-commit scan above. Fail-closed like the rest of this gate.
     const [tracked, untracked] = await Promise.all([
       this.git(['diff', '--name-only', 'HEAD'], { cwd: worktreePath }),
-      this.git(['ls-files', '--others', '--exclude-standard'], { cwd: worktreePath }),
+      this.git(['ls-files', '--others', '--exclude-standard'], {
+        cwd: worktreePath,
+      }),
     ]);
     for (const name of [...tracked.split('\n'), ...untracked.split('\n')]
       .map((s) => s.trim())
@@ -269,15 +302,22 @@ export class LocalGitService {
 
     let commonDir: string;
     try {
-      commonDir = await this.git(['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-        cwd: worktreePath,
-      });
+      commonDir = await this.git(
+        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        {
+          cwd: worktreePath,
+        },
+      );
     } catch {
       commonDir = worktreePath; // fall back to per-worktree serialization
     }
 
     await this.withLock(commonDir, async () => {
-      const auth = { cwd: worktreePath, gitUrl: repo.gitUrl, token: repo.token };
+      const auth = {
+        cwd: worktreePath,
+        gitUrl: repo.gitUrl,
+        token: repo.token,
+      };
       try {
         await this.git(['submodule', 'update', '--init', '--recursive'], auth);
         return;
@@ -289,7 +329,9 @@ export class LocalGitService {
       // Recovery: a re-cut worktree can leave a dangling submodule gitdir that plain `--init` can't
       // repair. Deregister every submodule (clears the stale gitlinks + working trees), then re-clone.
       try {
-        await this.git(['submodule', 'deinit', '-f', '--all'], { cwd: worktreePath });
+        await this.git(['submodule', 'deinit', '-f', '--all'], {
+          cwd: worktreePath,
+        });
         await this.git(['submodule', 'update', '--init', '--recursive'], auth);
       } catch (err) {
         this.logger.error(
@@ -302,7 +344,9 @@ export class LocalGitService {
 
   /** Worktree-relative names of files currently staged in the index. */
   async stagedNames(worktreePath: string): Promise<string[]> {
-    const out = await this.git(['diff', '--cached', '--name-only'], { cwd: worktreePath });
+    const out = await this.git(['diff', '--cached', '--name-only'], {
+      cwd: worktreePath,
+    });
     return out ? out.split('\n').filter(Boolean) : [];
   }
 
@@ -310,14 +354,21 @@ export class LocalGitService {
    *  changes (staged/unstaged/already committed within this thread) PLUS brand-new untracked files, since
    *  this runs mid-turn before the writer commits (ADR 0005's judge needs the CURRENT thread's changes, not the
    *  whole job's). Best-effort; never blocks the gate on a git error. */
-  async changedFileNames(worktreePath: string, baseSha: string): Promise<string[]> {
+  async changedFileNames(
+    worktreePath: string,
+    baseSha: string,
+  ): Promise<string[]> {
     try {
       const [diffOut, untrackedOut] = await Promise.all([
         this.git(['diff', '--name-only', baseSha], { cwd: worktreePath }),
-        this.git(['ls-files', '--others', '--exclude-standard'], { cwd: worktreePath }),
+        this.git(['ls-files', '--others', '--exclude-standard'], {
+          cwd: worktreePath,
+        }),
       ]);
       const names = new Set(
-        [...diffOut.split('\n'), ...untrackedOut.split('\n')].map((s) => s.trim()).filter(Boolean),
+        [...diffOut.split('\n'), ...untrackedOut.split('\n')]
+          .map((s) => s.trim())
+          .filter(Boolean),
       );
       return [...names];
     } catch {
@@ -363,9 +414,14 @@ export class LocalGitService {
         await this.git(['clone', gitUrl, repoPath], { gitUrl, token });
       } else {
         // Refresh origin so worktrees cut from origin/<default> are current.
-        await this.git(['fetch', 'origin', '--prune'], { cwd: repoPath, gitUrl, token });
+        await this.git(['fetch', 'origin', '--prune'], {
+          cwd: repoPath,
+          gitUrl,
+          token,
+        });
       }
-      const defaultBranch = input.defaultBranch ?? (await this.detectDefaultBranch(repoPath));
+      const defaultBranch =
+        input.defaultBranch ?? (await this.detectDefaultBranch(repoPath));
       return { repoId: input.repoId, gitUrl, defaultBranch, repoPath, token };
     });
   }
@@ -374,11 +430,18 @@ export class LocalGitService {
    * List the files under `subdir` at a git ref (e.g. `origin/main`) — a READ against the base clone with
    * no working tree needed. Returns repo-relative paths; empty when the dir doesn't exist at that ref.
    */
-  async listFilesAtRef(repoPath: string, ref: string, subdir: string): Promise<string[]> {
+  async listFilesAtRef(
+    repoPath: string,
+    ref: string,
+    subdir: string,
+  ): Promise<string[]> {
     try {
-      const out = await this.git(['ls-tree', '-r', '--name-only', ref, '--', subdir], {
-        cwd: repoPath,
-      });
+      const out = await this.git(
+        ['ls-tree', '-r', '--name-only', ref, '--', subdir],
+        {
+          cwd: repoPath,
+        },
+      );
       return out ? out.split('\n').filter(Boolean) : [];
     } catch {
       return []; // ref or subdir absent — treat as empty
@@ -386,7 +449,11 @@ export class LocalGitService {
   }
 
   /** Read one file's contents at a git ref (`git show <ref>:<path>`); null when the path is absent there. */
-  async readFileAtRef(repoPath: string, ref: string, path: string): Promise<string | null> {
+  async readFileAtRef(
+    repoPath: string,
+    ref: string,
+    path: string,
+  ): Promise<string | null> {
     try {
       return await this.git(['show', `${ref}:${path}`], { cwd: repoPath });
     } catch {
@@ -410,14 +477,19 @@ export class LocalGitService {
    * the accumulated change vs base including uncommitted edits (GitHub-PR-like but live). Empty string
    * when nothing differs or the base ref is unknown. `trim:false` keeps the raw patch byte-exact for parsePatch.
    */
-  async diffFromMergeBase(worktreePath: string, baseRef: string): Promise<string> {
+  async diffFromMergeBase(
+    worktreePath: string,
+    baseRef: string,
+  ): Promise<string> {
     try {
       return await this.git(
         ['diff', '--no-color', '--find-renames', '--merge-base', baseRef],
         { cwd: worktreePath, trim: false },
       );
     } catch (err) {
-      this.logger.warn(`diffFromMergeBase(${baseRef}) in ${worktreePath} failed: ${String(err)}`);
+      this.logger.warn(
+        `diffFromMergeBase(${baseRef}) in ${worktreePath} failed: ${String(err)}`,
+      );
       return '';
     }
   }
@@ -426,7 +498,14 @@ export class LocalGitService {
   async diffNumstatFromMergeBase(
     worktreePath: string,
     baseRef: string,
-  ): Promise<Array<{ path: string; additions: number; deletions: number; binary: boolean }>> {
+  ): Promise<
+    Array<{
+      path: string;
+      additions: number;
+      deletions: number;
+      binary: boolean;
+    }>
+  > {
     try {
       const out = await this.git(
         ['diff', '--numstat', '--find-renames', '--merge-base', baseRef],
@@ -443,7 +522,12 @@ export class LocalGitService {
           if (additions === '-' && deletions === '-') {
             return { path, additions: 0, deletions: 0, binary: true };
           }
-          return { path, additions: parseInt(additions, 10), deletions: parseInt(deletions, 10), binary: false };
+          return {
+            path,
+            additions: parseInt(additions, 10),
+            deletions: parseInt(deletions, 10),
+            binary: false,
+          };
         });
     } catch {
       return [];
@@ -454,7 +538,9 @@ export class LocalGitService {
   async diffNameStatusFromMergeBase(
     worktreePath: string,
     baseRef: string,
-  ): Promise<Array<{ path: string; oldPath?: string; status: DiffNameStatus }>> {
+  ): Promise<
+    Array<{ path: string; oldPath?: string; status: DiffNameStatus }>
+  > {
     try {
       const out = await this.git(
         ['diff', '--name-status', '--find-renames', '--merge-base', baseRef],
@@ -469,7 +555,11 @@ export class LocalGitService {
           const [code, firstPath, secondPath] = line.split('\t');
           const status = normalizeNameStatus(code ?? '');
           if (status === 'renamed') {
-            return { path: (secondPath ?? firstPath ?? '').trim(), oldPath: (firstPath ?? '').trim(), status };
+            return {
+              path: (secondPath ?? firstPath ?? '').trim(),
+              oldPath: (firstPath ?? '').trim(),
+              status,
+            };
           }
           return { path: (firstPath ?? '').trim(), status };
         })
@@ -494,13 +584,21 @@ export class LocalGitService {
 
   /** True iff the repo has git submodules at its base branch (drives clone-vs-worktree provisioning). */
   async hasSubmodules(repo: ProjectRepo): Promise<boolean> {
-    return (await this.readFileAtRef(repo.repoPath, `origin/${repo.defaultBranch}`, '.gitmodules')) !== null;
+    return (
+      (await this.readFileAtRef(
+        repo.repoPath,
+        `origin/${repo.defaultBranch}`,
+        '.gitmodules',
+      )) !== null
+    );
   }
 
   /** Resolve the repo's default branch from origin/HEAD; fall back to `main`. */
   private async detectDefaultBranch(repoPath: string): Promise<string> {
     try {
-      const ref = await this.git(['symbolic-ref', 'refs/remotes/origin/HEAD'], { cwd: repoPath });
+      const ref = await this.git(['symbolic-ref', 'refs/remotes/origin/HEAD'], {
+        cwd: repoPath,
+      });
       const m = ref.match(/refs\/remotes\/origin\/(.+)$/);
       if (m) return m[1];
     } catch {
@@ -531,7 +629,10 @@ export class LocalGitService {
       });
       const base = `origin/${repo.defaultBranch}`;
       // Reuse an existing branch ref if present (a resume); else create it off the base.
-      const branchExists = await this.refExists(repo.repoPath, `refs/heads/${branch}`);
+      const branchExists = await this.refExists(
+        repo.repoPath,
+        `refs/heads/${branch}`,
+      );
       const addArgs = branchExists
         ? ['worktree', 'add', worktreePath, branch]
         : ['worktree', 'add', '-b', branch, worktreePath, base];
@@ -549,7 +650,9 @@ export class LocalGitService {
 
   async refExists(repoPath: string, ref: string): Promise<boolean> {
     try {
-      await this.git(['show-ref', '--verify', '--quiet', ref], { cwd: repoPath });
+      await this.git(['show-ref', '--verify', '--quiet', ref], {
+        cwd: repoPath,
+      });
       return true;
     } catch {
       return false;
@@ -558,7 +661,9 @@ export class LocalGitService {
 
   /** True when the worktree has staged or unstaged changes. */
   async hasChanges(worktreePath: string): Promise<boolean> {
-    const status = await this.git(['status', '--porcelain'], { cwd: worktreePath });
+    const status = await this.git(['status', '--porcelain'], {
+      cwd: worktreePath,
+    });
     return status.length > 0;
   }
 
@@ -581,7 +686,10 @@ export class LocalGitService {
    * pushed) or any `origin/<branch>..HEAD` commit ⇒ unsafe. Missing upstream is treated as UNSAFE, never as
    * "0 ahead". Fail-closed: any git error ⇒ unsafe.
    */
-  async worktreeSafeToRecut(worktreePath: string, branch: string): Promise<boolean> {
+  async worktreeSafeToRecut(
+    worktreePath: string,
+    branch: string,
+  ): Promise<boolean> {
     try {
       const dotGit = join(worktreePath, '.git');
       const isClone = existsSync(dotGit) && (await stat(dotGit)).isDirectory();
@@ -634,7 +742,13 @@ export class LocalGitService {
       });
       // Check out detached at origin/<defaultBranch> — no new branch ref so it stays read-only.
       await this.git(
-        ['worktree', 'add', '--detach', worktreePath, `origin/${repo.defaultBranch}`],
+        [
+          'worktree',
+          'add',
+          '--detach',
+          worktreePath,
+          `origin/${repo.defaultBranch}`,
+        ],
         { cwd: repo.repoPath },
       );
     });
@@ -659,7 +773,10 @@ export class LocalGitService {
    * Lands at the same per-thread path scheme as `createBaseWorktree` (`<repoPath>/.worktrees/thread-<jobId>`)
    * so both modes are interchangeable to callers. Idempotent: an existing clone is reused (boot recovery).
    */
-  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+  async createBaseClone(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
     const slug = `thread-${jobId.replace(/[^a-z0-9_-]/gi, '-')}`;
     const worktreePath = join(repo.repoPath, '.worktrees', slug);
 
@@ -673,17 +790,27 @@ export class LocalGitService {
       });
       await this.git(['clone', repo.repoPath, worktreePath]);
       // Point origin at the real GitHub remote (the local clone's origin is the on-disk main clone).
-      await this.git(['remote', 'set-url', 'origin', repo.gitUrl], { cwd: worktreePath });
+      await this.git(['remote', 'set-url', 'origin', repo.gitUrl], {
+        cwd: worktreePath,
+      });
       // Fetch the fresh base from GitHub and detach on it (mirrors createBaseWorktree's detached base).
       await this.git(['fetch', 'origin', repo.defaultBranch], {
         cwd: worktreePath,
         gitUrl: repo.gitUrl,
         token: repo.token,
       });
-      await this.git(['checkout', '--detach', `origin/${repo.defaultBranch}`], { cwd: worktreePath });
+      await this.git(['checkout', '--detach', `origin/${repo.defaultBranch}`], {
+        cwd: worktreePath,
+      });
     });
 
-    return { repoId: repo.repoId, branch: repo.defaultBranch, worktreePath, gitUrl: repo.gitUrl, token: repo.token };
+    return {
+      repoId: repo.repoId,
+      branch: repo.defaultBranch,
+      worktreePath,
+      gitUrl: repo.gitUrl,
+      token: repo.token,
+    };
   }
 
   /**
@@ -712,10 +839,15 @@ export class LocalGitService {
         // fall through — treat as not a clone
       }
 
-      const localBranchExists = await this.refExists(sandbox.worktreePath, `refs/heads/${featureBranch}`);
+      const localBranchExists = await this.refExists(
+        sandbox.worktreePath,
+        `refs/heads/${featureBranch}`,
+      );
       if (localBranchExists) {
         // Resume: the branch was already cut — just check it out.
-        await this.git(['checkout', featureBranch], { cwd: sandbox.worktreePath });
+        await this.git(['checkout', featureBranch], {
+          cwd: sandbox.worktreePath,
+        });
         return;
       }
 
@@ -731,17 +863,27 @@ export class LocalGitService {
         } catch {
           // no remote branch (or fetch failed) — fall through to cutting fresh
         }
-        if (await this.refExists(sandbox.worktreePath, `refs/remotes/origin/${featureBranch}`)) {
-          await this.git(['checkout', '-b', featureBranch, `origin/${featureBranch}`], {
-            cwd: sandbox.worktreePath,
-          });
+        if (
+          await this.refExists(
+            sandbox.worktreePath,
+            `refs/remotes/origin/${featureBranch}`,
+          )
+        ) {
+          await this.git(
+            ['checkout', '-b', featureBranch, `origin/${featureBranch}`],
+            {
+              cwd: sandbox.worktreePath,
+            },
+          );
           return;
         }
       }
 
       // Fresh approval (or no remote branch to restore): cut the branch off the current detached HEAD
       // (which is on base).
-      await this.git(['checkout', '-b', featureBranch], { cwd: sandbox.worktreePath });
+      await this.git(['checkout', '-b', featureBranch], {
+        cwd: sandbox.worktreePath,
+      });
     });
     return { ...sandbox, branch: featureBranch };
   }
@@ -768,9 +910,13 @@ export class LocalGitService {
         );
       } else {
         try {
-          await this.git(['worktree', 'remove', '--force', worktreePath], { cwd: repo.repoPath });
+          await this.git(['worktree', 'remove', '--force', worktreePath], {
+            cwd: repo.repoPath,
+          });
         } catch (err) {
-          this.logger.warn(`worktree remove failed for ${worktreePath}: ${err}`);
+          this.logger.warn(
+            `worktree remove failed for ${worktreePath}: ${err}`,
+          );
         }
       }
     });
@@ -787,7 +933,9 @@ export class LocalGitService {
    */
   async currentBranch(worktreePath: string): Promise<string | null> {
     try {
-      const out = (await this.git(['branch', '--show-current'], { cwd: worktreePath })).trim();
+      const out = (
+        await this.git(['branch', '--show-current'], { cwd: worktreePath })
+      ).trim();
       return out.length ? out : null;
     } catch {
       return null;
@@ -818,14 +966,20 @@ export class LocalGitService {
       if (!sha) throw new Error(`ref '${ref}' not found on ${gitUrl}`);
       return { ref, sha };
     }
-    const out = await this.git(['ls-remote', '--symref', gitUrl, 'HEAD'], { gitUrl, token });
+    const out = await this.git(['ls-remote', '--symref', gitUrl, 'HEAD'], {
+      gitUrl,
+      token,
+    });
     const lines = out.split('\n');
     const symref = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/.exec(lines[0] ?? '');
     // The `ref: refs/heads/<default>\tHEAD` announcement line ALSO ends in `\tHEAD` — skip it explicitly so
     // this finds the actual sha line (`<sha>\tHEAD`), not the symref line itself.
-    const shaLine = lines.find((l) => l.endsWith('\tHEAD') && !l.startsWith('ref:'));
+    const shaLine = lines.find(
+      (l) => l.endsWith('\tHEAD') && !l.startsWith('ref:'),
+    );
     const sha = shaLine?.split('\t')[0];
-    if (!symref || !sha) throw new Error(`could not resolve default branch for ${gitUrl}`);
+    if (!symref || !sha)
+      throw new Error(`could not resolve default branch for ${gitUrl}`);
     return { ref: symref[1], sha };
   }
 
@@ -841,7 +995,10 @@ export class LocalGitService {
     destPath: string,
     token?: string,
   ): Promise<string> {
-    await this.git(['clone', '--depth', '1', '--branch', ref, gitUrl, destPath], { gitUrl, token });
+    await this.git(
+      ['clone', '--depth', '1', '--branch', ref, gitUrl, destPath],
+      { gitUrl, token },
+    );
     return this.git(['rev-parse', 'HEAD'], { cwd: destPath });
   }
 }

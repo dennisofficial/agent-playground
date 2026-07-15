@@ -85,7 +85,8 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
 
   it('no NON-TEST source file in app/ imports ScopingInvestigatorService', () => {
     const matches = grepAppSrc(/ScopingInvestigatorService/, [
-      '.spec.ts', '.int.test.ts',
+      '.spec.ts',
+      '.int.test.ts',
     ]);
     // Only comments are allowed (the service is mentioned in JSDoc of its successor).
     const nonComment = matches.filter((line) => {
@@ -113,9 +114,11 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
    */
   it('the concrete host EngineRunner class is NOT imported in brain/ service files', () => {
     // Pattern: `EngineRunner` as a named import (but NOT `DockerEngineRunner` / `EngineRunnerPort`)
-    const violations = grepAppDir('brain', /import[^;]*\bEngineRunner\b(?!Port)/, [
-      '.spec.ts', '.int.test.ts',
-    ]).filter((line) => {
+    const violations = grepAppDir(
+      'brain',
+      /import[^;]*\bEngineRunner\b(?!Port)/,
+      ['.spec.ts', '.int.test.ts'],
+    ).filter((line) => {
       // Allow DockerEngineRunner imports — it execs turns inside the sandbox container.
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
@@ -124,9 +127,11 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   });
 
   it('the concrete host EngineRunner class is NOT imported in driver/ service files', () => {
-    const violations = grepAppDir('driver', /import[^;]*\bEngineRunner\b(?!Port)/, [
-      '.spec.ts', '.int.test.ts',
-    ]).filter((line) => {
+    const violations = grepAppDir(
+      'driver',
+      /import[^;]*\bEngineRunner\b(?!Port)/,
+      ['.spec.ts', '.int.test.ts'],
+    ).filter((line) => {
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
     });
@@ -136,9 +141,11 @@ describe('R6 invariant (b): ScopingInvestigatorService deleted; EngineRunner onl
   it('runner/ files use EngineRunnerPort (the interface), not the host EngineRunner class directly', () => {
     // runner/ should import EngineRunnerPort (the interface) or ENGINE_RUNNER (the token), never the
     // raw EngineRunner class (which would bypass the sandbox abstraction).
-    const violations = grepAppDir('runner', /import[^;]*\bEngineRunner\b(?!Port)/, [
-      '.spec.ts', '.int.test.ts',
-    ]).filter((line) => {
+    const violations = grepAppDir(
+      'runner',
+      /import[^;]*\bEngineRunner\b(?!Port)/,
+      ['.spec.ts', '.int.test.ts'],
+    ).filter((line) => {
       const content = line.split(': ').slice(1).join(': ');
       return !content.includes('DockerEngineRunner');
     });
@@ -156,7 +163,10 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
    * at the Redis cutover, ADR 0001; the dispatch + its scope guard remain.)
    */
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
-    const src = readFileSync(join(SRC, 'engine', 'tool-bridge-host.ts'), 'utf8');
+    const src = readFileSync(
+      join(SRC, 'engine', 'tool-bridge-host.ts'),
+      'utf8',
+    );
     // The guard: for a THREAD-SCOPED tool, if args includes a jobId field it must match the owning thread.
     expect(src).toContain('Thread scope violation');
     expect(src).toContain("args['jobId'] !== bridge.jobId");
@@ -167,7 +177,10 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
   });
 
   it('RedisEngineRunner dispatches host tools through dispatchToolRequest (scope-enforced path)', () => {
-    const src = readFileSync(join(SRC, 'sandbox', 'redis-engine-runner.ts'), 'utf8');
+    const src = readFileSync(
+      join(SRC, 'sandbox', 'redis-engine-runner.ts'),
+      'utf8',
+    );
     expect(src).toContain('dispatchToolRequest');
   });
 });
@@ -193,7 +206,11 @@ function grepAppDir(
   pattern: RegExp,
   excludeSuffixes: string[] = [],
 ): string[] {
-  const { readdirSync, statSync, readFileSync: rf } = require('node:fs') as typeof import('node:fs');
+  const {
+    readdirSync,
+    statSync,
+    readFileSync: rf,
+  } = require('node:fs') as typeof import('node:fs');
   const targetDir = subdir ? join(SRC, subdir) : SRC;
 
   const hits: string[] = [];

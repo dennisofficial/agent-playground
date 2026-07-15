@@ -9,13 +9,15 @@ type ControllerMocks = {
   update: ReturnType<typeof vi.fn>;
 };
 
-function makeController(thread: {
-  id?: string;
-  org_id?: string;
-  repo_id?: string;
-  status: string;
-  decision_record_id?: string | null;
-} | null) {
+function makeController(
+  thread: {
+    id?: string;
+    org_id?: string;
+    repo_id?: string;
+    status: string;
+    decision_record_id?: string | null;
+  } | null,
+) {
   const row = thread
     ? {
         id: thread.id ?? 'job-1',
@@ -30,8 +32,9 @@ function makeController(thread: {
     update: vi.fn(async () => ({ affected: 1 })),
   };
   const jobs = {
-    findOne: vi.fn(async ({ where }: { where: { id: string; org_id: string } }) =>
-      row && where.id === row.id && where.org_id === row.org_id ? row : null,
+    findOne: vi.fn(
+      async ({ where }: { where: { id: string; org_id: string } }) =>
+        row && where.id === row.id && where.org_id === row.org_id ? row : null,
     ),
     update: mocks.update,
   };
@@ -77,9 +80,14 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   it('sets mode with no gate parked: updates the row, never clicks approve', async () => {
     const { controller, mocks } = makeController({ status: 'running' });
 
-    const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-      mode: 'both',
-    } as never);
+    const result = await controller.setAutoApprove(
+      ORG,
+      USER as never,
+      'job-1',
+      {
+        mode: 'both',
+      } as never,
+    );
 
     expect(mocks.update).toHaveBeenCalledWith(
       { id: 'job-1', org_id: 'org-1' },
@@ -97,15 +105,24 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
         decision_record_id: 'dr-current',
       });
 
-      const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-        mode,
-      } as never);
+      const result = await controller.setAutoApprove(
+        ORG,
+        USER as never,
+        'job-1',
+        {
+          mode,
+        } as never,
+      );
 
       expect(mocks.receiveApprovalClick).toHaveBeenCalledTimes(1);
-      const [actionId, value, userId] = mocks.receiveApprovalClick.mock.calls[0];
+      const [actionId, value, userId] =
+        mocks.receiveApprovalClick.mock.calls[0];
       expect(actionId).toBe(APPROVE_ACTION_ID);
       expect(userId).toBe('user-1');
-      expect(JSON.parse(value)).toEqual({ jobId: 'job-1', decisionRecordId: 'dr-current' });
+      expect(JSON.parse(value)).toEqual({
+        jobId: 'job-1',
+        decisionRecordId: 'dr-current',
+      });
       expect(result).toEqual({ ok: true, autoApproveMode: mode });
     },
   );
@@ -118,9 +135,14 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
         decision_record_id: 'dr-current',
       });
 
-      const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-        mode,
-      } as never);
+      const result = await controller.setAutoApprove(
+        ORG,
+        USER as never,
+        'job-1',
+        {
+          mode,
+        } as never,
+      );
 
       expect(mocks.receiveApprovalClick).not.toHaveBeenCalled();
       expect(result).toEqual({ ok: true, autoApproveMode: mode });
@@ -130,14 +152,22 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   it.each(['ship', 'both'] as const)(
     'mode %s while awaiting_ship_review: immediately resolves the parked ship gate',
     async (mode) => {
-      const { controller, mocks } = makeController({ status: 'awaiting_ship_review' });
+      const { controller, mocks } = makeController({
+        status: 'awaiting_ship_review',
+      });
 
-      const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-        mode,
-      } as never);
+      const result = await controller.setAutoApprove(
+        ORG,
+        USER as never,
+        'job-1',
+        {
+          mode,
+        } as never,
+      );
 
       expect(mocks.receiveApprovalClick).toHaveBeenCalledTimes(1);
-      const [actionId, value, userId] = mocks.receiveApprovalClick.mock.calls[0];
+      const [actionId, value, userId] =
+        mocks.receiveApprovalClick.mock.calls[0];
       expect(actionId).toBe(SHIP_ACTION_ID);
       expect(userId).toBe('user-1');
       expect(JSON.parse(value)).toEqual({ jobId: 'job-1' });
@@ -148,11 +178,18 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   it.each(['plan', 'off'] as const)(
     'mode %s while awaiting_ship_review: does NOT resolve the parked ship gate',
     async (mode) => {
-      const { controller, mocks } = makeController({ status: 'awaiting_ship_review' });
+      const { controller, mocks } = makeController({
+        status: 'awaiting_ship_review',
+      });
 
-      const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-        mode,
-      } as never);
+      const result = await controller.setAutoApprove(
+        ORG,
+        USER as never,
+        'job-1',
+        {
+          mode,
+        } as never,
+      );
 
       expect(mocks.receiveApprovalClick).not.toHaveBeenCalled();
       expect(result).toEqual({ ok: true, autoApproveMode: mode });
@@ -160,11 +197,18 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   );
 
   it("mode 'off': persists auto_approve_mode:'off' with NO auto_approve_by, never clicks approve", async () => {
-    const { controller, mocks } = makeController({ status: 'awaiting_approval' });
+    const { controller, mocks } = makeController({
+      status: 'awaiting_approval',
+    });
 
-    const result = await controller.setAutoApprove(ORG, USER as never, 'job-1', {
-      mode: 'off',
-    } as never);
+    const result = await controller.setAutoApprove(
+      ORG,
+      USER as never,
+      'job-1',
+      {
+        mode: 'off',
+      } as never,
+    );
 
     expect(mocks.update).toHaveBeenCalledWith(
       { id: 'job-1', org_id: 'org-1' },
@@ -178,7 +222,9 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
     const { controller } = makeController(null);
 
     await expect(
-      controller.setAutoApprove(ORG, USER as never, 'job-1', { mode: 'both' } as never),
+      controller.setAutoApprove(ORG, USER as never, 'job-1', {
+        mode: 'both',
+      } as never),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -186,7 +232,9 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
     const { controller } = makeController({ status: 'running' });
 
     await expect(
-      controller.setAutoApprove(ORG, USER as never, 'job-1', { mode: 'yes' } as never),
+      controller.setAutoApprove(ORG, USER as never, 'job-1', {
+        mode: 'yes',
+      } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 

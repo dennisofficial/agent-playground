@@ -18,7 +18,11 @@
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EnvService } from '../../_core/config/env/env.service';
@@ -44,7 +48,14 @@ import {
 } from '../persistence/entities';
 import { SANDBOX_PROVIDER, SandboxActivityRegistry } from '../sandbox';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
-import { DRIVER_REPO, type DriverRepoResolver, type ResolvedRepo, JobLifecycleService, JOB_TEARDOWN, WorktreeProvisioner } from '../driver';
+import {
+  DRIVER_REPO,
+  type DriverRepoResolver,
+  type ResolvedRepo,
+  JobLifecycleService,
+  JOB_TEARDOWN,
+  WorktreeProvisioner,
+} from '../driver';
 import { SkillUpdaterService } from '../skills/skill-updater.service';
 import { JobDependencyService } from '../job-deps';
 import { OrganizationService } from './organization.service';
@@ -69,7 +80,11 @@ function dbOpts() {
 // ── Fakes (mirror job-lifecycle.int.test.ts — no filesystem, no Docker) ──────────────────────────
 
 class FakeGitService {
-  async ensureRepo(input: { repoId: string; gitUrl: string; defaultBranch?: string }): Promise<ProjectRepo> {
+  async ensureRepo(input: {
+    repoId: string;
+    gitUrl: string;
+    defaultBranch?: string;
+  }): Promise<ProjectRepo> {
     return {
       repoId: input.repoId,
       gitUrl: input.gitUrl,
@@ -77,17 +92,32 @@ class FakeGitService {
       repoPath: `/tmp/delete-org-fake-repos/${input.repoId}`,
     };
   }
-  async createBaseWorktree(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
-    return { repoId: repo.repoId, branch: 'main', worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`, gitUrl: repo.gitUrl };
+  async createBaseWorktree(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
+    return {
+      repoId: repo.repoId,
+      branch: 'main',
+      worktreePath: `${repo.repoPath}/.worktrees/thread-${jobId}`,
+      gitUrl: repo.gitUrl,
+    };
   }
   async hasSubmodules(): Promise<boolean> {
     return false;
   }
-  async switchBranch(sandbox: FeatureSandbox, _repo: ProjectRepo, featureBranch: string): Promise<FeatureSandbox> {
+  async switchBranch(
+    sandbox: FeatureSandbox,
+    _repo: ProjectRepo,
+    featureBranch: string,
+  ): Promise<FeatureSandbox> {
     return { ...sandbox, branch: featureBranch };
   }
   // Provision-path no-ops (no real git/cache/submodules/index in the fake).
-  async createBaseClone(repo: ProjectRepo, jobId: string): Promise<FeatureSandbox> {
+  async createBaseClone(
+    repo: ProjectRepo,
+    jobId: string,
+  ): Promise<FeatureSandbox> {
     return this.createBaseWorktree(repo, jobId);
   }
   async ensureSubmodules(): Promise<void> {}
@@ -98,8 +128,19 @@ class FakeGitService {
 }
 
 class FakeSandboxProvider {
-  async attach({ sandbox, jobId }: { sandbox: FeatureSandbox; orgId: string; jobId?: string }): Promise<FeatureSandbox> {
-    return { ...sandbox, containerId: `fake-c-${jobId ?? sandbox.branch}`, warm: true };
+  async attach({
+    sandbox,
+    jobId,
+  }: {
+    sandbox: FeatureSandbox;
+    orgId: string;
+    jobId?: string;
+  }): Promise<FeatureSandbox> {
+    return {
+      ...sandbox,
+      containerId: `fake-c-${jobId ?? sandbox.branch}`,
+      warm: true,
+    };
   }
   async teardown(): Promise<void> {}
   async teardownByIdentity(): Promise<void> {}
@@ -129,12 +170,27 @@ let otherRepoId: string;
 /** Delete every row both sentinel orgs own (idempotent — survives a prior failed run). */
 async function purge(): Promise<void> {
   for (const org of [ORG_ID, OTHER_ORG_ID]) {
-    const threadIds: Array<{ id: string }> = await ds.query(`SELECT id FROM jobs WHERE org_id = $1`, [org]);
+    const threadIds: Array<{ id: string }> = await ds.query(
+      `SELECT id FROM jobs WHERE org_id = $1`,
+      [org],
+    );
     const ids = threadIds.map((t) => t.id);
     if (ids.length) {
       await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [ids]);
     }
-    for (const table of ['threads', 'stages', 'decision_records', 'stimuli', 'job_sandboxes', 'jobs', 'repos', 'org_credentials', 'org_invites', 'organization_members', 'memory']) {
+    for (const table of [
+      'threads',
+      'stages',
+      'decision_records',
+      'stimuli',
+      'job_sandboxes',
+      'jobs',
+      'repos',
+      'org_credentials',
+      'org_invites',
+      'organization_members',
+      'memory',
+    ]) {
       await ds.query(`DELETE FROM ${table} WHERE org_id = $1`, [org]);
     }
     await ds.query(`DELETE FROM organizations WHERE id = $1`, [org]);
@@ -144,7 +200,10 @@ async function purge(): Promise<void> {
 
 /** Seed one org + one connected repo; return the repo's surrogate uuid id. */
 async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
-  await ds.query(`INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`, [orgId, `Org ${slug}`, slug]);
+  await ds.query(
+    `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')`,
+    [orgId, `Org ${slug}`, slug],
+  );
   const rows = await ds.query(
     `INSERT INTO repos (org_id, slug, name, git_url, default_branch, access_ok) VALUES ($1, $2, $3, $4, 'main', true) RETURNING id`,
     [orgId, `${slug}-repo`, `Repo ${slug}`, REPO_URL],
@@ -153,7 +212,11 @@ async function seedOrgWithRepo(orgId: string, slug: string): Promise<string> {
 }
 
 /** Seed one row in every child/org-scoped table for `jobId` under (`orgId`, `repoId`). */
-async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: string): Promise<void> {
+async function seedThreadChildren(
+  orgId: string,
+  repoIdArg: string,
+  jobId: string,
+): Promise<void> {
   const [stage] = await ds.query(
     `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
     [jobId, orgId],
@@ -162,23 +225,63 @@ async function seedThreadChildren(orgId: string, repoIdArg: string, jobId: strin
     `INSERT INTO threads (job_id, org_id, stage_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
     [jobId, orgId, stage.id],
   );
-  await ds.query(`INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`, [jobId, thread.id]);
-  await ds.query(`INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`, [orgId, repoIdArg, jobId]);
-  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`, [orgId, repoIdArg, jobId]);
+  await ds.query(
+    `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
+    [jobId, thread.id],
+  );
+  await ds.query(
+    `INSERT INTO decision_records (org_id, repo_id, job_id, overview) VALUES ($1, $2, $3, 'o')`,
+    [orgId, repoIdArg, jobId],
+  );
+  await ds.query(
+    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+    [orgId, repoIdArg, jobId],
+  );
 }
 
 /** Seed the org-DIRECT rows (no thread): credentials, an invite, a membership, memory, a parked event. */
-async function seedOrgDirect(orgId: string, repoIdArg: string, inviteToken: string, dedupeKey: string): Promise<void> {
-  await ds.query(`INSERT INTO org_credentials (org_id, scope) VALUES ($1, '*')`, [orgId]);
-  await ds.query(`INSERT INTO org_invites (token, org_id, email, role) VALUES ($1, $2, 'x@y.com', 'member')`, [inviteToken, orgId]);
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [orgId, SHARED_USER_ID]);
-  await ds.query(`INSERT INTO memory (fact, embedding, org_id, scope) VALUES ('f', $1::vector, $2, $3)`, [EMBEDDING, orgId, `team:${orgId}`]);
+async function seedOrgDirect(
+  orgId: string,
+  repoIdArg: string,
+  inviteToken: string,
+  dedupeKey: string,
+): Promise<void> {
+  await ds.query(
+    `INSERT INTO org_credentials (org_id, scope) VALUES ($1, '*')`,
+    [orgId],
+  );
+  await ds.query(
+    `INSERT INTO org_invites (token, org_id, email, role) VALUES ($1, $2, 'x@y.com', 'member')`,
+    [inviteToken, orgId],
+  );
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [orgId, SHARED_USER_ID],
+  );
+  await ds.query(
+    `INSERT INTO memory (fact, embedding, org_id, scope) VALUES ('f', $1::vector, $2, $3)`,
+    [EMBEDDING, orgId, `team:${orgId}`],
+  );
   // A stimulus parked on the org/repo BEFORE any thread existed (job_id NULL) — orphaned unless swept.
-  await ds.query(`INSERT INTO stimuli (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`, [orgId, repoIdArg, dedupeKey]);
+  await ds.query(
+    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`,
+    [orgId, repoIdArg, dedupeKey],
+  );
 }
 
-const countWhere = async (table: string, col: string, val: string): Promise<number> =>
-  Number((await ds.query(`SELECT COUNT(*)::int AS c FROM ${table} WHERE ${col} = $1`, [val]))[0].c);
+const countWhere = async (
+  table: string,
+  col: string,
+  val: string,
+): Promise<number> =>
+  Number(
+    (
+      await ds.query(
+        `SELECT COUNT(*)::int AS c FROM ${table} WHERE ${col} = $1`,
+        [val],
+      )
+    )[0].c,
+  );
 
 beforeEach(async () => {
   mod = await Test.createTestingModule({
@@ -206,7 +309,17 @@ beforeEach(async () => {
       { provide: LocalGitService, useValue: new FakeGitService() },
       { provide: SANDBOX_PROVIDER, useValue: new FakeSandboxProvider() },
       SandboxActivityRegistry,
-      { provide: TenantCredentialStore, useValue: { presence: async () => ({ hasAnthropic: false, hasGithub: false, engineAuthSet: false }), get: async () => undefined } },
+      {
+        provide: TenantCredentialStore,
+        useValue: {
+          presence: async () => ({
+            hasAnthropic: false,
+            hasGithub: false,
+            engineAuthSet: false,
+          }),
+          get: async () => undefined,
+        },
+      },
       {
         provide: CredentialResolver,
         useValue: {
@@ -217,12 +330,41 @@ beforeEach(async () => {
           engineAuth: async () => ({ secret: 'test-secret' }),
         },
       },
-      { provide: GithubPrService, useValue: { getRepo: async () => null, openPullRequest: async () => ({ url: '', existing: false }), getPullState: async () => 'open' } },
-      { provide: DRIVER_REPO, useValue: { resolve: async (): Promise<ResolvedRepo> => { throw new Error('not used'); } } as DriverRepoResolver },
-      { provide: WorktreeProvisioner, useValue: { provisionAndAttach: async ({ sandbox }: { sandbox: FeatureSandbox }) => ({ sandbox, hydrationSig: 'sig' }) } },
-      { provide: JobDependencyService, useValue: { onBlockerResolved: async () => {} } },
+      {
+        provide: GithubPrService,
+        useValue: {
+          getRepo: async () => null,
+          openPullRequest: async () => ({ url: '', existing: false }),
+          getPullState: async () => 'open',
+        },
+      },
+      {
+        provide: DRIVER_REPO,
+        useValue: {
+          resolve: async (): Promise<ResolvedRepo> => {
+            throw new Error('not used');
+          },
+        } as DriverRepoResolver,
+      },
+      {
+        provide: WorktreeProvisioner,
+        useValue: {
+          provisionAndAttach: async ({
+            sandbox,
+          }: {
+            sandbox: FeatureSandbox;
+          }) => ({ sandbox, hydrationSig: 'sig' }),
+        },
+      },
+      {
+        provide: JobDependencyService,
+        useValue: { onBlockerResolved: async () => {} },
+      },
       { provide: TurnRegistry, useValue: { failRunningForJob: async () => 0 } },
-      { provide: SkillUpdaterService, useValue: { reconcileOrgAsync: () => undefined } },
+      {
+        provide: SkillUpdaterService,
+        useValue: { reconcileOrgAsync: () => undefined },
+      },
       // JobLifecycleService construct-depends on the neutral driver→brain BrainGateway; deleteOrg's
       // teardown path never fires a brain wake, so an inert stub satisfies DI without being called.
       {
@@ -247,7 +389,10 @@ beforeEach(async () => {
   ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
   await purge();
-  await ds.query(`INSERT INTO users (id, email, password_hash) VALUES ($1, 'shared@x.com', 'h')`, [SHARED_USER_ID]);
+  await ds.query(
+    `INSERT INTO users (id, email, password_hash) VALUES ($1, 'shared@x.com', 'h')`,
+    [SHARED_USER_ID],
+  );
   repoId = await seedOrgWithRepo(ORG_ID, 'delete-org');
   otherRepoId = await seedOrgWithRepo(OTHER_ORG_ID, 'survivor-org');
 });
@@ -260,8 +405,18 @@ afterEach(async () => {
 describe('deleteOrg cascade (live Postgres + fakes)', () => {
   it('removes every org-scoped row across all tables, leaving zero orphans', async () => {
     // Two real jobs (each provisions a job_sandboxes row + fake worktree).
-    const t1 = await threadLifecycle.createJob({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'A' });
-    const t2 = await threadLifecycle.createJob({ orgId: ORG_ID, repoId, baseBranch: 'main', displayName: 'B' });
+    const t1 = await threadLifecycle.createJob({
+      orgId: ORG_ID,
+      repoId,
+      baseBranch: 'main',
+      displayName: 'A',
+    });
+    const t2 = await threadLifecycle.createJob({
+      orgId: ORG_ID,
+      repoId,
+      baseBranch: 'main',
+      displayName: 'B',
+    });
     await seedThreadChildren(ORG_ID, repoId, t1.jobId);
     await seedThreadChildren(ORG_ID, repoId, t2.jobId);
     await seedOrgDirect(ORG_ID, repoId, 'tok-del', 'evt-del');
@@ -287,7 +442,10 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
     // messages carry no org_id — assert by the (now-deleted) jobs' ids.
-    const msgs = await ds.query(`SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`, [[t1.jobId, t2.jobId]]);
+    const msgs = await ds.query(
+      `SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`,
+      [[t1.jobId, t2.jobId]],
+    );
     expect(Number(msgs[0].c)).toBe(0);
 
     // The shared user row SURVIVES — orgs share users; only the membership join is removed.
@@ -295,7 +453,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
   });
 
   it('is scoped to the target org — a sibling org and its data are untouched', async () => {
-    const survivor = await threadLifecycle.createJob({ orgId: OTHER_ORG_ID, repoId: otherRepoId, baseBranch: 'main', displayName: 'keep' });
+    const survivor = await threadLifecycle.createJob({
+      orgId: OTHER_ORG_ID,
+      repoId: otherRepoId,
+      baseBranch: 'main',
+      displayName: 'keep',
+    });
     await seedThreadChildren(OTHER_ORG_ID, otherRepoId, survivor.jobId);
     await seedOrgDirect(OTHER_ORG_ID, otherRepoId, 'tok-keep', 'evt-keep');
 
@@ -308,12 +471,16 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('jobs', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('threads', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('stages', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(
+      1,
+    );
     expect(await countWhere('stimuli', 'org_id', OTHER_ORG_ID)).toBe(2);
     expect(await countWhere('job_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_credentials', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_invites', 'org_id', OTHER_ORG_ID)).toBe(1);
-    expect(await countWhere('organization_members', 'org_id', OTHER_ORG_ID)).toBe(1);
+    expect(
+      await countWhere('organization_members', 'org_id', OTHER_ORG_ID),
+    ).toBe(1);
     expect(await countWhere('memory', 'org_id', OTHER_ORG_ID)).toBe(1);
   });
 });

@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Step 6 cleanup: drop the two columns the typed-thread model superseded — `review_agents` (the shared
@@ -11,16 +11,23 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * uniqueness. The DROP INDEX / CREATE UNIQUE INDEX lines are removed so the index is left untouched.
  */
 export class DropReviewAgentsAndIsMasterReview1783201608663 implements MigrationInterface {
-    name = 'DropReviewAgentsAndIsMasterReview1783201608663'
+  name = 'DropReviewAgentsAndIsMasterReview1783201608663';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "review_agents"`);
-        await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "is_master_review"`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" DROP COLUMN "review_agents"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "threads" DROP COLUMN "is_master_review"`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "threads" ADD "is_master_review" boolean NOT NULL DEFAULT false`);
-        await queryRunner.query(`ALTER TABLE "threads" ADD "review_agents" jsonb NOT NULL DEFAULT '[]'`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "threads" ADD "is_master_review" boolean NOT NULL DEFAULT false`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "threads" ADD "review_agents" jsonb NOT NULL DEFAULT '[]'`,
+    );
+  }
 }

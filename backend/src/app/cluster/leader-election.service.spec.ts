@@ -23,8 +23,10 @@ vi.mock('pg', () => {
     async connect(): Promise<void> {}
     async query(sql: string): Promise<{ rows: unknown[] }> {
       this.queries.push(sql);
-      if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: h.grant }] };
-      if (sql.includes('pg_advisory_unlock')) return { rows: [{ pg_advisory_unlock: true }] };
+      if (sql.includes('pg_try_advisory_lock'))
+        return { rows: [{ locked: h.grant }] };
+      if (sql.includes('pg_advisory_unlock'))
+        return { rows: [{ pg_advisory_unlock: true }] };
       return { rows: [] };
     }
     async end(): Promise<void> {
@@ -101,15 +103,21 @@ describe('LeaderElectionService', () => {
     expect(svc.isLeader()).toBe(false); // /health/ready → 503
     expect(demoted).toHaveBeenCalledTimes(1); // reaper + realtime stop
     const client = h.clients[0];
-    expect(client.queries.some((q) => q.includes('pg_advisory_unlock'))).toBe(false); // lock still held
+    expect(client.queries.some((q) => q.includes('pg_advisory_unlock'))).toBe(
+      false,
+    ); // lock still held
 
     await svc.releaseLeadership();
-    expect(client.queries.some((q) => q.includes('pg_advisory_unlock'))).toBe(true); // now released
+    expect(client.queries.some((q) => q.includes('pg_advisory_unlock'))).toBe(
+      true,
+    ); // now released
     await svc.onApplicationShutdown();
   });
 
   it('is the implicit leader on a *_test database (no real lock taken)', async () => {
-    const svc = new LeaderElectionService(envMock({ POSTGRES_DB: 'atlas_test' }));
+    const svc = new LeaderElectionService(
+      envMock({ POSTGRES_DB: 'atlas_test' }),
+    );
     await svc.onApplicationBootstrap();
     expect(svc.isLeader()).toBe(true);
     expect(h.clients).toHaveLength(0); // never opened a pg connection

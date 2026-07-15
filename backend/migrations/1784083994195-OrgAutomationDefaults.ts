@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from "typeorm";
+import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Add two org-level automation defaults (`default_auto_approve_mode`, `default_auto_merge`) that a new
@@ -7,16 +7,23 @@ import { MigrationInterface, QueryRunner } from "typeorm";
  * only — safe defaults, no transform, no drops.
  */
 export class OrgAutomationDefaults1784040000000 implements MigrationInterface {
-    name = 'OrgAutomationDefaults1784040000000'
+  name = 'OrgAutomationDefaults1784040000000';
 
-    public async up(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "organizations" ADD "default_auto_approve_mode" text NOT NULL DEFAULT 'off'`);
-        await queryRunner.query(`ALTER TABLE "organizations" ADD "default_auto_merge" boolean NOT NULL DEFAULT false`);
-    }
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "organizations" ADD "default_auto_approve_mode" text NOT NULL DEFAULT 'off'`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" ADD "default_auto_merge" boolean NOT NULL DEFAULT false`,
+    );
+  }
 
-    public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN "default_auto_merge"`);
-        await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN "default_auto_approve_mode"`);
-    }
-
+  public async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN "default_auto_merge"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "organizations" DROP COLUMN "default_auto_approve_mode"`,
+    );
+  }
 }

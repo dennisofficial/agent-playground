@@ -51,6 +51,8 @@ export class AddClaudeCredUniqueOrgEmail1783739501420 implements MigrationInterf
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     // Only the index is reversible; the dedupe is a one-way data cleanup (acceptable).
-    await queryRunner.query(`DROP INDEX "public"."uq_claude_cred_org_email_personal"`);
+    await queryRunner.query(
+      `DROP INDEX "public"."uq_claude_cred_org_email_personal"`,
+    );
   }
 }

@@ -62,7 +62,12 @@ export const ADVISORY: Agent[] = [
  *  design-fidelity `prototype` mockup subagent. These are the single-turn, no-conversation helpers; shared
  *  audience for `SUBAGENT_KERNEL_NOTE`. (Excludes the ship-time PR/master-review turns, which are full
  *  sessions, not Task subagents.) */
-export const ENGINE_SUBAGENTS: Agent[] = [...ADVISORY, Agent.VALIDATE, Agent.FAN_OUT, Agent.PROTOTYPE];
+export const ENGINE_SUBAGENTS: Agent[] = [
+  ...ADVISORY,
+  Agent.VALIDATE,
+  Agent.FAN_OUT,
+  Agent.PROTOTYPE,
+];
 
 /** Every code-review surface (the per-diff `review` subagent + the ship-time master review). */
 export const REVIEWERS: Agent[] = [Agent.REVIEW_AGENT, Agent.MASTER_REVIEW];

@@ -3,7 +3,11 @@ import { shipOpenPrBody } from './ship-open-pr';
 
 describe('turns / ship-open-pr', () => {
   describe('shipOpenPrBody', () => {
-    const base = { branch: 'atlas/feat', defaultBranch: 'main', title: 'A feature' };
+    const base = {
+      branch: 'atlas/feat',
+      defaultBranch: 'main',
+      title: 'A feature',
+    };
 
     it('carries the CC-style body sections + evidence bundle + git commands into the task body', () => {
       const task = shipOpenPrBody(base);
@@ -32,7 +36,9 @@ describe('turns / ship-open-pr', () => {
       });
 
       const quotedBranch = "'feat/o'\\''hara;$(touch bad)'";
-      expect(task).toContain(`git log --oneline 'HEAD..origin/release/x'\\''y'`);
+      expect(task).toContain(
+        `git log --oneline 'HEAD..origin/release/x'\\''y'`,
+      );
       expect(task).toContain(`git merge 'origin/release/x'\\''y'`);
       expect(task).toContain(`git push -u origin ${quotedBranch}`);
       expect(task).toContain(

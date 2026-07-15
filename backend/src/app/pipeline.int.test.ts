@@ -21,9 +21,21 @@
  *    driving (no ship, no PR), and NEVER calls `BrainGateway` — proving the headless driver property (2c).
  */
 import { Test, type TestingModule } from '@nestjs/testing';
-import { TypeOrmModule, getDataSourceToken, getRepositoryToken } from '@nestjs/typeorm';
+import {
+  TypeOrmModule,
+  getDataSourceToken,
+  getRepositoryToken,
+} from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { ConsoleLogger, Logger } from '@nestjs/common';
 import type { EnvService } from '@core/config/env/env.service';
 import { CustomNamingStrategy } from '../_lib/database/custom-naming.strategy';
@@ -36,9 +48,19 @@ import { BuildShipService } from './driver/build-ship.service';
 import type { DriverRepoResolver, ResolvedRepo } from './driver/repo-resolver';
 import type { PlanVisibilityService } from './decision-gate';
 import type { AutoFixStage } from './autofix';
-import type { GithubPrService, LocalGitService, FeatureSandbox, ProjectRepo } from './git';
+import type {
+  GithubPrService,
+  LocalGitService,
+  FeatureSandbox,
+  ProjectRepo,
+} from './git';
 import type { TurnRunnerService } from './runner';
-import type { BlockSink, ChatSurface, LiveTurnStore, TaskEventSink } from './surface';
+import type {
+  BlockSink,
+  ChatSurface,
+  LiveTurnStore,
+  TaskEventSink,
+} from './surface';
 import { TurnHarnessFactory } from './surface';
 import type { ToolBridgeOptions } from './engine';
 import type { CredentialResolver } from './onboarding';
@@ -112,12 +134,20 @@ function makeFakeTurn(script: ThreadScript): {
         calls.push({ mode: input.mode, stepId: input.stepId });
         const tools = input.toolBridge?.tools ?? {};
         const tid = input.stepId ?? '';
-        if (script.blockThreadId && tid === script.blockThreadId && tools['block_thread']) {
+        if (
+          script.blockThreadId &&
+          tid === script.blockThreadId &&
+          tools['block_thread']
+        ) {
           await tools['block_thread']({
             reason: 'decision',
             detail: 'Need a product decision before this lane can proceed.',
           });
-        } else if (script.rotateThreadId && tid === script.rotateThreadId && tools['record_leg_handoff']) {
+        } else if (
+          script.rotateThreadId &&
+          tid === script.rotateThreadId &&
+          tools['record_leg_handoff']
+        ) {
           await tools['record_leg_handoff']({
             handoff:
               'Scope: wired the webhook handler (WIP).\nFAILED: `pnpm build` — return type mismatch.\nNext: finish the return type on the fresh leg.',
@@ -125,11 +155,15 @@ function makeFakeTurn(script: ThreadScript): {
         } else if (tools['complete_thread']) {
           // The first `complete_thread` with an open checklist is bounced ONCE (task nudge, returns a
           // `warning` without latching) so the model can reconcile its tasks in-turn; a real turn re-asserts.
-          const first = (await tools['complete_thread']({ summary: `built ${tid}`, verification })) as
-            | { warning?: string }
-            | undefined;
+          const first = (await tools['complete_thread']({
+            summary: `built ${tid}`,
+            verification,
+          })) as { warning?: string } | undefined;
           if (first?.warning) {
-            await tools['complete_thread']({ summary: `built ${tid}`, verification });
+            await tools['complete_thread']({
+              summary: `built ${tid}`,
+              verification,
+            });
           }
         }
         return {
@@ -154,13 +188,15 @@ function makeFakeTurn(script: ThreadScript): {
 /** Canned git — no real worktree touched. */
 function makeGit(): LocalGitService {
   return {
-    createFeatureSandbox: vi.fn(async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
-      repoId: REPO.repoId,
-      branch,
-      worktreePath: `/wt/${branch}`,
-      gitUrl: REPO.gitUrl,
-      token: 'ghtok',
-    })),
+    createFeatureSandbox: vi.fn(
+      async (_repo: ProjectRepo, branch: string): Promise<FeatureSandbox> => ({
+        repoId: REPO.repoId,
+        branch,
+        worktreePath: `/wt/${branch}`,
+        gitUrl: REPO.gitUrl,
+        token: 'ghtok',
+      }),
+    ),
     headSha: vi.fn(async () => 'sha0'),
     currentBranch: vi.fn(async () => null),
     hasChanges: vi.fn(async () => false),
@@ -178,11 +214,13 @@ function makePr(): GithubPrService {
       number: 7,
       existing: false,
     })),
-    findOpenPullByHead: vi.fn(async (_token: string, args: { head: string }) => ({
-      url: 'https://github.com/acme/pipeline-int/pull/7',
-      number: 7,
-      head: args.head,
-    })),
+    findOpenPullByHead: vi.fn(
+      async (_token: string, args: { head: string }) => ({
+        url: 'https://github.com/acme/pipeline-int/pull/7',
+        number: 7,
+        head: args.head,
+      }),
+    ),
   } as unknown as GithubPrService;
 }
 
@@ -210,7 +248,10 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       ],
       providers: [
         DriverStoreService,
-        { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: JobDependencyService,
+          useValue: { blockersOf: async () => [] },
+        },
       ],
     }).compile();
     // `.compile()` silences Nest's Logger — restore a real one so the driver's own drive logs print.
@@ -246,12 +287,17 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE');
+    await ds.query(
+      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+    );
   });
 
   /** Assemble the REAL driver with the canned collaborators + the given fake turn / brain-gateway spy —
    *  wiring copied verbatim from `driver/host-retry-backstop.int.test.ts` (the constructor is unchanged). */
-  function makeDriver(turn: TurnRunnerService, brainGateway: BrainGateway): ThreadDriver {
+  function makeDriver(
+    turn: TurnRunnerService,
+    brainGateway: BrainGateway,
+  ): ThreadDriver {
     const env = {
       get: (k: string) => (k === 'DRIVER_TRANSIENT_RETRY_MS' ? '1' : undefined),
     } as unknown as EnvService;
@@ -265,15 +311,26 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       appendBlock: vi.fn(async () => undefined),
       appendBlockOnce: vi.fn(async () => undefined),
     } as unknown as BlockSink;
-    const taskSink = { applyTaskEvent: vi.fn(async () => undefined) } as unknown as TaskEventSink;
+    const taskSink = {
+      applyTaskEvent: vi.fn(async () => undefined),
+    } as unknown as TaskEventSink;
     const usage = {
       getResetAt: () => undefined,
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
-    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, taskSink, usage);
+    const turnHarness = new TurnHarnessFactory(
+      liveTurns,
+      blockSink,
+      taskSink,
+      usage,
+    );
     const judge = {
       async judge() {
-        return { runtimeSurfaceTouched: false, liveVerificationAdequate: true, reason: 'test verdict' };
+        return {
+          runtimeSurfaceTouched: false,
+          liveVerificationAdequate: true,
+          reason: 'test verdict',
+        };
       },
     } as unknown as LiveVerificationJudge;
     const staticJudge = {
@@ -289,16 +346,28 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       makeGit(),
       makePr(),
       turn,
-      { postSectionPlan: vi.fn(async () => 'vis-ts') } as unknown as PlanVisibilityService,
+      {
+        postSectionPlan: vi.fn(async () => 'vis-ts'),
+      } as unknown as PlanVisibilityService,
       {
         autofixThread: vi.fn(),
         autofixPullRequest: vi.fn(),
         runReviewLens: vi.fn(async () => []),
-        applyReviewFindings: vi.fn(async () => ({ fixReport: '', commits: [] })),
-        ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({ ...ctx, diff: 'x', changedFiles: ['f.ts'] })),
+        applyReviewFindings: vi.fn(async () => ({
+          fixReport: '',
+          commits: [],
+        })),
+        ensureContextDiff: vi.fn(async (ctx: Record<string, unknown>) => ({
+          ...ctx,
+          diff: 'x',
+          changedFiles: ['f.ts'],
+        })),
         emitReviewNotice: vi.fn(async () => undefined),
       } as unknown as AutoFixStage,
-      { name: 'agent', post: vi.fn(async () => 'ts') } as unknown as ChatSurface,
+      {
+        name: 'agent',
+        post: vi.fn(async () => 'ts'),
+      } as unknown as ChatSurface,
       env,
       {
         attach: async ({ sandbox }: { sandbox: FeatureSandbox }) => sandbox,
@@ -323,9 +392,15 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         engineAuth: async () => ({ secret: 'test-secret' }),
       } as unknown as CredentialResolver,
       usage,
-      { resolveForTurn: async () => [], resolveForSandbox: async () => [] } as never,
+      {
+        resolveForTurn: async () => [],
+        resolveForSandbox: async () => [],
+      } as never,
       { refreshForSandbox: async () => ({ rotated: false }) } as never,
-      { resolveForTurn: async () => [], resolveReviewSkillsForThread: async () => [] } as never,
+      {
+        resolveForTurn: async () => [],
+        resolveReviewSkillsForThread: async () => [],
+      } as never,
       {
         ensureContainer: async () => ({
           sandbox: {
@@ -358,7 +433,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       turnHarness,
       blockSink,
       liveTurns,
-      { listRunning: async () => [] } as unknown as import('./sandbox/turn-registry.service').TurnRegistry,
+      {
+        listRunning: async () => [],
+      } as unknown as import('./sandbox/turn-registry.service').TurnRegistry,
       brainGateway,
       judge,
       staticJudge,
@@ -371,7 +448,11 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       undefined, // jit
       {
         planningThreadId: async (jid: string) =>
-          (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+          (
+            await threads.findOneOrFail({
+              where: { job_id: jid, role: 'planning' },
+            })
+          ).id,
       } as unknown as import('./job-bootstrap').JobBootstrapService,
     );
   }
@@ -405,29 +486,81 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       }),
     );
 
-    const planning = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'planning', title: 'Plan' });
-    await store.createThreadInStage({
-      stageId: planning.id, jobId: job.id, orgId: ORG_ID, role: 'planning', brief: 'Main', ordinal: 100,
+    const planning = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'planning',
+      title: 'Plan',
     });
-    const planReview = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'plan_review' });
     await store.createThreadInStage({
-      stageId: planReview.id, jobId: job.id, orgId: ORG_ID, role: 'plan_review', brief: 'Plan review', ordinal: 200,
+      stageId: planning.id,
+      jobId: job.id,
+      orgId: ORG_ID,
+      role: 'planning',
+      brief: 'Main',
+      ordinal: 100,
+    });
+    const planReview = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'plan_review',
+    });
+    await store.createThreadInStage({
+      stageId: planReview.id,
+      jobId: job.id,
+      orgId: ORG_ID,
+      role: 'plan_review',
+      brief: 'Plan review',
+      ordinal: 200,
     });
 
-    const backend = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'build', title: 'Backend' });
+    const backend = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'build',
+      title: 'Backend',
+    });
     const backendBuilder = await store.createThreadInStage({
-      stageId: backend.id, jobId: job.id, orgId: ORG_ID, role: 'builder', brief: 'Backend — wire the handler', ordinal: 300,
+      stageId: backend.id,
+      jobId: job.id,
+      orgId: ORG_ID,
+      role: 'builder',
+      brief: 'Backend — wire the handler',
+      ordinal: 300,
     });
-    const task = await store.createTask({ stageId: backend.id, orgId: ORG_ID, title: 'Write the migration' });
+    const task = await store.createTask({
+      stageId: backend.id,
+      orgId: ORG_ID,
+      title: 'Write the migration',
+    });
 
-    const frontend = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'build', title: 'Frontend' });
+    const frontend = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'build',
+      title: 'Frontend',
+    });
     const frontendBuilder = await store.createThreadInStage({
-      stageId: frontend.id, jobId: job.id, orgId: ORG_ID, role: 'builder', brief: 'Frontend — render the view', ordinal: 400,
+      stageId: frontend.id,
+      jobId: job.id,
+      orgId: ORG_ID,
+      role: 'builder',
+      brief: 'Frontend — render the view',
+      ordinal: 400,
     });
 
-    const master = await store.createStage({ jobId: job.id, orgId: ORG_ID, kind: 'master_review' });
+    const master = await store.createStage({
+      jobId: job.id,
+      orgId: ORG_ID,
+      kind: 'master_review',
+    });
     await store.createThreadInStage({
-      stageId: master.id, jobId: job.id, orgId: ORG_ID, role: 'master_review', brief: 'Master review', ordinal: 500,
+      stageId: master.id,
+      jobId: job.id,
+      orgId: ORG_ID,
+      role: 'master_review',
+      brief: 'Master review',
+      ordinal: 500,
     });
 
     return {
@@ -474,25 +607,40 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
       // The backend builder must have a live session for a rotation to abandon (the fake engine's turn does
       // not itself persist one — the real recordActiveLeg does, but only AFTER the rotate decision).
-      await store.setThreadSessionId(seed.backendBuilderId, 'sess-backend-leg1');
+      await store.setThreadSessionId(
+        seed.backendBuilderId,
+        'sess-backend-leg1',
+      );
 
       const brainGateway = makeBrainGatewaySpy();
-      const { turn, calls } = makeFakeTurn({ rotateThreadId: seed.backendBuilderId });
+      const { turn, calls } = makeFakeTurn({
+        rotateThreadId: seed.backendBuilderId,
+      });
       const driver = makeDriver(turn, brainGateway);
 
       // ── #1: the fixture plan's stages exist in the right kind/order ────────────────────────────────
       const stagesBefore = await store.stagesForJob(seed.jobId);
       expect(stagesBefore.map((s) => s.kind)).toEqual([
-        'planning', 'plan_review', 'build', 'build', 'master_review',
+        'planning',
+        'plan_review',
+        'build',
+        'build',
+        'master_review',
       ]);
 
       await driver.dispatch(await store.loadJob(seed.jobId));
-      const finalStatus = await pollJobStatus(driver, seed.jobId, (s) => s === 'done' || s === 'failed');
+      const finalStatus = await pollJobStatus(
+        driver,
+        seed.jobId,
+        (s) => s === 'done' || s === 'failed',
+      );
       expect(finalStatus).toBe('done');
 
       // ── 2a: `record_leg_handoff` inserted a 2nd builder into the SAME stage, sharing the stage tasks ──
       const backendThreads = await store.threadsForStage(seed.backendStageId);
-      const backendBuilders = backendThreads.filter((t) => t.role === 'builder');
+      const backendBuilders = backendThreads.filter(
+        (t) => t.role === 'builder',
+      );
       expect(backendBuilders).toHaveLength(2);
       const [leg1, leg2] = backendBuilders;
       expect(leg1.id).toBe(seed.backendBuilderId);
@@ -512,17 +660,29 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         (t) => t.role === 'review_agent' || t.role === 'review_fix',
       );
       // Tree-parented off the LAST builder (leg 2), NOT leg 1 — review runs once, after the whole stage.
-      expect(backendReviewers.every((t) => t.parent_thread_id === leg2.id)).toBe(true);
+      expect(
+        backendReviewers.every((t) => t.parent_thread_id === leg2.id),
+      ).toBe(true);
       // …but stage-scoped: every review child carries the build stage's id.
-      expect(backendReviewers.every((t) => t.stage_id === seed.backendStageId)).toBe(true);
-      expect(backendReviewers.filter((t) => t.role === 'review_agent').length).toBeGreaterThanOrEqual(1);
-      expect(backendReviewers.filter((t) => t.role === 'review_fix')).toHaveLength(1);
+      expect(
+        backendReviewers.every((t) => t.stage_id === seed.backendStageId),
+      ).toBe(true);
+      expect(
+        backendReviewers.filter((t) => t.role === 'review_agent').length,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        backendReviewers.filter((t) => t.role === 'review_fix'),
+      ).toHaveLength(1);
       // Run once, not per leg: leg 1 has NO review children of its own.
-      const leg1Children = backendThreads.filter((t) => t.parent_thread_id === leg1.id);
+      const leg1Children = backendThreads.filter(
+        (t) => t.parent_thread_id === leg1.id,
+      );
       expect(leg1Children).toEqual([]);
 
       // Both build stages' builders + the master review all completed via the stubbed engine.
-      const executeStepIds = calls.filter((c) => c.mode === 'execute').map((c) => c.stepId);
+      const executeStepIds = calls
+        .filter((c) => c.mode === 'execute')
+        .map((c) => c.stepId);
       expect(executeStepIds).toContain(seed.backendBuilderId);
       expect(executeStepIds).toContain(leg2.id); // the fresh rotated leg drove its own turn
       expect(executeStepIds).toContain(seed.frontendBuilderId);
@@ -535,7 +695,10 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       expect(postBuildThread.role).toBe('post_build');
       expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
       expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: seed.jobId, threadId: postBuildThread.id }),
+        expect.objectContaining({
+          jobId: seed.jobId,
+          threadId: postBuildThread.id,
+        }),
       );
 
       // ── 2e: the recorded PR (setPrReady) spawned a ci stage-thread ───────────────────────────────────
@@ -546,10 +709,15 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
       const finalJob = await jobs.findOneOrFail({ where: { id: seed.jobId } });
       expect(finalJob.status).toBe('done');
-      expect(finalJob.pr_url).toBe('https://github.com/acme/pipeline-int/pull/7');
+      expect(finalJob.pr_url).toBe(
+        'https://github.com/acme/pipeline-int/pull/7',
+      );
 
       // eslint-disable-next-line no-console
-      console.log('OBSERVED stage kinds (after ship):', stagesAfter.map((s) => s.kind));
+      console.log(
+        'OBSERVED stage kinds (after ship):',
+        stagesAfter.map((s) => s.kind),
+      );
     },
     90_000,
   );
@@ -571,7 +739,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       const deadline = Date.now() + 30_000;
       let blockedOutcome: string | null = null;
       while (Date.now() < deadline) {
-        blockedOutcome = await store.haltOutcome(seed.backendBuilderId).catch(() => null);
+        blockedOutcome = await store
+          .haltOutcome(seed.backendBuilderId)
+          .catch(() => null);
         if (blockedOutcome) break;
         await new Promise((r) => setTimeout(r, 25));
       }
@@ -580,7 +750,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       // The blocked thread carries the paused overlay + a `blocked` terminal record.
       const term = await store.getTerminalRecord(seed.backendBuilderId);
       expect(term?.status).toBe('blocked');
-      const blockedRow = await threads.findOneOrFail({ where: { id: seed.backendBuilderId } });
+      const blockedRow = await threads.findOneOrFail({
+        where: { id: seed.backendBuilderId },
+      });
       expect(blockedRow.condition).toBe('paused');
 
       // The job driving STOPPED for it: no ship, no PR, and the downstream stages never ran.
@@ -591,7 +763,9 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       expect(stages.some((s) => s.kind === 'post_build')).toBe(false);
       expect(stages.some((s) => s.kind === 'ci')).toBe(false);
       // The frontend builder + master review never drove.
-      const frontendBuilder = await threads.findOneOrFail({ where: { id: seed.frontendBuilderId } });
+      const frontendBuilder = await threads.findOneOrFail({
+        where: { id: seed.frontendBuilderId },
+      });
       expect(frontendBuilder.status).toBe('pending');
 
       // ── 2c: the headless driver bounced NOTHING to the brain on the halt ─────────────────────────────

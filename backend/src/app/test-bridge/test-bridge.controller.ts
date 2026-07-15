@@ -118,7 +118,9 @@ export class TestBridgeController {
     const flag = this.env.get('TEST_BRIDGE');
     const enabled = nodeEnv !== ENodeEnv.PROD && flag !== 'off';
     if (!enabled) {
-      throw new NotFoundException('Atlas test-bridge disabled (set TEST_BRIDGE=on, or run outside production).');
+      throw new NotFoundException(
+        'Atlas test-bridge disabled (set TEST_BRIDGE=on, or run outside production).',
+      );
     }
   }
 
@@ -131,7 +133,10 @@ export class TestBridgeController {
   async seed(@Body() body: SeedRequest): Promise<SeedResponse> {
     this.assertEnabled();
     const { orgId, repoId, repoUrl } = body;
-    await this.orgs.upsert({ id: orgId, name: orgId, slug: orgId, status: 'active' }, ['id']);
+    await this.orgs.upsert(
+      { id: orgId, name: orgId, slug: orgId, status: 'active' },
+      ['id'],
+    );
     await this.repos.upsert(
       {
         org_id: orgId,
@@ -163,7 +168,9 @@ export class TestBridgeController {
     // Resolve the repo by its slug (the test-bridge addresses repos by their human slug).
     const repo = await this.repos.findOne({ where: { slug: channel } });
     if (!repo) {
-      throw new NotFoundException(`No seeded repo ${channel} — POST /test/seed first.`);
+      throw new NotFoundException(
+        `No seeded repo ${channel} — POST /test/seed first.`,
+      );
     }
 
     // A reply continues the supplied thread; a new conversation creates a real thread up front so its id
@@ -195,7 +202,11 @@ export class TestBridgeController {
     });
 
     const { replies, approvalCard } = await this.waitForReplies(cursor, jobId);
-    return { threadTs: jobId, replies, ...(approvalCard ? { approvalCard } : {}) };
+    return {
+      threadTs: jobId,
+      replies,
+      ...(approvalCard ? { approvalCard } : {}),
+    };
   }
 
   /**
@@ -205,8 +216,14 @@ export class TestBridgeController {
   @Post('approve')
   async approve(@Body() body: ApproveRequest): Promise<{ ok: boolean }> {
     this.assertEnabled();
-    const ok = this.approvals.resolve(body.jobId, body.verdict ?? 'approve', TESTER_ID);
-    this.logger.log(`approve job=${body.jobId} verdict=${body.verdict ?? 'approve'} ok=${ok}`);
+    const ok = this.approvals.resolve(
+      body.jobId,
+      body.verdict ?? 'approve',
+      TESTER_ID,
+    );
+    this.logger.log(
+      `approve job=${body.jobId} verdict=${body.verdict ?? 'approve'} ok=${ok}`,
+    );
     return { ok };
   }
 
@@ -235,9 +252,12 @@ export class TestBridgeController {
     const job = await this.jobs.findOne({ where: { id: body.jobId } });
     if (!job) throw new NotFoundException(`No job ${body.jobId}`);
 
-    const threadId = body.threadId ?? (await this.resolveBuilderThreadId(body.jobId));
+    const threadId =
+      body.threadId ?? (await this.resolveBuilderThreadId(body.jobId));
     if (!threadId) {
-      throw new NotFoundException(`No builder thread for job ${body.jobId} — dispatch a build first.`);
+      throw new NotFoundException(
+        `No builder thread for job ${body.jobId} — dispatch a build first.`,
+      );
     }
 
     await this.laneSeeder.seedLane(
@@ -246,7 +266,9 @@ export class TestBridgeController {
       body.priority,
     );
     const lane = laneFor('builder', threadId);
-    this.logger.log(`seed-lane job=${job.id} thread=${threadId} priority=${body.priority ?? 'default'}`);
+    this.logger.log(
+      `seed-lane job=${job.id} thread=${threadId} priority=${body.priority ?? 'default'}`,
+    );
     return { ok: true, threadId, lane };
   }
 
@@ -274,7 +296,12 @@ export class TestBridgeController {
       where: { job_id: jobId },
       order: { ordinal: 'ASC' },
     });
-    return rows.map((t) => ({ id: t.id, kind: t.role, status: t.status, ordinal: t.ordinal }));
+    return rows.map((t) => ({
+      id: t.id,
+      kind: t.role,
+      status: t.status,
+      ordinal: t.ordinal,
+    }));
   }
 
   /** `GET /test/stimuli?jobId=...` — the job's `stimuli` delivery ledger (lane/priority/body + the
@@ -399,15 +426,20 @@ export class TestBridgeController {
 }
 
 /** Parse the first approval card out of a batch of posts (its blocks carry the jobId). */
-function findApprovalCard(posts: OutboundChatMessage[]): SayApprovalCard | undefined {
+function findApprovalCard(
+  posts: OutboundChatMessage[],
+): SayApprovalCard | undefined {
   for (const post of posts) {
     const meta = parseApprovalMeta(post.blocks);
     if (meta) {
       return {
         jobId: meta.jobId,
-        ...(meta.decisionRecordId ? { decisionRecordId: meta.decisionRecordId } : {}),
+        ...(meta.decisionRecordId
+          ? { decisionRecordId: meta.decisionRecordId }
+          : {}),
         // The card's first text is "Plan proposal — <title>"; strip the prefix for a clean title.
-        title: post.text.replace(/^Plan proposal\s*—\s*/, '').trim() || post.text,
+        title:
+          post.text.replace(/^Plan proposal\s*—\s*/, '').trim() || post.text,
       };
     }
   }

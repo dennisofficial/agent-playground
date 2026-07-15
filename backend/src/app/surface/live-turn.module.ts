@@ -1,7 +1,13 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, StageEntity, SubagentEntity, TaskEntity, ThreadEntity } from '../persistence/entities';
+import {
+  MessageEntity,
+  StageEntity,
+  SubagentEntity,
+  TaskEntity,
+  ThreadEntity,
+} from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';
 import {
@@ -26,7 +32,10 @@ import {
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([MessageEntity, ThreadEntity, StageEntity, TaskEntity, SubagentEntity], DB_CONNECTION),
+    TypeOrmModule.forFeature(
+      [MessageEntity, ThreadEntity, StageEntity, TaskEntity, SubagentEntity],
+      DB_CONNECTION,
+    ),
   ],
   providers: [
     LiveTurnStore,
@@ -39,6 +48,13 @@ import {
     TurnHarnessFactory,
     ThreadInputService,
   ],
-  exports: [LiveTurnStore, TurnHarnessFactory, BLOCK_SINK, TASK_EVENT_SINK, SUBAGENT_STORE, ThreadInputService],
+  exports: [
+    LiveTurnStore,
+    TurnHarnessFactory,
+    BLOCK_SINK,
+    TASK_EVENT_SINK,
+    SUBAGENT_STORE,
+    ThreadInputService,
+  ],
 })
 export class LiveTurnModule {}

@@ -20,9 +20,19 @@ export interface WorkspaceProfileSnapshot {
   /** Secret FILE refs the hydrator renders in — `request_secret`/`request_file`. Path + label ONLY. */
   secretFiles: { path: string; label: string | null }[];
   /** MCP servers effective for this repo — `propose_mcp_servers`. Name/tier/surfaces/enabled, no secrets. */
-  mcpServers: { name: string; tier: 'org' | 'repo'; surfaces: string[]; enabled: boolean }[];
+  mcpServers: {
+    name: string;
+    tier: 'org' | 'repo';
+    surfaces: string[];
+    enabled: boolean;
+  }[];
   /** Skills effective for this repo — `propose_skill`. Name/tier/description/enabled. */
-  skills: { name: string; tier: 'org' | 'repo'; description: string; enabled: boolean }[];
+  skills: {
+    name: string;
+    tier: 'org' | 'repo';
+    description: string;
+    enabled: boolean;
+  }[];
   /** The attached house-style profile — `propose_convention_profile`. Slug + display name, or null. */
   houseStyle: { slug: string; name: string | null } | null;
 }
@@ -35,7 +45,11 @@ export interface WorkspaceProfileSnapshot {
  * MCP server whose auth USED to work and later FAILED (expired static secret / dead OAuth refresh token).
  */
 export interface ProfileGap {
-  kind: 'unfilled_mcp_secret' | 'new_stack' | 'broken_auth' | 'needs_oauth_connect';
+  kind:
+    | 'unfilled_mcp_secret'
+    | 'new_stack'
+    | 'broken_auth'
+    | 'needs_oauth_connect';
   /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
   detail: string;
 }
@@ -61,24 +75,41 @@ export class WorkspaceProfileService {
   ) {}
 
   /** Aggregate the current state across all seven dimensions (~5 cheap queries). */
-  async describe(orgId: string, repoId: string): Promise<WorkspaceProfileSnapshot> {
-    const [mounts, setupScript, previewInstructions, secretFiles, mcpRows, skillRows, houseStyleSlug, houseStyle] =
-      await Promise.all([
-        this.workspaceConfig.listMounts(orgId, repoId),
-        this.workspaceConfig.getSetupScript(orgId, repoId),
-        this.workspaceConfig.getPreviewInstructions(orgId, repoId),
-        this.secretFiles.list(orgId, repoId),
-        this.mcp.rowsForTurn(orgId, repoId),
-        this.skills.rowsForTurn(orgId, repoId),
-        this.conventions.attachedSlug(orgId, repoId),
-        this.conventions.resolveForRepo(orgId, repoId),
-      ]);
+  async describe(
+    orgId: string,
+    repoId: string,
+  ): Promise<WorkspaceProfileSnapshot> {
+    const [
+      mounts,
+      setupScript,
+      previewInstructions,
+      secretFiles,
+      mcpRows,
+      skillRows,
+      houseStyleSlug,
+      houseStyle,
+    ] = await Promise.all([
+      this.workspaceConfig.listMounts(orgId, repoId),
+      this.workspaceConfig.getSetupScript(orgId, repoId),
+      this.workspaceConfig.getPreviewInstructions(orgId, repoId),
+      this.secretFiles.list(orgId, repoId),
+      this.mcp.rowsForTurn(orgId, repoId),
+      this.skills.rowsForTurn(orgId, repoId),
+      this.conventions.attachedSlug(orgId, repoId),
+      this.conventions.resolveForRepo(orgId, repoId),
+    ]);
 
     return {
       mounts: mounts.map((m) => ({ path: m.path, mode: m.mode })),
       setupScript: { present: !!setupScript, length: setupScript?.length ?? 0 },
-      previewRecipe: { present: !!previewInstructions, length: previewInstructions?.length ?? 0 },
-      secretFiles: secretFiles.map((f) => ({ path: f.path, label: f.label ?? null })),
+      previewRecipe: {
+        present: !!previewInstructions,
+        length: previewInstructions?.length ?? 0,
+      },
+      secretFiles: secretFiles.map((f) => ({
+        path: f.path,
+        label: f.label ?? null,
+      })),
       mcpServers: mcpRows.map((r) => ({
         name: r.name,
         tier: r.scope === '*' ? 'org' : 'repo',
@@ -176,7 +207,10 @@ export class WorkspaceProfileService {
   /** Render gaps as a compact block appended after the snapshot. Returns '' when there are none. */
   renderGaps(gaps: ProfileGap[]): string {
     if (gaps.length === 0) return '';
-    return ['PROFILE GAPS (fix these so future jobs inherit a working profile):', ...gaps.map((g) => `- ${g.detail}`)].join('\n');
+    return [
+      'PROFILE GAPS (fix these so future jobs inherit a working profile):',
+      ...gaps.map((g) => `- ${g.detail}`),
+    ].join('\n');
   }
 
   /** Render a snapshot as a compact markdown block for the brain prompt. Returns '' when totally empty. */

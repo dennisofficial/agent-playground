@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import { ConventionProfileResolver } from './convention-profile.resolver';
-import type { ConventionProfileEntity, RepoEntity } from '../persistence/entities';
+import type {
+  ConventionProfileEntity,
+  RepoEntity,
+} from '../persistence/entities';
 
 /**
  * The resolver's misfire guard is the load-bearing behavior: `resolveForRepo` returns null unless the repo
@@ -23,12 +26,18 @@ function make(opts: {
     findOne: vi.fn().mockResolvedValue(opts.repo ?? null),
     update: vi.fn().mockResolvedValue({ affected: 1 }),
   } as unknown as Repository<RepoEntity>;
-  return { resolver: new ConventionProfileResolver(profiles, repos), profiles, repos };
+  return {
+    resolver: new ConventionProfileResolver(profiles, repos),
+    profiles,
+    repos,
+  };
 }
 
 describe('ConventionProfileResolver.resolveForRepo', () => {
   it('returns null when the repo has no pointer', async () => {
-    const { resolver } = make({ repo: { id: REPO, convention_profile_slug: null } });
+    const { resolver } = make({
+      repo: { id: REPO, convention_profile_slug: null },
+    });
     expect(await resolver.resolveForRepo(ORG, REPO)).toBeNull();
   });
 
@@ -38,7 +47,10 @@ describe('ConventionProfileResolver.resolveForRepo', () => {
   });
 
   it('returns null when the pointer dangles to a deleted profile', async () => {
-    const { resolver } = make({ repo: { id: REPO, convention_profile_slug: 'gone' }, profile: null });
+    const { resolver } = make({
+      repo: { id: REPO, convention_profile_slug: 'gone' },
+      profile: null,
+    });
     expect(await resolver.resolveForRepo(ORG, REPO)).toBeNull();
   });
 
@@ -55,27 +67,40 @@ describe('ConventionProfileResolver.resolveForRepo', () => {
       repo: { id: REPO, convention_profile_slug: 'p' },
       profile: { slug: 'p', name: 'House', body: 'Use shared/ contract.' },
     });
-    expect(await resolver.resolveForRepo(ORG, REPO)).toEqual({ name: 'House', body: 'Use shared/ contract.' });
+    expect(await resolver.resolveForRepo(ORG, REPO)).toEqual({
+      name: 'House',
+      body: 'Use shared/ contract.',
+    });
   });
 });
 
 describe('ConventionProfileResolver.attach', () => {
   it('rejects a slug that does not exist in the org', async () => {
     const { resolver, repos } = make({ profile: null });
-    await expect(resolver.attach(ORG, REPO, 'nope')).rejects.toThrow(/does not exist/);
+    await expect(resolver.attach(ORG, REPO, 'nope')).rejects.toThrow(
+      /does not exist/,
+    );
     expect(repos.update).not.toHaveBeenCalled();
   });
 
   it('sets the pointer for a valid slug (scoped to org + repo)', async () => {
-    const { resolver, repos } = make({ profile: { slug: 'p', name: 'P', body: 'x' } });
+    const { resolver, repos } = make({
+      profile: { slug: 'p', name: 'P', body: 'x' },
+    });
     await resolver.attach(ORG, REPO, 'p');
-    expect(repos.update).toHaveBeenCalledWith({ id: REPO, org_id: ORG }, { convention_profile_slug: 'p' });
+    expect(repos.update).toHaveBeenCalledWith(
+      { id: REPO, org_id: ORG },
+      { convention_profile_slug: 'p' },
+    );
   });
 
   it('clears the pointer with null WITHOUT a slug lookup', async () => {
     const { resolver, repos, profiles } = make({});
     await resolver.attach(ORG, REPO, null);
     expect(profiles.findOne).not.toHaveBeenCalled();
-    expect(repos.update).toHaveBeenCalledWith({ id: REPO, org_id: ORG }, { convention_profile_slug: null });
+    expect(repos.update).toHaveBeenCalledWith(
+      { id: REPO, org_id: ORG },
+      { convention_profile_slug: null },
+    );
   });
 });

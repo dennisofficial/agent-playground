@@ -12,7 +12,10 @@ import {
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import type { Request, Response } from 'express';
-import { OrganizationService, type OrgSummary } from '../org/organization.service';
+import {
+  OrganizationService,
+  type OrgSummary,
+} from '../org/organization.service';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto, type AuthSession } from './dto/auth.dto';
 import type { UserEntity } from '../persistence/entities';
@@ -51,7 +54,12 @@ export class AuthController {
     @Body() body: RegisterDto,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ user: AuthSession }> {
-    const user = await this.auth.register(body.email, body.password, body.name, res);
+    const user = await this.auth.register(
+      body.email,
+      body.password,
+      body.name,
+      res,
+    );
     return { user };
   }
 

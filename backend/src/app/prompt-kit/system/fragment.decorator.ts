@@ -52,7 +52,9 @@ export function Fragment(meta: FragmentMeta): MethodDecorator {
 }
 
 /** Read a group instance's `{ methodName → FragmentMeta }` map (empty if none). Pass the instance's prototype. */
-export function getFragmentMetaMap(proto: object): Record<string, FragmentMeta> {
+export function getFragmentMetaMap(
+  proto: object,
+): Record<string, FragmentMeta> {
   return FRAGMENT_META.get(proto) ?? {};
 }
 

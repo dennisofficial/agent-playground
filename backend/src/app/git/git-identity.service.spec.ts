@@ -31,7 +31,11 @@ describe('GitIdentityService.resolve', () => {
       email: '583231+octocat@users.noreply.github.com',
     });
 
-    const githubBlank = fakeGithub({ login: 'octocat', id: 583231, name: '   ' });
+    const githubBlank = fakeGithub({
+      login: 'octocat',
+      id: 583231,
+      name: '   ',
+    });
     const svcBlank = new GitIdentityService(githubBlank);
     expect(await svcBlank.resolve('TOK')).toEqual({
       name: 'octocat',

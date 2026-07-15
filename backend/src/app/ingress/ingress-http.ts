@@ -44,7 +44,13 @@ export function toRawNotification(req: RawBodyRequest): RawNotification {
   return {
     // The HMAC must cover the EXACT bytes Slack/GitHub sent — never a re-serialized object. `rawBody`
     // is present because the Atlas HTTP app is created with `rawBody: true`.
-    rawBody: req.rawBody ?? Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {})),
+    rawBody:
+      req.rawBody ??
+      Buffer.from(
+        typeof req.body === 'string'
+          ? req.body
+          : JSON.stringify(req.body ?? {}),
+      ),
     headers: normalizeHeaders(req.headers),
     body: req.body,
   };
@@ -89,11 +95,15 @@ export async function mapTriageToHttp(
   result: IngressResult,
 ): Promise<Record<string, unknown>> {
   if (result.outcome === 'rejected') {
-    logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
+    logger.warn(
+      `${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`,
+    );
     throw rejectionToHttp(result.reason, result.detail);
   }
   if (result.outcome === 'ignored') {
-    logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
+    logger.debug(
+      `${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`,
+    );
     return { status: 'ignored', reason: result.reason };
   }
   if (result.outcome !== 'accepted') {
@@ -130,7 +140,9 @@ export async function runWorkEvent(
   reconciler: GitStateReconciler,
   req: RawBodyRequest,
 ): Promise<Record<string, unknown>> {
-  const { triage, ci, rearm } = await adapter.handleWorkEvent(toRawNotification(req));
+  const { triage, ci, rearm } = await adapter.handleWorkEvent(
+    toRawNotification(req),
+  );
   if (ci) ciSync.schedule(ci); // fire-and-forget, debounced — never blocks the 202 or the triage path
   if (rearm) {
     await reconciler.markJobDue(rearm.orgId, rearm.repoId, {
@@ -159,14 +171,20 @@ export async function runPrWebhook(
   reconciler: GitStateReconciler,
   baseMove: BaseMoveMergeabilitySync,
 ): Promise<Record<string, unknown>> {
-  const result: IngressResult = await adapter.handlePrWebhook(toRawNotification(req));
+  const result: IngressResult = await adapter.handlePrWebhook(
+    toRawNotification(req),
+  );
 
   if (result.outcome === 'rejected') {
-    logger.warn(`${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`);
+    logger.warn(
+      `${adapter.source} rejected (${result.reason}): ${result.detail ?? ''}`,
+    );
     throw rejectionToHttp(result.reason, result.detail);
   }
   if (result.outcome === 'ignored') {
-    logger.debug(`${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`);
+    logger.debug(
+      `${adapter.source} ignored (${result.reason}): ${result.detail ?? ''}`,
+    );
     return { status: 'ignored', reason: result.reason };
   }
   if (result.outcome === 'pr-sync') {
@@ -195,9 +213,13 @@ function rejectionToHttp(
   switch (reason) {
     case 'bad-signature':
     case 'unverifiable':
-      return new UnauthorizedException(detail ?? 'signature verification failed');
+      return new UnauthorizedException(
+        detail ?? 'signature verification failed',
+      );
     case 'unroutable':
-      return new NotFoundException(detail ?? 'no project routes this notification');
+      return new NotFoundException(
+        detail ?? 'no project routes this notification',
+      );
     case 'malformed':
       return new BadRequestException(detail ?? 'malformed payload');
     case 'unsupported':

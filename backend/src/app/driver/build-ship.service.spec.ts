@@ -48,7 +48,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     return { openPrAtShip, brainGateway };
   }
 
-  function baseGit(over: Partial<Record<string, unknown>> = {}): LocalGitService {
+  function baseGit(
+    over: Partial<Record<string, unknown>> = {},
+  ): LocalGitService {
     // No `commitAll` — the host has no commit primitive anymore (Atlas owns every commit).
     return {
       scanBranchForForbidden: vi.fn(async () => []),
@@ -58,15 +60,23 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     } as unknown as LocalGitService;
   }
 
-  function baseStore(over: Partial<Record<string, unknown>> = {}): DriverStoreService {
+  function baseStore(
+    over: Partial<Record<string, unknown>> = {},
+  ): DriverStoreService {
     return {
       setPrReady: vi.fn(async () => undefined),
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
       // The ship path ensures a fresh `post_build` stage-thread and runs the open-PR turn on its session.
-      ensurePostBuildThread: vi.fn(async () => ({ stageId: 'stage1', threadId: 'pb1' })),
+      ensurePostBuildThread: vi.fn(async () => ({
+        stageId: 'stage1',
+        threadId: 'pb1',
+      })),
       // latchPr ensures the `ci` stage-thread exists once the PR is recorded (post-ship seam, d14).
-      ensureCiThread: vi.fn(async () => ({ stageId: 'stage2', threadId: 'ci1' })),
+      ensureCiThread: vi.fn(async () => ({
+        stageId: 'stage2',
+        threadId: 'ci1',
+      })),
       ...over,
     } as unknown as DriverStoreService;
   }
@@ -75,7 +85,10 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const git = baseGit();
     const openPullRequest = vi.fn();
     const findOpenPullByHead = vi.fn(async () => null); // branch not indexed yet
-    const pr = { openPullRequest, findOpenPullByHead } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest,
+      findOpenPullByHead,
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
@@ -85,7 +98,11 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       record: {
         overview: '',
         decisions: [
-          { title: 'Public', decisionClass: 'scope', ruling: 'endpoints are @Public' },
+          {
+            title: 'Public',
+            decisionClass: 'scope',
+            ruling: 'endpoints are @Public',
+          },
         ] as never,
       },
       repo,
@@ -114,7 +131,10 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       url: 'https://github.com/acme/widget/pull/7',
       number: 7,
     }));
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead,
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
@@ -127,7 +147,11 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       repo: 'widget',
       head: 'feature/abcd',
     });
-    expect(store.setPrReady).toHaveBeenCalledWith('j1', 'https://github.com/acme/widget/pull/7', 7);
+    expect(store.setPrReady).toHaveBeenCalledWith(
+      'j1',
+      'https://github.com/acme/widget/pull/7',
+      7,
+    );
     expect(store.setJobStatus).not.toHaveBeenCalled();
     expect(result).toEqual({
       opened: true,
@@ -139,12 +163,20 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
 
   it('falls back to the ship branch when the stored job title is blank', async () => {
     const git = baseGit();
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn(async () => null) } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead: vi.fn(async () => null),
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
-    await svc.ship({ job: { ...job, title: '   ' } as unknown as Job, record: null, repo, sandbox });
+    await svc.ship({
+      job: { ...job, title: '   ' } as unknown as Job,
+      record: null,
+      repo,
+      sandbox,
+    });
 
     expect(openPrAtShip).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -156,13 +188,19 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
 
   it('follows the live branch: ships/discovers against the branch HEAD is actually on', async () => {
     // The agent switched branches mid-build; `current_branch` on the job reflects it.
-    const liveJob = { ...job, currentBranch: 'atlas/renamed' } as unknown as Job;
+    const liveJob = {
+      ...job,
+      currentBranch: 'atlas/renamed',
+    } as unknown as Job;
     const git = baseGit();
     const findOpenPullByHead = vi.fn(async () => ({
       url: 'https://github.com/acme/widget/pull/9',
       number: 9,
     }));
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead,
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
@@ -181,13 +219,24 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
 
   it('no GitHub token → no PR, job left running (opened:false, reason no-token)', async () => {
     const git = baseGit();
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead: vi.fn(),
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
-    const noTokenRepo = { ...repo, token: undefined } as unknown as ResolvedRepo;
+    const noTokenRepo = {
+      ...repo,
+      token: undefined,
+    } as unknown as ResolvedRepo;
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
-    const result = await svc.ship({ job, record: null, repo: noTokenRepo, sandbox });
+    const result = await svc.ship({
+      job,
+      record: null,
+      repo: noTokenRepo,
+      sandbox,
+    });
 
     // Gated before any open-PR turn — the brain was never seeded.
     expect(openPrAtShip).not.toHaveBeenCalled();
@@ -198,18 +247,28 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
   it('HARD-BLOCKS the PR when the pre-ship leak-scan finds a committed hydrated secret', async () => {
     const scanBranchForForbidden = vi.fn(async () => ['.env.keys']);
     const git = baseGit({ scanBranchForForbidden });
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead: vi.fn(),
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const result = await svc.ship({ job, record: null, repo, sandbox });
 
-    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
+    expect(scanBranchForForbidden).toHaveBeenCalledWith(
+      '/wt/feat',
+      'origin/main',
+    );
     // Blocked before the open-PR turn — the brain was never seeded, nothing latched.
     expect(openPrAtShip).not.toHaveBeenCalled();
     expect(store.setPrReady).not.toHaveBeenCalled();
-    expect(result).toEqual({ opened: false, reason: 'leak-scan', leaked: ['.env.keys'] });
+    expect(result).toEqual({
+      opened: false,
+      reason: 'leak-scan',
+      leaked: ['.env.keys'],
+    });
   });
 
   it('FAILS CLOSED — a scan error blocks the ship rather than opening the PR', async () => {
@@ -217,7 +276,10 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       throw new Error('rev-list exploded');
     });
     const git = baseGit({ scanBranchForForbidden });
-    const pr = { openPullRequest: vi.fn(), findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
+    const pr = {
+      openPullRequest: vi.fn(),
+      findOpenPullByHead: vi.fn(),
+    } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
 
@@ -239,18 +301,27 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const ok = await svc.preShip(job, repo, sandbox);
     // The host NEVER commits — `preShip` only leak-scans the branch (over commits AND the working tree).
-    expect(scanBranchForForbidden).toHaveBeenCalledWith('/wt/feat', 'origin/main');
+    expect(scanBranchForForbidden).toHaveBeenCalledWith(
+      '/wt/feat',
+      'origin/main',
+    );
     expect(ok).toEqual({ ok: true });
   });
 
   it('preShip HARD-BLOCKS when the leak-scan finds a forbidden path (committed or uncommitted)', async () => {
-    const git = baseGit({ scanBranchForForbidden: vi.fn(async () => ['.env.local']) });
+    const git = baseGit({
+      scanBranchForForbidden: vi.fn(async () => ['.env.local']),
+    });
     const pr = { findOpenPullByHead: vi.fn() } as unknown as GithubPrService;
     const store = baseStore();
     const { brainGateway } = makeBrain();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
     const blocked = await svc.preShip(job, repo, sandbox);
-    expect(blocked).toEqual({ ok: false, reason: 'leak-scan', leaked: ['.env.local'] });
+    expect(blocked).toEqual({
+      ok: false,
+      reason: 'leak-scan',
+      leaked: ['.env.local'],
+    });
   });
 });

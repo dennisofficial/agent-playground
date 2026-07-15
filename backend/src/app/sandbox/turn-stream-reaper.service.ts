@@ -7,7 +7,10 @@ import type {
 import { SchedulerRegistry } from '@nestjs/schedule';
 import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
-import { REDIS_STREAM_PORT, type RedisStreamPort } from '../../_lib/redis/redis.port';
+import {
+  REDIS_STREAM_PORT,
+  type RedisStreamPort,
+} from '../../_lib/redis/redis.port';
 import { TurnRegistry } from './turn-registry.service';
 
 /** Match every per-turn transport key (`turn:{T}:spec|events|tools|replies`). */
@@ -143,10 +146,14 @@ export class TurnStreamReaperService
         .then(() => {
           reaped++;
         })
-        .catch((err) => this.logger.debug(`reaper del ${turnId} failed (ignored): ${err}`));
+        .catch((err) =>
+          this.logger.debug(`reaper del ${turnId} failed (ignored): ${err}`),
+        );
     }
     if (reaped > 0) {
-      this.logger.warn(`reaped ${reaped} orphaned turn stream set(s) — no active_turns row`);
+      this.logger.warn(
+        `reaped ${reaped} orphaned turn stream set(s) — no active_turns row`,
+      );
     }
   }
 }

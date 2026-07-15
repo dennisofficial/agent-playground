@@ -189,7 +189,11 @@ export class WorkerGroup {
 
   /** The repo's saved preview recipe, injected READ-ONLY so the orchestrator can follow/adapt it instead of
    *  re-discovering the preview setup. Only when a recipe exists. */
-  @Fragment({ usedBy: [Agent.WORKER], order: 425, condition: (c) => !!c.previewInstructions?.trim() })
+  @Fragment({
+    usedBy: [Agent.WORKER],
+    order: 425,
+    condition: (c) => !!c.previewInstructions?.trim(),
+  })
   previewRecipe(ctx: PromptCtx): string {
     return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }

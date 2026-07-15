@@ -44,9 +44,14 @@ export class ConventionProfilesController {
 
   /** List every profile (with body) for the org — the console editor's data. */
   @Get()
-  async list(
-    @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ profiles: { slug: string; name: string; body: string; detectHint: string | null }[] }> {
+  async list(@CurrentOrg() org: CurrentOrgCtx): Promise<{
+    profiles: {
+      slug: string;
+      name: string;
+      body: string;
+      detectHint: string | null;
+    }[];
+  }> {
     return { profiles: await this.conventions.allProfiles(org.id) };
   }
 
@@ -68,7 +73,9 @@ export class ConventionProfilesController {
     @Body() body: SetConventionProfileDto,
   ): Promise<{ ok: boolean }> {
     if (!SLUG_RE.test(slug)) {
-      throw new BadRequestException('slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)');
+      throw new BadRequestException(
+        'slug must be lowercase letters/digits/_/- (e.g. nestjs-next-shared)',
+      );
     }
     await this.conventions.upsertProfile(org.id, slug, {
       name: body.name,

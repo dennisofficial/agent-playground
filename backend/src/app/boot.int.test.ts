@@ -82,7 +82,6 @@ describe('AppModule HTTP boot (full DI assembly, live Postgres)', () => {
       const routes = collectRoutePaths(app);
       expect(routes).toContain('/webhooks/github/events');
       expect(routes).toContain('/webhooks/github/state');
-
     } finally {
       await app?.close();
       if (prevSurface === undefined) delete process.env.SURFACE;

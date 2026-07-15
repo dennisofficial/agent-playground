@@ -1,4 +1,11 @@
-import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
@@ -85,7 +92,11 @@ export class StimulusEntity extends TimestampedEntity {
    * (via `->> 'priority'`) rather than a new column, since it's opportunistic metadata, not a FK/index target.
    */
   @Column({ type: 'jsonb', nullable: true })
-  reply_route!: { surfaceId: string; jobRef: string; priority?: 'now' | 'queue' | 'later' } | null;
+  reply_route!: {
+    surfaceId: string;
+    jobRef: string;
+    priority?: 'now' | 'queue' | 'later';
+  } | null;
 
   // ─── event-only ─────────────────────────────────────────────────────────
   /** The gateway that produced an event, e.g. 'github' | 'webhook'; null for chat. */

@@ -13,13 +13,25 @@ const fakeEnv = { get: () => undefined } as unknown as EnvService;
 // spec). vi.mock is hoisted above these imports by vitest, so `SkillResolver` sees the stub.
 vi.mock('./system-skill-registry', () => ({
   buildSystemSkills: () => [
-    { name: 'shared', description: 'managed description', surfaces: ['build', 'brain'] },
-    { name: 'managed-only', description: 'only on the system tier', surfaces: ['build'] },
+    {
+      name: 'shared',
+      description: 'managed description',
+      surfaces: ['build', 'brain'],
+    },
+    {
+      name: 'managed-only',
+      description: 'only on the system tier',
+      surfaces: ['build'],
+    },
     {
       name: 'git-shared',
       description: 'git-sourced managed description',
       surfaces: ['build'],
-      git: { url: 'https://github.com/example/repo', subpath: 'skills/git-shared', ref: 'main' },
+      git: {
+        url: 'https://github.com/example/repo',
+        subpath: 'skills/git-shared',
+        ref: 'main',
+      },
     },
   ],
 }));
@@ -33,13 +45,18 @@ class FakeRepo {
   }
   async save(row: WorkspaceSkillEntity): Promise<WorkspaceSkillEntity> {
     const i = this.rows.findIndex(
-      (r) => r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
+      (r) =>
+        r.org_id === row.org_id && r.scope === row.scope && r.name === row.name,
     );
     if (i >= 0) this.rows[i] = row;
     else this.rows.push(row);
     return row;
   }
-  async findOne({ where }: { where: Partial<WorkspaceSkillEntity> }): Promise<WorkspaceSkillEntity | null> {
+  async findOne({
+    where,
+  }: {
+    where: Partial<WorkspaceSkillEntity>;
+  }): Promise<WorkspaceSkillEntity | null> {
     return this.rows.find((r) => this.match(r, where)) ?? null;
   }
   async find({
@@ -51,14 +68,21 @@ class FakeRepo {
     return this.rows.filter((r) => conds.some((c) => this.match(r, c)));
   }
   async delete(): Promise<void> {}
-  private match(r: WorkspaceSkillEntity, where: Partial<WorkspaceSkillEntity>): boolean {
-    return Object.entries(where).every(([k, v]) => (r as unknown as Record<string, unknown>)[k] === v);
+  private match(
+    r: WorkspaceSkillEntity,
+    where: Partial<WorkspaceSkillEntity>,
+  ): boolean {
+    return Object.entries(where).every(
+      ([k, v]) => (r as unknown as Record<string, unknown>)[k] === v,
+    );
   }
 }
 
 function make(): { resolver: SkillResolver; store: WorkspaceSkillStore } {
   const repo = new FakeRepo();
-  const store = new WorkspaceSkillStore(repo as unknown as Repository<WorkspaceSkillEntity>);
+  const store = new WorkspaceSkillStore(
+    repo as unknown as Repository<WorkspaceSkillEntity>,
+  );
   return { resolver: new SkillResolver(store, fakeEnv), store };
 }
 
@@ -105,7 +129,9 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
 
   it('a repo-scoped skill of the same name ALSO overrides the managed one', async () => {
     const { resolver, store } = make();
-    await store.write('org1', 'repo-1', 'shared', { description: 'repo override' });
+    await store.write('org1', 'repo-1', 'shared', {
+      description: 'repo override',
+    });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     expect(out.find((s) => s.name === 'shared')).toEqual({
       name: 'shared',
@@ -141,7 +167,9 @@ describe('SkillResolver.resolveForTurn — managed (system) tier precedence', ()
 
   it('an org-scoped skill overrides a git-sourced managed one by name, same as a static one', async () => {
     const { resolver, store } = make();
-    await store.write('org1', '*', 'git-shared', { description: 'org override' });
+    await store.write('org1', '*', 'git-shared', {
+      description: 'org override',
+    });
     const out = await resolver.resolveForTurn('org1', 'repo-1', 'build');
     const gitShared = out.find((s) => s.name === 'git-shared');
     expect(gitShared).toEqual({

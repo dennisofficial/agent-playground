@@ -9,7 +9,11 @@
  */
 
 /** A pending secret confirmation the brain re-delivers to the sandbox. */
-function secret(jobId: string, name: string, opts?: { fail?: boolean }): string {
+function secret(
+  jobId: string,
+  name: string,
+  opts?: { fail?: boolean },
+): string {
   const base = `seed:secret:${jobId}:${name}`;
   return opts?.fail ? `${base}:fail` : base;
 }

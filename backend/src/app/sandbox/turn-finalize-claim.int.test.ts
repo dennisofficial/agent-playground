@@ -67,7 +67,9 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
       .useValue(new FakeThreadTitler())
       .compile();
 
-    app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+    app = moduleRef.createNestApplication<NestExpressApplication>({
+      rawBody: true,
+    });
     app.enableShutdownHooks();
     await app.init();
 
@@ -82,7 +84,12 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     );
     const [repo] = await dataSource.query(
       `INSERT INTO repos (org_id, slug, name, git_url) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [TEAM_ID, `claim-repo-${randomUUID().slice(0, 8)}`, 'claim-repo', 'https://example.invalid/r.git'],
+      [
+        TEAM_ID,
+        `claim-repo-${randomUUID().slice(0, 8)}`,
+        'claim-repo',
+        'https://example.invalid/r.git',
+      ],
     );
     const [job] = await dataSource.query(
       `INSERT INTO jobs (org_id, repo_id, origin) VALUES ($1,$2,$3) RETURNING id`,
@@ -98,10 +105,14 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
 
   afterAll(async () => {
     if (dataSource) {
-      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM active_turns WHERE org_id = $1`, [
+        TEAM_ID,
+      ]);
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
       await dataSource.query(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]);
-      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]);
+      await dataSource.query(`DELETE FROM organizations WHERE id = $1`, [
+        TEAM_ID,
+      ]);
     }
     await app?.close();
     if (prevSurface === undefined) delete process.env.SURFACE;
@@ -130,8 +141,20 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     const text = `winner-only-${randomUUID()}`;
     const textEvent: EngineEvent = { kind: 'text', text };
 
-    const winner = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main' });
-    const loser = harness.create({ jobId: jobA, orgId: TEAM_ID, threadId: threadA, channel: 'repo-guard', lane: 'main' });
+    const winner = harness.create({
+      jobId: jobA,
+      orgId: TEAM_ID,
+      threadId: threadA,
+      channel: 'repo-guard',
+      lane: 'main',
+    });
+    const loser = harness.create({
+      jobId: jobA,
+      orgId: TEAM_ID,
+      threadId: threadA,
+      channel: 'repo-guard',
+      lane: 'main',
+    });
     winner.onEvent(textEvent);
     loser.onEvent(textEvent);
 

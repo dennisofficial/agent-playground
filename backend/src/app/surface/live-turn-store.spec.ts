@@ -21,16 +21,38 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hel' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'a' } });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: { path: 'a' },
+    });
 
     const snap = store.snapshot(REPO, THREAD)!;
     expect(snap.active).toBe(true);
-    expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
-    expect(snap.blocks[1]).toMatchObject({ kind: 'text', text: 'Hello', done: false });
-    expect(snap.blocks[2]).toMatchObject({ kind: 'tool', name: 'Read', done: false });
+    expect(snap.blocks.map((b) => b.kind)).toEqual([
+      'thinking',
+      'text',
+      'tool',
+    ]);
+    expect(snap.blocks[1]).toMatchObject({
+      kind: 'text',
+      text: 'Hello',
+      done: false,
+    });
+    expect(snap.blocks[2]).toMatchObject({
+      kind: 'tool',
+      name: 'Read',
+      done: false,
+    });
 
     // tool_result pairs with the open tool_use by id.
-    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu1', result: 'contents', isError: false });
+    store.push(REPO, THREAD, {
+      kind: 'tool_result',
+      id: 'tu1',
+      result: 'contents',
+      isError: false,
+    });
     expect(store.snapshot(REPO, THREAD)!.blocks[2]).toMatchObject({
       kind: 'tool',
       result: 'contents',
@@ -56,13 +78,30 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     // Authoritative blocks close each open block by KIND — not by "last" (which pushed dupes before the fix).
     store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
     store.push(REPO, THREAD, { kind: 'text', text: 'Hello' });
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: {},
+    });
 
     const snap = store.snapshot(REPO, THREAD)!;
     // Exactly one thinking + one text block (pre-fix this was thinking,text,thinking,text — the dup).
-    expect(snap.blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
-    expect(snap.blocks[0]).toMatchObject({ kind: 'thinking', text: 'reasoning', done: true });
-    expect(snap.blocks[1]).toMatchObject({ kind: 'text', text: 'Hello', done: true });
+    expect(snap.blocks.map((b) => b.kind)).toEqual([
+      'thinking',
+      'text',
+      'tool',
+    ]);
+    expect(snap.blocks[0]).toMatchObject({
+      kind: 'thinking',
+      text: 'reasoning',
+      done: true,
+    });
+    expect(snap.blocks[1]).toMatchObject({
+      kind: 'text',
+      text: 'Hello',
+      done: true,
+    });
   });
 });
 
@@ -81,7 +120,9 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     // The lane is gone, and — crucially — no turn_end frame was fanned (which would race the client's
     // async reconcileNow().then(endLiveTurn)). Contrast with `end`, which DOES emit turn_end.
     expect(store.snapshot(REPO, THREAD)).toBeNull();
-    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(false);
+    expect(
+      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end'),
+    ).toBe(false);
   });
 
   it('end DOES fan a turn_end (the contrast that makes reset’s silence meaningful)', () => {
@@ -93,7 +134,9 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     store.end(REPO, THREAD);
     sub.unsubscribe();
 
-    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end')).toBe(true);
+    expect(
+      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_end'),
+    ).toBe(true);
   });
 
   it('strand → reset → replay rebuilds ONE open text block + a fresh turn_start (baseline strands two)', () => {
@@ -122,11 +165,15 @@ describe('LiveTurnStore — silent reset (orphaned-turn reattach rebuilds a CLEA
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'fresh' });
     sub.unsubscribe();
 
-    const openText = store.snapshot(REPO, THREAD)!.blocks.filter((b) => b.kind === 'text' && !b.done);
+    const openText = store
+      .snapshot(REPO, THREAD)!
+      .blocks.filter((b) => b.kind === 'text' && !b.done);
     expect(openText).toHaveLength(1);
     expect(openText[0].text).toBe('fresh');
     // A fresh turn_start fired after the reset (isNew) so a connected client rebuilds cleanly.
-    expect(frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start')).toBe(true);
+    expect(
+      frames.some((f) => (f.event as { kind?: string }).kind === 'turn_start'),
+    ).toBe(true);
   });
 });
 
@@ -145,28 +192,61 @@ describe('LiveTurnStore — background subagent settlement (bg_task marks the an
       input: { subagent_type: 'general-purpose', run_in_background: true },
     });
     // The immediate launch ack: the anchor flips done=true but is NOT finished.
-    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
+    store.push(REPO, THREAD, {
+      kind: 'tool_result',
+      id: 'tu-bg',
+      result: 'launched',
+      isError: false,
+    });
     // The subagent streams its own work under the anchor's id.
-    store.push(REPO, THREAD, { kind: 'text_delta', text: 'working', parentToolUseId: 'tu-bg' });
+    store.push(REPO, THREAD, {
+      kind: 'text_delta',
+      text: 'working',
+      parentToolUseId: 'tu-bg',
+    });
 
-    let anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    let anchor = store
+      .snapshot(REPO, THREAD)!
+      .blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor).toMatchObject({ done: true });
     expect(anchor.bgSettled).toBeUndefined(); // still running despite done=true
 
     // Real completion arrives as a bg_task settlement carrying the spawning Task id.
-    store.push(REPO, THREAD, { kind: 'bg_task', status: 'completed', parentToolUseId: 'tu-bg' });
+    store.push(REPO, THREAD, {
+      kind: 'bg_task',
+      status: 'completed',
+      parentToolUseId: 'tu-bg',
+    });
 
-    anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    anchor = store
+      .snapshot(REPO, THREAD)!
+      .blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor.bgSettled).toBe(true);
   });
 
   it('a bg_task "started" (no settlement) leaves the anchor unsettled', () => {
     const store = new LiveTurnStore();
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu-bg', name: 'Task', input: { run_in_background: true } });
-    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu-bg', result: 'launched', isError: false });
-    store.push(REPO, THREAD, { kind: 'bg_task', status: 'started', parentToolUseId: 'tu-bg' });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu-bg',
+      name: 'Task',
+      input: { run_in_background: true },
+    });
+    store.push(REPO, THREAD, {
+      kind: 'tool_result',
+      id: 'tu-bg',
+      result: 'launched',
+      isError: false,
+    });
+    store.push(REPO, THREAD, {
+      kind: 'bg_task',
+      status: 'started',
+      parentToolUseId: 'tu-bg',
+    });
 
-    const anchor = store.snapshot(REPO, THREAD)!.blocks.find((b) => b.toolId === 'tu-bg')!;
+    const anchor = store
+      .snapshot(REPO, THREAD)!
+      .blocks.find((b) => b.toolId === 'tu-bg')!;
     expect(anchor.bgSettled).toBeUndefined();
   });
 });
@@ -178,12 +258,19 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     const sub = store.stream$.subscribe((f) => frames.push(f));
 
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hi' });
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: {},
+    });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'bye' });
     sub.unsubscribe();
 
     // turn_start creates no block and carries no stamp; every block-creating delta frame does.
-    const delta = frames.filter((f) => (f.event as { kind: string }).kind !== 'turn_start');
+    const delta = frames.filter(
+      (f) => (f.event as { kind: string }).kind !== 'turn_start',
+    );
     expect(delta).toHaveLength(3);
     for (const f of delta) {
       expect(typeof f.emittedAt).toBe('number');
@@ -191,10 +278,13 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
       expect((f.event as { emittedAt?: number }).emittedAt).toBe(f.emittedAt);
     }
     const stamps = delta.map((f) => f.emittedAt as number);
-    for (let i = 1; i < stamps.length; i++) expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
+    for (let i = 1; i < stamps.length; i++)
+      expect(stamps[i]).toBeGreaterThan(stamps[i - 1]);
 
     // The turn_start frame creates no block, so it carries no stamp.
-    const start = frames.find((f) => (f.event as { kind: string }).kind === 'turn_start');
+    const start = frames.find(
+      (f) => (f.event as { kind: string }).kind === 'turn_start',
+    );
     expect(start!.emittedAt).toBeUndefined();
   });
 
@@ -202,12 +292,18 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     const store = new LiveTurnStore();
     store.push(REPO, THREAD, { kind: 'thinking', text: 'reasoning' });
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'Hello' });
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: {},
+    });
 
     const blocks = store.snapshot(REPO, THREAD)!.blocks;
     expect(blocks.map((b) => b.kind)).toEqual(['thinking', 'text', 'tool']);
     for (const b of blocks) expect(typeof b.emittedAt).toBe('number');
-    for (let i = 1; i < blocks.length; i++) expect(blocks[i].emittedAt).toBeGreaterThan(blocks[i - 1].emittedAt);
+    for (let i = 1; i < blocks.length; i++)
+      expect(blocks[i].emittedAt).toBeGreaterThan(blocks[i - 1].emittedAt);
   });
 
   it('appending text to an OPEN block keeps its emittedAt as the block start time (the ordering key)', () => {
@@ -231,23 +327,43 @@ describe('LiveTurnStore — server emittedAt stamps (lets the web time-merge liv
     const startStamp = store.snapshot(REPO, THREAD)!.blocks[0].emittedAt;
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'lo' });
     store.push(REPO, THREAD, { kind: 'text', text: 'Hello' });
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: {},
+    });
     const toolStamp = store.snapshot(REPO, THREAD)!.blocks[1].emittedAt;
-    store.push(REPO, THREAD, { kind: 'tool_result', id: 'tu1', result: 'contents', isError: false });
+    store.push(REPO, THREAD, {
+      kind: 'tool_result',
+      id: 'tu1',
+      result: 'contents',
+      isError: false,
+    });
     sub.unsubscribe();
 
-    const append = frames.find((f) => (f.event as { text?: string }).text === 'lo')!;
+    const append = frames.find(
+      (f) => (f.event as { text?: string }).text === 'lo',
+    )!;
     expect(append.emittedAt).toBe(startStamp);
     expect((append.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
 
-    const finalize = frames.find((f) => (f.event as { kind?: string }).kind === 'text')!;
+    const finalize = frames.find(
+      (f) => (f.event as { kind?: string }).kind === 'text',
+    )!;
     expect(finalize.emittedAt).toBe(startStamp);
-    expect((finalize.event as { emittedAt?: number }).emittedAt).toBe(startStamp);
+    expect((finalize.event as { emittedAt?: number }).emittedAt).toBe(
+      startStamp,
+    );
     expect(store.snapshot(REPO, THREAD)!.blocks[0].emittedAt).toBe(startStamp);
 
-    const toolResult = frames.find((f) => (f.event as { kind?: string }).kind === 'tool_result')!;
+    const toolResult = frames.find(
+      (f) => (f.event as { kind?: string }).kind === 'tool_result',
+    )!;
     expect(toolResult.emittedAt).toBe(toolStamp);
-    expect((toolResult.event as { emittedAt?: number }).emittedAt).toBe(toolStamp);
+    expect((toolResult.event as { emittedAt?: number }).emittedAt).toBe(
+      toolStamp,
+    );
   });
 });
 
@@ -255,7 +371,11 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
   function makeController(liveTurns: LiveTurnStore) {
     const surface = {
       outbound$: new Subject<WebOutboundMessage>(),
-      threadMeta$: new Subject<{ channel: string; jobId: string; title: string }>(),
+      threadMeta$: new Subject<{
+        channel: string;
+        jobId: string;
+        title: string;
+      }>(),
     };
     return new WebSurfaceController(
       surface as never, // surface (outbound$ + threadMeta$)
@@ -270,9 +390,18 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // threadTitle
       { stream$: new Subject() } as never, // usageBus
       { available: false } as never, // realtime
-      { isLeader: () => true, getState: () => 'leader', isDraining: () => false } as never, // election
+      {
+        isLeader: () => true,
+        getState: () => 'leader',
+        isDraining: () => false,
+      } as never, // election
       { dispatch: async () => undefined } as never, // dispatcher (JOB_DISPATCHER)
-      { write: async () => undefined, list: async () => [], listForRepo: async () => [], read: async () => null } as never, // secrets (WorkspaceSecretFileStore)
+      {
+        write: async () => undefined,
+        list: async () => [],
+        listForRepo: async () => [],
+        read: async () => null,
+      } as never, // secrets (WorkspaceSecretFileStore)
       {} as never, // store (BrainStoreService)
       { stopTurn: async () => false } as never, // brain (AgentSessionManager)
       {} as never, // mcpStore (McpServerStore)
@@ -299,14 +428,21 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
-      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+      .subscribe((m: MessageEvent) =>
+        frames.push(m.data as Record<string, unknown>),
+      );
 
     // 1) The FIRST thing it receives is a snapshot reflecting everything streamed so far ("Hello").
     const snapshotFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'snapshot',
     );
     expect(snapshotFrame).toBeDefined();
-    const snapEvent = snapshotFrame!.event as { blocks: Array<{ kind: string; text?: string }>; active: boolean };
+    const snapEvent = snapshotFrame!.event as {
+      blocks: Array<{ kind: string; text?: string }>;
+      active: boolean;
+    };
     expect(snapEvent.active).toBe(true);
     expect(snapEvent.blocks[0]).toMatchObject({ kind: 'text', text: 'Hello' });
     const snapSeq = snapshotFrame!.seq as number;
@@ -314,7 +450,9 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // 2) Subsequent deltas arrive live, with seq AFTER the snapshot (so the client appends, not dupes).
     store.push(REPO, THREAD, { kind: 'text_delta', text: ' world' });
     const deltaFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'text_delta',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'text_delta',
     );
     expect(deltaFrame).toBeDefined();
     expect((deltaFrame!.event as { text: string }).text).toBe(' world');
@@ -323,7 +461,9 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     // 3) turn_end is forwarded so the client reconciles against the durable log.
     store.end(REPO, THREAD);
     const endFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'turn_end',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'turn_end',
     );
     expect(endFrame).toBeDefined();
 
@@ -340,19 +480,32 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     const frames: Array<Record<string, unknown>> = [];
     const sub = controller
       .events('org-1', REPO)
-      .subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+      .subscribe((m: MessageEvent) =>
+        frames.push(m.data as Record<string, unknown>),
+      );
 
     // 1) The snapshot the controller fans (blocks: s.blocks) carries emittedAt on each block.
     const snapshotFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'snapshot',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'snapshot',
     );
-    const snapBlocks = (snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }).blocks;
+    const snapBlocks = (
+      snapshotFrame!.event as { blocks: Array<{ emittedAt?: number }> }
+    ).blocks;
     expect(typeof snapBlocks[0].emittedAt).toBe('number');
 
     // 2) A subsequent live delta (event: f.event, forwarded verbatim) carries emittedAt inside event.
-    store.push(REPO, THREAD, { kind: 'tool_use', id: 'tu1', name: 'Read', input: {} });
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Read',
+      input: {},
+    });
     const deltaFrame = frames.find(
-      (f) => f.type === 'stream' && (f.event as { kind?: string }).kind === 'tool_use',
+      (f) =>
+        f.type === 'stream' &&
+        (f.event as { kind?: string }).kind === 'tool_use',
     );
     const deltaEvent = deltaFrame!.event as { emittedAt?: number };
     expect(typeof deltaEvent.emittedAt).toBe('number');
@@ -369,7 +522,11 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
     store.end(REPO, THREAD);
 
     const frames: Array<Record<string, unknown>> = [];
-    const sub = controller.events('org-1', REPO).subscribe((m: MessageEvent) => frames.push(m.data as Record<string, unknown>));
+    const sub = controller
+      .events('org-1', REPO)
+      .subscribe((m: MessageEvent) =>
+        frames.push(m.data as Record<string, unknown>),
+      );
     expect(frames.filter((f) => f.type === 'stream')).toHaveLength(0);
     sub.unsubscribe();
   });
@@ -392,7 +549,10 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
     expect(phase.lane).toBe(PHASE);
     expect(main.blocks).toHaveLength(1);
     expect(main.blocks[0]).toMatchObject({ kind: 'text', text: 'brain !' });
-    expect(phase.blocks[0]).toMatchObject({ kind: 'text', text: 'replythinking' });
+    expect(phase.blocks[0]).toMatchObject({
+      kind: 'text',
+      text: 'replythinking',
+    });
 
     // Ending one lane leaves the other intact.
     store.end(REPO, THREAD, PHASE);
@@ -414,10 +574,20 @@ describe('LiveTurnStore — lanes (a brain turn and a build turn coexist on one 
     const store = new LiveTurnStore();
     // Brain text, then a subagent's forwarded text (different author) — must NOT merge into one block.
     store.push(REPO, THREAD, { kind: 'text_delta', text: 'main' });
-    store.push(REPO, THREAD, { kind: 'text_delta', text: 'sub', parentToolUseId: 'tu-9' });
+    store.push(REPO, THREAD, {
+      kind: 'text_delta',
+      text: 'sub',
+      parentToolUseId: 'tu-9',
+    });
     const snap = store.snapshot(REPO, THREAD)!;
     expect(snap.blocks).toHaveLength(2);
-    expect(snap.blocks[0]).toMatchObject({ text: 'main', parentToolUseId: undefined });
-    expect(snap.blocks[1]).toMatchObject({ text: 'sub', parentToolUseId: 'tu-9' });
+    expect(snap.blocks[0]).toMatchObject({
+      text: 'main',
+      parentToolUseId: undefined,
+    });
+    expect(snap.blocks[1]).toMatchObject({
+      text: 'sub',
+      parentToolUseId: 'tu-9',
+    });
   });
 });

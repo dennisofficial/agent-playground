@@ -76,7 +76,11 @@ const FOREIGN_REPO = '88888888-8888-4888-8888-88888888880f';
 const FOREIGN_JOB = '88888888-8888-4888-8888-888888888810'; // lives in a different org
 const BAD_BODY_JOB = '88888888-8888-4888-8888-888888888811';
 
-const PLAN_GATE_DRS = [PLAN_GATE_DR, PLAN_GATE_NO_RESOLVE_DR, PLAN_GATE_BOTH_DR];
+const PLAN_GATE_DRS = [
+  PLAN_GATE_DR,
+  PLAN_GATE_NO_RESOLVE_DR,
+  PLAN_GATE_BOTH_DR,
+];
 
 const OWNER_EMAIL = 'auto-approve-it-owner@example.test';
 const PASSWORD = 'auto-approve-it-pw-12345';
@@ -87,25 +91,40 @@ let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 let ownerId: string;
 
-async function register(email: string): Promise<{ cookie: string; id: string }> {
+async function register(
+  email: string,
+): Promise<{ cookie: string; id: string }> {
   const res = await request(server)
     .post('/auth/register')
     .send({ email, password: PASSWORD, name: email.split('@')[0] });
   expect(res.status).toBe(200);
-  const setCookie = (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
+  const setCookie =
+    (res.headers['set-cookie'] as unknown as string[] | undefined) ?? [];
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   return { cookie, id: res.body.user.id as string };
 }
 
 async function purge(): Promise<void> {
-  await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [PLAN_GATE_DRS]).catch(() => undefined);
-  await ds.query(`DELETE FROM jobs WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]]).catch(() => undefined);
-  await ds.query(`DELETE FROM repos WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]]).catch(() => undefined);
   await ds
-    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
+    .query(`DELETE FROM decision_records WHERE id = ANY($1)`, [PLAN_GATE_DRS])
     .catch(() => undefined);
-  await ds.query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG, FOREIGN_ORG]]).catch(() => undefined);
-  await ds.query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL]).catch(() => undefined);
+  await ds
+    .query(`DELETE FROM jobs WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM repos WHERE org_id = ANY($1)`, [[ORG, FOREIGN_ORG]])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organization_members WHERE org_id = ANY($1)`, [
+      [ORG, FOREIGN_ORG],
+    ])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM organizations WHERE id = ANY($1)`, [[ORG, FOREIGN_ORG]])
+    .catch(() => undefined);
+  await ds
+    .query(`DELETE FROM users WHERE email = $1`, [OWNER_EMAIL])
+    .catch(() => undefined);
 }
 
 function autoApproveUrl(jobId: string, orgId = ORG, repoId = REPO): string {
@@ -116,7 +135,9 @@ function pipelineUrl(jobId: string): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/pipeline`;
 }
 
-async function loadJobRow(jobId: string): Promise<Record<string, unknown> | undefined> {
+async function loadJobRow(
+  jobId: string,
+): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
     `SELECT status, activity, build_path, auto_approve_mode, auto_approve_by, ship_review_approved_at
        FROM jobs WHERE id = $1`,
@@ -127,7 +148,11 @@ async function loadJobRow(jobId: string): Promise<Record<string, unknown> | unde
 
 /** Seed a job parked at `awaiting_approval` + its `decision_records` row (mirrors
  *  `web-surface.approval-dispatch.int.test.ts`'s `seedAwaitingApproval`). */
-async function seedAwaitingApproval(jobId: string, drId: string, title: string): Promise<void> {
+async function seedAwaitingApproval(
+  jobId: string,
+  drId: string,
+  title: string,
+): Promise<void> {
   // `jobs.decision_record_id` and `decision_records.job_id` are mutually-referential FKs, so seed the job
   // WITHOUT the pointer first, insert the record (its `job_id` now resolves), then stamp the pointer.
   await ds.query(
@@ -140,7 +165,10 @@ async function seedAwaitingApproval(jobId: string, drId: string, title: string):
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,
     [drId, ORG, REPO, jobId, ['Backend']],
   );
-  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [drId, jobId]);
+  await ds.query(`UPDATE jobs SET decision_record_id = $1 WHERE id = $2`, [
+    drId,
+    jobId,
+  ]);
 }
 
 /** Poll the DB until `predicate` is true or the timeout elapses — several of these resolutions are
@@ -187,7 +215,9 @@ beforeAll(async () => {
     .useValue({})
     .compile();
 
-  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
+  app = moduleRef.createNestApplication<NestExpressApplication>({
+    rawBody: true,
+  });
   app.use(cookieParser());
   app.enableShutdownHooks();
   await app.init();
@@ -204,10 +234,10 @@ beforeAll(async () => {
     `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'Auto Approve Org', 'auto-approve-org', 'active')`,
     [ORG],
   );
-  await ds.query(`INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, [
-    ORG,
-    owner.id,
-  ]);
+  await ds.query(
+    `INSERT INTO organization_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`,
+    [ORG, owner.id],
+  );
   await ds.query(
     `INSERT INTO repos (id, org_id, slug, name, git_url, default_branch, access_ok)
      VALUES ($1, $2, 'auto-approve-repo', 'Auto Approve Repo', 'https://github.com/atlas-it/auto-approve.git', 'main', true)`,
@@ -254,8 +284,16 @@ beforeAll(async () => {
 
   // CASE 3 — the plan-approval gate, each with its own durable decision_records row.
   await seedAwaitingApproval(PLAN_GATE_JOB, PLAN_GATE_DR, 'Plan gate resolves');
-  await seedAwaitingApproval(PLAN_GATE_NO_RESOLVE_JOB, PLAN_GATE_NO_RESOLVE_DR, 'Plan gate no-resolve');
-  await seedAwaitingApproval(PLAN_GATE_BOTH_JOB, PLAN_GATE_BOTH_DR, 'Plan gate resolves (both)');
+  await seedAwaitingApproval(
+    PLAN_GATE_NO_RESOLVE_JOB,
+    PLAN_GATE_NO_RESOLVE_DR,
+    'Plan gate no-resolve',
+  );
+  await seedAwaitingApproval(
+    PLAN_GATE_BOTH_JOB,
+    PLAN_GATE_BOTH_DR,
+    'Plan gate resolves (both)',
+  );
 
   // CASE 4 — set then disable: a plain running job (no gate to auto-resolve, keeps the disable
   // assertion isolated from the gate-resolution cases).
@@ -292,21 +330,35 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     expect(res.body).toEqual({ ok: true, autoApproveMode: 'both' });
 
     const row = await loadJobRow(OPEN_JOB);
-    expect(row).toMatchObject({ auto_approve_mode: 'both', auto_approve_by: ownerId });
+    expect(row).toMatchObject({
+      auto_approve_mode: 'both',
+      auto_approve_by: ownerId,
+    });
     // eslint-disable-next-line no-console -- evidence: OBSERVED DB row after set.
-    console.log('OBSERVED CASE 1 DB row (open job, mode=both):', JSON.stringify(row));
+    console.log(
+      'OBSERVED CASE 1 DB row (open job, mode=both):',
+      JSON.stringify(row),
+    );
 
     // Sub-case: pipeline DTO for a still-`open` job rides the `no_job` shape and must surface autoApproveMode.
-    const pipe = await request(server).get(pipelineUrl(OPEN_JOB)).set('Cookie', ownerCookie);
+    const pipe = await request(server)
+      .get(pipelineUrl(OPEN_JOB))
+      .set('Cookie', ownerCookie);
     expect(pipe.status).toBe(200);
-    expect(pipe.body).toMatchObject({ status: 'no_job', autoApproveMode: 'both' });
+    expect(pipe.body).toMatchObject({
+      status: 'no_job',
+      autoApproveMode: 'both',
+    });
     // eslint-disable-next-line no-console
     console.log('OBSERVED CASE 1 GET pipeline:', JSON.stringify(pipe.body));
   });
 
   it("CASE 2a — mode='ship' while awaiting_ship_review: 200, then the job auto-advances OUT of the gate, and the (now non-no_job) pipeline shape still carries autoApproveMode", async () => {
     const before = await loadJobRow(SHIP_GATE_JOB);
-    expect(before).toMatchObject({ status: 'awaiting_ship_review', ship_review_approved_at: null });
+    expect(before).toMatchObject({
+      status: 'awaiting_ship_review',
+      ship_review_approved_at: null,
+    });
 
     const res = await request(server)
       .patch(autoApproveUrl(SHIP_GATE_JOB))
@@ -326,7 +378,11 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
 
     const after = await loadJobRow(SHIP_GATE_JOB);
     // THE key "auto-advances with no click" proof: the gate resolved on its own.
-    expect(after).toMatchObject({ status: 'running', auto_approve_mode: 'ship', auto_approve_by: ownerId });
+    expect(after).toMatchObject({
+      status: 'running',
+      auto_approve_mode: 'ship',
+      auto_approve_by: ownerId,
+    });
     expect(after?.ship_review_approved_at).not.toBeNull();
     // eslint-disable-next-line no-console
     console.log(
@@ -334,12 +390,17 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
     );
 
     // The job is no longer `open`/`no_job` — the NORMAL pipeline shape must also surface autoApproveMode.
-    const pipe = await request(server).get(pipelineUrl(SHIP_GATE_JOB)).set('Cookie', ownerCookie);
+    const pipe = await request(server)
+      .get(pipelineUrl(SHIP_GATE_JOB))
+      .set('Cookie', ownerCookie);
     expect(pipe.status).toBe(200);
     expect(pipe.body).not.toMatchObject({ status: 'no_job' });
     expect(pipe.body).toMatchObject({ autoApproveMode: 'ship' });
     // eslint-disable-next-line no-console
-    console.log('OBSERVED CASE 2a GET pipeline (normal shape):', JSON.stringify(pipe.body));
+    console.log(
+      'OBSERVED CASE 2a GET pipeline (normal shape):',
+      JSON.stringify(pipe.body),
+    );
   });
 
   it("CASE 2b — mode='plan' while awaiting_ship_review: does NOT resolve the ship gate", async () => {
@@ -353,7 +414,10 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
 
     await settle();
     const after = await loadJobRow(SHIP_GATE_NO_RESOLVE_JOB);
-    expect(after).toMatchObject({ status: 'awaiting_ship_review', ship_review_approved_at: null });
+    expect(after).toMatchObject({
+      status: 'awaiting_ship_review',
+      ship_review_approved_at: null,
+    });
   });
 
   it("CASE 2c — mode='both' while awaiting_ship_review: resolves the ship gate", async () => {
@@ -405,7 +469,10 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
       build_path: 'plan',
     });
     // eslint-disable-next-line no-console
-    console.log('OBSERVED CASE 3a DB row after auto-resolve:', JSON.stringify(after));
+    console.log(
+      'OBSERVED CASE 3a DB row after auto-resolve:',
+      JSON.stringify(after),
+    );
   });
 
   it("CASE 3b — mode='ship' while awaiting_approval: does NOT resolve the plan gate", async () => {
@@ -447,7 +514,10 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
       .send({ mode: 'both' });
     expect(enableRes.status).toBe(200);
     const afterEnable = await loadJobRow(DISABLE_JOB);
-    expect(afterEnable).toMatchObject({ auto_approve_mode: 'both', auto_approve_by: ownerId });
+    expect(afterEnable).toMatchObject({
+      auto_approve_mode: 'both',
+      auto_approve_by: ownerId,
+    });
 
     const disableRes = await request(server)
       .patch(autoApproveUrl(DISABLE_JOB))
@@ -459,9 +529,15 @@ describe('auto-approve — PATCH .../jobs/:jobId/auto-approve (live Postgres, re
 
     const afterDisable = await loadJobRow(DISABLE_JOB);
     // `auto_approve_by` is left set — the endpoint omits the key entirely for `mode:'off'`.
-    expect(afterDisable).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: ownerId });
+    expect(afterDisable).toMatchObject({
+      auto_approve_mode: 'off',
+      auto_approve_by: ownerId,
+    });
     // eslint-disable-next-line no-console
-    console.log('OBSERVED CASE 4 DB row after set(both) then set(off):', JSON.stringify(afterDisable));
+    console.log(
+      'OBSERVED CASE 4 DB row after set(both) then set(off):',
+      JSON.stringify(afterDisable),
+    );
   });
 
   it('CASE 5a — foreign-org job: 404 (caller IS a member of the URL org, but the jobId belongs to a different org)', async () => {
@@ -497,32 +573,58 @@ describe('auto-approve — POST .../jobs armed at creation (live Postgres, real 
   const createUrl = `/web/orgs/${ORG}/repos/${REPO}/jobs`;
 
   async function createJob(body: Record<string, unknown>): Promise<string> {
-    const res = await request(server).post(createUrl).set('Cookie', ownerCookie).send(body);
+    const res = await request(server)
+      .post(createUrl)
+      .set('Cookie', ownerCookie)
+      .send(body);
     expect(res.status).toBe(201);
     expect(typeof res.body.jobId).toBe('string');
     return res.body.jobId as string;
   }
 
   it("CREATE 1 — autoApproveMode='plan' at creation: the new job row is stamped auto_approve_mode='plan' + auto_approve_by=<caller>", async () => {
-    const jobId = await createJob({ firstMessage: 'Add a health endpoint.', autoApproveMode: 'plan' });
+    const jobId = await createJob({
+      firstMessage: 'Add a health endpoint.',
+      autoApproveMode: 'plan',
+    });
     const row = await loadJobRow(jobId);
-    expect(row).toMatchObject({ auto_approve_mode: 'plan', auto_approve_by: ownerId });
+    expect(row).toMatchObject({
+      auto_approve_mode: 'plan',
+      auto_approve_by: ownerId,
+    });
     // eslint-disable-next-line no-console -- evidence: OBSERVED DB row of the newly-created job.
-    console.log('OBSERVED CREATE 1 DB row (created with mode=plan):', JSON.stringify(row));
+    console.log(
+      'OBSERVED CREATE 1 DB row (created with mode=plan):',
+      JSON.stringify(row),
+    );
   });
 
   it("CREATE 2 — no autoApproveMode: the new job falls back to the org default (unset here, so 'off') with no auto_approve_by", async () => {
-    const jobId = await createJob({ firstMessage: 'Plain job, no auto-approve.' });
+    const jobId = await createJob({
+      firstMessage: 'Plain job, no auto-approve.',
+    });
     const row = await loadJobRow(jobId);
-    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+    expect(row).toMatchObject({
+      auto_approve_mode: 'off',
+      auto_approve_by: null,
+    });
     // eslint-disable-next-line no-console
-    console.log('OBSERVED CREATE 2 DB row (created with no mode):', JSON.stringify(row));
+    console.log(
+      'OBSERVED CREATE 2 DB row (created with no mode):',
+      JSON.stringify(row),
+    );
   });
 
   it("CREATE 3 — autoApproveMode='off' explicitly: same as omitting it (off, no auto_approve_by)", async () => {
-    const jobId = await createJob({ firstMessage: 'Explicit off.', autoApproveMode: 'off' });
+    const jobId = await createJob({
+      firstMessage: 'Explicit off.',
+      autoApproveMode: 'off',
+    });
     const row = await loadJobRow(jobId);
-    expect(row).toMatchObject({ auto_approve_mode: 'off', auto_approve_by: null });
+    expect(row).toMatchObject({
+      auto_approve_mode: 'off',
+      auto_approve_by: null,
+    });
   });
 
   it('CREATE 4 — a present-but-invalid autoApproveMode is REJECTED (400), never silently falling back to the org default', async () => {

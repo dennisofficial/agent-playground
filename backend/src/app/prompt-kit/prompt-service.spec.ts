@@ -2,8 +2,16 @@ import { Test } from '@nestjs/testing';
 import { describe, expect, it } from 'vitest';
 import { PromptService } from './prompt.service';
 import { Agent } from './system/agent';
-import { Fragment, FragmentGroup, getFragmentMetaMap } from './system/fragment.decorator';
-import { loadFragmentsFromInstances, renderAgentPrompt, validateFragments } from './system/assemble';
+import {
+  Fragment,
+  FragmentGroup,
+  getFragmentMetaMap,
+} from './system/fragment.decorator';
+import {
+  loadFragmentsFromInstances,
+  renderAgentPrompt,
+  validateFragments,
+} from './system/assemble';
 
 /**
  * The fragment-library assembler, exercised on the brain (`ATLAS_MAIN`). The brain is now assembled ONLY from
@@ -13,7 +21,12 @@ import { loadFragmentsFromInstances, renderAgentPrompt, validateFragments } from
  */
 describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   it('assembles a substantial brain prompt that opens with the identity for each job kind', () => {
-    for (const jobKind of ['feature', 'bugfix', 'event', 'onboarding'] as const) {
+    for (const jobKind of [
+      'feature',
+      'bugfix',
+      'event',
+      'onboarding',
+    ] as const) {
       const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
       expect(out.length, `jobKind=${jobKind}`).toBeGreaterThan(10_000);
       expect(out.startsWith('You are Atlas'), `jobKind=${jobKind}`).toBe(true);
@@ -22,7 +35,9 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
 
   it('carries the job-kind block + behavioral tail, in that order, for a feature job', () => {
     const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const identityAt = out.indexOf('You are Atlas, an autonomous software-engineering orchestrator');
+    const identityAt = out.indexOf(
+      'You are Atlas, an autonomous software-engineering orchestrator',
+    );
     const jobKindAt = out.indexOf('JOB KIND — FEATURE');
     const baselineAt = out.indexOf('BASELINE THE CURRENT BEHAVIOR');
     const liveValAt = out.indexOf('PROVE IT BY RUNNING IT');
@@ -36,20 +51,26 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
 
   it('onboarding vs feature select DIFFERENT fragments (jobKind is a condition, not an agent)', () => {
     const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'onboarding',
+    });
 
     // feature-only (normal-brain) content
     expect(feature).toContain('WHY YOU GRILL');
     expect(feature).toContain('FULL PATH — review_plan then propose_plan');
     expect(feature).toContain('JOB KIND — FEATURE');
     expect(onboarding).not.toContain('WHY YOU GRILL');
-    expect(onboarding).not.toContain('FULL PATH — review_plan then propose_plan');
+    expect(onboarding).not.toContain(
+      'FULL PATH — review_plan then propose_plan',
+    );
     expect(onboarding).not.toContain('JOB KIND —');
 
     // onboarding-only content
     expect(onboarding).toContain('onboarding a newly-connected repository');
     expect(onboarding).toContain('FLEET INVENTORY');
-    expect(onboarding).toContain('FINISH — only when the FULL fleet inventory is GREEN');
+    expect(onboarding).toContain(
+      'FINISH — only when the FULL fleet inventory is GREEN',
+    );
     // the live-accessibility procedure is onboarding-only (build brains carry PUBLIC PREVIEW URLS instead)
     expect(onboarding).toContain('LIVE-SERVICE ACCESSIBILITY');
     expect(feature).not.toContain('onboarding a newly-connected repository');
@@ -57,12 +78,15 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     expect(feature).not.toContain('LIVE-SERVICE ACCESSIBILITY');
 
     // the behavioral tail is shared (no jobKind condition)
-    for (const out of [feature, onboarding]) expect(out).toContain('SPIKE BEFORE YOU COMMIT');
+    for (const out of [feature, onboarding])
+      expect(out).toContain('SPIKE BEFORE YOU COMMIT');
   });
 
   it('carries the UI-preview + context-link guidance on build brains, not onboarding', () => {
     const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'onboarding',
+    });
     expect(feature).toContain('UI PREVIEW BY DEFAULT');
     expect(feature).toContain('REFERENCE /context FILES AS CLICKABLE LINKS');
     expect(onboarding).not.toContain('UI PREVIEW BY DEFAULT'); // isBuildBrain gate
@@ -95,10 +119,14 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
 
 describe('PromptService — DI facade boots + validates', () => {
   it('resolves + primes without throwing (the real fragment set is valid)', async () => {
-    const moduleRef = await Test.createTestingModule({ providers: [PromptService] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      providers: [PromptService],
+    }).compile();
     await moduleRef.init(); // fires onModuleInit → primeFragments (boot-loud validation)
     const prompts = moduleRef.get(PromptService);
-    expect(prompts.generate(Agent.ATLAS_MAIN, { jobKind: 'feature' }).length).toBeGreaterThan(10_000);
+    expect(
+      prompts.generate(Agent.ATLAS_MAIN, { jobKind: 'feature' }).length,
+    ).toBeGreaterThan(10_000);
   });
 });
 
@@ -118,9 +146,11 @@ describe('validateFragments — fails loudly', () => {
     }
     const instance = new ClashingGroup();
     // sanity: the @Fragment methods were recorded on the prototype
-    expect(Object.keys(getFragmentMetaMap(Object.getPrototypeOf(instance)))).toEqual(['a', 'b']);
-    expect(() => validateFragments(loadFragmentsFromInstances([instance]))).toThrow(
-      /duplicate order 5000 for agent/,
-    );
+    expect(
+      Object.keys(getFragmentMetaMap(Object.getPrototypeOf(instance))),
+    ).toEqual(['a', 'b']);
+    expect(() =>
+      validateFragments(loadFragmentsFromInstances([instance])),
+    ).toThrow(/duplicate order 5000 for agent/);
   });
 });

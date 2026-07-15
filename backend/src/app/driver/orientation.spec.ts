@@ -18,24 +18,32 @@ describe('extractOrientation', () => {
   it('returns null when the block is absent, empty, or the input is undefined', () => {
     expect(extractOrientation(undefined)).toBeNull();
     expect(extractOrientation('a plan with no orientation block')).toBeNull();
-    expect(extractOrientation('<repo-orientation>   </repo-orientation>')).toBeNull();
+    expect(
+      extractOrientation('<repo-orientation>   </repo-orientation>'),
+    ).toBeNull();
   });
 
   it('finds the block even when fenced in a code block and is case-insensitive', () => {
-    const fenced = '```\n<REPO-ORIENTATION>layout: single package</REPO-ORIENTATION>\n```';
+    const fenced =
+      '```\n<REPO-ORIENTATION>layout: single package</REPO-ORIENTATION>\n```';
     expect(extractOrientation(fenced)).toBe('layout: single package');
   });
 
   it('caps a runaway body to keep the build task bounded', () => {
     const huge = 'x'.repeat(5000);
-    const out = extractOrientation(`<repo-orientation>${huge}</repo-orientation>`)!;
+    const out = extractOrientation(
+      `<repo-orientation>${huge}</repo-orientation>`,
+    )!;
     expect(out.length).toBeLessThanOrEqual(1501); // 1500 + the ellipsis
     expect(out.endsWith('…')).toBe(true);
   });
 });
 
 describe('renderBatchTask orientation injection', () => {
-  const record = { overview: 'Build X', decisions: [] } as unknown as DecisionRecord;
+  const record = {
+    overview: 'Build X',
+    decisions: [],
+  } as unknown as DecisionRecord;
   const steps: Step[] = [
     {
       id: 's1',
@@ -73,7 +81,10 @@ describe('renderBatchTask orientation injection', () => {
   it('includes the orientation cheat-sheet, framed as subordinate to code + specs, when set', () => {
     const task = renderBatchTask(
       record,
-      { ...baseThread, orientation: 'Monorepo — verify: pnpm -C backend test:unit' },
+      {
+        ...baseThread,
+        orientation: 'Monorepo — verify: pnpm -C backend test:unit',
+      },
       steps,
     );
     expect(task).toContain('Repo orientation');

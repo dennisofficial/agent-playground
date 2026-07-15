@@ -29,14 +29,33 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  isInitializeRequest,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  createServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { CONTAINER_MCP_HUB_CONFIG, CONTAINER_MCP_HUB_DIR, MCP_HUB_PORT } from '../container-paths';
+import {
+  CONTAINER_MCP_HUB_CONFIG,
+  CONTAINER_MCP_HUB_DIR,
+  MCP_HUB_PORT,
+} from '../container-paths';
 import type { ResolvedMcpServer } from '../../engine/engine.types';
 import {
   type McpHubConfig,
@@ -56,15 +75,23 @@ function log(msg: string): void {
   console.log(`[mcp-hub] ${msg}`);
 }
 
-const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const delay = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 function errorResult(text: string): CallToolResult {
   return { content: [{ type: 'text', text }], isError: true };
 }
 
 /** setpriv (util-linux) location, or undefined if not installed — used to drop stdio children to host uid. */
-export function findSetpriv(exists: (p: string) => boolean = existsSync): string | undefined {
-  for (const p of ['/usr/bin/setpriv', '/bin/setpriv', '/sbin/setpriv', '/usr/sbin/setpriv']) {
+export function findSetpriv(
+  exists: (p: string) => boolean = existsSync,
+): string | undefined {
+  for (const p of [
+    '/usr/bin/setpriv',
+    '/bin/setpriv',
+    '/sbin/setpriv',
+    '/usr/sbin/setpriv',
+  ]) {
     if (exists(p)) return p;
   }
   return undefined;
@@ -81,14 +108,28 @@ export function buildStdioSpawn(
   spec: ResolvedMcpServer,
   spawn: McpHubSpawnIdentity,
   setprivPath: string | undefined,
-): { command: string; args: string[]; env: Record<string, string>; cwd: string } {
+): {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string;
+} {
   const env = { ...spawn.baseEnv, HOME: spawn.home, ...(spec.env ?? {}) };
   const origArgs = spec.args ?? [];
   const command = spec.command ?? '';
   if (setprivPath && spawn.uid !== undefined && spawn.gid !== undefined) {
     return {
       command: setprivPath,
-      args: ['--reuid', String(spawn.uid), '--regid', String(spawn.gid), '--clear-groups', '--', command, ...origArgs],
+      args: [
+        '--reuid',
+        String(spawn.uid),
+        '--regid',
+        String(spawn.gid),
+        '--clear-groups',
+        '--',
+        command,
+        ...origArgs,
+      ],
       env,
       cwd: spawn.cwd,
     };
@@ -162,13 +203,24 @@ class UpstreamConnection {
   private makeTransport(): Transport {
     if (this.spec.transport === 'stdio') {
       const s = buildStdioSpawn(this.spec, this.spawn, this.setprivPath);
-      return new StdioClientTransport({ command: s.command, args: s.args, env: s.env, cwd: s.cwd, stderr: 'inherit' });
+      return new StdioClientTransport({
+        command: s.command,
+        args: s.args,
+        env: s.env,
+        cwd: s.cwd,
+        stderr: 'inherit',
+      });
     }
     const url = new URL(this.spec.url as string);
-    const requestInit = this.spec.headers ? { headers: this.spec.headers } : undefined;
+    const requestInit = this.spec.headers
+      ? { headers: this.spec.headers }
+      : undefined;
     return this.spec.transport === 'sse'
       ? new SSEClientTransport(url, requestInit ? { requestInit } : undefined)
-      : new StreamableHTTPClientTransport(url, requestInit ? { requestInit } : undefined);
+      : new StreamableHTTPClientTransport(
+          url,
+          requestInit ? { requestInit } : undefined,
+        );
   }
 
   private async connectLoop(): Promise<void> {
@@ -189,22 +241,35 @@ class UpstreamConnection {
         this.tools = listed.tools ?? [];
         this.connected = true;
         this.backoff = RECONNECT_MIN_MS;
-        log(`upstream ${this.spec.name} connected (${this.tools.length} tools, transport=${this.spec.transport})`);
+        log(
+          `upstream ${this.spec.name} connected (${this.tools.length} tools, transport=${this.spec.transport})`,
+        );
         return; // stay connected; onclose re-enters connectLoop
       } catch (err) {
-        log(`upstream ${this.spec.name} connect failed: ${String(err)} — retry in ${this.backoff}ms`);
+        log(
+          `upstream ${this.spec.name} connect failed: ${String(err)} — retry in ${this.backoff}ms`,
+        );
         await delay(this.backoff);
         this.backoff = Math.min(this.backoff * 2, RECONNECT_MAX_MS);
       }
     }
   }
 
-  async callTool(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
-    if (!this.client || !this.connected) return errorResult(`MCP server "${this.spec.name}" is not connected`);
+  async callTool(
+    name: string,
+    args: Record<string, unknown> | undefined,
+  ): Promise<CallToolResult> {
+    if (!this.client || !this.connected)
+      return errorResult(`MCP server "${this.spec.name}" is not connected`);
     try {
-      return (await this.client.callTool({ name, arguments: args ?? {} })) as CallToolResult;
+      return (await this.client.callTool({
+        name,
+        arguments: args ?? {},
+      })) as CallToolResult;
     } catch (err) {
-      return errorResult(`MCP server "${this.spec.name}" call failed: ${String(err)}`);
+      return errorResult(
+        `MCP server "${this.spec.name}" call failed: ${String(err)}`,
+      );
     }
   }
 
@@ -226,7 +291,11 @@ export class Hub {
   private readonly servers = new Map<string, UpstreamConnection>();
   /** Live Streamable-HTTP sessions keyed by the MCP session id the transport assigns on `initialize`. */
   private readonly sessions = new Map<string, StreamableHTTPServerTransport>();
-  private spawn: McpHubSpawnIdentity = { cwd: '/workspace', home: '/home/atlas', baseEnv: {} };
+  private spawn: McpHubSpawnIdentity = {
+    cwd: '/workspace',
+    home: '/home/atlas',
+    baseEnv: {},
+  };
   private readonly setprivPath = findSetpriv();
   private http: HttpServer | undefined;
 
@@ -238,7 +307,10 @@ export class Hub {
   registerTestUpstream(conn: {
     spec: Pick<ResolvedMcpServer, 'name'>;
     tools: Tool[];
-    callTool: (name: string, args: Record<string, unknown> | undefined) => Promise<CallToolResult>;
+    callTool: (
+      name: string,
+      args: Record<string, unknown> | undefined,
+    ) => Promise<CallToolResult>;
   }): void {
     this.servers.set(conn.spec.name, conn as UpstreamConnection);
   }
@@ -278,7 +350,10 @@ export class Hub {
 
   /** Route one HTTP request to its server's Streamable-HTTP transport (create the session on `initialize`,
    *  reuse it by `mcp-session-id` after). */
-  private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
     const name = decodeRoute(req.url);
     const conn = name ? this.servers.get(name) : undefined;
     if (!conn) {
@@ -307,20 +382,30 @@ export class Hub {
       // A new connection MUST open with `initialize` (POST). Anything else without a live session → 400.
       if (req.method !== 'POST' || !isInitializeRequest(body)) {
         res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'no valid mcp session (send initialize first)' }));
+        res.end(
+          JSON.stringify({
+            error: 'no valid mcp session (send initialize first)',
+          }),
+        );
         return;
       }
-      const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id: string) => {
-          this.sessions.set(id, transport);
-        },
-      });
+      const transport: StreamableHTTPServerTransport =
+        new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id: string) => {
+            this.sessions.set(id, transport);
+          },
+        });
       transport.onclose = () => {
         if (transport.sessionId) this.sessions.delete(transport.sessionId);
       };
-      const server = new Server({ name: `atlas-mcp-hub/${conn.spec.name}`, version: '1.0.0' }, { capabilities: { tools: {} } });
-      server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: conn.tools }));
+      const server = new Server(
+        { name: `atlas-mcp-hub/${conn.spec.name}`, version: '1.0.0' },
+        { capabilities: { tools: {} } },
+      );
+      server.setRequestHandler(ListToolsRequestSchema, () => ({
+        tools: conn.tools,
+      }));
       server.setRequestHandler(CallToolRequestSchema, async (r) => {
         const result = await conn.callTool(r.params.name, r.params.arguments);
         return maybeDumpLargeResult(

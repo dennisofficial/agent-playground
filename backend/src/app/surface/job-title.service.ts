@@ -29,7 +29,10 @@ export class JobTitleService {
   ) {}
 
   /** Generate a title from a message, or `undefined` when no Anthropic key resolves / the model errors. */
-  async generate(input: { message: string; orgId?: string }): Promise<string | undefined> {
+  async generate(input: {
+    message: string;
+    orgId?: string;
+  }): Promise<string | undefined> {
     const chain = await this.chainFor(input.orgId);
     if (!chain) return undefined;
     const raw = await chain.invoke({ message: input.message.slice(0, 4000) });
@@ -51,7 +54,11 @@ export class JobTitleService {
       const title = await this.generate({ message, orgId });
       if (!title || title === placeholder) return;
       const res = await this.jobs.update(
-        { id: jobId, org_id: orgId, title: placeholder === null ? IsNull() : placeholder },
+        {
+          id: jobId,
+          org_id: orgId,
+          title: placeholder === null ? IsNull() : placeholder,
+        },
         { title },
       );
       if (res.affected) this.surface.emitThreadMeta(repoId, jobId, title);

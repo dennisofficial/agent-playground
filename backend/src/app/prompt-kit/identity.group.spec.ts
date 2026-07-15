@@ -40,10 +40,15 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   });
 
   it('emits NOTHING (byte-identical) when no job ctx is supplied', () => {
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'feature',
+    });
     expect(baseline).not.toContain(HEADER);
     // The no-misfire invariant: absent `job` ⇒ exactly today's prompt.
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature', job: null });
+    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      jobKind: 'feature',
+      job: null,
+    });
     expect(out).toBe(baseline);
   });
 

@@ -157,7 +157,9 @@ export type RunningServiceInfo = {
  * of restarting them. The driver probes the live supervisor state and maps it to {@link RunningServiceInfo};
  * this renders the prose. Returns '' for an empty list so the caller can omit the block entirely.
  */
-export function renderRunningServicesNote(services: RunningServiceInfo[]): string {
+export function renderRunningServicesNote(
+  services: RunningServiceInfo[],
+): string {
   if (services.length === 0) return '';
   const lines = services.map((s) => {
     const port = s.port != null ? ` — port ${s.port}` : '';
@@ -509,7 +511,9 @@ const PREVIEW_RECIPE_NONE = '(no preview recipe saved yet)';
 
 /** The fenced-markdown rendering of a recipe body, shared by the operator seed and the build-lane view. */
 export function fencedRecipe(recipeBody: string): string {
-  return '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```';
+  return (
+    '```md\n' + recipeBody + (recipeBody.endsWith('\n') ? '' : '\n') + '```'
+  );
 }
 
 /** The one rule that keeps the recipe reusable: it is REPO-scoped, job-agnostic memory, not a log of this
@@ -517,7 +521,7 @@ export function fencedRecipe(recipeBody: string): string {
 const PREVIEW_RECIPE_JOB_AGNOSTIC_NOTE =
   'The recipe is REPO-scoped, JOB-AGNOSTIC memory that ANY future job on this repo reuses — NOT a log of ' +
   'this run: capture only the repeatable stand-up procedure, and STRIP everything specific to the change ' +
-  'you just previewed (this run\'s deep-link target, feature-only fixtures/seed scripts, and any ' +
+  "you just previewed (this run's deep-link target, feature-only fixtures/seed scripts, and any " +
   '"verified for <feature>" note). For the deep-link, record HOW to build one into the area under test, ' +
   'not the literal URL for this feature.';
 
@@ -548,7 +552,9 @@ export function composePreviewPrepSeed(instructions: string | null): string {
 
 /** Build-lane READ-ONLY view of the saved recipe (the brain owns writes). '' when none, so a gating
  *  fragment drops entirely. Same fenced formatting as the operator seed. */
-export function renderBuildLanePreviewRecipe(instructions: string | null): string {
+export function renderBuildLanePreviewRecipe(
+  instructions: string | null,
+): string {
   const recipe = instructions?.trim() ? instructions : null;
   if (!recipe) return '';
   return [
@@ -619,11 +625,11 @@ export const RUNNABLE_WORKSPACE_NOTE =
  */
 export const EVIDENCE_ARTIFACTS_NOTE =
   'CAPTURE EVIDENCE ARTIFACTS — once you have live-validated (see VALIDATE BY RUNNING), leave the PROOF on ' +
-  'disk under `$ATLAS_EVIDENCE_DIR` (this turn\'s own evidence folder; falls back to `/context/evidence` if ' +
+  "disk under `$ATLAS_EVIDENCE_DIR` (this turn's own evidence folder; falls back to `/context/evidence` if " +
   'the var is unset) so the operator can see the work actually runs. Evidence (logs, screenshots, ' +
   '`RESULTS.md`) goes under `$ATLAS_EVIDENCE_DIR`; `/context/artifacts/` is reserved for human-facing ' +
   'DELIVERABLES (HTML mockups, reports), not evidence. Treat `/context/specs` and `/context/generated` as ' +
-  "READ-ONLY grounding, and put all CODE under `/workspace`; everything you drop under `$ATLAS_EVIDENCE_DIR` " +
+  'READ-ONLY grounding, and put all CODE under `/workspace`; everything you drop under `$ATLAS_EVIDENCE_DIR` ' +
   "surfaces in the operator's EVIDENCE panel — logs and markdown render as text, screenshots (`.png`) render " +
   'inline. Capture, per scenario you validated: the command/test OUTPUT as a `*.log`, a `.png` SCREENSHOT of a ' +
   'REAL running app you drove in a browser (Playwright `page.screenshot`), any report the run produced, and a ' +

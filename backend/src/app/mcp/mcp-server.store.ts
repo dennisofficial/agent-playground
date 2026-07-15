@@ -12,7 +12,11 @@ import {
   type StoredMcpConfig,
   type StoredMcpOAuthConfig,
 } from '../persistence/entities';
-import { decryptSecret, encryptSecret, loadSecretsKey } from '../onboarding/secret-cipher';
+import {
+  decryptSecret,
+  encryptSecret,
+  loadSecretsKey,
+} from '../onboarding/secret-cipher';
 
 /** The org-wide scope sentinel (mirrors `OrgCredentialsEntity.scope`); a non-`*` scope is a repo id. */
 export const ORG_SCOPE = '*';
@@ -103,8 +107,10 @@ export class McpServerStore {
 
   private redact(r: McpServerEntity): RedactedMcpServer {
     const secretKeys: string[] = [];
-    for (const [k, v] of Object.entries(r.config.headers ?? {})) if (v === null) secretKeys.push(`header:${k}`);
-    for (const [k, v] of Object.entries(r.config.env ?? {})) if (v === null) secretKeys.push(`env:${k}`);
+    for (const [k, v] of Object.entries(r.config.headers ?? {}))
+      if (v === null) secretKeys.push(`header:${k}`);
+    for (const [k, v] of Object.entries(r.config.env ?? {}))
+      if (v === null) secretKeys.push(`env:${k}`);
     return {
       scope: McpServerStore.fromDbScope(r.scope),
       name: r.name,
@@ -114,7 +120,9 @@ export class McpServerStore {
       surfaces: r.surfaces,
       enabled: r.enabled,
       discoveredTools: r.discovered_tools,
-      lastValidatedAt: r.last_validated_at ? new Date(r.last_validated_at).toISOString() : null,
+      lastValidatedAt: r.last_validated_at
+        ? new Date(r.last_validated_at).toISOString()
+        : null,
       validationError: r.validation_error,
       authKind: r.auth_kind,
       // Token presence, not blob presence: beginAuthorization writes a blob (nonce + PKCE/DCR state)
@@ -132,7 +140,12 @@ export class McpServerStore {
    * the encrypted `secrets_enc` blob. A `secret` entry with an EMPTY value preserves the stored value
    * (the console shows presence, not the value; re-enter to change). Writing resets the validation state.
    */
-  async write(orgId: string, dbScope: string, name: string, input: McpServerInput): Promise<void> {
+  async write(
+    orgId: string,
+    dbScope: string,
+    name: string,
+    input: McpServerInput,
+  ): Promise<void> {
     const existing = await this.servers.findOne({
       where: { org_id: orgId, scope: dbScope, name },
     });
@@ -170,7 +183,8 @@ export class McpServerStore {
 
     // Non-secret OAuth knobs live in `config`; the tokens/DCR blob in `oauth_enc` is owned by McpOAuthService
     // and deliberately NOT touched here (so editing e.g. the scope of a connected server keeps its tokens).
-    if (input.oauth && Object.keys(input.oauth).length > 0) config.oauth = input.oauth;
+    if (input.oauth && Object.keys(input.oauth).length > 0)
+      config.oauth = input.oauth;
 
     const hasSecrets = !!(secrets.headers || secrets.env);
     const row =
@@ -178,15 +192,22 @@ export class McpServerStore {
     row.transport = input.transport;
     row.auth_kind = input.authKind ?? 'static';
     row.config = config;
-    row.secrets_enc = hasSecrets ? encryptSecret(JSON.stringify(secrets), this.key()) : null;
-    row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['brain', 'build'];
+    row.secrets_enc = hasSecrets
+      ? encryptSecret(JSON.stringify(secrets), this.key())
+      : null;
+    row.surfaces =
+      input.surfaces && input.surfaces.length > 0
+        ? input.surfaces
+        : ['brain', 'build'];
     row.enabled = input.enabled ?? true;
     // A changed config invalidates any prior validation probe.
     row.discovered_tools = null;
     row.last_validated_at = null;
     row.validation_error = null;
     await this.servers.save(row);
-    this.logger.log(`wrote mcp server org=${orgId} scope=${dbScope} name=${name}`);
+    this.logger.log(
+      `wrote mcp server org=${orgId} scope=${dbScope} name=${name}`,
+    );
   }
 
   /**
@@ -204,7 +225,9 @@ export class McpServerStore {
     key: string,
     value: string,
   ): Promise<boolean> {
-    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    const row = await this.servers.findOne({
+      where: { org_id: orgId, scope: dbScope, name },
+    });
     if (!row) return false;
     const secrets = this.decryptSecrets(row);
     (secrets[slot] ??= {})[key] = value;
@@ -213,13 +236,17 @@ export class McpServerStore {
     (config[slot] ??= {})[key] = null;
     row.config = config;
     await this.servers.save(row);
-    this.logger.log(`set mcp secret org=${orgId} scope=${dbScope} name=${name} slot=${slot} key=${key}`);
+    this.logger.log(
+      `set mcp secret org=${orgId} scope=${dbScope} name=${name} slot=${slot} key=${key}`,
+    );
     return true;
   }
 
   async delete(orgId: string, dbScope: string, name: string): Promise<void> {
     await this.servers.delete({ org_id: orgId, scope: dbScope, name });
-    this.logger.log(`deleted mcp server org=${orgId} scope=${dbScope} name=${name}`);
+    this.logger.log(
+      `deleted mcp server org=${orgId} scope=${dbScope} name=${name}`,
+    );
   }
 
   /** Persist the outcome of a validation probe (tool list or error). */
@@ -229,7 +256,9 @@ export class McpServerStore {
     name: string,
     result: { discoveredTools?: string[]; error?: string },
   ): Promise<void> {
-    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    const row = await this.servers.findOne({
+      where: { org_id: orgId, scope: dbScope, name },
+    });
     if (!row) return;
     row.discovered_tools = result.error ? null : (result.discoveredTools ?? []);
     row.validation_error = result.error ?? null;
@@ -250,8 +279,14 @@ export class McpServerStore {
   }
 
   /** Fetch one raw row (for a validation probe that needs the decrypted secrets). */
-  async rawRow(orgId: string, dbScope: string, name: string): Promise<McpServerEntity | null> {
-    return this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+  async rawRow(
+    orgId: string,
+    dbScope: string,
+    name: string,
+  ): Promise<McpServerEntity | null> {
+    return this.servers.findOne({
+      where: { org_id: orgId, scope: dbScope, name },
+    });
   }
 
   /**
@@ -273,10 +308,16 @@ export class McpServerStore {
       // A secret slot shows as a `null` placeholder in `config`; it is unfilled when the encrypted blob
       // has no value for that key.
       for (const [k, v] of Object.entries(r.config.headers ?? {}))
-        if (v === null && filled.headers?.[k] == null) slots.push(`header:${k}`);
+        if (v === null && filled.headers?.[k] == null)
+          slots.push(`header:${k}`);
       for (const [k, v] of Object.entries(r.config.env ?? {}))
         if (v === null && filled.env?.[k] == null) slots.push(`env:${k}`);
-      if (slots.length > 0) out.push({ name: r.name, scope: McpServerStore.fromDbScope(r.scope), slots });
+      if (slots.length > 0)
+        out.push({
+          name: r.name,
+          scope: McpServerStore.fromDbScope(r.scope),
+          slots,
+        });
     }
     return out;
   }
@@ -293,9 +334,21 @@ export class McpServerStore {
   async authFailingServers(
     orgId: string,
     repoId: string,
-  ): Promise<{ name: string; scope: 'org' | string; authKind: McpAuthKind; reason: string }[]> {
+  ): Promise<
+    {
+      name: string;
+      scope: 'org' | string;
+      authKind: McpAuthKind;
+      reason: string;
+    }[]
+  > {
     const rows = await this.rowsForTurn(orgId, repoId);
-    const out: { name: string; scope: 'org' | string; authKind: McpAuthKind; reason: string }[] = [];
+    const out: {
+      name: string;
+      scope: 'org' | string;
+      authKind: McpAuthKind;
+      reason: string;
+    }[] = [];
     for (const r of rows) {
       if (!r.enabled) continue;
       if (r.validation_error == null) continue;
@@ -322,14 +375,21 @@ export class McpServerStore {
   ): Promise<{ name: string; scope: 'org' | string }[]> {
     const rows = await this.rowsForTurn(orgId, repoId);
     return rows
-      .filter((r) => r.enabled && r.auth_kind === 'oauth' && !this.oauthHasToken(r))
-      .map((r) => ({ name: r.name, scope: McpServerStore.fromDbScope(r.scope) }));
+      .filter(
+        (r) => r.enabled && r.auth_kind === 'oauth' && !this.oauthHasToken(r),
+      )
+      .map((r) => ({
+        name: r.name,
+        scope: McpServerStore.fromDbScope(r.scope),
+      }));
   }
 
   /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */
   decryptSecrets(row: McpServerEntity): McpSecretValues {
     if (!row.secrets_enc) return {};
-    return JSON.parse(decryptSecret(row.secrets_enc, this.key())) as McpSecretValues;
+    return JSON.parse(
+      decryptSecret(row.secrets_enc, this.key()),
+    ) as McpSecretValues;
   }
 
   // ── OAuth blob (used ONLY by McpOAuthService) ─────────────────────────────────────────────────
@@ -369,10 +429,13 @@ export class McpServerStore {
     blob: McpOAuthBlob,
     opts?: { validationError?: string | null },
   ): Promise<boolean> {
-    const row = await this.servers.findOne({ where: { org_id: orgId, scope: dbScope, name } });
+    const row = await this.servers.findOne({
+      where: { org_id: orgId, scope: dbScope, name },
+    });
     if (!row) return false;
     row.oauth_enc = encryptSecret(JSON.stringify(blob), this.key());
-    if (opts && 'validationError' in opts) row.validation_error = opts.validationError ?? null;
+    if (opts && 'validationError' in opts)
+      row.validation_error = opts.validationError ?? null;
     await this.servers.save(row);
     return true;
   }

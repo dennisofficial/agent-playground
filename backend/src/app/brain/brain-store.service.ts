@@ -1,6 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
+import {
+  DataSource,
+  In,
+  IsNull,
+  MoreThan,
+  Not,
+  type ObjectLiteral,
+  Repository,
+} from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
@@ -112,7 +120,8 @@ export class BrainStoreService {
   /** The job's planning-stage thread id — the anchor every main-lane message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
-    if (!this.jobBootstrap) throw new Error('brain-store: JobBootstrapService not wired');
+    if (!this.jobBootstrap)
+      throw new Error('brain-store: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
@@ -1860,7 +1869,9 @@ export class BrainStoreService {
             .createQueryBuilder('t')
             .innerJoin(StageEntity, 's', 's.id = t.stage_id')
             .where('t.job_id = :jobId', { jobId: input.jobId })
-            .andWhere('s.decision_record_id = :priorRecordId', { priorRecordId })
+            .andWhere('s.decision_record_id = :priorRecordId', {
+              priorRecordId,
+            })
             .andWhere("t.role = 'builder'")
             .andWhere("t.status = 'done'")
             .getExists()
@@ -1904,13 +1915,18 @@ export class BrainStoreService {
       // the authored plan — then ONE `master_review` stage after them. Direct build gets its own
       // `direct_build` stage at dispatch time (a separate seam), so persistPlan skips stage creation for it.
       if (input.threadTitles.length > 0) {
-        let stageOrdinal = (await maxOrdinal(stages, input.jobId)) + ORDINAL_GAP;
+        let stageOrdinal =
+          (await maxOrdinal(stages, input.jobId)) + ORDINAL_GAP;
         // Top-level threads (parent null) share a job-wide UNIQUE(job_id, parent_thread_id, ordinal) index
         // (d7 dropped decision_record_id from it), so their ordinals must be job-GLOBAL-unique — not
         // stage-local. Start after the highest existing top-level ordinal (planning/plan_review, and any
         // preserved prior-revision history) and gap-number from there.
         let threadOrdinal =
-          (await maxOrdinal(threads, input.jobId, 't.parent_thread_id IS NULL')) + ORDINAL_GAP;
+          (await maxOrdinal(
+            threads,
+            input.jobId,
+            't.parent_thread_id IS NULL',
+          )) + ORDINAL_GAP;
 
         for (let i = 0; i < input.threadTitles.length; i++) {
           const brief = input.threadTitles[i];

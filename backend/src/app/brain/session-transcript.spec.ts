@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseSessionTranscriptTail, parseSessionTranscriptTurns } from './session-transcript';
+import {
+  parseSessionTranscriptTail,
+  parseSessionTranscriptTurns,
+} from './session-transcript';
 
 /** Build one JSONL line (the SDK writes one content block per line). */
 const line = (o: Record<string, unknown>): string => JSON.stringify(o);
@@ -9,22 +12,107 @@ const line = (o: Record<string, unknown>): string => JSON.stringify(o);
  *  verified on-disk shape (shared `message.id`, per-line `uuid`, tool_result as a `user` line). */
 const TRANSCRIPT = [
   line({ type: 'queue-operation', operation: 'enqueue', sessionId: 'sess-1' }),
-  line({ type: 'user', uuid: 'u-prompt', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:00.000Z', message: { role: 'user', content: 'Do a deep dive review.' } }),
-  line({ type: 'assistant', uuid: 'a-think', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:01.000Z', message: { id: 'msg_1', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'thinking', thinking: 'Let me look around.' }] } }),
-  line({ type: 'assistant', uuid: 'a-text1', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:02.000Z', message: { id: 'msg_1', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'Reading the repo now.' }] } }),
-  line({ type: 'assistant', uuid: 'a-tool', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:03.000Z', message: { id: 'msg_1', role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_42', name: 'Read', input: { file_path: 'README.md' } }] } }),
-  line({ type: 'user', uuid: 'u-res', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:04.000Z', toolUseResult: { ok: true }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_42', content: '# OrthoScribe', is_error: false }] } }),
-  line({ type: 'assistant', uuid: 'a-final', sessionId: 'sess-1', timestamp: '2026-06-29T15:11:05.000Z', message: { id: 'msg_2', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is the deep dive.' }] } }),
+  line({
+    type: 'user',
+    uuid: 'u-prompt',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:00.000Z',
+    message: { role: 'user', content: 'Do a deep dive review.' },
+  }),
+  line({
+    type: 'assistant',
+    uuid: 'a-think',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:01.000Z',
+    message: {
+      id: 'msg_1',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{ type: 'thinking', thinking: 'Let me look around.' }],
+    },
+  }),
+  line({
+    type: 'assistant',
+    uuid: 'a-text1',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:02.000Z',
+    message: {
+      id: 'msg_1',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [{ type: 'text', text: 'Reading the repo now.' }],
+    },
+  }),
+  line({
+    type: 'assistant',
+    uuid: 'a-tool',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:03.000Z',
+    message: {
+      id: 'msg_1',
+      role: 'assistant',
+      stop_reason: 'tool_use',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_42',
+          name: 'Read',
+          input: { file_path: 'README.md' },
+        },
+      ],
+    },
+  }),
+  line({
+    type: 'user',
+    uuid: 'u-res',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:04.000Z',
+    toolUseResult: { ok: true },
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_42',
+          content: '# OrthoScribe',
+          is_error: false,
+        },
+      ],
+    },
+  }),
+  line({
+    type: 'assistant',
+    uuid: 'a-final',
+    sessionId: 'sess-1',
+    timestamp: '2026-06-29T15:11:05.000Z',
+    message: {
+      id: 'msg_2',
+      role: 'assistant',
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'Here is the deep dive.' }],
+    },
+  }),
 ].join('\n');
 
 describe('parseSessionTranscriptTail', () => {
   it('recovers the tail after the operator prompt, in order, with per-line sdkUuid identity', () => {
-    const { blocks, endedClean, sessionId, operatorPromptCount } = parseSessionTranscriptTail(TRANSCRIPT);
+    const { blocks, endedClean, sessionId, operatorPromptCount } =
+      parseSessionTranscriptTail(TRANSCRIPT);
     expect(sessionId).toBe('sess-1');
     expect(operatorPromptCount).toBe(1);
     expect(endedClean).toBe(true);
-    expect(blocks.map((b) => b.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
-    expect(blocks.map((b) => b.meta.sdkUuid)).toEqual(['a-think', 'a-text1', 'a-tool', 'a-final']);
+    expect(blocks.map((b) => b.kind)).toEqual([
+      'thinking',
+      'chat',
+      'tool',
+      'chat',
+    ]);
+    expect(blocks.map((b) => b.meta.sdkUuid)).toEqual([
+      'a-think',
+      'a-text1',
+      'a-tool',
+      'a-final',
+    ]);
     expect(blocks.every((b) => b.meta.recovered === true)).toBe(true);
     // The operator prompt itself is NOT recovered (already persisted as a user message).
     expect(blocks.some((b) => b.text === 'Do a deep dive review.')).toBe(false);
@@ -33,7 +121,13 @@ describe('parseSessionTranscriptTail', () => {
   it('pairs a tool_result onto its tool_use block by tool_use_id', () => {
     const { blocks } = parseSessionTranscriptTail(TRANSCRIPT);
     const tool = blocks.find((b) => b.kind === 'tool')!;
-    expect(tool.meta).toMatchObject({ id: 'toolu_42', name: 'Read', toolUseId: 'toolu_42', result: '# OrthoScribe', isError: false });
+    expect(tool.meta).toMatchObject({
+      id: 'toolu_42',
+      name: 'Read',
+      toolUseId: 'toolu_42',
+      result: '# OrthoScribe',
+      isError: false,
+    });
   });
 
   it('marks endedClean=false when the trailing assistant message never reached end_turn', () => {
@@ -52,19 +146,49 @@ describe('parseSessionTranscriptTail', () => {
 
   it('returns no blocks when the transcript has no operator prompt to anchor on', () => {
     const noPrompt = [
-      line({ type: 'assistant', uuid: 'a1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'orphan' }] } }),
+      line({
+        type: 'assistant',
+        uuid: 'a1',
+        message: {
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'orphan' }],
+        },
+      }),
     ].join('\n');
-    const { blocks, operatorPromptCount } = parseSessionTranscriptTail(noPrompt);
+    const { blocks, operatorPromptCount } =
+      parseSessionTranscriptTail(noPrompt);
     expect(operatorPromptCount).toBe(0);
     expect(blocks).toEqual([]);
   });
 
   it('anchors on the LAST prompt when the session has multiple turns (only recovers the final one)', () => {
     const twoTurns = [
-      line({ type: 'user', uuid: 'p1', message: { role: 'user', content: 'first' } }),
-      line({ type: 'assistant', uuid: 'a1', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'first reply' }] } }),
-      line({ type: 'user', uuid: 'p2', message: { role: 'user', content: 'second' } }),
-      line({ type: 'assistant', uuid: 'a2', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'second reply' }] } }),
+      line({
+        type: 'user',
+        uuid: 'p1',
+        message: { role: 'user', content: 'first' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'a1',
+        message: {
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'first reply' }],
+        },
+      }),
+      line({
+        type: 'user',
+        uuid: 'p2',
+        message: { role: 'user', content: 'second' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'a2',
+        message: {
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'second reply' }],
+        },
+      }),
     ].join('\n');
     const { blocks } = parseSessionTranscriptTail(twoTurns);
     expect(blocks.map((b) => b.text)).toEqual(['second reply']);
@@ -78,24 +202,68 @@ describe('parseSessionTranscriptTurns', () => {
     expect(turns).toHaveLength(1);
     expect(turns[0].promptText).toBe('Do a deep dive review.');
     expect(turns[0].endedClean).toBe(true);
-    expect(turns[0].blocks.map((b) => b.kind)).toEqual(['thinking', 'chat', 'tool', 'chat']);
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual([
+      'thinking',
+      'chat',
+      'tool',
+      'chat',
+    ]);
   });
 
   it('recovers a MIDDLE turn interrupted before end_turn, then superseded by a completed turn (the incident)', () => {
     const stranded = [
-      line({ type: 'user', uuid: 'p1', message: { role: 'user', content: 'investigate' } }),
-      line({ type: 'assistant', uuid: 'i-text', message: { stop_reason: 'tool_use', content: [{ type: 'text', text: 'looking' }] } }),
+      line({
+        type: 'user',
+        uuid: 'p1',
+        message: { role: 'user', content: 'investigate' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'i-text',
+        message: {
+          stop_reason: 'tool_use',
+          content: [{ type: 'text', text: 'looking' }],
+        },
+      }),
       // dangling tool_use: no matching tool_result, no end_turn — the interruption point.
-      line({ type: 'assistant', uuid: 'i-ask', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'ask_question', input: {} }] } }),
-      line({ type: 'user', uuid: 'p2', message: { role: 'user', content: 'hello?' } }),
-      line({ type: 'assistant', uuid: 'h-final', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'sorry, finished' }] } }),
+      line({
+        type: 'assistant',
+        uuid: 'i-ask',
+        message: {
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'toolu_ask',
+              name: 'ask_question',
+              input: {},
+            },
+          ],
+        },
+      }),
+      line({
+        type: 'user',
+        uuid: 'p2',
+        message: { role: 'user', content: 'hello?' },
+      }),
+      line({
+        type: 'assistant',
+        uuid: 'h-final',
+        message: {
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'sorry, finished' }],
+        },
+      }),
     ].join('\n');
     const { turns } = parseSessionTranscriptTurns(stranded);
     expect(turns).toHaveLength(2);
     // Turn 1 (the stranded investigation) never reached end_turn; turn 2 did.
     expect(turns[0].endedClean).toBe(false);
     expect(turns[1].endedClean).toBe(true);
-    expect(turns[0].blocks.map((b) => b.meta.sdkUuid)).toEqual(['i-text', 'i-ask']);
+    expect(turns[0].blocks.map((b) => b.meta.sdkUuid)).toEqual([
+      'i-text',
+      'i-ask',
+    ]);
     // The dangling tool_use is unpaired — the caller drops it (the next turn re-issues it).
     const ask = turns[0].blocks.find((b) => b.kind === 'tool')!;
     expect(ask.toolPaired).toBe(false);
@@ -106,6 +274,9 @@ describe('parseSessionTranscriptTurns', () => {
     const { turns } = parseSessionTranscriptTurns(TRANSCRIPT);
     const tool = turns[0].blocks.find((b) => b.kind === 'tool')!;
     expect(tool.toolPaired).toBe(true);
-    expect(tool.meta).toMatchObject({ id: 'toolu_42', result: '# OrthoScribe' });
+    expect(tool.meta).toMatchObject({
+      id: 'toolu_42',
+      result: '# OrthoScribe',
+    });
   });
 });

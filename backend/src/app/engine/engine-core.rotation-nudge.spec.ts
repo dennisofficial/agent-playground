@@ -27,7 +27,10 @@ afterEach(() => {
 /** A steerInput that never yields — it just flips the engine into streaming-input mode so `input` exists. */
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
   [Symbol.asyncIterator]() {
-    return { next: () => new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}) };
+    return {
+      next: () =>
+        new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
+    };
   },
 };
 
@@ -41,7 +44,12 @@ const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
  */
 function nudgeCapturingSdk(occupancies: number[], injected: string[]) {
   return {
-    query: ({ prompt }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) =>
+    query: ({
+      prompt,
+    }: {
+      prompt: AsyncIterable<unknown>;
+      options: Record<string, unknown>;
+    }) =>
       (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'sess-1' };
         const it = prompt[Symbol.asyncIterator]();
@@ -50,17 +58,36 @@ function nudgeCapturingSdk(occupancies: number[], injected: string[]) {
           while (true) {
             const r = await it.next();
             if (r.done) break;
-            if (!taskSeen) { taskSeen = true; continue; } // the initial task push
-            const content = (r.value as { message?: { content?: unknown } }).message?.content;
-            injected.push(typeof content === 'string' ? content : JSON.stringify(content));
+            if (!taskSeen) {
+              taskSeen = true;
+              continue;
+            } // the initial task push
+            const content = (r.value as { message?: { content?: unknown } })
+              .message?.content;
+            injected.push(
+              typeof content === 'string' ? content : JSON.stringify(content),
+            );
           }
         })();
         for (const occ of occupancies) {
           // One main-agent round-trip whose per-call input size is `occ` (parent_tool_use_id UNSET = main agent).
-          yield { type: 'assistant', message: { model: 'opus', content: [{ type: 'text', text: 'work' }], usage: { input_tokens: occ } } };
+          yield {
+            type: 'assistant',
+            message: {
+              model: 'opus',
+              content: [{ type: 'text', text: 'work' }],
+              usage: { input_tokens: occ },
+            },
+          };
           await tick(); // let the engine inject (synchronously) and the drain loop consume before the next round-trip
         }
-        yield { type: 'result', subtype: 'success', session_id: 'sess-1', result: 'ok', usage: { input_tokens: 1, output_tokens: 1 } };
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 'sess-1',
+          result: 'ok',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
         await tick();
       })(),
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
@@ -68,17 +95,31 @@ function nudgeCapturingSdk(occupancies: number[], injected: string[]) {
 
 async function runWithOccupancies(occupancies: number[]): Promise<string[]> {
   const injected: string[] = [];
-  const core = new EngineCore(nudgeCapturingSdk(occupancies, injected), {} as never, { homeRoot: HOME_ROOT });
+  const core = new EngineCore(
+    nudgeCapturingSdk(occupancies, injected),
+    {} as never,
+    { homeRoot: HOME_ROOT },
+  );
   await core.run({
     engine: 'claude',
     task: 'do a tiny thing',
     cwd: '/tmp/wt',
     systemPrompt: 'persona',
-    sandboxKey: { orgId: 'acme', repoId: 'atlas', jobId: 'feat', type: 'build' } as EngineHomeKey,
+    sandboxKey: {
+      orgId: 'acme',
+      repoId: 'atlas',
+      jobId: 'feat',
+      type: 'build',
+    } as EngineHomeKey,
     mode: 'execute',
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
-    rotationNudge: { softTokens: 50_000, reminderDeltaTokens: 20_000, softText: 'SOFT-NUDGE', reminderText: 'REMINDER-NUDGE' },
+    rotationNudge: {
+      softTokens: 50_000,
+      reminderDeltaTokens: 20_000,
+      softText: 'SOFT-NUDGE',
+      reminderText: 'REMINDER-NUDGE',
+    },
   } as never);
   return injected;
 }
@@ -93,7 +134,11 @@ describe('EngineCore — engine-local Leg-rotation nudge (race-free)', () => {
   it('injects SOFT then a REMINDER on each further +delta band', async () => {
     // 20k → 55k (SOFT, band 0) → 75k (band 1 → reminder) → 95k (band 2 → reminder) → 110k (still band 2/3? no re-fire same band).
     const injected = await runWithOccupancies([20_000, 55_000, 75_000, 95_000]);
-    expect(injected).toEqual(['SOFT-NUDGE', 'REMINDER-NUDGE', 'REMINDER-NUDGE']);
+    expect(injected).toEqual([
+      'SOFT-NUDGE',
+      'REMINDER-NUDGE',
+      'REMINDER-NUDGE',
+    ]);
   });
 
   it('first-ever fire is SOFT even when the first sample is already several bands past soft', async () => {

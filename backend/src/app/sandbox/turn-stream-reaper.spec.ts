@@ -18,7 +18,11 @@ const seedTurn = (redis: InMemoryRedisStream, turnId: string): string[] => {
   return [k.spec, k.events];
 };
 
-const reaper = (redis: InMemoryRedisStream, registry: TurnRegistry, idleMs = 300_000) =>
+const reaper = (
+  redis: InMemoryRedisStream,
+  registry: TurnRegistry,
+  idleMs = 300_000,
+) =>
   new TurnStreamReaperService(
     redis,
     registry,
@@ -32,7 +36,9 @@ describe('TurnStreamReaperService.reap', () => {
     const keys = seedTurn(redis, 'orphan-1');
     keys.forEach((key) => redis.setKeyIdleForTest(key, 600)); // idle 10min > 5min floor
 
-    const registry = { allTurnIds: vi.fn(async () => new Set<string>()) } as unknown as TurnRegistry;
+    const registry = {
+      allTurnIds: vi.fn(async () => new Set<string>()),
+    } as unknown as TurnRegistry;
     await reaper(redis, registry).reap();
 
     for (const key of keys) expect(await redis.objectIdleTime(key)).toBeNull(); // gone
@@ -48,17 +54,21 @@ describe('TurnStreamReaperService.reap', () => {
     } as unknown as TurnRegistry;
     await reaper(redis, registry).reap();
 
-    for (const key of keys) expect(await redis.objectIdleTime(key)).not.toBeNull(); // kept
+    for (const key of keys)
+      expect(await redis.objectIdleTime(key)).not.toBeNull(); // kept
   });
 
   it('spares an orphan still within the idle floor (mid-registration safety)', async () => {
     const redis = new InMemoryRedisStream();
     const keys = seedTurn(redis, 'fresh-1'); // just xadded → idle ~0
 
-    const registry = { allTurnIds: vi.fn(async () => new Set<string>()) } as unknown as TurnRegistry;
+    const registry = {
+      allTurnIds: vi.fn(async () => new Set<string>()),
+    } as unknown as TurnRegistry;
     await reaper(redis, registry).reap();
 
-    for (const key of keys) expect(await redis.objectIdleTime(key)).not.toBeNull(); // kept
+    for (const key of keys)
+      expect(await redis.objectIdleTime(key)).not.toBeNull(); // kept
   });
 
   it('reaps orphans while sparing live + fresh turns in one pass', async () => {
@@ -73,8 +83,10 @@ describe('TurnStreamReaperService.reap', () => {
     } as unknown as TurnRegistry;
     await reaper(redis, registry).reap();
 
-    for (const key of orphan) expect(await redis.objectIdleTime(key)).toBeNull();
-    for (const key of [...live, ...fresh]) expect(await redis.objectIdleTime(key)).not.toBeNull();
+    for (const key of orphan)
+      expect(await redis.objectIdleTime(key)).toBeNull();
+    for (const key of [...live, ...fresh])
+      expect(await redis.objectIdleTime(key)).not.toBeNull();
   });
 
   it('a registry failure is swallowed — nothing is deleted, never throws', async () => {
@@ -89,6 +101,7 @@ describe('TurnStreamReaperService.reap', () => {
     } as unknown as TurnRegistry;
 
     await expect(reaper(redis, registry).reap()).resolves.toBeUndefined();
-    for (const key of keys) expect(await redis.objectIdleTime(key)).not.toBeNull(); // untouched
+    for (const key of keys)
+      expect(await redis.objectIdleTime(key)).not.toBeNull(); // untouched
   });
 });

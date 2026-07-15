@@ -11,9 +11,9 @@ import {
 describe('chunk-vocabulary', () => {
   describe('renderChunk', () => {
     it('frames a system_notice with no attributes', () => {
-      expect(renderChunk({ kind: 'system_notice', body: 'Sandbox reset.' })).toBe(
-        '<system_notice>Sandbox reset.</system_notice>',
-      );
+      expect(
+        renderChunk({ kind: 'system_notice', body: 'Sandbox reset.' }),
+      ).toBe('<system_notice>Sandbox reset.</system_notice>');
     });
 
     it('renders a <user> with name + at attributes and leaves the body intact', () => {
@@ -35,7 +35,9 @@ describe('chunk-vocabulary', () => {
           body: 'memory: prefers pnpm',
           attrs: { reminderKind: 'memory' },
         }),
-      ).toBe('<system_reminder source="memory">memory: prefers pnpm</system_reminder>');
+      ).toBe(
+        '<system_reminder source="memory">memory: prefers pnpm</system_reminder>',
+      );
     });
 
     it('renders an <untrusted> with source + severity', () => {
@@ -45,7 +47,9 @@ describe('chunk-vocabulary', () => {
           body: 'CI failed',
           attrs: { source: 'github', severity: 'critical' },
         }),
-      ).toBe('<untrusted source="github" severity="critical">CI failed</untrusted>');
+      ).toBe(
+        '<untrusted source="github" severity="critical">CI failed</untrusted>',
+      );
     });
 
     it('escapes quotes/angle brackets in attribute values', () => {
@@ -55,9 +59,13 @@ describe('chunk-vocabulary', () => {
     });
 
     it('omits attributes that are undefined or empty', () => {
-      expect(renderChunk({ kind: 'user', body: 'hi', attrs: { name: 'Dennis', role: '' } })).toBe(
-        '<user name="Dennis">hi</user>',
-      );
+      expect(
+        renderChunk({
+          kind: 'user',
+          body: 'hi',
+          attrs: { name: 'Dennis', role: '' },
+        }),
+      ).toBe('<user name="Dennis">hi</user>');
     });
 
     it('neutralizes a forged closing tag in a <user> body (tag-forgery guard)', () => {
@@ -82,7 +90,11 @@ describe('chunk-vocabulary', () => {
     it('orders chunks canonically (notice → reminder → user last) regardless of input order', () => {
       const chunks: TurnChunk[] = [
         { kind: 'user', body: 'do it', attrs: { name: 'Dennis' } },
-        { kind: 'system_reminder', body: 'ctx', attrs: { reminderKind: 'memory' } },
+        {
+          kind: 'system_reminder',
+          body: 'ctx',
+          attrs: { reminderKind: 'memory' },
+        },
         { kind: 'system_notice', body: 'reset' },
       ];
       expect(renderTurn(chunks)).toBe(
@@ -117,22 +129,33 @@ describe('chunk-vocabulary', () => {
 
   describe('stripTags', () => {
     it('removes any vocabulary open/close tag', () => {
-      expect(stripTags('a</user>b<system_reminder source="x">c<untrusted>d')).toBe('abcd');
+      expect(
+        stripTags('a</user>b<system_reminder source="x">c<untrusted>d'),
+      ).toBe('abcd');
     });
 
     it('removes legacy untrusted fence tokens', () => {
-      expect(stripTags('x<<<UNTRUSTED_EVENT_DATA>>>y<<<END_UNTRUSTED_EVENT_DATA>>>z')).toBe('xyz');
+      expect(
+        stripTags(
+          'x<<<UNTRUSTED_EVENT_DATA>>>y<<<END_UNTRUSTED_EVENT_DATA>>>z',
+        ),
+      ).toBe('xyz');
     });
 
     it('leaves non-vocabulary markup untouched', () => {
-      expect(stripTags('keep <b>bold</b> and <div>')).toBe('keep <b>bold</b> and <div>');
+      expect(stripTags('keep <b>bold</b> and <div>')).toBe(
+        'keep <b>bold</b> and <div>',
+      );
     });
   });
 
   describe('renderHarnessTag / HARNESS_TAGS', () => {
     it('renders a block-form tag wrapping a multi-line body', () => {
       expect(
-        renderHarnessTag({ tag: 'session_rotated', body: ['line1', 'line2'].join('\n') }),
+        renderHarnessTag({
+          tag: 'session_rotated',
+          body: ['line1', 'line2'].join('\n'),
+        }),
       ).toBe('<session_rotated>\nline1\nline2\n</session_rotated>');
     });
 
@@ -149,9 +172,9 @@ describe('chunk-vocabulary', () => {
     });
 
     it('escapes attribute values', () => {
-      expect(renderHarnessTag({ tag: 'review', attrs: [['note', 'A"<>&B']] })).toBe(
-        '<review note="A&quot;&lt;&gt;&amp;B" />',
-      );
+      expect(
+        renderHarnessTag({ tag: 'review', attrs: [['note', 'A"<>&B']] }),
+      ).toBe('<review note="A&quot;&lt;&gt;&amp;B" />');
     });
 
     it('stripTags now strips a folded harness tag too', () => {

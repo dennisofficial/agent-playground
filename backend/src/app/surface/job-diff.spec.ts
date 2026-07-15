@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDiffSummary, parseGitDiff, type JobDiffNumstatEntry } from './job-diff';
+import {
+  buildDiffSummary,
+  parseGitDiff,
+  type JobDiffNumstatEntry,
+} from './job-diff';
 
 const RAW_DIFF = `diff --git a/src/foo.ts b/src/foo.ts
 index 111111..222222 100644
@@ -64,8 +68,18 @@ describe('parseGitDiff', () => {
     expect(file?.additions).toBe(2);
     expect(file?.deletions).toBe(0);
     expect(file?.hunks).toHaveLength(2);
-    expect(file?.hunks[0]).toMatchObject({ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4 });
-    expect(file?.hunks[1]).toMatchObject({ oldStart: 10, oldLines: 3, newStart: 11, newLines: 4 });
+    expect(file?.hunks[0]).toMatchObject({
+      oldStart: 1,
+      oldLines: 3,
+      newStart: 1,
+      newLines: 4,
+    });
+    expect(file?.hunks[1]).toMatchObject({
+      oldStart: 10,
+      oldLines: 3,
+      newStart: 11,
+      newLines: 4,
+    });
     expect(result.truncated).toBe(false);
   });
 
@@ -136,13 +150,35 @@ describe('buildDiffSummary', () => {
         { path: 'src/foo.ts', status: 'modified' },
         { path: 'src/new.ts', status: 'added' },
         { path: 'src/old.ts', status: 'deleted' },
-        { path: 'src/renamed-to.ts', oldPath: 'src/renamed-from.ts', status: 'renamed' },
+        {
+          path: 'src/renamed-to.ts',
+          oldPath: 'src/renamed-from.ts',
+          status: 'renamed',
+        },
         { path: 'src/image.png', status: 'modified' },
       ]).files,
     ).toEqual([
-      { path: 'src/foo.ts', additions: 2, deletions: 0, binary: false, status: 'modified' },
-      { path: 'src/new.ts', additions: 2, deletions: 0, binary: false, status: 'added' },
-      { path: 'src/old.ts', additions: 0, deletions: 2, binary: false, status: 'deleted' },
+      {
+        path: 'src/foo.ts',
+        additions: 2,
+        deletions: 0,
+        binary: false,
+        status: 'modified',
+      },
+      {
+        path: 'src/new.ts',
+        additions: 2,
+        deletions: 0,
+        binary: false,
+        status: 'added',
+      },
+      {
+        path: 'src/old.ts',
+        additions: 0,
+        deletions: 2,
+        binary: false,
+        status: 'deleted',
+      },
       {
         path: 'src/renamed-to.ts',
         oldPath: 'src/renamed-from.ts',
@@ -151,13 +187,25 @@ describe('buildDiffSummary', () => {
         binary: false,
         status: 'renamed',
       },
-      { path: 'src/image.png', additions: 0, deletions: 0, binary: true, status: 'modified' },
+      {
+        path: 'src/image.png',
+        additions: 0,
+        deletions: 0,
+        binary: true,
+        status: 'modified',
+      },
     ]);
   });
 
   it('defaults to modified when git omits a name-status entry', () => {
     expect(buildDiffSummary([NUMSTAT[0]]).files).toEqual([
-      { path: 'src/foo.ts', additions: 2, deletions: 0, binary: false, status: 'modified' },
+      {
+        path: 'src/foo.ts',
+        additions: 2,
+        deletions: 0,
+        binary: false,
+        status: 'modified',
+      },
     ]);
   });
 });

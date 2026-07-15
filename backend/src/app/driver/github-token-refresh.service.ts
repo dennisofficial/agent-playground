@@ -4,7 +4,10 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobSandboxEntity } from '../persistence/entities';
 import { CredentialResolver } from '../onboarding';
-import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
+import {
+  SANDBOX_PROVIDER,
+  type SandboxProvider,
+} from '../sandbox/sandbox-provider.port';
 
 /**
  * Leader-gated periodic sweep (~2 min, DriverModule) that keeps every ACTIVE app-mode sandbox's in-sandbox
@@ -30,7 +33,9 @@ export class GithubTokenRefreshService {
   ) {}
 
   async tick(): Promise<void> {
-    const rows = await this.sandboxes.find({ where: { lifecycle: 'attached' } });
+    const rows = await this.sandboxes.find({
+      where: { lifecycle: 'attached' },
+    });
     for (const row of rows) {
       if (!row.container_id) continue;
       try {

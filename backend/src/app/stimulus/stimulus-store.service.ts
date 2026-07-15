@@ -1,11 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
-import type {
-  ChatStimulus,
-  EventStimulus,
-  SeedRow,
-} from '../domain';
+import type { ChatStimulus, EventStimulus, SeedRow } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -93,7 +89,8 @@ export class StimulusStoreService {
   /** The job's planning-stage thread id — the anchor a job-level message row is stamped onto
    *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
-    if (!this.jobBootstrap) throw new Error('stimulus-store: JobBootstrapService not wired');
+    if (!this.jobBootstrap)
+      throw new Error('stimulus-store: JobBootstrapService not wired');
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
@@ -138,7 +135,11 @@ export class StimulusStoreService {
         // Operator-visible provenance: renders as a distinct EVENT bubble (not an operator/atlas line).
         // `eventSource`/`severity` drive the bubble's header. The body stays the clean human-readable
         // text — the untrusted fence is applied only to the copy delivered to the brain.
-        meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
+        meta: {
+          source: 'system_event',
+          eventSource: input.source,
+          severity: input.severity,
+        },
       }),
     );
 
@@ -215,7 +216,8 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    const ciThreadId = (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
+    const ciThreadId =
+      (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
     const lane = ciThreadId ? `thread:${ciThreadId}` : undefined;
     let row: StimulusEntity;
@@ -230,7 +232,11 @@ export class StimulusStoreService {
             author_bot_id: null,
             text: input.body,
             card: input.card ?? null,
-            meta: { source: 'system_event', eventSource: input.source, severity: input.severity },
+            meta: {
+              source: 'system_event',
+              eventSource: input.source,
+              severity: input.severity,
+            },
           }),
         );
         return m.save(
@@ -290,7 +296,9 @@ export class StimulusStoreService {
       .createQueryBuilder('j')
       .where('j.org_id = :orgId', { orgId })
       .andWhere('j.repo_id = :repoId', { repoId })
-      .andWhere('(j.feature_branch = :branch OR j.current_branch = :branch)', { branch })
+      .andWhere('(j.feature_branch = :branch OR j.current_branch = :branch)', {
+        branch,
+      })
       .andWhere('j.status != :closed', { closed: 'closed' })
       .orderBy('j.created_at', 'DESC')
       .getOne();
@@ -358,8 +366,12 @@ export class StimulusStoreService {
       ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
-      ...(input.seedQuestionIds?.length ? { seedQuestionIds: input.seedQuestionIds } : {}),
-      ...(input.seedSecretIds?.length ? { seedSecretIds: input.seedSecretIds } : {}),
+      ...(input.seedQuestionIds?.length
+        ? { seedQuestionIds: input.seedQuestionIds }
+        : {}),
+      ...(input.seedSecretIds?.length
+        ? { seedSecretIds: input.seedSecretIds }
+        : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
     };
 
@@ -396,7 +408,9 @@ export class StimulusStoreService {
           kind: desc.kind ?? 'system_notice',
           text: fromExternal(desc.label),
           chunkKey: desc.chunkKey,
-          ...(desc.untrustedSource ? { untrustedSource: desc.untrustedSource } : {}),
+          ...(desc.untrustedSource
+            ? { untrustedSource: desc.untrustedSource }
+            : {}),
           ...(desc.severity ? { severity: desc.severity } : {}),
           ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
           ...(desc.framing ? { framing: desc.framing } : {}),
@@ -438,8 +452,12 @@ export class StimulusStoreService {
       ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
       ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
       ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
-      ...(input.seedQuestionIds?.length ? { seedQuestionIds: input.seedQuestionIds } : {}),
-      ...(input.seedSecretIds?.length ? { seedSecretIds: input.seedSecretIds } : {}),
+      ...(input.seedQuestionIds?.length
+        ? { seedQuestionIds: input.seedQuestionIds }
+        : {}),
+      ...(input.seedSecretIds?.length
+        ? { seedSecretIds: input.seedSecretIds }
+        : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
       ...(input.author.id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
@@ -473,7 +491,9 @@ export class StimulusStoreService {
         job_id: input.jobId,
         author_id: HOST_SEED_AUTHOR.id,
         author_name: HOST_SEED_AUTHOR.displayName,
-        reply_route: input.priority ? { ...replyRoute, priority: input.priority } : replyRoute,
+        reply_route: input.priority
+          ? { ...replyRoute, priority: input.priority }
+          : replyRoute,
         source: null,
         dedupe_key: null,
         severity: null,
@@ -489,7 +509,10 @@ export class StimulusStoreService {
       trust: 'trusted',
       body: input.body,
       jobId: input.jobId,
-      author: { id: HOST_SEED_AUTHOR.id, displayName: HOST_SEED_AUTHOR.displayName },
+      author: {
+        id: HOST_SEED_AUTHOR.id,
+        displayName: HOST_SEED_AUTHOR.displayName,
+      },
       replyRoute,
       receivedAt: row.created_at,
       ...(input.priority ? { priority: input.priority } : {}),
@@ -521,7 +544,9 @@ export class StimulusStoreService {
       .andWhere('s.job_id = :j', { j: jobId })
       .andWhere("COALESCE(s.lane, 'main') = :lane", { lane })
       .andWhere('s.delivered_at IS NULL')
-      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
+      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', {
+        cutoff,
+      })
       .orderBy('s.created_at', 'ASC')
       .getMany();
     return rows.map((r) => this.rowToChatStimulus(r));
@@ -535,7 +560,10 @@ export class StimulusStoreService {
 
   /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
   async markChatDelivered(id: string): Promise<void> {
-    await this.stimuli.update({ id, delivered_at: IsNull() }, { delivered_at: new Date() });
+    await this.stimuli.update(
+      { id, delivered_at: IsNull() },
+      { delivered_at: new Date() },
+    );
   }
 
   /**
@@ -543,7 +571,10 @@ export class StimulusStoreService {
    * lane teardown, where a leased-but-unacked build-lane seed must not be stranded just because the normal
    * retry window has not expired yet.
    */
-  async undeliveredChatForLane(jobId: string, lane: string): Promise<ChatStimulus[]> {
+  async undeliveredChatForLane(
+    jobId: string,
+    lane: string,
+  ): Promise<ChatStimulus[]> {
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .where('s.kind = :k', { k: 'chat' })
@@ -584,7 +615,11 @@ export class StimulusStoreService {
    */
   async hasChatStimulusForSeedTarget(
     jobId: string,
-    target: { seedQuestionId?: string; seedSecretId?: string; seedFileId?: string },
+    target: {
+      seedQuestionId?: string;
+      seedSecretId?: string;
+      seedFileId?: string;
+    },
   ): Promise<boolean> {
     const qb = this.stimuli
       .createQueryBuilder('s')
@@ -629,12 +664,16 @@ export class StimulusStoreService {
       .where('s.kind = :k', { k: 'chat' })
       .andWhere('s.job_id = :j', { j: jobId })
       .andWhere('s.delivered_at IS NULL')
-      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .andWhere(
+        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
+      )
       .getExists();
   }
 
   /** Distinct (thread, org, repo) tuples with at least one undelivered chat stimulus — the sweep worklist. */
-  async undeliveredChatThreads(): Promise<Array<{ jobId: string; orgId: string; repoId: string }>> {
+  async undeliveredChatThreads(): Promise<
+    Array<{ jobId: string; orgId: string; repoId: string }>
+  > {
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .select('s.job_id', 'job_id')
@@ -646,9 +685,15 @@ export class StimulusStoreService {
       .andWhere('s.job_id IS NOT NULL')
       // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
       // along a turn that runs for some other reason (d18).
-      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
+      .andWhere(
+        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
+      )
       .getRawMany<{ job_id: string; org_id: string; repo_id: string }>();
-    return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id }));
+    return rows.map((r) => ({
+      jobId: r.job_id,
+      orgId: r.org_id,
+      repoId: r.repo_id,
+    }));
   }
 
   /**
@@ -672,9 +717,21 @@ export class StimulusStoreService {
       .andWhere('s.job_id IS NOT NULL')
       // A thread whose ONLY undelivered rows are `later` must not be swept awake — `later` only rides
       // along a turn that runs for some other reason (d18).
-      .andWhere("(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')")
-      .getRawMany<{ job_id: string; org_id: string; repo_id: string; lane: string }>();
-    return rows.map((r) => ({ jobId: r.job_id, orgId: r.org_id, repoId: r.repo_id, lane: r.lane }));
+      .andWhere(
+        "(s.reply_route ->> 'priority' IS NULL OR s.reply_route ->> 'priority' != 'later')",
+      )
+      .getRawMany<{
+        job_id: string;
+        org_id: string;
+        repo_id: string;
+        lane: string;
+      }>();
+    return rows.map((r) => ({
+      jobId: r.job_id,
+      orgId: r.org_id,
+      repoId: r.repo_id,
+      lane: r.lane,
+    }));
   }
 
   /** Clear the lease on every undelivered chat row (boot reconcile — re-drive anything mid-attempt at crash). */
@@ -700,7 +757,9 @@ export class StimulusStoreService {
       .where('s.kind = :k', { k: 'event' })
       .andWhere('s.delivered_at IS NULL')
       .andWhere('s.job_id IS NOT NULL')
-      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', { cutoff })
+      .andWhere('(s.attempted_at IS NULL OR s.attempted_at < :cutoff)', {
+        cutoff,
+      })
       .orderBy('s.created_at', 'ASC')
       .getMany();
     return rows.map((r) => this.rowToEventStimulus(r));
@@ -754,19 +813,31 @@ export class StimulusStoreService {
         // Rows written before author_name existed fall back to the scope id as the display label.
         displayName: row.author_name ?? row.author_id ?? 'operator',
       },
-      replyRoute: row.reply_route ?? { surfaceId: '', jobRef: row.job_id as string },
+      replyRoute: row.reply_route ?? {
+        surfaceId: '',
+        jobRef: row.job_id as string,
+      },
       receivedAt: row.created_at,
       ...(replyRoute?.priority ? { priority: replyRoute.priority } : {}),
-      ...(replyRoute?.seedQuestionId ? { seedQuestionId: replyRoute.seedQuestionId } : {}),
-      ...(replyRoute?.seedSecretId ? { seedSecretId: replyRoute.seedSecretId } : {}),
+      ...(replyRoute?.seedQuestionId
+        ? { seedQuestionId: replyRoute.seedQuestionId }
+        : {}),
+      ...(replyRoute?.seedSecretId
+        ? { seedSecretId: replyRoute.seedSecretId }
+        : {}),
       ...(replyRoute?.seedFileId ? { seedFileId: replyRoute.seedFileId } : {}),
-      ...(replyRoute?.seedQuestionIds?.length ? { seedQuestionIds: replyRoute.seedQuestionIds } : {}),
-      ...(replyRoute?.seedSecretIds?.length ? { seedSecretIds: replyRoute.seedSecretIds } : {}),
-      ...(replyRoute?.seedFileIds?.length ? { seedFileIds: replyRoute.seedFileIds } : {}),
+      ...(replyRoute?.seedQuestionIds?.length
+        ? { seedQuestionIds: replyRoute.seedQuestionIds }
+        : {}),
+      ...(replyRoute?.seedSecretIds?.length
+        ? { seedSecretIds: replyRoute.seedSecretIds }
+        : {}),
+      ...(replyRoute?.seedFileIds?.length
+        ? { seedFileIds: replyRoute.seedFileIds }
+        : {}),
       ...(row.author_id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
     };
   }
-
 }
 
 function isUniqueViolation(err: unknown): boolean {

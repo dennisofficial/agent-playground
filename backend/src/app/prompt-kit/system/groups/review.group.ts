@@ -24,7 +24,7 @@ export class ReviewGroup {
       '  2. `gh pr diff <N>` for the unified diff. THAT diff is the review scope — local working-tree changes',
       '     are out of scope. When an angle needs surrounding code, Read the files in this checkout if it is on',
       "     the PR's branch, otherwise fetch them with `gh`.",
-      'For a large diff, delegate the read to the `review` subagent (Task) — give it the diff + the PR\'s stated',
+      "For a large diff, delegate the read to the `review` subagent (Task) — give it the diff + the PR's stated",
       'intent and have it come back with candidate findings; you still verify them yourself (below).',
     ].join('\n');
   }
@@ -39,7 +39,7 @@ export class ReviewGroup {
       'for — inverted/wrong conditions, off-by-one, null/undefined deref, a missing `await`, falsy-zero (`!x`',
       'when 0 is valid), wrong-variable copy-paste, an error swallowed in a catch, unescaped regex metachars,',
       'a resource/lock/handle never released, a changed default or signature that breaks a caller, and',
-      'BEHAVIOR SILENTLY REMOVED (a branch/guard/validation deleted). Also flag DRIFT from this repo\'s own',
+      "BEHAVIOR SILENTLY REMOVED (a branch/guard/validation deleted). Also flag DRIFT from this repo's own",
       'conventions (you read its CLAUDE.md/AGENTS.md while orienting). Weigh each against the PR body: does the',
       'code actually do what the PR says, and does the PR own any regression it introduces?',
     ].join('\n');
@@ -52,7 +52,7 @@ export class ReviewGroup {
       'VERIFY EACH FINDING BEFORE YOU REPORT IT. A plausible-looking bug that cannot actually happen is noise',
       'that costs the operator trust. For each candidate, construct the concrete path that triggers it (the',
       'input/state) and confirm the surrounding code does not already prevent it — Read the callers, the',
-      'guards, the types. Drop the ones you cannot stand behind. Do not launder a subagent\'s claim as fact:',
+      "guards, the types. Drop the ones you cannot stand behind. Do not launder a subagent's claim as fact:",
       'if the `review` subagent surfaced it, re-check it yourself. You may run typecheck/tests on the branch',
       'to confirm a suspicion (install deps first if needed) — but a static review with verified findings is a',
       'complete, valuable deliverable on its own.',

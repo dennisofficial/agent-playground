@@ -46,7 +46,9 @@ function readTimestamps(filePath: string): number[] {
   if (!existsSync(filePath)) return [];
   try {
     const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'));
-    return Array.isArray(parsed) ? parsed.filter((n) => typeof n === 'number') : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((n) => typeof n === 'number')
+      : [];
   } catch {
     return []; // corrupt/partial file (e.g. a concurrent writer) — treat as no history, never throw
   }
@@ -56,7 +58,9 @@ function readTimestamps(filePath: string): number[] {
  * Record this boot and report whether recent boot frequency looks like a restart storm. Pure w.r.t. its
  * inputs (the file path + injectable clock), so it's unit-testable without touching real dev state.
  */
-export function checkRestartLoop(opts: RestartGuardOptions = {}): RestartGuardResult {
+export function checkRestartLoop(
+  opts: RestartGuardOptions = {},
+): RestartGuardResult {
   const {
     filePath = join(process.cwd(), '.dev-boot-log.json'),
     windowMs = DEFAULT_RESTART_WINDOW_MS,

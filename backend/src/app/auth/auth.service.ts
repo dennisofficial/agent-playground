@@ -81,7 +81,11 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   /** Verify credentials, then set cookies. Returns the session object. */
-  async login(email: string, password: string, res: Response): Promise<AuthSession> {
+  async login(
+    email: string,
+    password: string,
+    res: Response,
+  ): Promise<AuthSession> {
     const user = await this.users.findOne({ where: { email } });
     // Same error for missing user vs bad password (no account enumeration).
     if (!user || !(await verify(user.password_hash, password))) {
@@ -152,7 +156,10 @@ export class AuthService implements OnApplicationBootstrap {
     const parent = this.parentDomain(req.hostname);
     if (parent && parent !== base.domain) domains.push(parent);
     for (const domain of domains) {
-      const opts = { ...base, ...(domain ? { domain } : { domain: undefined }) };
+      const opts = {
+        ...base,
+        ...(domain ? { domain } : { domain: undefined }),
+      };
       res.clearCookie(ACCESS_COOKIE, { ...opts, path: '/' });
       res.clearCookie(REFRESH_COOKIE, { ...opts, path: REFRESH_PATH });
     }
@@ -177,7 +184,11 @@ export class AuthService implements OnApplicationBootstrap {
       this.jwt.signRefreshToken(user.id),
     ]);
     const base = this.cookieBase();
-    res.cookie(ACCESS_COOKIE, access, { ...base, path: '/', maxAge: ACCESS_MAX_AGE_MS });
+    res.cookie(ACCESS_COOKIE, access, {
+      ...base,
+      path: '/',
+      maxAge: ACCESS_MAX_AGE_MS,
+    });
     res.cookie(REFRESH_COOKIE, refresh, {
       ...base,
       path: REFRESH_PATH,
@@ -185,7 +196,10 @@ export class AuthService implements OnApplicationBootstrap {
     });
   }
 
-  private cookieBase(): Pick<CookieOptions, 'httpOnly' | 'sameSite' | 'secure' | 'domain'> {
+  private cookieBase(): Pick<
+    CookieOptions,
+    'httpOnly' | 'sameSite' | 'secure' | 'domain'
+  > {
     const domain = this.env.get('COOKIE_DOMAIN');
     return {
       httpOnly: true,
@@ -197,6 +211,9 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   private readCookie(req: Request, name: string): string | null {
-    return (req as Request & { cookies?: Record<string, string> }).cookies?.[name] ?? null;
+    return (
+      (req as Request & { cookies?: Record<string, string> }).cookies?.[name] ??
+      null
+    );
   }
 }

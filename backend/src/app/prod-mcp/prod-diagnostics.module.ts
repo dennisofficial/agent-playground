@@ -1,7 +1,10 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, ProdMaintenanceWriteEntity } from '../persistence/entities';
+import {
+  MessageEntity,
+  ProdMaintenanceWriteEntity,
+} from '../persistence/entities';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 
 /**
@@ -14,7 +17,10 @@ import { ProdDiagnosticsService } from './prod-diagnostics.service';
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ProdMaintenanceWriteEntity, MessageEntity], DB_CONNECTION),
+    TypeOrmModule.forFeature(
+      [ProdMaintenanceWriteEntity, MessageEntity],
+      DB_CONNECTION,
+    ),
   ],
   providers: [ProdDiagnosticsService],
   exports: [ProdDiagnosticsService],

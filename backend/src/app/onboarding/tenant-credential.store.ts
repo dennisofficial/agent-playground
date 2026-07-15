@@ -1,10 +1,17 @@
 import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import type { ClaudeUsageSnapshot, ClaudeUsageWindowKey, StoredUsageWindow } from '@workspace/shared';
+import type {
+  ClaudeUsageSnapshot,
+  ClaudeUsageWindowKey,
+  StoredUsageWindow,
+} from '@workspace/shared';
 import { DataSource, Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { OrganizationEntity, OrgCredentialsEntity } from '../persistence/entities';
+import {
+  OrganizationEntity,
+  OrgCredentialsEntity,
+} from '../persistence/entities';
 import { isNewerCodexAuth } from './codex-auth-freshness';
 import { decodeCodexAccountEmail } from './codex-id-token';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
@@ -96,7 +103,9 @@ export class TenantCredentialStore {
   async presence(orgId: string, scope = '*'): Promise<CredentialPresence> {
     const [row, org] = await Promise.all([
       this.repo.findOne({ where: { org_id: orgId, scope } }),
-      this.dataSource.getRepository(OrganizationEntity).findOne({ where: { id: orgId } }),
+      this.dataSource
+        .getRepository(OrganizationEntity)
+        .findOne({ where: { id: orgId } }),
     ]);
     return {
       hasAnthropic: !!row?.anthropic_api_key_enc,
@@ -115,23 +124,37 @@ export class TenantCredentialStore {
    * means the installation is a first claim (no other holder); a non-empty result must be authorized
    * against the initiating user's ownership before the installation may be linked to another org.
    */
-  async orgsHoldingInstallation(installationId: string, exceptOrgId: string): Promise<string[]> {
+  async orgsHoldingInstallation(
+    installationId: string,
+    exceptOrgId: string,
+  ): Promise<string[]> {
     const rows = await this.repo.find({
       where: { github_app_installation_id: installationId },
       select: { org_id: true },
     });
-    return [...new Set(rows.map((r) => r.org_id))].filter((id) => id !== exceptOrgId);
+    return [...new Set(rows.map((r) => r.org_id))].filter(
+      (id) => id !== exceptOrgId,
+    );
   }
 
   /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
-  async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
+  async codexAccountEmail(
+    orgId: string,
+    scope = '*',
+  ): Promise<string | undefined> {
     const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
     if (!row?.codex_auth_secret_enc) return undefined;
-    return decodeCodexAccountEmail(decryptSecret(row.codex_auth_secret_enc, this.key()));
+    return decodeCodexAccountEmail(
+      decryptSecret(row.codex_auth_secret_enc, this.key()),
+    );
   }
 
   /** Encrypt + persist the provided fields (find-or-create the (team, scope) row). Refuses without a key. */
-  async write(orgId: string, patch: TenantCredentialPatch, scope = '*'): Promise<void> {
+  async write(
+    orgId: string,
+    patch: TenantCredentialPatch,
+    scope = '*',
+  ): Promise<void> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const row =
       (await this.repo.findOne({ where: { org_id: orgId, scope } })) ??
@@ -140,7 +163,8 @@ export class TenantCredentialStore {
       row.anthropic_api_key_enc = encryptSecret(patch.anthropicApiKey, key);
     if (patch.openaiApiKey !== undefined)
       row.openai_api_key_enc = encryptSecret(patch.openaiApiKey, key);
-    if (patch.githubPat !== undefined) row.github_pat_enc = encryptSecret(patch.githubPat, key);
+    if (patch.githubPat !== undefined)
+      row.github_pat_enc = encryptSecret(patch.githubPat, key);
     if (patch.claudeOauthToken !== undefined)
       row.claude_oauth_token_enc = encryptSecret(patch.claudeOauthToken, key);
     if (patch.codexAuthSecret !== undefined)
@@ -150,10 +174,13 @@ export class TenantCredentialStore {
       row.github_app_installation_id = patch.githubAppInstallationId;
     if (patch.githubAppInstallationAccount !== undefined)
       row.github_app_installation_account = patch.githubAppInstallationAccount;
-    if (patch.githubAuthMode !== undefined) row.github_auth_mode = patch.githubAuthMode;
+    if (patch.githubAuthMode !== undefined)
+      row.github_auth_mode = patch.githubAuthMode;
     await this.repo.save(row);
     this.cache.delete(this.cacheKey(orgId, scope));
-    this.logger.log(`wrote credentials for team=${orgId} scope=${scope} (${describePatch(patch)})`);
+    this.logger.log(
+      `wrote credentials for team=${orgId} scope=${scope} (${describePatch(patch)})`,
+    );
   }
 
   /**
@@ -164,7 +191,11 @@ export class TenantCredentialStore {
    * newer blob; when timestamps are missing it degrades to write-only-on-real-change. No-ops when no
    * credentials row exists. Refuses (throws) without an encryption key — callers must swallow.
    */
-  async advanceCodexAuthSecret(orgId: string, newSecret: string, scope = '*'): Promise<void> {
+  async advanceCodexAuthSecret(
+    orgId: string,
+    newSecret: string,
+    scope = '*',
+  ): Promise<void> {
     const key = this.key(); // throws loudly when SECRETS_ENCRYPTION_KEY is unset
     const wrote = await this.dataSource.transaction(async (m) => {
       const row = await m.findOne(OrgCredentialsEntity, {
@@ -180,19 +211,25 @@ export class TenantCredentialStore {
       const current = row.codex_auth_secret_enc
         ? decryptSecret(row.codex_auth_secret_enc, key)
         : undefined;
-      if (current !== undefined && !isNewerCodexAuth(newSecret, current)) return false; // stale / no-change
+      if (current !== undefined && !isNewerCodexAuth(newSecret, current))
+        return false; // stale / no-change
       row.codex_auth_secret_enc = encryptSecret(newSecret, key);
       await m.save(row);
       return true;
     });
     if (wrote) {
       this.cache.delete(this.cacheKey(orgId, scope));
-      this.logger.log(`advanced codex auth secret for team=${orgId} scope=${scope}`);
+      this.logger.log(
+        `advanced codex auth secret for team=${orgId} scope=${scope}`,
+      );
     }
   }
 
   /** Durable Claude usage snapshot for (orgId, scope), or null when no row exists / none harvested yet. Plaintext — no cipher involved. */
-  async readClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<ClaudeUsageSnapshot | null> {
+  async readClaudeUsageSnapshot(
+    orgId: string,
+    scope = '*',
+  ): Promise<ClaudeUsageSnapshot | null> {
     const row = await this.repo.findOne({ where: { org_id: orgId, scope } });
     return row?.claude_usage_snapshot ?? null;
   }
@@ -217,14 +254,21 @@ export class TenantCredentialStore {
         lock: { mode: 'pessimistic_write' },
       });
       if (!row) return false;
-      let snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? { windows: {}, fetchedAt: 0 };
+      let snapshot: ClaudeUsageSnapshot = row.claude_usage_snapshot ?? {
+        windows: {},
+        fetchedAt: 0,
+      };
       // A harvest from a DIFFERENT credential than the stored snapshot must not merge into it —
       // the snapshot represents ONE account. Start fresh, tagged to the incoming credential.
       if (snapshot.credentialId !== credentialId) {
         snapshot = { windows: {}, fetchedAt: 0, credentialId };
       }
       const existing = snapshot.windows[key];
-      if (existing && existing.utilization === window.utilization && existing.resetsAt === window.resetsAt) {
+      if (
+        existing &&
+        existing.utilization === window.utilization &&
+        existing.resetsAt === window.resetsAt
+      ) {
         return false; // unchanged — skip the write
       }
       snapshot.windows = { ...snapshot.windows, [key]: window };
@@ -238,12 +282,16 @@ export class TenantCredentialStore {
 
   /** Drop the org's harvested usage snapshot (set the nullable column null) — used on a Claude account switch so the ring re-reads the new account from scratch. */
   async clearClaudeUsageSnapshot(orgId: string, scope = '*'): Promise<void> {
-    await this.repo.update({ org_id: orgId, scope }, { claude_usage_snapshot: null });
+    await this.repo.update(
+      { org_id: orgId, scope },
+      { claude_usage_snapshot: null },
+    );
   }
 
   private decryptRow(row: OrgCredentialsEntity): TenantCredentials {
     const key = this.key();
-    const dec = (v: string | null): string | undefined => (v ? decryptSecret(v, key) : undefined);
+    const dec = (v: string | null): string | undefined =>
+      v ? decryptSecret(v, key) : undefined;
     return {
       anthropicApiKey: dec(row.anthropic_api_key_enc),
       openaiApiKey: dec(row.openai_api_key_enc),

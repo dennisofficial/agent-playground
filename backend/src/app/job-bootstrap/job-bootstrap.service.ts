@@ -37,7 +37,9 @@ export class JobBootstrapService {
     });
     if (existing) {
       // Heal an interrupted bootstrap (stage written, thread not) so the planning anchor always resolves.
-      const thread = await this.threads.findOne({ where: { stage_id: existing.id } });
+      const thread = await this.threads.findOne({
+        where: { stage_id: existing.id },
+      });
       if (!thread) await this.createPlanningThread(existing.id, jobId, orgId);
       return;
     }
@@ -61,9 +63,20 @@ export class JobBootstrapService {
    * a bogus thread_id if it somehow doesn't.
    */
   async planningThreadId(jobId: string): Promise<string> {
-    const stage = await this.stages.findOne({ where: { job_id: jobId, kind: 'planning' }, order: { ordinal: 'ASC' } });
-    const thread = stage ? await this.threads.findOne({ where: { stage_id: stage.id }, order: { ordinal: 'ASC' } }) : null;
-    if (!thread) throw new Error(`job-bootstrap: job ${jobId} has no planning-stage thread to anchor a message`);
+    const stage = await this.stages.findOne({
+      where: { job_id: jobId, kind: 'planning' },
+      order: { ordinal: 'ASC' },
+    });
+    const thread = stage
+      ? await this.threads.findOne({
+          where: { stage_id: stage.id },
+          order: { ordinal: 'ASC' },
+        })
+      : null;
+    if (!thread)
+      throw new Error(
+        `job-bootstrap: job ${jobId} has no planning-stage thread to anchor a message`,
+      );
     return thread.id;
   }
 
@@ -84,7 +97,11 @@ export class JobBootstrapService {
 
   /** The planning stage's single `planning`-role thread — ordinal 0, so builders (gap-numbered after the
    *  highest top-level ordinal) never collide with it on the job-wide UNIQUE(job_id, parent, ordinal). */
-  private async createPlanningThread(stageId: string, jobId: string, orgId: string): Promise<void> {
+  private async createPlanningThread(
+    stageId: string,
+    jobId: string,
+    orgId: string,
+  ): Promise<void> {
     await this.threads.save(
       this.threads.create({
         stage_id: stageId,

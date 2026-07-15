@@ -48,10 +48,18 @@ function fakeAppTokens(
 
 /** A `GitIdentityService` stubbed to resolve a fixed human identity for any token — or undefined (invalid PAT) when overridden. */
 function fakeIdentities(
-  resolve?: (token: string) => Promise<{ name: string; email: string } | undefined>,
+  resolve?: (
+    token: string,
+  ) => Promise<{ name: string; email: string } | undefined>,
 ): GitIdentityService {
   return {
-    resolve: resolve ?? (() => Promise.resolve({ name: 'Dev', email: '42+dev@users.noreply.github.com' })),
+    resolve:
+      resolve ??
+      (() =>
+        Promise.resolve({
+          name: 'Dev',
+          email: '42+dev@users.noreply.github.com',
+        })),
   } as unknown as GitIdentityService;
 }
 
@@ -336,7 +344,8 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: { githubAppInstallationId: '123' } }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () =>
+            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -346,10 +355,13 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
 
     it('app-mode + installation, no PAT: resolves the App bot + the installation token', async () => {
       const r = new CredentialResolver(
-        fakeStore({ T1: { githubAuthMode: 'app', githubAppInstallationId: '123' } }),
+        fakeStore({
+          T1: { githubAuthMode: 'app', githubAppInstallationId: '123' },
+        }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () =>
+            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -405,7 +417,8 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () =>
+            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -423,7 +436,8 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () =>
+            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(() => Promise.resolve(undefined)),
@@ -443,7 +457,9 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
 
     it('is best-effort: the App branch throwing (appBotIdentity or getInstallationToken) yields {}, never throws', async () => {
       const r = new CredentialResolver(
-        fakeStore({ T1: { githubAuthMode: 'app', githubAppInstallationId: '123' } }),
+        fakeStore({
+          T1: { githubAuthMode: 'app', githubAppInstallationId: '123' },
+        }),
         fakeClaudeStore({}),
         fakeAppTokens({
           appBotIdentity: () => {
@@ -487,7 +503,8 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
         fakeStore({ T1: creds }),
         fakeClaudeStore({}),
         fakeAppTokens({
-          appBotIdentity: () => Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
+          appBotIdentity: () =>
+            Promise.resolve({ name: 'atlas-bot[bot]', email: 'bot@x' }),
           getInstallationToken: () => Promise.resolve('ghs_minted'),
         }),
         fakeIdentities(),
@@ -542,10 +559,16 @@ describe('CredentialResolver — per-org rows, no env fallback', () => {
     it('installation present: returns the minted App installation token, regardless of githubAuthMode', async () => {
       const r = new CredentialResolver(
         fakeStore({
-          T1: { githubAuthMode: 'pat', githubAppInstallationId: '123', githubPat: 'ghp_x' },
+          T1: {
+            githubAuthMode: 'pat',
+            githubAppInstallationId: '123',
+            githubPat: 'ghp_x',
+          },
         }),
         fakeClaudeStore({}),
-        fakeAppTokens({ getInstallationToken: () => Promise.resolve('ghs_host_minted') }),
+        fakeAppTokens({
+          getInstallationToken: () => Promise.resolve('ghs_host_minted'),
+        }),
         fakeIdentities(),
       );
       expect(await r.hostGithubToken('T1')).toBe('ghs_host_minted');
