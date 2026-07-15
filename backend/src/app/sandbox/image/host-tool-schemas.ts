@@ -460,7 +460,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
   withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
-  write_setup_script: 'Write the per-sandbox setup script for this workspace.',
+  write_setup_script:
+    'Write the per-sandbox cold-boot setup script for this workspace — idempotent commands that ARM the box ' +
+    '(install deps, build, index) start-ready. It does NOT start runtime services (docker/DB/app server); ' +
+    'those are started on demand by the turn that needs them.',
   read_setup_script:
     'Read the repo\'s current cold-boot setup script (the raw body, not just its length) so you can edit it ' +
     'safely before calling write_setup_script — which REPLACES the whole script. Returns { ok, present, script }.',
