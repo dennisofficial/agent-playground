@@ -699,7 +699,17 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       );
 
       // ── 2e: the recorded PR (setPrReady) spawned a ci stage-thread ───────────────────────────────────
-      const ciStage = stagesAfter.find((s) => s.kind === 'ci');
+      // The ci stage is created by the trailing PR-recorded seam, which can commit just after the job
+      // settles to `done`; poll so this read never races that async insert (flaked under full-sweep
+      // load, passed in isolation). Mirrors `pollJobStatus` above.
+      let ciStage = stagesAfter.find((s) => s.kind === 'ci');
+      const ciDeadline = Date.now() + 5_000;
+      while (!ciStage && Date.now() < ciDeadline) {
+        await new Promise((r) => setTimeout(r, 25));
+        ciStage = (await store.stagesForJob(seed.jobId)).find(
+          (s) => s.kind === 'ci',
+        );
+      }
       expect(ciStage).toBeTruthy();
       const [ciThread] = await store.threadsForStage(ciStage!.id);
       expect(ciThread.role).toBe('ci');

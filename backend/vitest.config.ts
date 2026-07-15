@@ -67,7 +67,14 @@ export default defineConfig((env) => {
   }
 
   // Integration tests only — real local services (db/queue), no LLM calls, no e2e app boot.
-  // Run with: pnpm test:int
+  // Run with: pnpm test:int — this is also the CI integration sweep.
+  //
+  // The real-Docker sandbox tests below spawn ROOT-owned containers whose bind-mounted agent-home
+  // leaves `.atlas-state` files in the working tree. On the shared self-hosted CI runner those
+  // survive the job and the next checkout's `git clean -ffdx` can't remove them (EACCES), wedging
+  // CI at the checkout step. They exercise real Docker/submodule plumbing that a disposable local
+  // run cleans up fine, so keep them OUT of `--mode int`; they still run via `pnpm test` (the
+  // default-mode integration project) locally. CI never runs bare `pnpm test`.
   if (env.mode === 'int') {
     return {
       ...base,
@@ -77,7 +84,15 @@ export default defineConfig((env) => {
         setupFiles,
         globalSetup,
         include: ['**/*.int.test.ts'],
-        exclude: ['**/*.e2e-spec.ts', '**/*.ai.test.ts', ...configDefaults.exclude],
+        exclude: [
+          '**/*.e2e-spec.ts',
+          '**/*.ai.test.ts',
+          '**/sandbox/sandbox-manager.int.test.ts',
+          '**/sandbox/sandbox-manager.submodule.int.test.ts',
+          '**/sandbox/dockerode-container-engine.int.test.ts',
+          '**/sandbox/restart-recovery.int.test.ts',
+          ...configDefaults.exclude,
+        ],
         pool: 'threads',
         poolOptions: { threads: { singleThread: true } },
         testTimeout: 30_000,
