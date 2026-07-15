@@ -11,9 +11,9 @@ runs:
     - name: Clean stale submodule artifacts
       # Self-hosted runners REUSE the _work directory between jobs. actions/checkout
       # cleans the superproject but NOT untracked files inside git submodules
-      # (packages/jwt-auth, nestjs-ai-essentials, nestjs-core-essentials), so a prior
+      # (submodules/jwt-auth, nestjs-ai-essentials, nestjs-core-essentials), so a prior
       # run's pnpm node_modules — full of store symlinks that dangle once the store is
-      # pruned — persists there. hashFiles('packages/**') then follows a broken symlink
+      # pruned — persists there. hashFiles('submodules/**') then follows a broken symlink
       # and fails the whole cache step. Wipe untracked submodule content before anything
       # hashes the tree. No-op on ephemeral hosted runners (already a clean checkout).
       shell: bash
@@ -47,11 +47,17 @@ runs:
       # Restored BEFORE install: pnpm's injectWorkspacePackages hardlinks each package's
       # dist into dependents at install time, so a warm dist lets us skip build:packages.
       # The key hashes source only (dist does not exist yet at this point), so any change
-      # to a package or the lockfile invalidates it.
+      # to a package or the lockfile invalidates it. Both `packages/**` (first-party) and
+      # `submodules/**` (workspace-package submodules like @workspace/auth) are covered:
+      # build:packages builds both, so a cache that omitted submodules/**/dist would leave
+      # their gitignored dist unbuilt on a hit and break module resolution (e.g.
+      # `@workspace/auth/server`).
       uses: actions/cache@v4
       with:
-        path: packages/**/dist
-        key: pkgs-dist-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/**') }}
+        path: |
+          packages/**/dist
+          submodules/**/dist
+        key: pkgs-dist-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/**', 'submodules/**') }}
 
     - name: Install dependencies
       shell: bash

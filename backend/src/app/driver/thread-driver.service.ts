@@ -387,7 +387,15 @@ export class ThreadDriver implements JobDispatcher {
   private async planningThreadId(jobId: string): Promise<string> {
     if (!this.jobBootstrap)
       throw new Error('thread-driver: JobBootstrapService not wired');
-    return this.jobBootstrap.planningThreadId(jobId);
+    try {
+      return await this.jobBootstrap.planningThreadId(jobId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes('has no planning-stage thread')) throw err;
+      const job = await this.store.loadJob(jobId);
+      await this.jobBootstrap.ensurePlanningStage(jobId, job.orgId);
+      return this.jobBootstrap.planningThreadId(jobId);
+    }
   }
 
   /** In-process 10s re-drive timers for host auth/transport retries (per job). The durable session_resume

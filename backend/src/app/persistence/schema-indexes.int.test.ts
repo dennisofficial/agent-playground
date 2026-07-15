@@ -53,6 +53,22 @@ async function purge(ds: DataSource): Promise<void> {
   await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
 }
 
+async function insertStage(
+  ds: DataSource,
+  args: {
+    jobId: string;
+    ordinal: number;
+    decisionRecordId?: string | null;
+  },
+): Promise<string> {
+  const rows = await ds.query(
+    `INSERT INTO stages (job_id, org_id, ordinal, kind, decision_record_id)
+     VALUES ($1, $2, $3, 'build', $4) RETURNING id`,
+    [args.jobId, ORG_ID, args.ordinal, args.decisionRecordId ?? null],
+  );
+  return rows[0].id as string;
+}
+
 describe('restored schema indexes (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
@@ -126,19 +142,21 @@ describe('restored schema indexes (live Postgres)', () => {
     );
     const jobId = jobRows[0].id as string;
 
+    const stageId = await insertStage(ds, { jobId, ordinal: 10 });
+
     const insertThread = () =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, kind, ordinal, brief, parent_thread_id)
-         VALUES ($1, $2, 'builder', 10, 'first', NULL)`,
-        [jobId, ORG_ID],
+        `INSERT INTO threads (job_id, org_id, stage_id, role, ordinal, brief, parent_thread_id)
+         VALUES ($1, $2, $3, 'builder', 10, 'first', NULL)`,
+        [jobId, ORG_ID, stageId],
       );
 
     await insertThread();
-    // NULLS NOT DISTINCT: a second (job_id, NULL decision_record, NULL parent, ordinal) row must collide.
+    // NULLS NOT DISTINCT: a second (job_id, NULL parent, ordinal) row must collide.
     await expect(insertThread()).rejects.toThrow();
   });
 
-  it('uq_threads_job_parent_ordinal ALLOWS the same (parent, ordinal) across different plan revisions', async () => {
+  it('uq_threads_job_parent_ordinal rejects duplicate root ordinals across different plan revisions', async () => {
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
        ON CONFLICT (id) DO NOTHING`,
@@ -162,16 +180,26 @@ describe('restored schema indexes (live Postgres)', () => {
        VALUES ($1, $2, $3, 'rev one'), ($1, $2, $3, 'rev two') RETURNING id`,
       [ORG_ID, repoId, jobId],
     );
-    const [recA, recB] = [recRows[0].id as string, recRows[1].id as string];
-    const insertAt10 = (recordId: string) =>
+    const [stageA, stageB] = await Promise.all([
+      insertStage(ds, {
+        jobId,
+        ordinal: 10,
+        decisionRecordId: recRows[0].id as string,
+      }),
+      insertStage(ds, {
+        jobId,
+        ordinal: 20,
+        decisionRecordId: recRows[1].id as string,
+      }),
+    ]);
+    const insertAt10 = (stageId: string) =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, kind, ordinal, brief, parent_thread_id, decision_record_id)
-         VALUES ($1, $2, 'builder', 10, 'lane', NULL, $3)`,
-        [jobId, ORG_ID, recordId],
+        `INSERT INTO threads (job_id, org_id, stage_id, role, ordinal, brief, parent_thread_id)
+         VALUES ($1, $2, $3, 'builder', 10, 'lane', NULL)`,
+        [jobId, ORG_ID, stageId],
       );
-    // Same (job, NULL parent, ordinal 10) but DIFFERENT decision_record_id → the revision column keeps them
-    // distinct, so the second insert must NOT collide (this is what lets a re-propose preserve done lanes).
-    await insertAt10(recA);
-    await expect(insertAt10(recB)).resolves.toBeDefined();
+    // `decision_record_id` now lives on stages, not threads, so root thread ordinals are job-global.
+    await insertAt10(stageA);
+    await expect(insertAt10(stageB)).rejects.toThrow();
   });
 });

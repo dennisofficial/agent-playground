@@ -1,6 +1,14 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { AutoApproveMode } from '@workspace/shared';
+import { OrgClaudeCredentialEntity } from './org-claude-credential.entity';
 
 /**
  * An organization — the top-level tenant in Atlas. Replaces the Slack-era `atlas_teams`/`team_id`
@@ -26,13 +34,26 @@ export class OrganizationEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'onboarding' })
   status!: string; // 'onboarding' | 'active' | 'suspended'
 
-  /**
-   * The org's single active Claude credential (FK → `claude_credentials.id`, ON DELETE SET NULL, enforced
-   * in the migration). No `@ManyToOne` relation here on purpose — avoids a circular entity import with
-   * `OrgClaudeCredentialEntity`; the plain column + migration FK is enough.
-   */
+  /** The org's single active Claude credential (FK → `claude_credentials.id`, ON DELETE SET NULL). */
   @Column({ type: 'uuid', nullable: true })
   selected_claude_credential_id!: string | null;
+
+  /**
+   * `foreignKeyConstraintName` is explicit because the naming-strategy-computed name
+   * (`fk_organizations_selected_claude_credential_id_claude_credentials`, 65 chars) exceeds Postgres's
+   * 63-char identifier limit — Postgres silently truncates it at every reference, which would drift
+   * forever against TypeORM's (untruncated) computed name on every `generate`.
+   */
+  @ManyToOne(() => OrgClaudeCredentialEntity, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
+  @JoinColumn({
+    name: 'selected_claude_credential_id',
+    foreignKeyConstraintName:
+      'fk_organizations_selected_claude_credential_claude_credentials',
+  })
+  selectedClaudeCredential?: OrgClaudeCredentialEntity | null;
 
   /** Org DEFAULT auto-approve mode a new job inherits at creation (see createJob). 'off' until an owner sets it. */
   @Column({ type: 'text', default: 'off' })

@@ -84,6 +84,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Migration hygiene guard (backend/src/app/persistence/migrations-hygiene.spec.ts)
+          # needs origin/main resolvable to compute the merge-base diff of added migrations.
+          fetch-depth: 0
 
       - name: Set up workspace
         uses: ./.github/actions/setup-workspace

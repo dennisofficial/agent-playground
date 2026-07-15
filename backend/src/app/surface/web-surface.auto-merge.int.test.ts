@@ -38,6 +38,7 @@ import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { AutoMergeService } from '../driver/auto-merge.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { MERGE_ACTION_ID } from '../surface/approval-blocks';
 
 const fakeCreds = {
@@ -76,6 +77,7 @@ const PASSWORD = 'auto-merge-it-pw-12345';
 
 let app: NestExpressApplication;
 let ds: DataSource;
+let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 let ownerId: string;
@@ -158,6 +160,7 @@ async function seedGreenJob(
              'open', $5, 'clean', 'success')`,
     [jobId, ORG, REPO, title, prNumber],
   );
+  await bootstrap.ensurePlanningStage(jobId, ORG);
 }
 
 async function waitFor(
@@ -208,6 +211,7 @@ beforeAll(async () => {
 
   server = app.getHttpServer();
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+  bootstrap = app.get(JobBootstrapService);
 
   await purge();
   const owner = await register(OWNER_EMAIL);

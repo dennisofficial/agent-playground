@@ -28,6 +28,7 @@ import {
   RepoEntity,
   UserEntity,
 } from '../persistence/entities';
+import { JobBootstrapService } from '../job-bootstrap';
 import {
   EventFilterService,
   ProjectRoutingService,
@@ -90,6 +91,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
       controllers: [GithubEventsWebhookController],
       providers: [
         ProjectRoutingService,
+        JobBootstrapService,
         StimulusStoreService,
         EventFilterService,
         StimulusIntake,

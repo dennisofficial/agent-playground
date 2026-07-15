@@ -35,6 +35,7 @@ import {
   MessageEntity,
   StimulusEntity,
 } from '../persistence/entities';
+import { JobBootstrapService } from '../job-bootstrap';
 import type { EventStimulus } from '../domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
@@ -127,6 +128,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
       controllers: [GithubEventsWebhookController],
       providers: [
         ProjectRoutingService,
+        JobBootstrapService,
         StimulusStoreService,
         EventFilterService,
         StimulusIntake,

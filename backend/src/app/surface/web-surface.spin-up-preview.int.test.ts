@@ -37,6 +37,7 @@ import {
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
+import { JobBootstrapService } from '../job-bootstrap';
 import { WebSurface } from './web-surface';
 import { webShipReviewCard } from './web-approval-card';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
@@ -67,6 +68,7 @@ let app: NestExpressApplication;
 let ds: DataSource;
 let surface: WebSurface;
 let configStore: WorkspaceConfigStore;
+let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 
@@ -107,15 +109,16 @@ async function purge(): Promise<void> {
 }
 
 async function seedShipCardRow(jobId: string): Promise<void> {
+  const threadId = await bootstrap.planningThreadId(jobId);
   const card = webShipReviewCard({
     jobId,
     title: 'Ready to ship',
     summary: 'The build is ready.',
   });
   await ds.query(
-    `INSERT INTO messages (job_id, author, author_id, author_bot_id, text, kind, ts, card)
-     VALUES ($1, 'Atlas', 'atlas', 'atlas', 'Ready to ship', 'card', $2, $3::jsonb)`,
-    [jobId, `ship-review:${jobId}`, JSON.stringify(card)],
+    `INSERT INTO messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, ts, card)
+     VALUES ($1, $2, 'Atlas', 'atlas', 'atlas', 'Ready to ship', 'card', $3, $4::jsonb)`,
+    [jobId, threadId, `ship-review:${jobId}`, JSON.stringify(card)],
   );
 }
 
@@ -179,6 +182,7 @@ beforeAll(async () => {
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
   surface = app.get(WebSurface);
   configStore = app.get(WorkspaceConfigStore);
+  bootstrap = app.get(JobBootstrapService);
 
   await purge();
   const owner = await register(OWNER_EMAIL);
@@ -226,6 +230,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
        VALUES ($1, $2, $3, 'control', 'Ready build', 'feature', 'awaiting_ship_review', 'idle')`,
       [GATE_JOB, ORG, REPO],
     );
+    await bootstrap.ensurePlanningStage(GATE_JOB, ORG);
     await seedShipCardRow(GATE_JOB);
   }
 
@@ -320,6 +325,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
        VALUES ($1, $2, $3, 'control', 'Building build', 'feature', 'running', 'build')`,
       [RUNNING_JOB, ORG, REPO],
     );
+    await bootstrap.ensurePlanningStage(RUNNING_JOB, ORG);
     await seedShipCardRow(RUNNING_JOB);
 
     let res!: request.Response;
