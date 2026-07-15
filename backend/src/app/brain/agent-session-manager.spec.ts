@@ -66,6 +66,7 @@ import type { JitHostExecutor } from './jit-host-executor';
 import type { EnvService } from '@core/config/env/env.service';
 import { retryResumeNudge } from '../prompt-kit/harness';
 import type { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
@@ -192,18 +193,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getDecisionRecord: vi.fn(),
     retractShip: vi.fn(),
     openAmendProposal: vi.fn(),
-    // ADR 0004 Phase 3 — halt wake + bounded fix
     loadJob: vi.fn(),
     getThread: vi.fn(),
     getTerminalRecord: vi.fn(),
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
-    claimHaltFixAttempt: vi.fn(),
-    markHaltWaked: vi.fn(),
-    // Decision d1 — completion wake (gen-CAS): claim returns a gen so the delivery proceeds; supersede no-ops.
     threadsForJob: vi.fn().mockResolvedValue([]),
-    claimDoneWakeGen: vi.fn().mockResolvedValue(1),
-    supersedeDoneWakeMessages: vi.fn().mockResolvedValue(undefined),
-    markDoneWaked: vi.fn(),
   } as unknown as DriverStoreService;
 
   const mockAutoMerge = {
@@ -376,14 +370,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     // Promise (not undefined) for the tests that don't stub it themselves.
     (
       mockDriverStore.resolveSessionAnchor as ReturnType<typeof vi.fn>
-    ).mockResolvedValue(undefined);
-    // Decision d1 completion-wake gen-CAS defaults (resetAllMocks wiped them): claim yields a gen so the
-    // notifyThreadDone delivery proceeds, and the supersede/threadsForJob are no-op promises.
-    (
-      mockDriverStore.claimDoneWakeGen as ReturnType<typeof vi.fn>
-    ).mockResolvedValue(1);
-    (
-      mockDriverStore.supersedeDoneWakeMessages as ReturnType<typeof vi.fn>
     ).mockResolvedValue(undefined);
     (
       mockDriverStore.threadsForJob as ReturnType<typeof vi.fn>
@@ -629,6 +615,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      new SelfSufficiencyToolsService(mockStore, mockMemory), // selfSufficiency
       ...optionalTail({ jit: mockJit }),
     );
   });
@@ -3532,6 +3519,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      new SelfSufficiencyToolsService(
+        store,
+        {} as unknown as MemoryStore,
+      ), // selfSufficiency
       ...optionalTail({ liveTurns }),
     );
     return {
@@ -4944,6 +4935,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail(),
     );
     return { manager, store };
@@ -5164,6 +5156,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail(),
     );
     return { manager, store, lifecycle, ship, repos };
@@ -5313,6 +5306,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
+      inert, // selfSufficiency (32)
       ...optionalTail(),
     );
     return {
@@ -5584,6 +5578,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      inert, // selfSufficiency
       ...optionalTail(),
     );
     return {
@@ -5886,6 +5881,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)
         { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        inert, // selfSufficiency (32)
         ...optionalTail(),
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
@@ -6066,6 +6062,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       {} as unknown as LiveVerificationJudge,
       { getResetAt: () => undefined } as unknown as OauthUsageService,
+      {} as unknown as SelfSufficiencyToolsService, // selfSufficiency
       ...optionalTail({ env }),
     );
     return manager as unknown as {

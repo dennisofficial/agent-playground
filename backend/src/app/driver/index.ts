@@ -50,13 +50,6 @@ export {
   type LiveVerificationJudge,
   type LiveVerificationVerdict,
 } from './live-verification-judge';
-export {
-  STATIC_VERIFICATION_JUDGE,
-  AnthropicStaticVerificationJudge,
-  JudgeStaticVerificationChain,
-  type StaticVerificationJudge,
-  type StaticVerificationVerdict,
-} from './static-verification-judge';
 export { LiveVerificationModule } from './live-verification.module';
 export {
   LANE_SEEDER,

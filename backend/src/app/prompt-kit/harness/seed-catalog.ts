@@ -363,7 +363,7 @@ export function haltWakeFraming(
     `You may investigate (read transcripts/code), post a diagnosis, and request a missing secret — but you` +
       ` may NOT edit/push code, re-drive the halted thread from Main, or ship without the operator.`,
   ];
-  return [...preamble, ...haltTriageGuidance(term?.blocked?.reason)].join('\n');
+  return [...preamble, ...haltTriageGuidance()].join('\n');
 }
 
 export function renderHaltDelivery(
@@ -394,14 +394,6 @@ export function haltRecordBody(
 ): string {
   return [
     term?.summary ? `summary: ${term.summary}` : null,
-    term?.blocked ? `blocked.reason: ${term.blocked.reason}` : null,
-    term?.blocked ? `blocked.detail: ${term.blocked.detail}` : null,
-    term?.failure
-      ? `failure: ${term.failure.kind}${term.failure.command ? ` (${term.failure.command})` : ''}`
-      : null,
-    term?.failure?.stderrTail
-      ? `stderrTail:\n${term.failure.stderrTail}`
-      : null,
     term?.gaps?.length
       ? `gaps:\n${term.gaps.map((g) => `- ${g}`).join('\n')}`
       : null,

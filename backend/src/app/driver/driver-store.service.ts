@@ -58,7 +58,6 @@ const ORDINAL_GAP = 10;
  * extra field rather than the driver re-querying the thread for it.
  */
 export type DriverThread = Thread & { orgId: string };
-type HaltBudgetReason = 'judge_unavailable';
 
 /**
  * A builder's review CHILD thread (a `review_lens` or `post_review` row) as the driver's child-thread
@@ -983,7 +982,7 @@ export class DriverStoreService {
 
   // ── typed terminal record (ADR 0004: the thread ASSERTS its outcome; the driver reads it) ──────────
 
-  /** Persist the orchestrator's typed terminal assertion (from `complete_thread`/`block_thread`). */
+  /** Persist the orchestrator's typed done-report (from `complete_thread`). */
   async recordThreadTermination(
     threadId: string,
     record: ThreadTerminalRecord,
@@ -1022,151 +1021,6 @@ export class DriverStoreService {
     return row?.job_id ?? null;
   }
 
-  /** Mark a halted thread as OWED a brain wake (set by `haltJob` the moment a thread halts non-`done`).
-   *  `outcome` is the resolved `ThreadOutcome`. Leaves `halt_waked_at` null so the wake is owed. */
-  async setHaltOwed(
-    threadId: string,
-    outcome: 'blocked' | 'incomplete' | 'failed',
-  ): Promise<void> {
-    await this.threads.update(
-      { id: threadId },
-      { halt_outcome: outcome, halt_waked_at: null },
-    );
-  }
-
-  /** Threads whose halt is owed a brain wake (`halt_outcome` set, not yet waked). Optionally scoped to one
-   *  job. Returns the minimal shape the wake path needs: ids + the generation token (`halt_fix_attempts`)
-   *  the wake-stamp CAS keys on. */
-  async threadsAwaitingHaltWake(jobId?: string): Promise<
-    {
-      jobId: string;
-      threadId: string;
-      gen: number;
-      outcome: 'blocked' | 'incomplete' | 'failed';
-    }[]
-  > {
-    const qb = this.threads
-      .createQueryBuilder('t')
-      .select(['t.id', 't.job_id', 't.halt_fix_attempts', 't.halt_outcome'])
-      .where('t.halt_outcome IS NOT NULL')
-      .andWhere('t.halt_waked_at IS NULL');
-    if (jobId) qb.andWhere('t.job_id = :jobId', { jobId });
-    const rows = await qb.getMany();
-    return rows.map((r) => ({
-      jobId: r.job_id,
-      threadId: r.id,
-      gen: r.halt_fix_attempts,
-      outcome: r.halt_outcome as 'blocked' | 'incomplete' | 'failed',
-    }));
-  }
-
-  /** Stamp the wake delivered — a GENERATION-KEYED CAS (ADR 0004 Phase 3): stamp only if `halt_fix_attempts`
-   *  still equals the `gen` captured when the wake fired (no re-drive happened mid-wake) and the halt is still
-   *  owed + un-waked. A stale wake completing after a re-drive matches zero rows, so it can never clobber the
-   *  re-drive's re-armed (null) marker and silence a fresh halt's wake. */
-  async markHaltWaked(threadId: string, gen: number): Promise<void> {
-    await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ halt_waked_at: () => 'now()' })
-      .where('id = :threadId', { threadId })
-      .andWhere('halt_fix_attempts = :gen', { gen })
-      .andWhere('halt_waked_at IS NULL')
-      .andWhere('halt_outcome IS NOT NULL')
-      .execute();
-  }
-
-  // ── Completion-wake (decision d1) — mirrors the halt trio above, no generation CAS ─────────────
-
-  /** Mark a `done` thread as OWED a brain wake — `'final'` (whole build parked at ship gate) or `'notable'`
-   *  (done-with-gaps). Idempotent: a repeat call re-asserts the same owed row. */
-  async setDoneWakeOwed(
-    threadId: string,
-    reason: 'final' | 'notable',
-  ): Promise<void> {
-    await this.threads.update(
-      { id: threadId },
-      { done_wake_owed: true, done_wake_reason: reason, done_waked_at: null },
-    );
-  }
-
-  /** Threads whose completion is owed a brain wake (`done_wake_owed`, not yet waked). Optionally scoped to
-   *  one job. Mirrors `threadsAwaitingHaltWake`'s shape (no `gen` — a `done` thread is never re-driven). */
-  async threadsAwaitingDoneWake(
-    jobId?: string,
-  ): Promise<
-    { jobId: string; threadId: string; reason: 'final' | 'notable' }[]
-  > {
-    const qb = this.threads
-      .createQueryBuilder('t')
-      .select(['t.id', 't.job_id', 't.done_wake_reason'])
-      .where('t.done_wake_owed IS TRUE')
-      .andWhere('t.done_waked_at IS NULL');
-    if (jobId) qb.andWhere('t.job_id = :jobId', { jobId });
-    const rows = await qb.getMany();
-    return rows.map((r) => ({
-      jobId: r.job_id,
-      threadId: r.id,
-      reason: r.done_wake_reason as 'final' | 'notable',
-    }));
-  }
-
-  /** CAS-claim a fresh completion-wake generation at delivery START — atomically bump `done_wake_gen` and
-   *  return the new value, iff the wake is still owed + un-stamped. Returns null when nothing is owed
-   *  (already delivered/superseded → the caller no-ops). Mirrors the halt CAS but does the bump HERE (not
-   *  out-of-band like `retry_thread`): a plain read would hand two concurrent sweeps the SAME gen and let
-   *  both claim it, whereas the atomic bump gives each a distinct gen so the loser's late stamp is invalid. */
-  async claimDoneWakeGen(threadId: string): Promise<number | null> {
-    const res = await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ done_wake_gen: () => 'done_wake_gen + 1' })
-      .where('id = :threadId', { threadId })
-      .andWhere('done_wake_owed IS TRUE')
-      .andWhere('done_waked_at IS NULL')
-      .returning('done_wake_gen')
-      .execute();
-    const gen = (res.raw as { done_wake_gen?: number }[] | undefined)?.[0]
-      ?.done_wake_gen;
-    return typeof gen === 'number' ? gen : null;
-  }
-
-  /** Supersede a prior (dead) completion-wake attempt: delete every `messages` row for THIS originating wake
-   *  thread whose `meta.doneWakeGen` is below the current gen. Scoped by `doneWakeThreadId` (NOT just
-   *  job+gen) because `done_wake_gen` is per-thread and the owed-wake sweep iterates every owed thread of a
-   *  job — a job-wide `gen<N` delete would erase another thread's valid summary. Untagged rows (normal chat,
-   *  seed pills) carry no `doneWakeThreadId` → never matched. Called at delivery START so a truncated partial
-   *  from attempt N-1 is gone before the gen-N summary lands. */
-  async supersedeDoneWakeMessages(
-    jobId: string,
-    threadId: string,
-    gen: number,
-  ): Promise<void> {
-    await this.messages
-      .createQueryBuilder()
-      .delete()
-      .where('job_id = :jobId', { jobId })
-      .andWhere(`(meta ->> 'doneWakeThreadId') = :threadId`, { threadId })
-      .andWhere(`(meta ->> 'doneWakeGen')::int < :gen`, { gen })
-      .execute();
-  }
-
-  /** Stamp the completion wake delivered and clear the owed flag — GENERATION-KEYED CAS (mirrors
-   *  `markHaltWaked`): stamp only if `done_wake_gen` still equals the `gen` captured at delivery start (no
-   *  newer attempt superseded this one) and the wake is still owed + un-stamped. A stale attempt completing
-   *  after a newer claim matches zero rows, so it can't clear owed out from under the live attempt. */
-  async markDoneWaked(threadId: string, gen: number): Promise<void> {
-    await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ done_waked_at: () => 'now()', done_wake_owed: false })
-      .where('id = :threadId', { threadId })
-      .andWhere('done_wake_gen = :gen', { gen })
-      .andWhere('done_wake_owed IS TRUE')
-      .andWhere('done_waked_at IS NULL')
-      .execute();
-  }
-
   /** The job's `master_review` thread id — the carrier for the `'final'` completion wake — or null if the
    *  job has none (yet). */
   async masterReviewThreadId(jobId: string): Promise<string | null> {
@@ -1175,34 +1029,6 @@ export class DriverStoreService {
       select: { id: true },
     });
     return row?.id ?? null;
-  }
-
-  /** Clear the halt signal on a re-drive so a FRESH block re-arms a fresh wake (both the owed flag and the
-   *  dedup marker). The `halt_fix_attempts` budget is intentionally NOT cleared (it's a lifetime counter). */
-  async clearHalt(threadId: string): Promise<void> {
-    await this.threads.update(
-      { id: threadId },
-      { halt_outcome: null, halt_waked_at: null },
-    );
-  }
-
-  /** CAS-claim one autonomous re-drive attempt: atomically increment `halt_fix_attempts` iff still below
-   *  `cap`. Returns `{ ok:true, used }` when a slot was claimed, else `{ ok:false, used:cap }` (exhausted).
-   *  The compare-and-swap makes a double-fired wake safe — two concurrent claims can't both pass the cap. */
-  async claimHaltFixAttempt(
-    threadId: string,
-    cap: number,
-  ): Promise<{ ok: boolean; used: number }> {
-    const res = await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ halt_fix_attempts: () => 'halt_fix_attempts + 1' })
-      .where('id = :threadId', { threadId })
-      .andWhere('halt_fix_attempts < :cap', { cap })
-      .returning('halt_fix_attempts')
-      .execute();
-    const used = res.raw?.[0]?.halt_fix_attempts as number | undefined;
-    return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
   /** CAS-claim one auth transient-error auto-retry attempt (driver lane). Atomically increment
@@ -1254,94 +1080,6 @@ export class DriverStoreService {
     return { count: row?.driver_transient_retries ?? 0, lastAttemptAt: row?.retry_last_attempt_at ?? null };
   }
 
-  /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets
-   *  the re-halt short-circuit tell a genuinely already-notified block (owed-wake row exists → safe to
-   *  suppress the redundant re-notify) from a blocked terminal record whose `haltJob` hasn't run yet (crash
-   *  between `block_thread`'s record write and `haltJob` → must still notify once, else the wake is lost). */
-  async haltOutcome(
-    threadId: string,
-  ): Promise<'blocked' | 'incomplete' | 'failed' | null> {
-    const row = await this.threads.findOne({
-      where: { id: threadId },
-      select: { id: true, halt_outcome: true },
-    });
-    return (
-      (row?.halt_outcome as 'blocked' | 'incomplete' | 'failed' | null) ?? null
-    );
-  }
-
-  /** The thread's spent autonomous re-drive budget (0 if unset). Read by `haltJob` to decide whether a
-   *  `blocked` thread still has brain-retry budget (keep the job running + wake) or is spent (rest the job). */
-  async haltFixAttempts(threadId: string): Promise<number> {
-    const row = await this.threads.findOne({
-      where: { id: threadId },
-      select: { id: true, halt_fix_attempts: true },
-    });
-    return row?.halt_fix_attempts ?? 0;
-  }
-
-  /** Which recovery path last consumed the shared `halt_fix_attempts` counter. Stored in existing jsonb so a
-   *  `judge_unavailable` patient retry that later reveals a real defect does not steal the 2-attempt defect
-   *  budget. */
-  async haltBudgetReason(threadId: string): Promise<HaltBudgetReason | null> {
-    const row = await this.threads.findOne({
-      where: { id: threadId },
-      select: { id: true, config: true },
-    });
-    return haltBudgetReasonFromConfig(row?.config);
-  }
-
-  /** Durable marker for the shared halt budget's current owner. `null` clears the marker while preserving the
-   *  rest of the thread config. */
-  async setHaltBudgetReason(
-    threadId: string,
-    reason: HaltBudgetReason | null,
-  ): Promise<void> {
-    const recoveryObject = `(CASE WHEN jsonb_typeof(config->'recovery') = 'object' THEN config->'recovery' ELSE '{}'::jsonb END)`;
-    const configObject = `COALESCE(config, '{}'::jsonb)`;
-    const clearedRecovery = `(${recoveryObject} - 'haltBudgetReason')`;
-    const nextConfig = reason
-      ? `jsonb_set(${configObject}, '{recovery}', ${recoveryObject} || jsonb_build_object('haltBudgetReason', CAST(:reason AS text)), true)`
-      : `CASE WHEN ${clearedRecovery} = '{}'::jsonb THEN ${configObject} - 'recovery' ELSE jsonb_set(${configObject}, '{recovery}', ${clearedRecovery}, true) END`;
-    await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ config: () => nextConfig })
-      .where('id = :threadId', { threadId })
-      .setParameters({ reason })
-      .execute();
-  }
-
-  /** OPERATOR RE-ARM (ADR 0004 rider 4): reset the autonomous re-drive budget for a job's spent threads so a
-   *  human re-engagement (`resumePaused`/`retry`) grants Atlas a fresh set of attempts. The counter is a
-   *  LIFETIME budget for AUTONOMOUS loops — only an explicit operator action re-arms it (never boot-resume),
-   *  so the halt loop can't self-perpetuate. Returns how many threads were re-armed. */
-  async rearmHaltedThreads(jobId: string): Promise<number> {
-    const res = await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ halt_fix_attempts: 0 })
-      .where('job_id = :jobId', { jobId })
-      .andWhere('halt_fix_attempts > 0')
-      .execute();
-    return res.affected ?? 0;
-  }
-
-  /** Reset ONE thread's autonomous re-drive budget to 0 — the single-thread analog of
-   *  {@link rearmHaltedThreads}. Used by the operator "Retry now" lever so a fresh judge-cap budget is granted
-   *  to the TARGET thread only (never resetting a resting sibling that genuinely exhausted its defect budget),
-   *  and to clear a defect counter polluted by prior judge-outage retries. Returns 1 if a positive counter was
-   *  reset, else 0. */
-  async rearmThread(threadId: string): Promise<number> {
-    const res = await this.threads
-      .createQueryBuilder()
-      .update(ThreadEntity)
-      .set({ halt_fix_attempts: 0 })
-      .where('id = :threadId', { threadId })
-      .andWhere('halt_fix_attempts > 0')
-      .execute();
-    return res.affected ?? 0;
-  }
 
   // ── review children (post-build review fan-out as real child threads) ──────────────────────────
   // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
@@ -1588,13 +1326,11 @@ export class DriverStoreService {
       hasPlan: t.plan != null,
       sessionId: t.session_id,
       commitSha: t.commit_sha,
-      blockReason: t.terminal_record?.blocked?.reason ?? null,
-      // True only when the LIVE judge was the outage and static build+tests passed — gates the "Skip & accept"
-      // button (mirrors operatorAcceptStuckThread's server-side guard, so the UI never offers an unsafe accept).
-      acceptableOnJudgeOutage:
-        t.terminal_record?.blocked?.reason === 'judge_unavailable' &&
-        t.terminal_record?.staticVerification?.verdict?.staticChecksAdequate ===
-          true,
+      // The verification-gate reason taxonomy + judge-outage "Skip & accept" hold are gone: a thread that
+      // isn't done now lands in the single `incomplete` condition (surfaced via `condition`), so these
+      // read-model fields are constant. Retained (constant) until Thread 2 drops them from the web read model.
+      blockReason: null,
+      acceptableOnJudgeOutage: false,
       // The lane's pre-turn composer-footer default (`model · effort`), keyed off the thread's role.
       defaultFooter: laneDefaultFooter(t.role),
       // Per-role operator-chat toggle (d12) — whether this thread's kind accepts operator input at all. The
@@ -2174,12 +1910,6 @@ function toThread(row: ThreadEntity): DriverThread {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function haltBudgetReasonFromConfig(config: unknown): HaltBudgetReason | null {
-  const recovery = isRecord(config) ? config.recovery : null;
-  const reason = isRecord(recovery) ? recovery.haltBudgetReason : null;
-  return reason === 'judge_unavailable' ? reason : null;
 }
 
 function toReviewChild(row: ThreadEntity): ReviewChildThread {

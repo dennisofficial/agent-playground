@@ -96,9 +96,13 @@ export class BuildLaneDeliveryService
           );
         }
 
-        const halted =
-          (await this.driverStore.haltOutcome(threadId).catch(() => null)) !=
-          null;
+        // "Not done — needs the operator": the single collapsed halt state a build thread lands in when it
+        // doesn't cleanly `complete_thread` (`condition==='incomplete'`), replacing the old `halt_outcome`
+        // routing flag. An operator post to such a thread re-drives it; a live/pending thread pumps instead.
+        const current = await this.driverStore
+          .getThread(threadId)
+          .catch(() => null);
+        const halted = current?.condition === 'incomplete';
         if (halted) {
           // Persist the operator's own bubble first — mirrors the live/pending branch below, so the
           // message shows up in the thread's transcript even though this branch drives it via

@@ -97,8 +97,9 @@ export function renderBatchTask(
         ` making small edits yourself where a subagent would be overkill, and verify the whole thread before` +
         ` finishing. If you hit a decision the locked plan does NOT cover: if a one-line human answer would` +
         ` unblock you right now, call \`request_operator_input\` and wait; if you genuinely cannot make progress` +
-        ` this turn (a missing secret/service, or a substantive decision that needs deliberation), call` +
-        ` \`block_thread\` to hand it to Atlas rather than guessing or stopping silently.\n\n${blocks}`,
+        ` this turn (a missing secret/service, or a substantive decision that needs deliberation), just end` +
+        ` your turn without calling \`complete_thread\` — it surfaces as not-done to the operator` +
+        ` automatically, rather than guessing or stopping silently.\n\n${blocks}`,
       COMMIT_AND_PUSH_INSTRUCTION,
     ].join('\n'),
   );
@@ -148,8 +149,9 @@ export function renderMasterReviewTask(
       `\n5. FINISH: when done and the build is green (and your fixes, if any, are committed + pushed), you MUST` +
         ` call the \`complete_thread\` host tool (available via the "atlasbridge" MCP server) with a one-line` +
         ` \`summary\` of what you reviewed/fixed and the \`verification\` you ran. This is how you signal` +
-        ` completion — the review is NOT recorded as done until you call it. If you genuinely cannot proceed,` +
-        ` call \`block_thread\` with a reason and detail instead.`,
+        ` completion — the review is NOT recorded as done until you call it. This review is ADVISORY: any` +
+        ` findings you cannot safely fix yourself go in \`gaps\` (and note them in \`summary\`) for the` +
+        ` operator's ship-review — record them and still call \`complete_thread\`.`,
     ].join('\n'),
   );
 }

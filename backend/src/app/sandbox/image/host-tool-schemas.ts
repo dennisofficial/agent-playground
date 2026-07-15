@@ -63,11 +63,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   request_operator_input: {
     question: z.string(),
   },
-  block_thread: {
-    reason: z.enum(['question', 'needs_env', 'decision']),
-    detail: z.string(),
-    gaps: z.array(z.string()).optional(),
-  },
   record_leg_handoff: {
     handoff: z.string(),
   },
@@ -397,9 +392,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'one-line summary plus, ideally, the changes you made and the verification you ran.',
   request_operator_input:
     'Ask the operator a blocking question when you need a human decision before you can continue.',
-  block_thread:
-    'Voluntarily HALT this thread — you cannot make progress this turn and there is nothing to poll for. ' +
-    'Use complete_thread when done instead.',
   record_leg_handoff:
     'Record a handoff note for the next leg of this thread before you stop.',
   record_deviation:

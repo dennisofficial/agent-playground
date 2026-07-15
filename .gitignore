@@ -39,3 +39,11 @@ ds-bundle/
 
 # design-sync staged scripts + isolated deps (never commit)
 .ds-sync/
+
+# Stale pre-migration submodule checkouts left over from before 36f5291f moved submodules
+# from packages/ to submodules/. The real tracked location is submodules/* (gitlinks); these
+# packages/* copies are abandoned environment cruft, never committed.
+/packages/ai-testing/
+/packages/jwt-auth/
+/packages/nestjs-ai-essentials/
+/packages/nestjs-core-essentials/
