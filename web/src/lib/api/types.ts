@@ -441,10 +441,10 @@ export interface PipelineReviewChild {
 }
 
 /**
- * One task in a stage's LIVE, LLM-authored checklist — folded server-side from `TaskCreate`/`TaskUpdate`
- * tool calls (no fixed/expected set: `[]` just means nobody has created a task yet, not "not started").
- * Owned by the STAGE (not a single thread), so it survives builder-leg rotation within a build stage.
- * `dropped` is the SDK's `deleted` status.
+ * One task in a stage's LIVE, LLM-authored checklist — written server-side by the `task_create`/
+ * `task_update` host-bridge tools (no fixed/expected set: `[]` just means nobody has created a task
+ * yet, not "not started"). Owned by the STAGE (not a single thread), so it survives builder-leg
+ * rotation within a build stage. `dropped` is the `deleted` status.
  */
 export interface TaskItem {
   id: string;
