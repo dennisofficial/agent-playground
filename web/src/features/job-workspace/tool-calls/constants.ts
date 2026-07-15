@@ -23,6 +23,8 @@ export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
   get_decision_record: "Decision record",
   recall: "Recall memory",
   remember: "Remember",
+  forget: "Forget memory",
+  update_memory: "Update memory",
   ask_question: "Ask question",
   create_decision: "Lock decision",
   withdraw_question: "Withdraw question",

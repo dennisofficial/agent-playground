@@ -36,6 +36,8 @@ export class SelfSufficiencyToolsService {
     request_file: ToolImpl;
     recall: ToolImpl;
     remember: ToolImpl;
+    forget: ToolImpl;
+    update_memory: ToolImpl;
   } {
     return {
       request_secret: this.buildRequestSecretTool(ctx),
@@ -48,7 +50,7 @@ export class SelfSufficiencyToolsService {
             orgId: ctx.orgId,
             limit: 8,
           });
-          return facts.map((f) => ({ fact: f.fact, scope: f.scope }));
+          return facts.map((f) => ({ id: f.id, fact: f.fact, scope: f.scope }));
         } catch (err) {
           this.logger.debug(`recall failed: ${err}`);
           return [];
@@ -68,6 +70,32 @@ export class SelfSufficiencyToolsService {
           return { stored: true };
         } catch (err) {
           return { stored: false, reason: String(err) };
+        }
+      },
+      forget: async (args) => {
+        const id = String(args['id'] ?? '').trim();
+        if (!id) return { forgotten: false, reason: 'id is required' };
+        try {
+          const { deleted } = await this.memory.forget(id, ctx.orgId);
+          return deleted
+            ? { forgotten: true }
+            : { forgotten: false, reason: 'no such memory' };
+        } catch (err) {
+          return { forgotten: false, reason: String(err) };
+        }
+      },
+      update_memory: async (args) => {
+        const id = String(args['id'] ?? '').trim();
+        const fact = String(args['fact'] ?? '').trim();
+        if (!id) return { updated: false, reason: 'id is required' };
+        if (!fact) return { updated: false, reason: 'fact is required' };
+        try {
+          const { updated } = await this.memory.updateFact(id, fact, ctx.orgId);
+          return updated
+            ? { updated: true }
+            : { updated: false, reason: 'no such memory' };
+        } catch (err) {
+          return { updated: false, reason: String(err) };
         }
       },
     };
