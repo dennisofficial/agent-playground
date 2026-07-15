@@ -9,7 +9,7 @@ import {
 } from "@/lib/api/composer-store";
 
 /** Attachment caps — mirror the backend (`MAX_ATTACHMENTS` / `MAX_ATTACHMENT_BYTES`). */
-export const MAX_ATTACHMENTS = 10;
+export const MAX_ATTACHMENTS = 25;
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 /**
