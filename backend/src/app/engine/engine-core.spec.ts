@@ -1274,8 +1274,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       auth: { secret: 'tok' },
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + the task
-    // tools (live task list) + web. Writes/Bash still fall through to canUseTool.
+    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + web.
+    // Writes/Bash still fall through to canUseTool. (The task list is the atlas-host-bridge `task_*` tools
+    // now, not the disabled SDK-native ones.)
     expect(opts.allowedTools).toEqual([
       'Read',
       'Glob',
@@ -1284,10 +1285,6 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       'SendMessage',
       'TaskOutput',
       'TaskStop',
-      'TaskCreate',
-      'TaskUpdate',
-      'TaskList',
-      'TaskGet',
       'WebSearch',
       'WebFetch',
     ]);

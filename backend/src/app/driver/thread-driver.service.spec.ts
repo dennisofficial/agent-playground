@@ -184,7 +184,7 @@ function makeStore(state: StoreState): {
       parentThreadId: null,
       startSha: null,
       config: { stageId, stageKind: input.kind },
-    } as StoreDriverThread);
+    });
     return { stageId, threadId };
   };
   const stagesForJob = (jobId: string) =>
@@ -1231,36 +1231,43 @@ function assemble(
       },
     ),
   } as unknown as BlockSink;
-  // Captures task-event folds — the master-review bridge's `task_create`/`task_update` (parity with the
-  // Claude lanes' SDK task tools) — so the task-bridge tests can assert the checklist writes; also backs the
-  // TurnHarnessFactory below (harness-driven folds aren't asserted here — see turn-harness.service.spec.ts).
+  // Captures the direct-CRUD task-sink calls the `task_*` host-bridge handlers make, so the task-bridge
+  // tests can assert the checklist writes. The sink is injected into the ThreadDriver (its TASK_EVENT_SINK);
+  // the TurnHarnessFactory no longer touches it.
   const taskEvents: Array<{
+    method: 'createTask' | 'updateTask' | 'readTasks';
     scope: { kind: string; id: string };
-    toolName: string;
-    input: Record<string, unknown>;
-    result: unknown;
+    input?: Record<string, unknown>;
   }> = [];
+  let taskSeq = 0;
   const taskSink = {
-    applyTaskEvent: vi.fn(
+    createTask: vi.fn(
       async (
         scope: { kind: string; id: string },
-        toolName: string,
         input: Record<string, unknown>,
-        result: unknown,
       ) => {
-        taskEvents.push({ scope, toolName, input, result });
+        taskEvents.push({ method: 'createTask', scope, input });
+        return { id: String(++taskSeq) };
       },
     ),
+    updateTask: vi.fn(
+      async (
+        scope: { kind: string; id: string },
+        input: Record<string, unknown>,
+      ) => {
+        taskEvents.push({ method: 'updateTask', scope, input });
+        return { ok: true };
+      },
+    ),
+    readTasks: vi.fn(async (scope: { kind: string; id: string }) => {
+      taskEvents.push({ method: 'readTasks', scope });
+      return [];
+    }),
   } as unknown as TaskEventSink;
   const usage = {
     applyHarvest: vi.fn().mockResolvedValue(undefined),
   } as unknown as OauthUsageService;
-  const turnHarness = new TurnHarnessFactory(
-    liveTurns,
-    blockSink,
-    taskSink,
-    usage,
-  );
+  const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
   // BuildShipService's direct ENGINE_RUNNER dependency (the PR Review orchestrator) — separate from the
   // `turn`/`calls` fake above (TurnRunnerService, used by per-thread build turns) so PR Review's one
   // execute turn doesn't inflate the per-thread `execTurns` count.
@@ -5856,18 +5863,18 @@ describe('ThreadDriver — master-review bridged task list', () => {
     );
   }
 
-  it('exposes task_create/task_update ONLY for the master-review thread', () => {
+  it('exposes the task_* tool set for EVERY thread (builder + master-review) — Claude native is disabled', () => {
     const h = assemble(baseState());
-    const mrTools = bridgeFor(
-      h,
+    for (const t of [
       thread('mr', 90, 'Master review', 'executing', true),
-    ).tools;
-    expect(typeof mrTools.task_create).toBe('function');
-    expect(typeof mrTools.task_update).toBe('function');
-    // A Claude builder keeps its native SDK task tools — the bridge must NOT double them here.
-    const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
-    expect(builderTools.task_create).toBeUndefined();
-    expect(builderTools.task_update).toBeUndefined();
+      thread('be', 10, 'Backend'),
+    ]) {
+      const tools = bridgeFor(h, t).tools;
+      expect(typeof tools.task_create).toBe('function');
+      expect(typeof tools.task_update).toBe('function');
+      expect(typeof tools.task_list).toBe('function');
+      expect(typeof tools.task_get).toBe('function');
+    }
   });
 
   // Drift guard: every tool a turn bridge actually registers MUST have a TOOL_SHAPES entry, or the
@@ -5894,7 +5901,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     }
   });
 
-  it('folds task_create into the thread scope with sequential ids, and returns the id to the model', async () => {
+  it('task_create writes the row through the sink and returns the durable id string to the model', async () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
@@ -5908,28 +5915,26 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const r2 = await tools.task_create({ subject: 'Apply fixes' });
     await tools.task_update({ taskId: '1', status: 'in_progress' });
 
-    // The create result carries the id (so the model can pass it back to task_update) — matching the
-    // Claude SDK task tools' "Task #N created…" contract that `createdTaskId` parses.
+    // The create result echoes the sink's returned id in the `Task #<id> created: <subject>` contract the
+    // web's `createdTaskId` regex parses (the fake sink hands back sequential ids "1", "2").
     expect(r1).toBe('Task #1 created: Review the merged diff');
     expect(r2).toBe('Task #2 created: Apply fixes');
 
-    // All folds landed on the master-review THREAD scope, via the same sink the Claude lanes use.
+    // All writes landed on the master-review THREAD scope, via the same sink every thread lane uses.
     expect(
-      h.taskEvents.map((e) => [e.toolName, e.scope.kind, e.scope.id]),
+      h.taskEvents.map((e) => [e.method, e.scope.kind, e.scope.id]),
     ).toEqual([
-      ['taskcreate', 'thread', 'mr'],
-      ['taskcreate', 'thread', 'mr'],
-      ['taskupdate', 'thread', 'mr'],
+      ['createTask', 'thread', 'mr'],
+      ['createTask', 'thread', 'mr'],
+      ['updateTask', 'thread', 'mr'],
     ]);
-    // The create fold gets the id-bearing result string; the update fold carries the model's status change.
-    expect(h.taskEvents[0].result).toBe('Task #1 created');
     expect(h.taskEvents[2].input).toMatchObject({
       taskId: '1',
       status: 'in_progress',
     });
   });
 
-  it('rejects a task_create with no subject and a task_update with no taskId (no fold)', async () => {
+  it('rejects a task_create with no subject and a task_update with no taskId (no sink write)', async () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
@@ -6235,7 +6240,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
             contextTokens: 210_000,
             contextLimit: 1_000_000,
           });
-          await input.toolBridge!.tools!['record_leg_handoff']!({
+          await input.toolBridge!.tools['record_leg_handoff']({
             handoff: `Leg ${buildLeg}: WIP.\nNext: keep going.`,
           });
           return mkResult(input, `leg ${buildLeg} handed off`);

@@ -89,6 +89,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     addBlocks: ['3'],
     removeBlocks: ['4'],
   },
+  task_list: {},
+  task_get: { taskId: 't1' },
   report_verification: {
     passed: true,
     verification: verificationPayload,

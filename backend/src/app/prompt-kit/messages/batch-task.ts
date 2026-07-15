@@ -1,5 +1,5 @@
 import { agentMessage, type AgentMessage } from '../message';
-import { CODEX_TASK_LIST_NOTE, COMMIT_AND_PUSH_NOTE } from '../system';
+import { COMMIT_AND_PUSH_NOTE, TASK_LIST_NOTE } from '../system';
 import type { DecisionRecord, Step } from '../../domain';
 import type { TaskItem } from '../../persistence/entities';
 import type { ResolvedRepo } from '../../driver/repo-resolver';
@@ -12,8 +12,9 @@ import type { DriverThread } from '../../driver/driver-store.service';
  */
 
 /** Render the still-OPEN task-list items into a `<carried_tasks>` block for the fresh Leg's seed (B5). The
- *  durable `threads.tasks` outlives the abandoned session's in-memory to-do, so the fresh Leg keeps its
- *  checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the block. */
+ *  durable stage-owned `tasks` table outlives the abandoned session's in-memory to-do, so the fresh Leg
+ *  keeps its checklist. Returns '' when nothing is open (all done / no list) — the caller then omits the
+ *  block. */
 export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
   const open = tasks.filter(
     (t) => t.status === 'pending' || t.status === 'in_progress',
@@ -45,8 +46,8 @@ export function renderOpenTasksWarning(open: TaskItem[]): AgentMessage {
     [
       `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
       'assert done. For EACH task below: if the work is genuinely finished, mark it completed' +
-        ' (`TaskUpdate` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
-        ' then mark it completed; if it is no longer needed, delete it (`TaskUpdate` status: deleted). Then',
+        ' (`task_update` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
+        ' then mark it completed; if it is no longer needed, delete it (`task_update` status: deleted). Then',
       'call `complete_thread` again. This is your ONE reminder — anything still open after your next',
       '`complete_thread` will be dropped from the checklist.',
       '<open_tasks>',
@@ -133,7 +134,7 @@ export function renderMasterReviewTask(
       `Feature overview:\n${record?.overview ?? ''}`,
       `\nLocked decisions (respect these):\n${decisions}`,
       `\nThis is the FINAL review-and-fix pass over the whole feature branch before its pull request opens.`,
-      `\nTRACK YOUR WORK: ${CODEX_TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
+      `\n${TASK_LIST_NOTE} Up front, \`task_create\` one task for each step below.`,
       `\n1. Review the whole merged diff: \`git diff origin/${repo.defaultBranch}...HEAD\`. Look for real,` +
         ` in-scope defects — correctness bugs, security issues, and cross-thread integration mistakes (where` +
         ` two threads' changes don't line up). Ignore style nits and anything outside this feature's scope.`,
