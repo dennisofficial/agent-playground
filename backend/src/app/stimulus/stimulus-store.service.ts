@@ -441,6 +441,7 @@ export class StimulusStoreService {
       );
     });
 
+    const resumeThreadId = resumeThreadIdFromLane(input.lane);
     return {
       id: row.id,
       orgId: input.orgId,
@@ -464,6 +465,7 @@ export class StimulusStoreService {
         : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
       ...(input.author.id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
+      ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
 
@@ -782,9 +784,7 @@ export class StimulusStoreService {
    *  round-trips through the persisted `lane` (`thread:<id>`) so a sweep re-drive routes identically to the
    *  first delivery attempt (see `attachEventToJob`'s §CI-routing). */
   private rowToEventStimulus(row: StimulusEntity): EventStimulus {
-    const resumeThreadId = row.lane?.startsWith('thread:')
-      ? row.lane.slice('thread:'.length)
-      : undefined;
+    const resumeThreadId = resumeThreadIdFromLane(row.lane);
     return {
       id: row.id,
       orgId: row.org_id,
@@ -804,6 +804,7 @@ export class StimulusStoreService {
   /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
   private rowToChatStimulus(row: StimulusEntity): ChatStimulus {
     const replyRoute: ReplyRouteJson | null = row.reply_route;
+    const resumeThreadId = resumeThreadIdFromLane(row.lane);
     return {
       id: row.id,
       orgId: row.org_id,
@@ -840,8 +841,17 @@ export class StimulusStoreService {
         ? { seedFileIds: replyRoute.seedFileIds }
         : {}),
       ...(row.author_id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
+      ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
+}
+
+/** The `thread:<id>` routing coordinate a persisted `lane` encodes, or `undefined` for `'main'`/absent —
+ *  the single source of truth for reconstructing a stimulus's `resumeThreadId` from its durable lane. */
+function resumeThreadIdFromLane(
+  lane: string | null | undefined,
+): string | undefined {
+  return lane?.startsWith('thread:') ? lane.slice('thread:'.length) : undefined;
 }
 
 function isUniqueViolation(err: unknown): boolean {

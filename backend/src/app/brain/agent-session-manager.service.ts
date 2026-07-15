@@ -845,13 +845,13 @@ export class AgentSessionManager
     // steers a re-attached live turn or runs a fresh one; the periodic sweep keeps re-driving after boot.
     try {
       await this.stimulusStore.resetChatLeases();
-      const threads = await this.stimulusStore.undeliveredChatThreads();
-      if (threads.length > 0) {
+      const lanes = await this.stimulusStore.undeliveredChatLanes();
+      if (lanes.length > 0) {
         this.logger.log(
-          `Leader: re-driving undelivered operator message(s) across ${threads.length} thread(s)`,
+          `Leader: re-driving undelivered operator message(s) across ${lanes.length} lane(s)`,
         );
-        for (const t of threads) {
-          void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
+        for (const t of lanes) {
+          void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch((err) =>
             this.logger.warn(
               `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
             ),
@@ -1181,6 +1181,10 @@ export class AgentSessionManager
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
     if (!live?.turn_id) return false;
+    // `runningBrainTurn` returns the job's ONE live brain turn across all its lanes/sessions. Never cross-steer
+    // a stimulus into a turn on a different lane (e.g. a `ci` seed into a live `post_build` turn) — leave the
+    // durable row pending for that lane's own pump/sweep once this turn ends and the `active_turns` row clears.
+    if (live.lane !== this.laneForStimulus(stimulus)) return false;
     try {
       await this.engineRunner.steer(
         live.turn_id,
@@ -1577,7 +1581,19 @@ export class AgentSessionManager
 
   /** BrainSink.enqueueChat — a persisted operator message is ready; ensure the brain takes it. */
   async enqueueChat(stimulus: ChatStimulus): Promise<void> {
-    await this.pumpThread(stimulus.jobId, stimulus.orgId, stimulus.repoId);
+    await this.pumpThread(
+      stimulus.jobId,
+      stimulus.orgId,
+      stimulus.repoId,
+      this.laneForStimulus(stimulus),
+    );
+  }
+
+  /** The durable routing coordinate a chat stimulus targets: its own `thread:<id>` lane, else `'main'`. */
+  private laneForStimulus(stimulus: { resumeThreadId?: string }): string {
+    return stimulus.resumeThreadId
+      ? `thread:${stimulus.resumeThreadId}`
+      : 'main';
   }
 
   /**
@@ -1592,6 +1608,7 @@ export class AgentSessionManager
     jobId: string,
     orgId: string,
     repoId: string,
+    lane = 'main',
   ): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
@@ -1604,11 +1621,11 @@ export class AgentSessionManager
 
     // FAST PATH: a live brain turn is steered directly (the pump core resolves + steers `now`-priority
     // pending; `queue`/`later` stay pending for turn-end / ride-along).
-    const lane = this.mainDeliveryLane(jobId, orgId, repoId);
+    const deliveryLane = this.deliveryLane(jobId, orgId, repoId, lane);
     if (
       await trySteerLive(
         this.stimulusStore,
-        lane,
+        deliveryLane,
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
         this.logger,
       )
@@ -1622,7 +1639,7 @@ export class AgentSessionManager
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     const next = prev
       .catch(() => undefined)
-      .then(() => this.deliverPendingViaFreshTurn(lane));
+      .then(() => this.deliverPendingViaFreshTurn(deliveryLane));
     this.turnQueues.set(
       key,
       next.finally(() => {
@@ -1633,21 +1650,27 @@ export class AgentSessionManager
   }
 
   /**
-   * The brain's `main`-lane descriptor for the delivery pump: live-turn resolution stays `runningBrainTurn`
-   * (its exact live-turn + compaction semantics), steering stays the engine `steer`, body framing stays
-   * `engineBody`, and a fresh-turn drain coalesces the pending batch into ONE brain turn.
+   * The brain's delivery-pump descriptor for a given `lane` (`'main'` or `'thread:<id>'`): steering stays the
+   * engine `steer`, body framing stays `engineBody`, and a fresh-turn drain coalesces the pending batch into
+   * ONE brain turn. `resolveLiveTurn` is LANE-MATCHED — `runningBrainTurn` returns the job's single running
+   * brain turn across ALL its lanes/sessions, so it only counts as this lane's live turn when its `.lane`
+   * matches; otherwise the row stays queued (never cross-steered into a different session's turn).
    */
-  private mainDeliveryLane(
+  private deliveryLane(
     jobId: string,
     orgId: string,
     repoId: string,
+    lane: string,
   ): DeliveryLane {
     return {
       jobId,
       orgId,
       repoId,
-      lane: 'main',
-      resolveLiveTurn: () => this.turnRegistry.runningBrainTurn(jobId),
+      lane,
+      resolveLiveTurn: async () => {
+        const live = await this.turnRegistry.runningBrainTurn(jobId);
+        return live && live.lane === lane ? live : null;
+      },
       canSteer: () => typeof this.engineRunner.steer === 'function',
       steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
       renderBody: (p) => this.engineBody(p),
@@ -1701,9 +1724,14 @@ export class AgentSessionManager
    */
   private async collectPendingForTurn(
     jobId: string,
+    lane: string,
   ): Promise<CollectedPending | null> {
     const pending = await this.stimulusStore
-      .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
+      .eligiblePendingChat(
+        jobId,
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        lane,
+      )
       .catch((err) => {
         this.logger.warn(
           `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
@@ -1732,7 +1760,7 @@ export class AgentSessionManager
 
   /** Run ONE fresh turn that consumes the lane's pending operator messages (coalesced, oldest first). */
   private async deliverPendingViaFreshTurn(lane: DeliveryLane): Promise<void> {
-    const collected = await this.collectPendingForTurn(lane.jobId);
+    const collected = await this.collectPendingForTurn(lane.jobId, lane.lane);
     if (!collected) return;
     // Only WAKE for a wake-eligible (now/queue) message. A thread whose only pending rows are `later`
     // composes them as ride-along into some OTHER turn — it must never start a turn on its own.
@@ -1798,17 +1826,22 @@ export class AgentSessionManager
   /** LEADER periodic + boot re-drive of any operator message still undelivered (the at-least-once sweep). */
   private async sweepUndeliveredChat(): Promise<void> {
     if (this.election.getState() !== 'leader') return;
-    let threads: Array<{ jobId: string; orgId: string; repoId: string }>;
+    let lanes: Array<{
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      lane: string;
+    }>;
     try {
-      threads = await this.stimulusStore.undeliveredChatThreads();
+      lanes = await this.stimulusStore.undeliveredChatLanes();
     } catch (err) {
       this.logger.debug(
         `chat delivery sweep query failed (will retry): ${err}`,
       );
       return;
     }
-    for (const t of threads) {
-      void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
+    for (const t of lanes) {
+      void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch((err) =>
         this.logger.debug(
           `chat sweep pump failed for thread=${t.jobId}: ${err}`,
         ),
@@ -2931,7 +2964,7 @@ export class AgentSessionManager
         jobId: stimulus.jobId,
         orgId: stimulus.orgId,
         channel,
-        lane: 'main',
+        lane: this.laneForStimulus(stimulus),
         kind: 'brain',
         // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachOne).
         // `seed`/`seedQuestionId` are persisted so a re-attached DELIVERY turn can still stamp its card
