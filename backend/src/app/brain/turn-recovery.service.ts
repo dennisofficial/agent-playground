@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { Repository } from 'typeorm';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { MessageEntity, JobSandboxEntity } from '../persistence/entities';
+import { TranscriptMessageEntity, JobSandboxEntity } from '../persistence/entities';
 import {
   SANDBOX_PROVIDER,
   type SandboxProvider,
@@ -62,8 +62,8 @@ export class TurnRecoveryService implements OnModuleDestroy {
   private destroyed = false;
 
   constructor(
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectRepository(JobSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<JobSandboxEntity>,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,

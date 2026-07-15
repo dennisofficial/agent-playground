@@ -35,10 +35,10 @@ import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
 import { JobBootstrapService } from '../job-bootstrap';
 import {
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   ThreadEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
 } from '../persistence/entities';
 import { JobTitler } from '../titling';
@@ -96,16 +96,16 @@ export class BrainStoreService {
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
     private readonly threadGroups: Repository<ThreadGroupEntity>,
-    @InjectRepository(StimulusEntity, DB_CONNECTION)
-    private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(InboundMessageEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<InboundMessageEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
@@ -488,7 +488,7 @@ export class BrainStoreService {
   }
 
   /** Load this thread's card rows, newest-first — small helper for the question-card lookups below. */
-  private async questionCards(jobId: string): Promise<MessageEntity[]> {
+  private async questionCards(jobId: string): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -516,7 +516,7 @@ export class BrainStoreService {
    */
   async latestAnsweredQuestionCard(
     jobId: string,
-  ): Promise<MessageEntity | null> {
+  ): Promise<TranscriptMessageEntity | null> {
     const cards = await this.questionCards(jobId);
     const answered = cards.filter((m) => {
       const c = m.card as Record<string, unknown>;
@@ -546,7 +546,7 @@ export class BrainStoreService {
   ): Promise<{ ok: boolean }> {
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const thread = await threads.findOne({ where: { id: jobId } });
       if (!thread) return { ok: false };
       await messages.save(
@@ -590,7 +590,7 @@ export class BrainStoreService {
       });
       const res = await m
         .createQueryBuilder()
-        .update(MessageEntity)
+        .update(TranscriptMessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
         .where('job_id = :jobId', { jobId })
         .andWhere('ts = :questionId', { questionId })
@@ -655,7 +655,7 @@ export class BrainStoreService {
       });
       const res = await m
         .createQueryBuilder()
-        .update(MessageEntity)
+        .update(TranscriptMessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
         .where('job_id = :jobId', { jobId })
         .andWhere('ts = :questionId', { questionId })
@@ -796,7 +796,7 @@ export class BrainStoreService {
         : `Requested secret \`${input.card.name}\` → \`${input.card.path}\``;
     return this.dataSource.transaction(async (m) => {
       const threads = m.getRepository(JobEntity);
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const thread = await threads.findOne({ where: { id: jobId } });
       if (!thread) return { ok: false };
       if (input.card.ephemeral && thread.awaiting_secret_id) {
@@ -897,7 +897,7 @@ export class BrainStoreService {
       // card already provided → affected 0 → no double-decrement). Mirrors {@link markQuestionAnswered}.
       const res = await m
         .createQueryBuilder()
-        .update(MessageEntity)
+        .update(TranscriptMessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
         .where('job_id = :jobId', { jobId })
         .andWhere('ts = :requestId', { requestId })
@@ -963,7 +963,7 @@ export class BrainStoreService {
       });
       const res = await m
         .createQueryBuilder()
-        .update(MessageEntity)
+        .update(TranscriptMessageEntity)
         .set({ card: () => 'card || :patch::jsonb' })
         .where('job_id = :jobId', { jobId })
         .andWhere('ts = :requestId', { requestId })
@@ -1102,7 +1102,7 @@ export class BrainStoreService {
   // transcript). No migration: all state lives on the card in the `messages` jsonb.
 
   /** Load this job's file-request card rows, newest-first — ALL of them (open, provided, or withdrawn). */
-  private async fileRequestCards(jobId: string): Promise<MessageEntity[]> {
+  private async fileRequestCards(jobId: string): Promise<TranscriptMessageEntity[]> {
     const rows = await this.messages.find({
       where: { job_id: jobId, kind: 'card' },
       order: { created_at: 'DESC' },
@@ -1216,7 +1216,7 @@ export class BrainStoreService {
     });
     const res = await this.messages
       .createQueryBuilder()
-      .update(MessageEntity)
+      .update(TranscriptMessageEntity)
       .set({ card: () => 'card || :patch::jsonb' })
       .where('job_id = :jobId', { jobId })
       .andWhere('ts = :requestId', { requestId })

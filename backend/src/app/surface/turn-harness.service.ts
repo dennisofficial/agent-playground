@@ -10,7 +10,7 @@ import {
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
@@ -81,8 +81,8 @@ export const BLOCK_SINK = Symbol('BLOCK_SINK');
 @Injectable()
 export class MessageBlockSink implements BlockSink {
   constructor(
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     private readonly version: AppVersionService,
   ) {}
 
@@ -120,7 +120,7 @@ export class MessageBlockSink implements BlockSink {
         .values({
           ...row,
           idem_key: block.idemKey,
-        } as QueryDeepPartialEntity<MessageEntity>)
+        } as QueryDeepPartialEntity<TranscriptMessageEntity>)
         .orIgnore()
         .execute();
       const insertedId = result.identifiers?.[0]?.id as string | undefined;

@@ -17,7 +17,7 @@ import type { JobBootstrapService } from '../job-bootstrap';
 import type {
   JobEntity,
   RepoEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { AutoMergeService, prMergeReady } from './auto-merge.service';
 
@@ -48,7 +48,7 @@ function make(
     job?: JobEntity;
     repo?: Partial<RepoEntity>;
     mergeResult?: unknown;
-    existingMethodNote?: Partial<MessageEntity> | null;
+    existingMethodNote?: Partial<TranscriptMessageEntity> | null;
   } = {},
 ) {
   const job = over.job ?? makeJobEntity();
@@ -68,12 +68,12 @@ function make(
 
   const messagesFindOne = vi.fn(async () => over.existingMethodNote ?? null);
   const messagesSave = vi.fn(async (row: unknown) => row);
-  const messagesCreate = vi.fn((row: unknown) => row as MessageEntity);
+  const messagesCreate = vi.fn((row: unknown) => row as TranscriptMessageEntity);
   const messages = {
     findOne: messagesFindOne,
     save: messagesSave,
     create: messagesCreate,
-  } as unknown as Repository<MessageEntity>;
+  } as unknown as Repository<TranscriptMessageEntity>;
 
   const getPullDetail = vi.fn(
     async (): Promise<PullDetail> => ({
@@ -398,7 +398,7 @@ describe('AutoMergeService.mergeNow', () => {
         id: 'm-1',
         job_id: jobId,
         ts: `automerge-method:${jobId}:squash`,
-      } as Partial<MessageEntity>,
+      } as Partial<TranscriptMessageEntity>,
     });
     await svc.mergeNow(jobId, 'user-1');
     expect(messagesSave).not.toHaveBeenCalled();

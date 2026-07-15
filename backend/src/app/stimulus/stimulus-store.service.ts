@@ -5,8 +5,8 @@ import type { ChatStimulus, EventStimulus, SeedRow } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
-  StimulusEntity,
+  TranscriptMessageEntity,
+  InboundMessageEntity,
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
@@ -18,7 +18,7 @@ import { writeSystemChunk } from '../persistence/system-chunk-writer';
  * already piggybacks — see `StimulusEntity.reply_route`'s doc). The entity's declared column type stays
  * narrow; this file is the only reader/writer of the extra keys.
  */
-type ReplyRouteJson = NonNullable<StimulusEntity['reply_route']> & {
+type ReplyRouteJson = NonNullable<InboundMessageEntity['reply_route']> & {
   seedQuestionId?: string;
   seedSecretId?: string;
   seedFileId?: string;
@@ -33,7 +33,7 @@ type ReplyRouteJson = NonNullable<StimulusEntity['reply_route']> & {
 export interface SeededEvent {
   stimulus: EventStimulus;
   thread: JobEntity;
-  message: MessageEntity;
+  message: TranscriptMessageEntity;
 }
 
 /** Raised when the unique (team, project, source, dedupe_key) index rejects a live duplicate insert. */
@@ -74,10 +74,10 @@ export class StimulusStoreService {
   constructor(
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
-    @InjectRepository(StimulusEntity, DB_CONNECTION)
-    private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
+    @InjectRepository(InboundMessageEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<InboundMessageEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     // Bootstraps a freshly-seeded thread's ONE planning thread group + thread (d7: `thread_group_id` is never null).
@@ -143,7 +143,7 @@ export class StimulusStoreService {
       }),
     );
 
-    let row: StimulusEntity;
+    let row: InboundMessageEntity;
     try {
       row = await this.stimuli.save(
         this.stimuli.create({
@@ -221,11 +221,11 @@ export class StimulusStoreService {
       (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
     const lane = ciThreadId ? `thread:${ciThreadId}` : undefined;
-    let row: StimulusEntity;
+    let row: InboundMessageEntity;
     try {
       row = await this.dataSource.transaction(async (m) => {
         await m.save(
-          m.create(MessageEntity, {
+          m.create(TranscriptMessageEntity, {
             job_id: input.jobId,
             thread_id: threadId,
             author: input.source,
@@ -241,7 +241,7 @@ export class StimulusStoreService {
           }),
         );
         return m.save(
-          m.create(StimulusEntity, {
+          m.create(InboundMessageEntity, {
             org_id: input.orgId,
             repo_id: input.repoId,
             kind: 'event',
@@ -388,7 +388,7 @@ export class StimulusStoreService {
     const row = await this.dataSource.transaction(async (m) => {
       if (input.systemChunk === undefined) {
         await m.save(
-          m.create(MessageEntity, {
+          m.create(TranscriptMessageEntity, {
             job_id: input.jobId,
             thread_id: threadId,
             author: input.author.displayName,
@@ -406,7 +406,7 @@ export class StimulusStoreService {
         const isUntrusted = (desc.kind ?? 'system_notice') === 'untrusted';
         const fullBody =
           !isUntrusted && input.body !== desc.label ? input.body : undefined;
-        await writeSystemChunk(m.getRepository(MessageEntity), {
+        await writeSystemChunk(m.getRepository(TranscriptMessageEntity), {
           jobId: input.jobId,
           threadId,
           kind: desc.kind ?? 'system_notice',
@@ -423,7 +423,7 @@ export class StimulusStoreService {
       // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
 
       return m.save(
-        m.create(StimulusEntity, {
+        m.create(InboundMessageEntity, {
           org_id: input.orgId,
           repo_id: input.repoId,
           kind: 'chat',
@@ -781,7 +781,7 @@ export class StimulusStoreService {
    *  text — the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). `resumeThreadId`
    *  round-trips through the persisted `lane` (`thread:<id>`) so a sweep re-drive routes identically to the
    *  first delivery attempt (see `attachEventToJob`'s §CI-routing). */
-  private rowToEventStimulus(row: StimulusEntity): EventStimulus {
+  private rowToEventStimulus(row: InboundMessageEntity): EventStimulus {
     const resumeThreadId = row.lane?.startsWith('thread:')
       ? row.lane.slice('thread:'.length)
       : undefined;
@@ -802,7 +802,7 @@ export class StimulusStoreService {
   }
 
   /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
-  private rowToChatStimulus(row: StimulusEntity): ChatStimulus {
+  private rowToChatStimulus(row: InboundMessageEntity): ChatStimulus {
     const replyRoute: ReplyRouteJson | null = row.reply_route;
     return {
       id: row.id,

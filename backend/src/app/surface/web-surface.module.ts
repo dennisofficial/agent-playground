@@ -11,7 +11,7 @@ import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
 import { JobBootstrapModule } from '../job-bootstrap';
-import { MessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
+import { TranscriptMessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
   AMEND_APPROVE_ACTION_ID,
@@ -51,7 +51,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [JobEntity, MessageEntity, RepoEntity],
+      [JobEntity, TranscriptMessageEntity, RepoEntity],
       DB_CONNECTION,
     ),
     // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not

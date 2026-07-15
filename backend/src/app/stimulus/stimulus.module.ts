@@ -3,9 +3,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
 } from '../persistence/entities';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
@@ -39,7 +39,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
   imports: [
     JobBootstrapModule,
     TypeOrmModule.forFeature(
-      [RepoEntity, JobEntity, MessageEntity, StimulusEntity],
+      [RepoEntity, JobEntity, TranscriptMessageEntity, InboundMessageEntity],
       DB_CONNECTION,
     ),
   ],

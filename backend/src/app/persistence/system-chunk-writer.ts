@@ -1,5 +1,5 @@
 import type { Repository } from 'typeorm';
-import type { MessageEntity } from './entities/message.entity';
+import type { TranscriptMessageEntity } from './entities/transcript-message.entity';
 import type { AgentMessage } from '../prompt-kit/message';
 
 /**
@@ -36,7 +36,7 @@ export interface SystemChunkBuildContext {
  * between them.
  */
 export async function writeSystemChunk(
-  repo: Repository<MessageEntity>,
+  repo: Repository<TranscriptMessageEntity>,
   input: SystemChunkInput,
   buildCtx?: SystemChunkBuildContext,
 ): Promise<void> {

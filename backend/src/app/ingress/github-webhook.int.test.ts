@@ -32,8 +32,8 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ENTITIES,
   JobEntity,
-  MessageEntity,
-  StimulusEntity,
+  TranscriptMessageEntity,
+  InboundMessageEntity,
 } from '../persistence/entities';
 import { JobBootstrapService } from '../job-bootstrap';
 import type { EventStimulus } from '../domain';
@@ -114,8 +114,8 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
   let ds: DataSource;
   let controller: GithubEventsWebhookController;
   let jobs: Repository<JobEntity>;
-  let messages: Repository<MessageEntity>;
-  let stimuli: Repository<StimulusEntity>;
+  let messages: Repository<TranscriptMessageEntity>;
+  let stimuli: Repository<InboundMessageEntity>;
   let repoId: string;
   const delivered: EventStimulus[] = [];
 
@@ -171,8 +171,8 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
     controller = mod.get(GithubEventsWebhookController);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
-    stimuli = mod.get(getRepositoryToken(StimulusEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
+    stimuli = mod.get(getRepositoryToken(InboundMessageEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'GH Int Org', 'gh-int-org', 'active')

@@ -127,7 +127,7 @@ import { McpProbeService } from '../mcp/mcp-probe.service';
 import type { McpHeaderInput, McpServerInput } from '../mcp/mcp-server.store';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
   JobEntity,
   UserEntity,
@@ -750,8 +750,8 @@ export class WebSurfaceController {
     private readonly orgService: OrganizationService,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
     private readonly threadTitle: JobTitleService,

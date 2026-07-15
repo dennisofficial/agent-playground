@@ -42,7 +42,7 @@ import {
 import {
   ENTITIES,
   JobEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ProdMaintenanceWriteEntity,
   ThreadEntity,
 } from '../persistence/entities';
@@ -101,7 +101,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
   let ds: DataSource;
   let svc: ProdDiagnosticsService;
   let ledger: Repository<ProdMaintenanceWriteEntity>;
-  let messages: Repository<MessageEntity>;
+  let messages: Repository<TranscriptMessageEntity>;
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
   const surface = {
@@ -117,7 +117,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         TypeOrmModule.forRoot(readerOpts()),
         TypeOrmModule.forRoot(writerOpts()),
         TypeOrmModule.forFeature(
-          [ProdMaintenanceWriteEntity, MessageEntity, JobEntity, ThreadEntity],
+          [ProdMaintenanceWriteEntity, TranscriptMessageEntity, JobEntity, ThreadEntity],
           DB_CONNECTION,
         ),
       ],
@@ -142,7 +142,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     ledger = mod.get(
       getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION),
     );
-    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
 

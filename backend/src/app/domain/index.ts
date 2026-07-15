@@ -6,6 +6,7 @@
  * Zero v1 imports: nothing here reaches into `@harness/**` or the v1 `slack-app` surface.
  */
 export * from './stimulus';
+export * from './message';
 export * from './notification-source';
 export * from './job';
 export * from './decision-record';
