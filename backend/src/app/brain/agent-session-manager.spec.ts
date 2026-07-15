@@ -3353,7 +3353,11 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     // per `makeManager()` call so each test starts from a clean budget.
     const brainRetryCounters = new Map<
       string,
-      { benignAbort: number; transientRetry: number; sessionLimitTextMisfires: number }
+      {
+        benignAbort: number;
+        transientRetry: number;
+        sessionLimitTextMisfires: number;
+      }
     >();
     const brainRetryCounterFor = (jobId: string) => {
       let c = brainRetryCounters.get(jobId);
@@ -3376,12 +3380,15 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         c.transientRetry += 1;
         return { ok: true, used: c.transientRetry };
       }),
-      claimSessionLimitTextMisfire: vi.fn(async (jobId: string, cap: number) => {
-        const c = brainRetryCounterFor(jobId);
-        if (c.sessionLimitTextMisfires >= cap) return { ok: false, used: cap };
-        c.sessionLimitTextMisfires += 1;
-        return { ok: true, used: c.sessionLimitTextMisfires };
-      }),
+      claimSessionLimitTextMisfire: vi.fn(
+        async (jobId: string, cap: number) => {
+          const c = brainRetryCounterFor(jobId);
+          if (c.sessionLimitTextMisfires >= cap)
+            return { ok: false, used: cap };
+          c.sessionLimitTextMisfires += 1;
+          return { ok: true, used: c.sessionLimitTextMisfires };
+        },
+      ),
       clearBrainRetryCounters: vi.fn(async (jobId: string) => {
         const c = brainRetryCounterFor(jobId);
         c.benignAbort = 0;
@@ -3653,7 +3660,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       sessionId: 'sess-1',
       sessionLimit: { source: 'text' as const, rateLimitType: 'five_hour' },
     }));
-    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here. Drive FOUR
+    // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here. Drive THREE
     // consecutive turns through the SAME manager/store (no pre-seeding, no mock override) to prove the
     // counter genuinely ACCUMULATES across separate re-drives: the generic clean-turn counter reset must NOT
     // fire for a turn whose own result is itself a session-limit hit, or the streak could never exceed 1.
@@ -3661,10 +3668,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
     await manager.handleChatTurn(stimulus); // misfire 1/3 — quiet retry
     await manager.handleChatTurn(stimulus); // misfire 2/3 — quiet retry
-    await manager.handleChatTurn(stimulus); // misfire 3/3 — quiet retry
-    await manager.handleChatTurn(stimulus); // 4th consecutive — cap reached, claim refused — backstop park
+    await manager.handleChatTurn(stimulus); // misfire 3/3 — backstop park
 
-    expect(store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(4);
+    expect(store.claimSessionLimitTextMisfire).toHaveBeenCalledTimes(3);
     expect(
       (surface.post as ReturnType<typeof vi.fn>).mock.calls.filter((c) =>
         String(c[1]).includes("You've hit your session limit"),
@@ -3673,16 +3679,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const resumeCalls = (
       store.setSessionResume as ReturnType<typeof vi.fn>
     ).mock.calls.filter((args) => args[0] === THREAD_ID);
-    // The first 3 resume-clock writes are quiet retries (kind:'retry'); the 4th is the durable park (no kind).
+    // The first 2 resume-clock writes are quiet retries (kind:'retry'); the 3rd is the durable park (no kind).
     expect(
       resumeCalls
-        .slice(0, 3)
-        .every(
-          (args) => (args[2] as { kind?: string }).kind === 'retry',
-        ),
+        .slice(0, 2)
+        .every((args) => (args[2] as { kind?: string }).kind === 'retry'),
     ).toBe(true);
     expect(
-      (resumeCalls[3]?.[2] as { kind?: string } | undefined)?.kind,
+      (resumeCalls[2]?.[2] as { kind?: string } | undefined)?.kind,
     ).toBeUndefined();
   });
 

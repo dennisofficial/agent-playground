@@ -1237,19 +1237,18 @@ export class DriverStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
-  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire (driver/build lane only —
-   *  {@link JobEntity.session_limit_text_misfires_build} is separate from the brain's own
-   *  `session_limit_text_misfires_main`); refuses at `cap`. */
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
+   *  `cap`. */
   async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ session_limit_text_misfires_build: () => 'session_limit_text_misfires_build + 1' })
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
       .where('id = :jobId', { jobId })
-      .andWhere('session_limit_text_misfires_build < :cap', { cap })
-      .returning('session_limit_text_misfires_build')
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires_build as number | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1261,7 +1260,7 @@ export class DriverStoreService {
       {
         auth_retry_attempts: 0,
         driver_transient_retries: 0,
-        session_limit_text_misfires_build: 0,
+        session_limit_text_misfires: 0,
       },
     );
   }

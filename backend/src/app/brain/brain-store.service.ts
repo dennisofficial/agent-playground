@@ -1707,19 +1707,18 @@ export class BrainStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
-  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire (brain/main lane only —
-   *  {@link session_limit_text_misfires_main} is separate from the driver's own
-   *  `session_limit_text_misfires_build`); refuses at `cap`. Same shape as {@link claimTransientRetryRedrive}. */
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
+   *  `cap`. Same shape as {@link claimTransientRetryRedrive}. */
   async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ session_limit_text_misfires_main: () => 'session_limit_text_misfires_main + 1' })
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
       .where('id = :jobId', { jobId })
-      .andWhere('session_limit_text_misfires_main < :cap', { cap })
-      .returning('session_limit_text_misfires_main')
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires_main as number | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1732,7 +1731,7 @@ export class BrainStoreService {
       {
         benign_abort_redrives: 0,
         transient_retry_redrives: 0,
-        session_limit_text_misfires_main: 0,
+        session_limit_text_misfires: 0,
       },
     );
   }

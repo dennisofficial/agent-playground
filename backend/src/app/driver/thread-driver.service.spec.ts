@@ -2838,7 +2838,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const resumeCall = (
       h.store.setSessionResume as ReturnType<typeof vi.fn>
     ).mock.calls.find((args) => args[0] === state.job.id);
-    expect((resumeCall?.[2] as { kind?: string } | undefined)?.kind).toBeUndefined();
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
   });
 
   it('a text-fallback session limit durably parks once the misfire budget is exhausted (backstop escalation)', async () => {
@@ -2852,8 +2854,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     // usageUtilization left undefined (uncorroborated) — the misfire budget is what decides here.
     const h = assemble(state);
-    // Pre-exhaust the cap (SESSION_LIMIT_TEXT_MISFIRE_MAX = 3) so the next claim is refused.
-    await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
+    // Preload two prior misses so this drive's third consecutive miss reaches
+    // SESSION_LIMIT_TEXT_MISFIRE_MAX and parks immediately.
     await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
     await h.store.claimSessionLimitTextMisfire(state.job.id, 3);
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
@@ -2879,7 +2881,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const resumeCall = (
       h.store.setSessionResume as ReturnType<typeof vi.fn>
     ).mock.calls.find((args) => args[0] === state.job.id);
-    expect((resumeCall?.[2] as { kind?: string } | undefined)?.kind).toBeUndefined();
+    expect(
+      (resumeCall?.[2] as { kind?: string } | undefined)?.kind,
+    ).toBeUndefined();
   });
 
   it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {

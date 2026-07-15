@@ -1021,8 +1021,9 @@ export class ThreadDriver implements JobDispatcher {
               .catch(() => undefined);
           // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
           // engine fell back to parsing the CLI's printed "resets …" string.
-          const resetSource: 'usage_api' | 'parsed_string' =
-            limit.rateLimitType ? 'usage_api' : 'parsed_string';
+          const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType
+            ? 'usage_api'
+            : 'parsed_string';
           const at = new Date().toISOString();
           await this.store
             .setJobHalt(jobId, {
@@ -1048,11 +1049,11 @@ export class ThreadDriver implements JobDispatcher {
         if (isCorroboratedSessionLimit(limit.source, util)) {
           await durablePark();
         } else {
-          const { ok } = await this.store.claimSessionLimitTextMisfire(
+          const { ok, used } = await this.store.claimSessionLimitTextMisfire(
             jobId,
             SESSION_LIMIT_TEXT_MISFIRE_MAX,
           );
-          if (!ok) {
+          if (!ok || used >= SESSION_LIMIT_TEXT_MISFIRE_MAX) {
             this.logger.warn(
               `job=${jobId} text-only session limit unconfirmed x${SESSION_LIMIT_TEXT_MISFIRE_MAX} — parking`,
             );

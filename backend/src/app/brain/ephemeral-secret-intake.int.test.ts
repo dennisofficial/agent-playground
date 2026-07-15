@@ -120,6 +120,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       [ORG_ID, repoId],
     );
     jobId = thread.id;
+    await store.ensurePlanningStage(jobId, ORG_ID);
   });
 
   afterAll(async () => {

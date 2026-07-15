@@ -503,6 +503,60 @@ describe('OauthUsageService.get harvested-window expiry', () => {
   });
 });
 
+describe('OauthUsageService.getUtilization', () => {
+  it('returns undefined for a rolled-over corroboration window', async () => {
+    const store = new FakeCredentialStore();
+    const { svc } = makeService({ store });
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      {
+        utilization: 100,
+        resetsAt: new Date(Date.now() - 60_000).toISOString(),
+      },
+      Date.now(),
+      CRED,
+    );
+
+    await expect(
+      svc.getUtilization('org1', 'five_hour'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('returns undefined for an invalid corroboration reset timestamp', async () => {
+    const store = new FakeCredentialStore();
+    const { svc } = makeService({ store });
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'fiveHour',
+      { utilization: 100, resetsAt: 'not-a-date' },
+      Date.now(),
+      CRED,
+    );
+
+    await expect(
+      svc.getUtilization('org1', 'five_hour'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('returns utilization for the unrolled binding window', async () => {
+    const store = new FakeCredentialStore();
+    const { svc } = makeService({ store });
+    await store.mergeClaudeUsageWindow(
+      'org1',
+      'sevenDay',
+      {
+        utilization: 96,
+        resetsAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      },
+      Date.now(),
+      CRED,
+    );
+
+    await expect(svc.getUtilization('org1', 'seven_day')).resolves.toBe(96);
+  });
+});
+
 describe('OauthUsageService.get freshness (harvest vs live)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();

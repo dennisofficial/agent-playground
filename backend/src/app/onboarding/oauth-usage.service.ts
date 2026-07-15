@@ -331,7 +331,9 @@ export class OauthUsageService {
     const key =
       (rateLimitType && RATE_LIMIT_TYPE_TO_WINDOW[rateLimitType]) || 'fiveHour';
     const w = snapshot.windows[key];
-    if (!w || new Date(w.resetsAt).getTime() <= Date.now()) return undefined;
+    const resetAtMs = w ? new Date(w.resetsAt).getTime() : NaN;
+    if (!w || !Number.isFinite(resetAtMs) || resetAtMs <= Date.now())
+      return undefined;
     return w.utilization;
   }
 

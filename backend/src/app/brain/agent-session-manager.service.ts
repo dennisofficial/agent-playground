@@ -3234,7 +3234,7 @@ export class AgentSessionManager
     }
     // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread. Gated on
     // `!result.sessionLimit`: a session-limit turn is handled by the dedicated branch below, which owns its
-    // own `session_limit_text_misfires_main` bookkeeping (increment-on-quiet-retry, reset-on-park) — clearing it
+    // own `session_limit_text_misfires` bookkeeping (increment-on-quiet-retry, reset-on-park) — clearing it
     // here unconditionally would wipe the consecutive-misfire streak on EVERY text-fallback hit (this same
     // "clean turn" path runs for a session-limit result too, since it doesn't throw), so the N=3 backstop
     // could never accumulate past 1 across re-drives.
@@ -3361,7 +3361,8 @@ export class AgentSessionManager
             retryable: false,
             sessionLimit: true,
             category: 'session_limit',
-            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         );
@@ -3371,11 +3372,11 @@ export class AgentSessionManager
       if (isCorroboratedSessionLimit(source, util)) {
         await durablePark();
       } else {
-        const { ok } = await this.store.claimSessionLimitTextMisfire(
+        const { ok, used } = await this.store.claimSessionLimitTextMisfire(
           stimulus.jobId,
           SESSION_LIMIT_TEXT_MISFIRE_MAX,
         );
-        if (!ok) {
+        if (!ok || used >= SESSION_LIMIT_TEXT_MISFIRE_MAX) {
           this.logger.warn(
             `job=${stimulus.jobId} text-only session limit unconfirmed x${SESSION_LIMIT_TEXT_MISFIRE_MAX} — parking`,
           );
@@ -3396,6 +3397,17 @@ export class AgentSessionManager
                   credentialId: result.credentialId ?? null,
                 }
               : undefined,
+          );
+          void this.usageProjector?.record(
+            {
+              jobId: stimulus.jobId,
+              orgId: stimulus.orgId,
+              lane: 'main',
+              kind: 'brain',
+              engine: 'claude',
+              credentialId: result.credentialId ?? null,
+            },
+            result.usage,
           );
           await this.scheduleHostRetry(
             stimulus,
