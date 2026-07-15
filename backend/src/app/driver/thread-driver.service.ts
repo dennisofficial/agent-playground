@@ -523,6 +523,10 @@ export class ThreadDriver implements JobDispatcher {
     if (rearmed) {
       this.logger.log(`resumePaused job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // OPERATOR RE-ARM (driver-transient lane): an explicit resume always starts a fresh transient-drive
+    // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
+    // re-entry. Boot `resume()` never calls `resumePaused()`, so it still keeps the accumulated, restart-safe count.
+    await this.store.clearDriverRetryCounters(jobId);
     // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
     await this.store.clearJobHalt(jobId);
     // Clear the durable auto-resume clock too, so the leader sweep never re-fires this resume (no-op for a
@@ -601,6 +605,10 @@ export class ThreadDriver implements JobDispatcher {
     if (rearmed) {
       this.logger.log(`retry job=${jobId} — re-armed ${rearmed} halted thread(s)`);
     }
+    // OPERATOR RE-ARM (driver-transient lane): an explicit human retry always starts a fresh transient-drive
+    // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
+    // re-entry. Boot `resume()` never calls `retry()`, so it still keeps the accumulated, restart-safe count.
+    await this.store.clearDriverRetryCounters(jobId);
     // Clear the halt (the invariant: only retry/resumePaused/redriveThread may un-halt) and re-drive. The
     // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
     // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
@@ -677,6 +685,10 @@ export class ThreadDriver implements JobDispatcher {
     // Clear the JOB-level phase-preserving halt too (budget-aware recovery path): the brain's authorized
     // re-drive must lift the halt or `runJob`/`drive`'s halt gate would refuse to re-drive.
     await this.store.clearJobHalt(jobId).catch(() => undefined);
+    // OPERATOR/BRAIN RE-ARM (driver-transient lane): this re-drive re-enters `drive()` too, so it needs the
+    // same fresh transient-drive retry budget `retry`/`resumePaused` grant — mirrors the old function-local
+    // `attempt` counter's every-drive() reset.
+    await this.store.clearDriverRetryCounters(jobId).catch(() => undefined);
     await this.store.setThreadStatus(threadId, 'executing').catch(() => undefined);
     await this.store.setThreadCondition(threadId, 'none').catch(() => undefined);
     if (guidance) {
