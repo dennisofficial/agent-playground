@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it } from 'vitest';
 import { PromptService } from './prompt.service';
@@ -115,6 +116,35 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     expect(withInstr.startsWith(without)).toBe(true);
     expect(withInstr.trimEnd().endsWith(custom)).toBe(true);
   });
+});
+
+/**
+ * Byte-parity guard for the ATLAS_MAIN → PLANNING split (Thread 1 of the "explode the brain" plan). Every
+ * fragment-audience change in that split was ADDITIVE ONLY — PLANNING was never removed from a fragment,
+ * and no fragment's TEXT was edited — so `Agent.PLANNING`'s assembled prompt must be byte-identical to
+ * `Agent.ATLAS_MAIN`'s pre-split output. These sha256 hashes were captured from the pre-split commit
+ * (`c4d27b77`, the base of the split) by rendering `renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind })` for
+ * each kind — a genuine golden snapshot, not a guess. A failure here means PLANNING's prompt drifted from
+ * the legacy brain; that's either a real regression or an intentional change that needs a fresh snapshot.
+ */
+describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with pre-split ATLAS_MAIN', () => {
+  const PRE_SPLIT_SHA256: Record<string, string> = {
+    feature:
+      '9f91cb4ea0bb9c71d506de07cbd91572478d0336a431d819dfec0f5c6fa128ae',
+    bugfix: '273740cbfad1c562a81c3eab57f7e88fe2a02afc22937fd590131337a2c9563b',
+    onboarding:
+      'f205e216f00f2c387b817fb6db7daa9c82a897ec900cac82df3036d9e83720bf',
+    review: '5f59250d21b2ee47a5c708e3d76c58efbef307f8946550f702b3e1895f317898',
+  };
+
+  it.each(['feature', 'bugfix', 'onboarding', 'review'] as const)(
+    'jobKind=%s renders byte-identical to the pre-split ATLAS_MAIN snapshot',
+    (jobKind) => {
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
+      const sha256 = createHash('sha256').update(out).digest('hex');
+      expect(sha256).toBe(PRE_SPLIT_SHA256[jobKind]);
+    },
+  );
 });
 
 describe('PromptService — DI facade boots + validates', () => {

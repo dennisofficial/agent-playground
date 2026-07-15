@@ -112,6 +112,18 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
     },
   },
   {
+    id: 'post-build-gate',
+    agent: Agent.POST_BUILD,
+    note: 'ship-review gate turn (post_build thread)',
+    ctx: { jobKind: 'feature' },
+  },
+  {
+    id: 'ci-post-ship',
+    agent: Agent.CI,
+    note: 'post-ship PR-lifecycle turn (ci thread)',
+    ctx: { jobKind: 'feature' },
+  },
+  {
     id: 'worker-orchestrate',
     agent: Agent.WORKER,
     note: 'build thread orchestrator',

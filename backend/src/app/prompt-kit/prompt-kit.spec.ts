@@ -497,6 +497,49 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
   });
 });
 
+describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
+  // Both new stages share the engineering base with PLANNING (git ownership, live-validation, host tools)
+  // but must NOT carry the planning-phase apparatus — grilling, decision-record discipline, or the
+  // plan/ship-gate host tools — since a re-homed turn never uses any of it.
+  const PLANNING_ONLY_MARKERS = [
+    'GRILLING PROTOCOL',
+    'WHY YOU GRILL',
+    'propose_plan',
+    'review_plan',
+    'FULL PATH — review_plan then propose_plan',
+  ];
+
+  it('POST_BUILD carries the engineering base and its own gate identity', () => {
+    const out = renderAgentPrompt(Agent.POST_BUILD, { jobKind: 'feature' });
+    expect(out).toContain('YOU OWN GIT IN THE SANDBOX');
+    expect(out).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
+    expect(out).toContain('You are Atlas at the SHIP-REVIEW GATE');
+    for (const marker of PLANNING_ONLY_MARKERS) {
+      expect(out, marker).not.toContain(marker);
+    }
+  });
+
+  it('CI carries the engineering base and its own post-ship identity', () => {
+    const out = renderAgentPrompt(Agent.CI, { jobKind: 'feature' });
+    expect(out).toContain('YOU OWN GIT IN THE SANDBOX');
+    expect(out).toContain(AUTHOR_LIVE_VALIDATION_NOTE);
+    expect(out).toContain('You are Atlas owning the POST-SHIP PR lifecycle');
+    for (const marker of PLANNING_ONLY_MARKERS) {
+      expect(out, marker).not.toContain(marker);
+    }
+  });
+
+  it('both lean prompts are substantially SHORTER than the full PLANNING prompt', () => {
+    const planning = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
+    const postBuild = renderAgentPrompt(Agent.POST_BUILD, {
+      jobKind: 'feature',
+    });
+    const ci = renderAgentPrompt(Agent.CI, { jobKind: 'feature' });
+    expect(postBuild.length).toBeLessThan(planning.length);
+    expect(ci.length).toBeLessThan(planning.length);
+  });
+});
+
 describe('preview catalog (the dev-only /test/prompts source of truth)', () => {
   it('exposes every live agent prompt + renders each non-empty', () => {
     const ids = new Set(listAgentPrompts().map((e) => e.id));

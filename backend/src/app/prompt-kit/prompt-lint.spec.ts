@@ -76,6 +76,8 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
   const PERSONAS: Array<{ agent: Agent; ctx: PromptCtx; contract?: string }> = [
     { agent: Agent.PLANNING, ctx: { jobKind: 'feature' } },
     { agent: Agent.PLANNING, ctx: { jobKind: 'onboarding' } },
+    { agent: Agent.POST_BUILD, ctx: { jobKind: 'feature' } },
+    { agent: Agent.CI, ctx: { jobKind: 'feature' } },
     { agent: Agent.WORKER, ctx: { jobKind: 'feature' } },
     { agent: Agent.FAN_OUT, ctx: {} },
     { agent: Agent.EXPLORE, ctx: {} },

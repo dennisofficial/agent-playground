@@ -2843,14 +2843,22 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
+    // Which stage persona this turn runs as: a re-homed turn (post_build/ci) uses its thread's role; a plain
+    // planning turn (no resumeThreadId) is PLANNING. onboarding/review remain PLANNING via jobKind conditions.
+    const stageRole = stimulus.resumeThreadId
+      ? await this.driverStore.threadRole(stimulus.resumeThreadId).catch(() => null)
+      : null;
+    const promptAgent = stageRole ? threadKindSpec(stageRole).agent : Agent.PLANNING;
+
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
       cwd: sandbox.worktreePath,
-      // Assembled from fragments (ATLAS_MAIN): the onboarding vs normal-brain split is a jobKind condition,
-      // not a separate prompt id — `isOnboarding` still gates the toolset above. Byte-identical to the legacy
+      // Assembled from fragments: which stage persona (PLANNING/POST_BUILD/CI) resolved just above from the
+      // thread's role — the onboarding vs normal-brain split is a jobKind condition, not a separate prompt id
+      // (`isOnboarding` still gates the toolset above). PLANNING stays byte-identical to the legacy ATLAS_MAIN
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
-      systemPrompt: this.prompts.generate(Agent.PLANNING, {
+      systemPrompt: this.prompts.generate(promptAgent, {
         jobKind: brainJob?.kind ?? null,
         job: jobContext,
         settings: {
