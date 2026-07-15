@@ -14,7 +14,7 @@ import { LIVE_VALIDATION_NOT_OPTIONAL_NOTE } from '../fragments';
 export class PlanningGroup {
   /** Two paths header. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1180,
     condition: isBuildBrain,
   })
@@ -24,7 +24,7 @@ export class PlanningGroup {
 
   /** FULL PATH (review_plan → propose_plan). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1190,
     condition: isBuildBrain,
   })
@@ -41,7 +41,7 @@ export class PlanningGroup {
 
   /** PLAN DEPTH. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1200,
     condition: isBuildBrain,
   })
@@ -68,7 +68,7 @@ export class PlanningGroup {
 
   /** PLAN.MD STRUCTURE. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1210,
     condition: isBuildBrain,
   })
@@ -113,7 +113,7 @@ export class PlanningGroup {
 
   /** DIAGRAMS. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1220,
     condition: isBuildBrain,
   })
@@ -137,7 +137,7 @@ export class PlanningGroup {
 
   /** The review_plan → propose_plan flow. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1230,
     condition: isBuildBrain,
   })
@@ -204,7 +204,7 @@ export class PlanningGroup {
 
   /** FAST PATH (start_direct_build). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1240,
     condition: isBuildBrain,
   })

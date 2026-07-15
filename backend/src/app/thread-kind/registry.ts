@@ -35,7 +35,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The job brain / operator conversation. A first-class row for the tree, but its runtime is the
     // AgentSessionManager session (`job_sandboxes.session_id`) — the driver NEVER executes it.
     kind: 'planning',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
@@ -142,7 +142,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // master_review complete. Reuses the brain's prompting + a minimal "ship now" seed — no new per-stage
     // prompt engineering in this job (d14).
     kind: 'post_build',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
@@ -158,7 +158,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The post-ship CI stage-thread (d14): takes over CI handling from Main, reusing the existing CI prompt
     // surface (d14) — no new per-stage prompt engineering in this job.
     kind: 'ci',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',

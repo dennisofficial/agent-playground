@@ -4,7 +4,7 @@
  *
  * TOPIC bucket: the live task list.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import { TASK_LIST_NOTE } from '../fragments';
@@ -13,7 +13,7 @@ import { TASK_LIST_NOTE } from '../fragments';
 export class TaskListGroup {
   /** Task list + Main-row seeding rule. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1270,
     condition: notOnboarding,
   })
@@ -29,7 +29,7 @@ export class TaskListGroup {
 
   /** Task list + fleet-inventory seeding rule. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2030,
     condition: isOnboarding,
   })

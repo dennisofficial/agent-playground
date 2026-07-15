@@ -27,14 +27,14 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
       'event',
       'onboarding',
     ] as const) {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out.length, `jobKind=${jobKind}`).toBeGreaterThan(10_000);
       expect(out.startsWith('You are Atlas'), `jobKind=${jobKind}`).toBe(true);
     }
   });
 
   it('carries the job-kind block + behavioral tail, in that order, for a feature job', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     const identityAt = out.indexOf(
       'You are Atlas, an autonomous software-engineering orchestrator',
     );
@@ -50,8 +50,8 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   });
 
   it('onboarding vs feature select DIFFERENT fragments (jobKind is a condition, not an agent)', () => {
-    const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const feature = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
+    const onboarding = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
 
@@ -83,8 +83,8 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   });
 
   it('carries the UI-preview + context-link guidance on build brains, not onboarding', () => {
-    const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const feature = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
+    const onboarding = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
     expect(feature).toContain('UI PREVIEW BY DEFAULT');
@@ -96,16 +96,16 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     const marker = 'OPERATOR / ORG INSTRUCTIONS';
     const custom = 'Always prefer pnpm over npm in this workspace.';
 
-    const without = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const without = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(without).not.toContain(marker);
 
-    const blank = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const blank = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       settings: { userOrgInstructions: '   ' },
     });
     expect(blank).not.toContain(marker); // whitespace-only is treated as absent
 
-    const withInstr = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const withInstr = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       settings: { userOrgInstructions: custom },
     });
@@ -125,7 +125,7 @@ describe('PromptService — DI facade boots + validates', () => {
     await moduleRef.init(); // fires onModuleInit → primeFragments (boot-loud validation)
     const prompts = moduleRef.get(PromptService);
     expect(
-      prompts.generate(Agent.ATLAS_MAIN, { jobKind: 'feature' }).length,
+      prompts.generate(Agent.PLANNING, { jobKind: 'feature' }).length,
     ).toBeGreaterThan(10_000);
   });
 });
@@ -134,12 +134,12 @@ describe('validateFragments — fails loudly', () => {
   it('throws on a duplicate order within an agent', () => {
     @FragmentGroup()
     class ClashingGroup {
-      @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 5000 })
+      @Fragment({ usedBy: [Agent.PLANNING], order: 5000 })
       a(): string {
         return 'A';
       }
 
-      @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 5000 })
+      @Fragment({ usedBy: [Agent.PLANNING], order: 5000 })
       b(): string {
         return 'B';
       }

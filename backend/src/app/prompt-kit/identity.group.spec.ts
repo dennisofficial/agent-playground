@@ -13,7 +13,7 @@ const HEADER = 'CURRENT JOB';
 
 describe('identity.group — CURRENT JOB orientation block', () => {
   it('renders repo and branch·base for the build brain', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       job: { repoName: 'acme/widgets', branch: 'feat/x', baseBranch: 'main' },
     });
@@ -23,7 +23,7 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   });
 
   it('never renders a Working directory line (owned by the FILESYSTEM MAP fragment)', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       job: { repoName: 'acme/widgets', branch: 'feat/x', baseBranch: 'main' },
     });
@@ -31,7 +31,7 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   });
 
   it('collapses to a single Base line when no feature branch is cut yet', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       job: { repoName: 'acme/widgets', baseBranch: 'main' },
     });
@@ -40,12 +40,12 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   });
 
   it('emits NOTHING (byte-identical) when no job ctx is supplied', () => {
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const baseline = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
     });
     expect(baseline).not.toContain(HEADER);
     // The no-misfire invariant: absent `job` ⇒ exactly today's prompt.
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       job: null,
     });
@@ -53,7 +53,7 @@ describe('identity.group — CURRENT JOB orientation block', () => {
   });
 
   it('is withheld from review jobs (build-brain only)', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'review',
       job: { repoName: 'acme/widgets' },
     });

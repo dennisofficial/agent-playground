@@ -12,7 +12,7 @@ import { isBuildBrain, isOnboarding } from '../conditions';
 export class SafetyGroup {
   /** Act with care, report truthfully. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1290,
     condition: isBuildBrain,
   })
@@ -32,7 +32,7 @@ export class SafetyGroup {
 
   /** FINISH (only when the fleet is green). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2120,
     condition: isOnboarding,
   })
@@ -62,7 +62,7 @@ export class SafetyGroup {
 
   /** You do NOT plan/grill/build here. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2130,
     condition: isOnboarding,
   })

@@ -23,7 +23,7 @@ import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 export class HostToolsGroup {
   /** The host tools — qualification + enumeration + ambient capability tools. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1040,
     condition: isBuildBrain,
   })
@@ -70,7 +70,7 @@ export class HostToolsGroup {
 
   /** The atlas-prod host tools — ONLY present on the Atlas repo itself. The 7 read tools mirror the
    *  prod-diagnostics reader; propose_prod_write is a STRUCTURALLY-GATED write (propose-only). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1044, condition: isAtlasRepo })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1044, condition: isAtlasRepo })
   atlasProdTools(): string {
     return [
       `You are on the Atlas repo itself, so you ALSO have the atlas-prod tools — read-only production diagnostics plus a STRUCTURALLY-GATED prod DB write. Call the mcp__${ATLAS_PROD_BRIDGE_NAME}__ form:`,
@@ -92,7 +92,7 @@ export class HostToolsGroup {
    * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1045,
     condition: notOnboarding,
   })
@@ -102,7 +102,7 @@ export class HostToolsGroup {
 
   /** The flat top-level calling convention. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1050,
     condition: notOnboarding,
   })
@@ -118,7 +118,7 @@ export class HostToolsGroup {
 
   /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1060,
     condition: isBuildBrain,
   })
@@ -141,7 +141,7 @@ export class HostToolsGroup {
 
   /** The onboarding session's curated host tools. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2050,
     condition: isOnboarding,
   })
@@ -198,7 +198,7 @@ export class HostToolsGroup {
   }
 
   /** The review session's curated host tools (order 1041: unique vs hostTools@1040). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1041, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1041, condition: isReview })
   reviewTools(): string {
     return [
       TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),

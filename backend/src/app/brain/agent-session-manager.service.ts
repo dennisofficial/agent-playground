@@ -2850,7 +2850,7 @@ export class AgentSessionManager
       // Assembled from fragments (ATLAS_MAIN): the onboarding vs normal-brain split is a jobKind condition,
       // not a separate prompt id — `isOnboarding` still gates the toolset above. Byte-identical to the legacy
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
-      systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
+      systemPrompt: this.prompts.generate(Agent.PLANNING, {
         jobKind: brainJob?.kind ?? null,
         job: jobContext,
         settings: {

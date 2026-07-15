@@ -74,8 +74,8 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
   // plan-review `<output_contract>`), so a reader always knows WHAT to produce.
   const ROLE_MARKER = /\bYou are\b|<role>/;
   const PERSONAS: Array<{ agent: Agent; ctx: PromptCtx; contract?: string }> = [
-    { agent: Agent.ATLAS_MAIN, ctx: { jobKind: 'feature' } },
-    { agent: Agent.ATLAS_MAIN, ctx: { jobKind: 'onboarding' } },
+    { agent: Agent.PLANNING, ctx: { jobKind: 'feature' } },
+    { agent: Agent.PLANNING, ctx: { jobKind: 'onboarding' } },
     { agent: Agent.WORKER, ctx: { jobKind: 'feature' } },
     { agent: Agent.FAN_OUT, ctx: {} },
     { agent: Agent.EXPLORE, ctx: {} },

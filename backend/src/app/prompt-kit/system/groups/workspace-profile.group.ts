@@ -7,7 +7,7 @@
  *
  * TOPIC bucket: the workspace profile (environment & provisioning). Was `environment.group.ts`.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import type { PromptCtx } from '../prompt-ctx';
@@ -41,7 +41,7 @@ export class WorkspaceProfileGroup {
    * ceremony. Absorbs the old `environmentGaps` nudge (the persistence-by-kind recipe below).
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1280,
     condition: notOnboarding,
   })
@@ -88,7 +88,7 @@ export class WorkspaceProfileGroup {
    * MCP SERVERS, SKILLS, HOUSE STYLE, RESET) follow below.
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2015,
     condition: isOnboarding,
   })
@@ -107,7 +107,7 @@ export class WorkspaceProfileGroup {
 
   /** SECRETS. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2060,
     condition: isOnboarding,
   })
@@ -134,7 +134,7 @@ export class WorkspaceProfileGroup {
 
   /** DERIVED values. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2070,
     condition: isOnboarding,
   })
@@ -151,7 +151,7 @@ export class WorkspaceProfileGroup {
 
   /** AUTH / CAPABILITY ACCESS (the interactive-login recipe). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2080,
     condition: isOnboarding,
   })
@@ -183,7 +183,7 @@ export class WorkspaceProfileGroup {
 
   /** INSTALLING A CLI. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2090,
     condition: isOnboarding,
   })
@@ -201,7 +201,7 @@ export class WorkspaceProfileGroup {
 
   /** CONFIG (write_workspace_config mounts). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2100,
     condition: isOnboarding,
   })
@@ -222,7 +222,7 @@ export class WorkspaceProfileGroup {
 
   /** SETUP SCRIPT (write_setup_script; runs on every cold bring-up). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2105,
     condition: isOnboarding,
   })
@@ -250,7 +250,7 @@ export class WorkspaceProfileGroup {
 
   /** PREVIEW RECIPE (write_preview_instructions; injected into the Spin-up-preview seed). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2106,
     condition: isOnboarding,
   })
@@ -270,7 +270,7 @@ export class WorkspaceProfileGroup {
 
   /** MCP SERVERS (propose_mcp_servers; owner-approved, stack-matched). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2108,
     condition: isOnboarding,
   })
@@ -321,7 +321,7 @@ export class WorkspaceProfileGroup {
 
   /** SKILLS — reuse a maintained skill, else author a repo-idiom one; owner-approved. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2112,
     condition: isOnboarding,
   })
@@ -360,7 +360,7 @@ export class WorkspaceProfileGroup {
 
   /** HOUSE STYLE (propose_convention_profile; owner-approved, stack-matched). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2114,
     condition: isOnboarding,
   })
@@ -381,7 +381,7 @@ export class WorkspaceProfileGroup {
 
   /** RESET / PROVE-IT-COLD-BOOTS. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2116,
     condition: isOnboarding,
   })

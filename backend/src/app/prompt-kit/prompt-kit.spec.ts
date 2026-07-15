@@ -52,7 +52,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('CLARITY_OVER_COMMENTS_NOTE reaches every code author but no reviewer or minimal-diff persona', () => {
-    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+    for (const agent of [Agent.PLANNING, Agent.WORKER, Agent.FAN_OUT]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(
         out.split(CLARITY_OVER_COMMENTS_NOTE).length - 1,
@@ -61,7 +61,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     }
     // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(CLARITY_OVER_COMMENTS_NOTE);
     // deliberately excluded: reviewers and the minimal-diff autofix apply persona.
     for (const agent of [
@@ -77,7 +77,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
 
   it('TS_STYLE_NOTE reaches every code-writing agent (authors + fix lanes) but no read-only advisory persona', () => {
     for (const agent of [
-      Agent.ATLAS_MAIN,
+      Agent.PLANNING,
       Agent.WORKER,
       Agent.FAN_OUT,
       Agent.MASTER_REVIEW,
@@ -88,7 +88,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     }
     // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(TS_STYLE_NOTE);
     // read-only advisories never write code.
     for (const agent of [
@@ -105,7 +105,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('DESIGN_DISCIPLINE_NOTE reaches the code-authoring personas (brain + worker + fan-out writers) and points at the skill', () => {
-    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+    for (const agent of [Agent.PLANNING, Agent.WORKER, Agent.FAN_OUT]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(DESIGN_DISCIPLINE_NOTE).length - 1, String(agent)).toBe(
         1,
@@ -115,7 +115,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
     }
     // onboarding brain authors code too (script fixes) — it rides the un-gated behavioral tail.
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(DESIGN_DISCIPLINE_NOTE);
     // the external-PR review brain and read-only advisories never author code — no recognition trigger.
     for (const agent of [
@@ -130,19 +130,19 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       );
     }
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'review' }),
     ).not.toContain(DESIGN_DISCIPLINE_NOTE);
   });
 
   it('DOC_VERSION_VERIFY_NOTE reaches the three code authors but not the fix lanes or advisories', () => {
-    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.FAN_OUT]) {
+    for (const agent of [Agent.PLANNING, Agent.WORKER, Agent.FAN_OUT]) {
       const out = renderAgentPrompt(agent, { jobKind: 'feature' });
       expect(out.split(DOC_VERSION_VERIFY_NOTE).length - 1, String(agent)).toBe(
         1,
       );
     }
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(DOC_VERSION_VERIFY_NOTE);
     // the reviewer carries its OWN inline mandate; the fix lanes + advisories do not get this fragment.
     for (const agent of [
@@ -166,7 +166,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
   });
 
   it('the brain UI-preview instruction routes the mockup to the `prototype` subagent, not `implement`', () => {
-    const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     // The brain is told to delegate the mockup build to the dedicated `prototype` subagent...
     expect(brain).toContain(
       'DELEGATE the prototype build to the dedicated `prototype` subagent',
@@ -179,10 +179,10 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
 
   it('CANDOR_NOTE reaches the brain (feature + onboarding) but no worker/subagent persona', () => {
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).toContain(CANDOR_NOTE);
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(CANDOR_NOTE);
     // brain-only conversational stance: not the build/review/writer personas.
     for (const agent of [
@@ -223,16 +223,16 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out.split(SOLE_AUTHOR_NOTE).length - 1, String(agent)).toBe(1);
     }
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).toContain(SOLE_AUTHOR_NOTE);
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(SOLE_AUTHOR_NOTE);
   });
 
   it('the sandbox filesystem map reaches the brain (build) but not the builder', () => {
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).toContain(SANDBOX_FILESYSTEM_MAP_NOTE);
     // brain-only orientation: the build/writer personas do not get it.
     for (const agent of [Agent.WORKER, Agent.FAN_OUT]) {
@@ -267,7 +267,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out.startsWith(SUBAGENT_KERNEL_NOTE), String(agent)).toBe(true);
     }
     // NOT the full-session agents (brain, worker orchestrator, master review) — they converse / span turns.
-    for (const agent of [Agent.ATLAS_MAIN, Agent.WORKER, Agent.MASTER_REVIEW]) {
+    for (const agent of [Agent.PLANNING, Agent.WORKER, Agent.MASTER_REVIEW]) {
       expect(
         renderAgentPrompt(agent, { jobKind: 'feature' }),
         String(agent),
@@ -282,7 +282,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out.split(SUBAGENT_NUDGE_NOTE).length - 1, String(agent)).toBe(1);
     }
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).toContain(SUBAGENT_NUDGE_NOTE);
     // the subagents themselves don't recurse — they never get it.
     for (const agent of [
@@ -311,7 +311,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       expect(out, String(agent)).toContain('/context/evidence');
     }
     // NOT the writer (it implements a slice and reports up) nor the planning brain.
-    for (const agent of [Agent.FAN_OUT, Agent.ATLAS_MAIN]) {
+    for (const agent of [Agent.FAN_OUT, Agent.PLANNING]) {
       expect(
         renderAgentPrompt(agent, { jobKind: 'feature' }),
         String(agent),
@@ -330,7 +330,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       );
     }
     // The brain that finalizes must be told "SAW it run" means it LOOKED at the artifact.
-    const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(brain).toContain(
       'never finalize on an artifact you did not inspect',
     );
@@ -354,10 +354,10 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
       );
     }
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).toContain(RUNNABLE_WORKSPACE_NOTE);
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' }),
     ).toContain(RUNNABLE_WORKSPACE_NOTE);
     // read-only advisories don't own verification — they never get it.
     for (const agent of [
@@ -388,7 +388,7 @@ describe('composer dedup — shared blocks reach the right agents, exactly once'
 describe('public preview exposure prompt (opt-in --expose sequence)', () => {
   it('the PUBLIC PREVIEW URLS block composes into the build brain under notOnboarding', () => {
     for (const jobKind of ['feature', 'bugfix', 'event'] as const) {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out, jobKind).toContain('PUBLIC PREVIEW URLS');
       expect(out, jobKind).toContain('--port <n>');
       expect(out, jobKind).toContain('$ATLAS_PREVIEW_ID');
@@ -400,7 +400,7 @@ describe('public preview exposure prompt (opt-in --expose sequence)', () => {
   });
 
   it('onboarding reuses the exposure ordering inside LIVE-SERVICE ACCESSIBILITY', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding' });
+    const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding' });
     // onboarding composes its own accessibility fragment (not the build-brain publicExposure block)...
     expect(out).toContain('LIVE-SERVICE ACCESSIBILITY');
     // ...which reuses PUBLIC_EXPOSURE_NOTE, so the load-bearing exposure essentials survive assembly.
@@ -409,7 +409,7 @@ describe('public preview exposure prompt (opt-in --expose sequence)', () => {
   });
 
   it('sandboxRuntime documents the --port flag alongside the run form', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(out).toContain(
       'atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>',
     );
@@ -467,7 +467,7 @@ describe('shared review scope', () => {
 
 describe('brain vs worker behavioral tails do not leak into each other', () => {
   it('the brain carries baseline+author-live-validation+spike; the worker carries validate+spike', () => {
-    const brain = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const brain = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(brain).toContain(BASELINE_FIRST_NOTE);
     expect(brain).toContain(SPIKE_FIRST_NOTE);
     // The brain gets the AUTHORING twin (author validation as a live run, never optional), NOT the worker's
@@ -477,7 +477,7 @@ describe('brain vs worker behavioral tails do not leak into each other', () => {
   });
 
   it('the external-PR review brain does not carry build-authoring guidance', () => {
-    const review = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review' });
+    const review = renderAgentPrompt(Agent.PLANNING, { jobKind: 'review' });
     for (const note of [
       BASELINE_FIRST_NOTE,
       AUTHOR_LIVE_VALIDATION_NOTE,

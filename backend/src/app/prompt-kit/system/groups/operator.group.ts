@@ -5,7 +5,7 @@
  * on `ctx.settings.userOrgInstructions`, so when absent the assembled prompt is byte-identical to the legacy
  * composed brain. Ordered `9000` — after everything else, in both the normal and onboarding subsets.
  */
-import { Agent } from '../agent';
+import { ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { hasOrgInstructions } from '../conditions';
 import type { PromptCtx } from '../prompt-ctx';
@@ -14,7 +14,7 @@ import type { PromptCtx } from '../prompt-ctx';
 export class OperatorGroup {
   /** Standing operator/org instructions for this org (only when set). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 9000,
     condition: hasOrgInstructions,
   })

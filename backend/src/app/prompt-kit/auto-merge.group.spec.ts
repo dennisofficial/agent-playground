@@ -21,15 +21,15 @@ describe('hasAutoMerge', () => {
 
 describe('auto-merge.group — auto-merge-mode announcement', () => {
   it('injects the marker for ATLAS_MAIN when autoMerge is true', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoMerge: true },
     });
     expect(out).toContain(MARKER);
   });
 
   it('emits NOTHING (byte-identical) for ATLAS_MAIN when autoMerge is false', () => {
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN);
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const baseline = renderAgentPrompt(Agent.PLANNING);
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoMerge: false },
     });
     expect(out).not.toContain(MARKER);
@@ -38,7 +38,7 @@ describe('auto-merge.group — auto-merge-mode announcement', () => {
   });
 
   it('is absent when autoMerge is unset (no settings at all)', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN);
+    const out = renderAgentPrompt(Agent.PLANNING);
     expect(out).not.toContain(MARKER);
   });
 
@@ -50,7 +50,7 @@ describe('auto-merge.group — auto-merge-mode announcement', () => {
   });
 
   it('tells the brain a green, mergeable PR merges itself with no human at the final gate', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoMerge: true },
     });
     expect(out).toMatch(/merges? .*without a human/i);

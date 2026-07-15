@@ -13,7 +13,7 @@ import type { PromptCtx } from '../prompt-ctx';
 export class IdentityGroup {
   /** The orchestrator identity. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1000,
     condition: isBuildBrain,
   })
@@ -35,7 +35,7 @@ export class IdentityGroup {
    * isn't known yet (e.g. no feature branch before it's cut) just drops its line.
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1002,
     condition: (c: PromptCtx) => isBuildBrain(c) && !!c.job,
   })
@@ -56,7 +56,7 @@ export class IdentityGroup {
   }
 
   /** The PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1001, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1001, condition: isReview })
   reviewIdentity(): string {
     return [
       'You are Atlas, reviewing an EXISTING pull request — work already done, OUTSIDE of Atlas, by someone',
@@ -69,7 +69,7 @@ export class IdentityGroup {
 
   /** The repo bring-up identity. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2000,
     condition: isOnboarding,
   })

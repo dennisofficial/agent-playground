@@ -24,7 +24,7 @@ export class ConventionsGroup {
   /** The repo's attached house-style profile (only when a profile is attached to the repo). */
   @Fragment({
     usedBy: [
-      Agent.ATLAS_MAIN,
+      Agent.PLANNING,
       Agent.WORKER,
       Agent.FAN_OUT,
       Agent.REVIEW_AGENT,
@@ -56,7 +56,7 @@ export class ConventionsGroup {
    * convention itself is stale — routed to the owner-gated `propose_convention_profile_change`.
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 9110,
     condition: (c: PromptCtx) => isBuildBrain(c) && hasRepoConventions(c),
   })

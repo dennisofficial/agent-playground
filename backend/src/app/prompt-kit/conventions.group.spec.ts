@@ -16,7 +16,7 @@ const PROFILE = {
 
 // The full build-facing set the fragment declares in `usedBy`.
 const BUILD_FACING: Agent[] = [
-  Agent.ATLAS_MAIN,
+  Agent.PLANNING,
   Agent.WORKER,
   Agent.FAN_OUT,
   Agent.REVIEW_AGENT,
@@ -78,10 +78,10 @@ describe('conventions.group — repo house-style envelope', () => {
   it('appends the envelope at the tail (operator-layer), not the head', () => {
     // Use an onboarding ctx so the build-brain-only "notice drift" fragment (order 9110) is absent and the
     // envelope (9100) is genuinely the last block — the property under test.
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const baseline = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
-    const withConv = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const withConv = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
       settings: { repoConventions: PROFILE },
     });
@@ -97,25 +97,25 @@ describe('conventions.group — notice-house-style-drift affordance', () => {
 
   it('appears for the build brain (feature/bugfix) when a profile is attached', () => {
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature', ...conv }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature', ...conv }),
     ).toContain(MARK);
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'bugfix', ...conv }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'bugfix', ...conv }),
     ).toContain(MARK);
   });
 
   it('is absent when no profile is attached (nothing to notice)', () => {
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' }),
     ).not.toContain(MARK);
   });
 
   it('is absent for onboarding + review turns (only the build brain proposes profile changes)', () => {
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'onboarding', ...conv }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'onboarding', ...conv }),
     ).not.toContain(MARK);
     expect(
-      renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'review', ...conv }),
+      renderAgentPrompt(Agent.PLANNING, { jobKind: 'review', ...conv }),
     ).not.toContain(MARK);
   });
 

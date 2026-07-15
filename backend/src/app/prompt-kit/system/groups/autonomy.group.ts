@@ -17,7 +17,7 @@ export class AutonomyGroup {
   /** Tell the brain it is running autonomously — the gate(s) this mode covers auto-advance, so it must
    *  self-verify harder there. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1250,
     condition: hasAutoApprove,
   })
