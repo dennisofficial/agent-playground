@@ -38,6 +38,10 @@ export class ThreadApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** Set on a 429 `{status:'cooling_down', retryAfterMs}` body (the manual retry/resume re-slam guard,
+     *  `/retry` + `/retry-turn`) — how long the caller should wait before the server will accept another
+     *  bare (non-`force`) manual retry for this job. Undefined for every other error shape. */
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "ThreadApiError";
@@ -64,13 +68,24 @@ async function webJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let detail = res.statusText;
+    let retryAfterMs: number | undefined;
     try {
-      const body = (await res.json()) as { message?: string };
+      const body = (await res.json()) as {
+        message?: string;
+        status?: string;
+        retryAfterMs?: number;
+      };
       if (body?.message) detail = body.message;
+      // The manual-retry re-slam guard's 429 body carries no `message`, just `{status:'cooling_down',
+      // retryAfterMs}` — surface a caller-friendly detail and the wait hint together.
+      if (res.status === 429 && body?.status === "cooling_down") {
+        detail = "Retrying too soon — cooling down.";
+        retryAfterMs = body.retryAfterMs;
+      }
     } catch {
       /* non-JSON error body */
     }
-    throw new ThreadApiError(res.status, detail);
+    throw new ThreadApiError(res.status, detail, retryAfterMs);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -113,6 +128,14 @@ export interface RawThreadMessage {
     | "system_reminder"
     | "untrusted";
   card?: WebCard | null;
+  /**
+   * Untyped per-message extras. On a `system_operator` failure notice: `retryable` (bool, shows the Resume
+   * button), `sessionLimit` (bool, shows the countdown + Force-resume row instead), `resumeAt` (ISO string,
+   * the session-limit auto-resume clock), and — the classified-failure surfacing — `category`
+   * (`TurnFailureCategory`: `session_limit` | `auth` | `transient` | `api_overloaded` | `sandbox_lost` |
+   * `unresumable` | `unknown`) + `summary` (a short plain-language headline; when present the box leads with
+   * it and tucks the raw `text` behind a "Details" disclosure — see `SystemOperatorNotice`).
+   */
   meta?: Record<string, unknown> | null;
   postedAt: string;
 }
@@ -149,6 +172,7 @@ export interface JobMessage {
     | "system_reminder"
     | "untrusted";
   card?: WebCard;
+  /** See {@link RawThreadMessage.meta} — same shape, carried through `normalizeMessage` unchanged. */
   meta?: Record<string, unknown>;
   postedAt: string;
   /** Client-only: an optimistic post not yet echoed by history. */
