@@ -412,11 +412,15 @@ export function submitAnswerBatch(
   });
 }
 
-/** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
+/** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable.
+ *  `force: true` (the session-limit "Force resume now" affordance) skips the server's short manual-retry
+ *  re-slam cooldown — sent as `?force=true`. */
 export function retryJob(
   ref: JobRef,
+  opts?: { force?: boolean },
 ): Promise<{ ok: boolean; status: string }> {
-  return webJson(threadPath(ref, "/retry"), { method: "POST" });
+  const q = opts?.force ? "?force=true" : "";
+  return webJson(threadPath(ref, `/retry${q}`), { method: "POST" });
 }
 
 /** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive (re-runs the live judge),
@@ -455,10 +459,15 @@ export function shipWithoutReview(
 /**
  * The "Resume" button on a `retryable` system→operator error box (a chat-turn that hit a transient
  * engine failure). Distinct from `retryJob` — this re-pokes the SAME engine session with no new operator
- * message, rather than re-driving a halted BUILD track.
+ * message, rather than re-driving a halted BUILD track. `force: true` (the session-limit "Force resume
+ * now" affordance) skips the server's short manual-retry re-slam cooldown — sent as `?force=true`.
  */
-export function retryTurn(ref: JobRef): Promise<{ ok: boolean }> {
-  return webJson(threadPath(ref, "/retry-turn"), { method: "POST" });
+export function retryTurn(
+  ref: JobRef,
+  opts?: { force?: boolean },
+): Promise<{ ok: boolean }> {
+  const q = opts?.force ? "?force=true" : "";
+  return webJson(threadPath(ref, `/retry-turn${q}`), { method: "POST" });
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────────────────────────────────

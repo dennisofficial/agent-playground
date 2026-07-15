@@ -806,7 +806,7 @@ function SessionLimitActions({
         loading={resume.isPending}
         loadingText="Resuming…"
         disabled={resume.isSuccess}
-        onClick={() => resume.mutate()}
+        onClick={() => resume.mutate({ force: true })}
       >
         <RotateCw size={12} className="mr-1" />
         {resume.isSuccess ? "Resumed" : "Force resume now"}
@@ -847,6 +847,11 @@ export function SystemOperatorNotice({
   const sessionLimit = message.meta?.sessionLimit === true;
   const resumeAt =
     typeof message.meta?.resumeAt === "string" ? message.meta.resumeAt : undefined;
+  // The friendly, classified one-liner (`summarizeTurnFailure`) — when present, it's the headline and the
+  // raw `message.text` moves behind a "Details" disclosure instead of always showing verbatim.
+  const summary =
+    typeof message.meta?.summary === "string" ? message.meta.summary : undefined;
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isMain = (lane ?? MAIN_LANE) === MAIN_LANE;
   const retry = useRetryTurn(jobRef);
   return (
@@ -877,9 +882,37 @@ export function SystemOperatorNotice({
         <span className="flex-1" />
         <span className="font-mono text-[10px] text-faint">harness</span>
       </div>
-      {/* Markdown body */}
+      {/* Markdown body — a classified failure leads with the friendly summary and tucks the raw text behind
+          a "Details" disclosure; an unclassified (older) row just renders the raw text as before. */}
       <div className="px-3.5 py-3">
-        <Markdown>{message.text}</Markdown>
+        {summary ? (
+          <>
+            <p className="text-[13px] text-text">{summary}</p>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((o) => !o)}
+              aria-expanded={detailsOpen}
+              className="mt-1.5 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide text-faint hover:text-dim"
+            >
+              <ChevronRight
+                size={10}
+                strokeWidth={2.6}
+                className={`shrink-0 transition-transform ${detailsOpen ? "rotate-90" : ""}`}
+              />
+              Details
+            </button>
+            {detailsOpen ? (
+              <div
+                className="mt-2 border-t pt-2.5"
+                style={{ borderColor: "var(--red-line)" }}
+              >
+                <Markdown>{message.text}</Markdown>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <Markdown>{message.text}</Markdown>
+        )}
       </div>
       {sessionLimit ? (
         <SessionLimitActions jobRef={jobRef} isMain={isMain} resumeAt={resumeAt} />
@@ -895,7 +928,7 @@ export function SystemOperatorNotice({
                 loading={retry.isPending}
                 loadingText="Resuming…"
                 disabled={retry.isSuccess}
-                onClick={() => retry.mutate()}
+                onClick={() => retry.mutate(undefined)}
               >
                 <RotateCw size={12} className="mr-1" />
                 {retry.isSuccess ? "Resumed" : "Resume"}

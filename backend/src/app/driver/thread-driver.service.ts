@@ -1359,13 +1359,14 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async relayFailure(jobId: string, err: unknown): Promise<void> {
     const text = `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`;
+    const { category, summary } = summarizeTurnFailure(err);
     const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'error' },
+        meta: { source: 'system_operator', severity: 'error', category, summary },
       })
       .catch((e) =>
         this.logger.error(`could not durably record failure for job=${jobId}: ${e}`),
