@@ -126,7 +126,7 @@ export interface IEnvConfig {
   COOKIE_DOMAIN?: string; // scopes session cookies across subdomains in deploy; host-only in dev
   // Sandbox preview exposure (see the exposure module). All optional — the feature is OFF (no routing,
   // no injected env) unless PREVIEW_BASE_DOMAIN is set, so dev/local is unchanged.
-  PREVIEW_BASE_DOMAIN?: string; // e.g. `atlas.dltechnologies.co`; unset → exposure disabled
+  PREVIEW_BASE_DOMAIN?: string; // e.g. `preview.byatlas.io`; unset → exposure disabled
   CADDY_ADMIN_SOCKET?: string; // Caddy admin unix socket path; default /srv/atlas/caddy/admin/admin.sock
   CADDY_CONTAINER_NAME?: string; // Caddy container to bridge into sandbox nets; default `atlas-caddy`
   PREVIEW_ID_SECRET?: string; // HMAC key for the previewId token; derives from SECRETS_ENCRYPTION_KEY if unset

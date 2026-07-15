@@ -147,19 +147,19 @@ Add A (and optionally AAAA) records pointing at the box IP:
 
 | Name | Type | Value |
 |---|---|---|
-| `api.atlas.dltechnologies.co` | A | `<box-ip>` |
-| `atlas.dltechnologies.co` | A | `<box-ip>` |
-| `*.atlas.dltechnologies.co` | A | `<box-ip>` |
+| `app.byatlas.io` | A | `<box-ip>` |
+| `api.byatlas.io` | A | `<box-ip>` |
+| `*.preview.byatlas.io` | A | `<box-ip>` |
 
 Caddy handles TLS certificate provisioning via Let's Encrypt automatically once
 DNS resolves. Email for LE notifications is set in `infra/Caddyfile`.
 
-The `*.atlas.dltechnologies.co` wildcard record covers every ephemeral sandbox-preview
-subdomain (`<previewId>-<svc>.atlas.dltechnologies.co`). Its wildcard TLS cert can't use
+The `*.preview.byatlas.io` wildcard record covers every ephemeral sandbox-preview
+subdomain (`<previewId>-<svc>.preview.byatlas.io`). Its wildcard TLS cert can't use
 HTTP-01/TLS-ALPN (a CA policy for wildcards), so Caddy issues it via the ACME **DNS-01**
 challenge using the `caddy-dns/cloudflare` module (baked into `infra/caddy.Dockerfile`).
 That needs a scoped Cloudflare API **token** (not the global key) with **Zone:Read +
-DNS:Edit** on the `dltechnologies.co` zone, set as `CLOUDFLARE_API_TOKEN` in
+DNS:Edit** on the `byatlas.io` zone, set as `CLOUDFLARE_API_TOKEN` in
 `/srv/atlas/secrets/atlas.env` (see `infra/.env.prod.example`). The one wildcard cert is
 reused by every preview route the backend adds dynamically — no per-subdomain issuance.
 
@@ -298,11 +298,11 @@ docker logs -f atlas-backend-blue
 
 ```bash
 # Health endpoints
-curl https://api.atlas.dltechnologies.co/health/live
-curl https://api.atlas.dltechnologies.co/health/ready
+curl https://api.byatlas.io/health/live
+curl https://api.byatlas.io/health/ready
 
 # Open the web console
-open https://atlas.dltechnologies.co
+open https://app.byatlas.io
 ```
 
 Create a thread and verify a sandbox spawns (watch `docker ps` for a new container).
