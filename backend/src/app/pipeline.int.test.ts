@@ -312,18 +312,15 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       appendBlockOnce: vi.fn(async () => undefined),
     } as unknown as BlockSink;
     const taskSink = {
-      applyTaskEvent: vi.fn(async () => undefined),
+      createTask: vi.fn(async () => ({ id: 'noop' })),
+      updateTask: vi.fn(async () => ({ ok: true })),
+      readTasks: vi.fn(async () => []),
     } as unknown as TaskEventSink;
     const usage = {
       getResetAt: () => undefined,
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
-    const turnHarness = new TurnHarnessFactory(
-      liveTurns,
-      blockSink,
-      taskSink,
-      usage,
-    );
+    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
     const judge = {
       async judge() {
         return {
@@ -342,7 +339,7 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
     return new ThreadDriver(
       store,
-      { resolve: async () => RESOLVED } as unknown as DriverRepoResolver,
+      { resolve: async () => RESOLVED },
       makeGit(),
       makePr(),
       turn,
@@ -383,7 +380,7 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         bridgeCaddyToSandbox: async () => undefined,
         unbridgeCaddyFromSandbox: async () => undefined,
         listLiveThreadJobIds: async () => [],
-      } as never,
+      },
       {
         anthropicKey: async () => undefined,
         openaiKey: async () => undefined,
@@ -713,7 +710,6 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
         'https://github.com/acme/pipeline-int/pull/7',
       );
 
-      // eslint-disable-next-line no-console
       console.log(
         'OBSERVED stage kinds (after ship):',
         stagesAfter.map((s) => s.kind),

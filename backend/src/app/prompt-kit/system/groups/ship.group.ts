@@ -8,12 +8,12 @@ import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   CLOUD_SANDBOX_NOTE,
-  CODEX_TASK_LIST_NOTE,
   EVIDENCE_ARTIFACTS_NOTE,
   GIT_SAFETY_NOTE,
   REVIEW_SCOPE_NOTE,
   RUNNABLE_WORKSPACE_NOTE,
   SOLE_AUTHOR_NOTE,
+  TASK_LIST_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
@@ -87,8 +87,7 @@ export class ShipGroup {
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 108 })
   taskList(): string {
     return (
-      'TASK LIST — ' +
-      CODEX_TASK_LIST_NOTE +
+      TASK_LIST_NOTE +
       ' Up front, `task_create` one task per phase (e.g. "Review the merged diff", "Apply fixes", ' +
       '"Verify + live smoke").'
     );

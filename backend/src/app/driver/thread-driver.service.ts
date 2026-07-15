@@ -62,6 +62,7 @@ import {
   TurnHarnessFactory,
   TASK_EVENT_SINK,
   type TaskEventSink,
+  makeTaskTools,
   laneFor,
   webShipReviewCard,
 } from '../surface';
@@ -92,13 +93,12 @@ import type {
 import type { JobDispatcher } from '../brain';
 import { TurnRunnerService } from '../runner';
 import {
-  CODEX_TASK_LIST_NOTE,
   COMMIT_AND_PUSH_NOTE,
   renderAgentPrompt,
   renderBatchTask,
   renderMasterReviewTask,
   renderOpenLegTasks,
-  renderOpenTasksWarning,
+  renderOpenTasksAdvisory,
   renderRunningServicesNote,
   composeLegSeed,
   foldLegTurn,
@@ -1074,9 +1074,11 @@ export class ThreadDriver implements JobDispatcher {
     // left of that cooldown window before driving again, so a boot resume can't fire off immediately after
     // a claim it never got to sleep out. A fresh entry (no prior claim, or one aged past the window) waits
     // zero.
-    const { count, lastAttemptAt } = await this.store.driverTransientRetryState(jobId);
+    const { count, lastAttemptAt } =
+      await this.store.driverTransientRetryState(jobId);
     if (count > 0 && lastAttemptAt) {
-      const remaining = HOST_RETRY_BACKOFF_MS - (Date.now() - lastAttemptAt.getTime());
+      const remaining =
+        HOST_RETRY_BACKOFF_MS - (Date.now() - lastAttemptAt.getTime());
       if (remaining > 0) {
         await new Promise((r) => setTimeout(r, remaining));
       }
@@ -1089,7 +1091,10 @@ export class ThreadDriver implements JobDispatcher {
         if (this.election.isDraining() || !isTransientDriveError(err)) {
           throw err;
         }
-        const { ok, used: n } = await this.store.claimDriverTransientRetry(jobId, maxRetries);
+        const { ok, used: n } = await this.store.claimDriverTransientRetry(
+          jobId,
+          maxRetries,
+        );
         if (!ok) {
           throw err;
         }
@@ -1134,7 +1139,10 @@ export class ThreadDriver implements JobDispatcher {
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
     if (isTransientAuthError(err)) {
-      const { ok, used: n } = await this.store.claimAuthRetryAttempt(jobId, MAX_HOST_RETRIES);
+      const { ok, used: n } = await this.store.claimAuthRetryAttempt(
+        jobId,
+        MAX_HOST_RETRIES,
+      );
       if (ok) {
         // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
         // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
@@ -1356,7 +1364,12 @@ export class ThreadDriver implements JobDispatcher {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'warning', category: 'auth', summary },
+        meta: {
+          source: 'system_operator',
+          severity: 'warning',
+          category: 'auth',
+          summary,
+        },
       })
       .catch((e) =>
         this.logger.error(
@@ -1398,7 +1411,8 @@ export class ThreadDriver implements JobDispatcher {
             severity: 'warning',
             sessionLimit: true,
             category: 'session_limit',
-            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         })
@@ -1420,7 +1434,8 @@ export class ThreadDriver implements JobDispatcher {
             severity: 'warning',
             sessionLimit: true,
             category: 'session_limit',
-            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         });
@@ -1515,7 +1530,12 @@ export class ThreadDriver implements JobDispatcher {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'error', category, summary },
+        meta: {
+          source: 'system_operator',
+          severity: 'error',
+          category,
+          summary,
+        },
       })
       .catch((e) =>
         this.logger.error(
@@ -2681,7 +2701,7 @@ export class ThreadDriver implements JobDispatcher {
     const lenses = reviewAgentsForThread(stageType, frameworkSkillNames);
     const childSpecs = [
       ...lenses.map((l) => ({
-        kind: 'review_agent' as ThreadRole,
+        kind: 'review_agent',
         brief: l.label,
         config:
           l.id === 'framework'
@@ -2967,10 +2987,6 @@ export class ThreadDriver implements JobDispatcher {
     // explicit STOP directive: re-asserting the SAME state succeeds (nothing to retry); a CONFLICTING assertion
     // is refused but still told to stop, never to retry.
     let terminated: null | 'done' | 'blocked' = null;
-    // ONE-SHOT task double-check: the first `done` assertion with an unreconciled checklist is bounced back
-    // (below) so the model can finish/close its own tasks in-turn; a subsequent assertion is let through
-    // regardless (the done transition then drops any stragglers). Guards against wedging a validated thread.
-    let taskNudgedOnce = false;
     const afterTerminal = (attempted: 'done' | 'blocked') => {
       const stop =
         `This thread already asserted \`${terminated}\` this turn — it is recorded and final. ` +
@@ -3001,22 +3017,19 @@ export class ThreadDriver implements JobDispatcher {
             error: 'summary is required (one line: what this thread built)',
           };
         }
-        // Task double-check — BEFORE the live-verification gate: on the FIRST `done` claim, if the durable
-        // checklist still has open items, bounce once (not latched) so the model reconciles its own tasks
-        // in-turn (finishing genuinely-unfinished work, which then flows through the gate + commit). One
-        // reminder only; the retry skips this and proceeds, and the done transition flips any leftovers to
-        // `dropped`.
-        if (!taskNudgedOnce) {
-          const open = (
-            await this.store
-              .getThreadTasks(thread.id)
-              .catch(() => [] as TaskItem[])
-          ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
-          if (open.length) {
-            taskNudgedOnce = true;
-            return { ok: true, warning: renderOpenTasksWarning(open) };
-          }
-        }
+        // Task list is ADVISORY at completion (decision d1) — it NEVER blocks `complete_thread`. A prior
+        // version bounced the FIRST `done` claim while the durable checklist held open items; because the
+        // one-shot lived on this per-turn closure, every re-delivery re-bounced and wedged the thread into a
+        // permanent `incomplete` loop. Now we only READ the still-open items to surface a non-blocking note;
+        // the assertion proceeds to the verification gates and latches, and the done transition force-closes
+        // any leftovers via `dropOpenThreadTasks` (see runThread). The native task-fold id reconciliation is
+        // unreliable and being retired for durable task_* tools, so completion must not hinge on it.
+        const openTasks = (
+          await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])
+        ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
+        const taskAdvisory = openTasks.length
+          ? renderOpenTasksAdvisory(openTasks)
+          : undefined;
         const asStrings = (v: unknown): string[] | undefined =>
           Array.isArray(v) && v.length
             ? v.map((x) => String(x).trim()).filter(Boolean)
@@ -3109,15 +3122,20 @@ export class ThreadDriver implements JobDispatcher {
             ? { liveVerification: liveGate.record.liveVerification }
             : {}),
         };
-        const warning = [staticGate.warning, liveGate.warning]
-          .filter(Boolean)
-          .join(' ');
+        const warnings = [staticGate.warning, liveGate.warning].filter(Boolean);
         // Latch ONLY an ACCEPTED terminal assertion. A judge DOWNGRADE (status still 'blocked', returned
         // with a `warning`) is a REJECTED claim — the orchestrator must be able to capture the missing
         // evidence and call `complete_thread` again in the SAME turn (ADR 0005's warning-retry). A
         // premature latch here silently traps a genuinely-done thread as `blocked` (caught in live
         // validation: the model curl'd a real 200, then its second complete_thread was wrongly rejected).
-        if (gatedRecord.status === 'done') terminated = 'done';
+        if (gatedRecord.status === 'done') {
+          terminated = 'done';
+          // Only surface the open-tasks advisory on an ACCEPTED `done`: the done transition is what
+          // force-closes them (`dropOpenThreadTasks`), so telling the model they were auto-closed would be
+          // untrue on a `blocked` downgrade (where they legitimately stay open for the retry).
+          if (taskAdvisory) warnings.push(taskAdvisory);
+        }
+        const warning = warnings.join(' ');
         await this.store.recordThreadTermination(thread.id, gatedRecord);
         return warning ? { ok: true, warning } : { ok: true };
       },
@@ -3264,51 +3282,15 @@ export class ThreadDriver implements JobDispatcher {
       };
     }
 
-    // LIVE TASK LIST for the Codex master-review thread (parity with Claude Code's TaskCreate/TaskUpdate).
-    // Codex has no native SDK task tools, so bridge `task_create`/`task_update` into the SAME `tasks` column
-    // the Claude lanes fold into — the web then renders its checklist identically. Scoped to master_review:
-    // Claude builders already carry their in-process SDK task tools, so adding these there would duplicate.
-    if (thread.kind === 'master_review') {
-      const scope = { kind: 'thread' as const, id: thread.id };
-      // Per-turn sequential ids, matching Claude's per-session id space — `task_create` returns the id in a
-      // `"Task #N created"` string so the shared `createdTaskId` parser (task-fold.ts) reads it back, and the
-      // model echoes it into `task_update({ taskId })`. A resumed turn rebuilds its list from #1, exactly as
-      // a fresh Claude session re-derives its todos.
-      let taskSeq = 0;
-      tools.task_create = async (args) => {
-        const subject = String(args['subject'] ?? '').trim();
-        if (!subject)
-          return {
-            ok: false,
-            error: 'subject is required (a one-line task title)',
-          };
-        const id = String(++taskSeq);
-        await this.taskSink
-          .applyTaskEvent(scope, 'taskcreate', args, `Task #${id} created`)
-          .catch((err) =>
-            this.logger.debug(
-              `task_create fold failed (display-only): ${shortReason(err)}`,
-            ),
-          );
-        return `Task #${id} created: ${subject}`;
-      };
-      tools.task_update = async (args) => {
-        const taskId = String(args['taskId'] ?? '').trim();
-        if (!taskId)
-          return {
-            ok: false,
-            error: 'taskId is required (the id task_create returned)',
-          };
-        await this.taskSink
-          .applyTaskEvent(scope, 'taskupdate', args, null)
-          .catch((err) =>
-            this.logger.debug(
-              `task_update fold failed (display-only): ${shortReason(err)}`,
-            ),
-          );
-        return { ok: true };
-      };
-    }
+    // LIVE TASK LIST for every build/master-review thread. Claude's native task tools are disabled
+    // (engine-core), so both engines drive the operator-visible checklist through this ONE canonical
+    // `task_create`/`task_update`/`task_list`/`task_get` set — direct CRUD on the stage-owned `tasks` rows
+    // in a single durable uuid id space. Registered unconditionally: a fresh leg reads the durable rows, so
+    // the list survives rotation.
+    Object.assign(
+      tools,
+      makeTaskTools(this.taskSink, { kind: 'thread', id: thread.id }),
+    );
 
     return { jobId: job.id, tools };
   }
@@ -3666,7 +3648,7 @@ export class ThreadDriver implements JobDispatcher {
     // The Leg the anchor's build session is currently on (1-based). Stamped into every build block's
     // `meta.legOrdinal` so the web slices this thread's transcript into one node per Leg. Bumped in the
     // rotation loop below as the session rotates, so each Leg's turns carry its own ordinal.
-    let currentLeg = anchor.legOrdinal;
+    const currentLeg = anchor.legOrdinal;
     const metaTag: Record<string, unknown> = {
       phaseId: anchor.id,
       legOrdinal: currentLeg,
@@ -4179,7 +4161,7 @@ export class ThreadDriver implements JobDispatcher {
     });
     return (
       rows.find((r) => {
-        const ctx = (r.ctx ?? {}) as Record<string, unknown>;
+        const ctx = r.ctx ?? {};
         return (
           r.kind === 'step' &&
           r.job_id === jobId &&
