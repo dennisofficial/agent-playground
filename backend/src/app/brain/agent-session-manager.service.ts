@@ -2361,6 +2361,16 @@ export class AgentSessionManager
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
   }
 
+  /** Which stage persona this turn runs as: a re-homed turn (post_build/ci) uses its thread's role; a plain
+   *  planning turn (no resumeThreadId) is PLANNING. onboarding/review remain PLANNING via jobKind conditions.
+   *  A missing/unreadable thread row falls back to PLANNING rather than failing the turn. */
+  private async resolvePromptAgent(stimulus: ChatStimulus): Promise<Agent> {
+    const stageRole = stimulus.resumeThreadId
+      ? await this.driverStore.threadRole(stimulus.resumeThreadId).catch(() => null)
+      : null;
+    return stageRole ? threadKindSpec(stageRole).agent : Agent.PLANNING;
+  }
+
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
    *  `handleChatTurn` queue above — never invoked concurrently for the same thread. `opts.onRegistered`
    *  (the delivery pump's fresh-turn path) fires when the turn becomes restart-survivable, so the pump can
@@ -2843,12 +2853,7 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
-    // Which stage persona this turn runs as: a re-homed turn (post_build/ci) uses its thread's role; a plain
-    // planning turn (no resumeThreadId) is PLANNING. onboarding/review remain PLANNING via jobKind conditions.
-    const stageRole = stimulus.resumeThreadId
-      ? await this.driverStore.threadRole(stimulus.resumeThreadId).catch(() => null)
-      : null;
-    const promptAgent = stageRole ? threadKindSpec(stageRole).agent : Agent.PLANNING;
+    const promptAgent = await this.resolvePromptAgent(stimulus);
 
     const runArgs: RunEngineArgs = {
       engine: 'claude',
