@@ -285,16 +285,13 @@ export class AgentSessionManager
   private readonly turnQueues = new Map<string, Promise<void>>();
 
   /**
-   * Bounded silent auto-resume for a BENIGN `aborted_streaming` (an SDK stream abort that self-recovers) —
-   * keyed by jobId, count of consecutive auto-resumes. Reset on the next successful turn. Past the cap we
-   * stop swallowing and surface the normal retryable box, so a PERSISTENT abort still reaches the operator.
+   * Bounded silent auto-resume cap for a BENIGN `aborted_streaming` (an SDK stream abort that
+   * self-recovers) — the durable `jobs.benign_abort_redrives` counter is CAS-claimed against this cap.
+   * Past the cap we stop swallowing and surface the normal retryable box, so a PERSISTENT abort still
+   * reaches the operator.
    */
-  private readonly benignAbortRedrives = new Map<string, number>();
   private static readonly MAX_BENIGN_ABORT_REDRIVES = 2;
 
-  /** Bounded host-side auto-retry budget for a RETRYABLE transient error (transient auth / host↔container
-   *  transport blip) — keyed by jobId, count of consecutive retries. Reset on the next successful turn. */
-  private readonly transientRetryRedrives = new Map<string, number>();
   /** Per-job in-process re-drive timer for the 10s host-retry backoff (the durable clock is the restart-only
    *  backstop). Cleared/replaced when a superseding turn is scheduled. */
   private readonly hostRetryTimers = new Map<string, NodeJS.Timeout>();
@@ -3094,9 +3091,11 @@ export class AgentSessionManager
         // act on. The engine-side hold makes the startup-race variant impossible; this is the net for any
         // residual/other abort. Instead of a scary red box, silently resume the SAME session once (the same
         // nudge the operator's Resume button seeds), bounded so a PERSISTENT abort still surfaces a box.
-        const n = (this.benignAbortRedrives.get(stimulus.jobId) ?? 0) + 1;
-        if (n <= AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES) {
-          this.benignAbortRedrives.set(stimulus.jobId, n);
+        const { ok, used: n } = await this.store.claimBenignAbortRedrive(
+          stimulus.jobId,
+          AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES,
+        );
+        if (ok) {
           this.logger.warn(
             `benign aborted_streaming for thread=${stimulus.jobId} — auto-resuming (attempt ${n}/${AgentSessionManager.MAX_BENIGN_ABORT_REDRIVES}), no operator box: ${err}`,
           );
@@ -3127,9 +3126,11 @@ export class AgentSessionManager
         // transport/infra blip): re-drive the SAME session up to MAX_HOST_RETRIES with a fixed backoff,
         // posting a quiet durable notice + driving the live "Reconnecting…" indicator each attempt. Only an
         // exhausted budget surfaces the retryable box.
-        const n = (this.transientRetryRedrives.get(stimulus.jobId) ?? 0) + 1;
-        if (n <= MAX_HOST_RETRIES) {
-          this.transientRetryRedrives.set(stimulus.jobId, n);
+        const { ok, used: n } = await this.store.claimTransientRetryRedrive(
+          stimulus.jobId,
+          MAX_HOST_RETRIES,
+        );
+        if (ok) {
           this.logger.warn(
             `retryable transient error for thread=${stimulus.jobId} — auto-retry ${n}/${MAX_HOST_RETRIES} in ${HOST_RETRY_BACKOFF_MS}ms: ${err}`,
           );
@@ -3161,8 +3162,7 @@ export class AgentSessionManager
       return;
     }
     // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
-    this.benignAbortRedrives.delete(stimulus.jobId);
-    this.transientRetryRedrives.delete(stimulus.jobId);
+    await this.store.clearBrainRetryCounters(stimulus.jobId);
     // …and cancel any still-pending host-retry backstop (timer + durable retry clock): this clean turn IS the
     // recovery, so a stale 10s timer must not fire a spurious 'Please continue' nudge on the now-healthy job.
     await this.clearPendingHostRetry(stimulus.jobId);

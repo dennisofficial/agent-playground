@@ -118,6 +118,20 @@ function makeStore(state: StoreState): {
   state: StoreState;
 } {
   let nextQuestionId = 1;
+  // Durable retry-counter fakes (mirrors the real CAS columns on `jobs`): keyed by jobId, independent of
+  // `state.job` since the domain `Job` shape doesn't expose these columns (store-internal only).
+  const retryCounters = new Map<
+    string,
+    { auth: number; driverTransient: number; lastAttemptAt: Date | null }
+  >();
+  const retryCounterFor = (jobId: string) => {
+    let c = retryCounters.get(jobId);
+    if (!c) {
+      c = { auth: 0, driverTransient: 0, lastAttemptAt: null };
+      retryCounters.set(jobId, c);
+    }
+    return c;
+  };
   const threadIdForAnchor = (anchorId: string): string =>
     state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
   const stageIdForThread = (thread: StoreDriverThread): string =>
@@ -643,6 +657,30 @@ function makeStore(state: StoreState): {
         (x) => x.jobId === jobId && x.kind === 'master_review',
       );
       return s?.id ?? null;
+    }),
+    // ── durable retry-counter fakes (Thread 1: durable retry counters) ─────────────────────────────
+    claimAuthRetryAttempt: vi.fn(async (jobId: string, cap: number) => {
+      const c = retryCounterFor(jobId);
+      if (c.auth >= cap) return { ok: false, used: cap };
+      c.auth += 1;
+      c.lastAttemptAt = new Date();
+      return { ok: true, used: c.auth };
+    }),
+    claimDriverTransientRetry: vi.fn(async (jobId: string, cap: number) => {
+      const c = retryCounterFor(jobId);
+      if (c.driverTransient >= cap) return { ok: false, used: cap };
+      c.driverTransient += 1;
+      c.lastAttemptAt = new Date();
+      return { ok: true, used: c.driverTransient };
+    }),
+    clearDriverRetryCounters: vi.fn(async (jobId: string) => {
+      const c = retryCounterFor(jobId);
+      c.auth = 0;
+      c.driverTransient = 0;
+    }),
+    driverTransientRetryState: vi.fn(async (jobId: string) => {
+      const c = retryCounterFor(jobId);
+      return { count: c.driverTransient, lastAttemptAt: c.lastAttemptAt };
     }),
   } as unknown as DriverStoreService;
   return { store, state };

@@ -1148,4 +1148,101 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
     expect((cardRow?.card as Record<string, unknown> | undefined)?.previewRequestedAt).toBeUndefined();
   });
+
+  // ── Retry-budget counters durability — auth_retry_attempts / driver_transient_retries (job-scoped, ─────
+  // ── CAS against real Postgres so a restart/crash-loop can't re-grant a fresh budget) ────────────────
+
+  async function seedBareJob(): Promise<{ jobId: string }> {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'retry counters',
+        kind: 'feature',
+        status: 'running',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    return { jobId: job.id };
+  }
+
+  it('claimAuthRetryAttempt is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
+    const { jobId } = await seedBareJob();
+    expect(await store.claimAuthRetryAttempt(jobId, 2)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimAuthRetryAttempt(jobId, 2)).toEqual({ ok: true, used: 2 });
+    // At the cap → refused, budget unchanged.
+    expect(await store.claimAuthRetryAttempt(jobId, 2)).toEqual({ ok: false, used: 2 });
+  });
+
+  it('claimDriverTransientRetry is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
+    const { jobId } = await seedBareJob();
+    expect(await store.claimDriverTransientRetry(jobId, 2)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimDriverTransientRetry(jobId, 2)).toEqual({ ok: true, used: 2 });
+    // At the cap → refused, budget unchanged.
+    expect(await store.claimDriverTransientRetry(jobId, 2)).toEqual({ ok: false, used: 2 });
+  });
+
+  it('claimAuthRetryAttempt and claimDriverTransientRetry both stamp retry_last_attempt_at', async () => {
+    const { jobId } = await seedBareJob();
+    const before = Date.now();
+    expect(await store.claimAuthRetryAttempt(jobId, 5)).toEqual({ ok: true, used: 1 });
+    let row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
+    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+    expect(await store.claimDriverTransientRetry(jobId, 5)).toEqual({ ok: true, used: 1 });
+    row = await jobs.findOne({ where: { id: jobId } });
+    expect(row?.retry_last_attempt_at).toBeInstanceOf(Date);
+    expect(row!.retry_last_attempt_at!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('two concurrent claimDriverTransientRetry calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
+    const { jobId } = await seedBareJob();
+    await store.claimDriverTransientRetry(jobId, 2); // used → 1
+    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
+    const [a, b] = await Promise.all([
+      store.claimDriverTransientRetry(jobId, 2),
+      store.claimDriverTransientRetry(jobId, 2),
+    ]);
+    const oks = [a, b].filter((r) => r.ok);
+    expect(oks).toHaveLength(1);
+    expect(oks[0]).toEqual({ ok: true, used: 2 });
+  });
+
+  it('clearDriverRetryCounters zeroes only the driver lanes — leaves retry_last_attempt_at and the brain\'s lanes untouched', async () => {
+    const { jobId } = await seedBareJob();
+    await store.claimAuthRetryAttempt(jobId, 5);
+    await store.claimDriverTransientRetry(jobId, 5);
+    // Bump the brain's own lane columns directly (no BrainStoreService in scope here) to prove
+    // clearDriverRetryCounters doesn't reach across lanes.
+    await jobs.update({ id: jobId }, { benign_abort_redrives: 3, transient_retry_redrives: 4 });
+    const before = await jobs.findOne({ where: { id: jobId } });
+    const stampBefore = before!.retry_last_attempt_at;
+    expect(stampBefore).toBeInstanceOf(Date);
+
+    await store.clearDriverRetryCounters(jobId);
+
+    const after = await jobs.findOne({ where: { id: jobId } });
+    expect(after?.auth_retry_attempts).toBe(0);
+    expect(after?.driver_transient_retries).toBe(0);
+    // Untouched by the driver-lane clear.
+    expect(after?.retry_last_attempt_at).toEqual(stampBefore);
+    expect(after?.benign_abort_redrives).toBe(3);
+    expect(after?.transient_retry_redrives).toBe(4);
+  });
+
+  it('driverTransientRetryState reads back the count + last-attempt timestamp (null/0 on a fresh job)', async () => {
+    const { jobId } = await seedBareJob();
+    expect(await store.driverTransientRetryState(jobId)).toEqual({
+      count: 0,
+      lastAttemptAt: null,
+    });
+
+    await store.claimDriverTransientRetry(jobId, 5);
+    await store.claimDriverTransientRetry(jobId, 5);
+    const state = await store.driverTransientRetryState(jobId);
+    expect(state.count).toBe(2);
+    expect(state.lastAttemptAt).toBeInstanceOf(Date);
+  });
 });
