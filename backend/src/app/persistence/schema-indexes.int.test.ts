@@ -128,7 +128,7 @@ describe('restored schema indexes (live Postgres)', () => {
 
     const insertThread = () =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, kind, ordinal, brief, parent_thread_id)
+        `INSERT INTO threads (job_id, org_id, role, ordinal, brief, parent_thread_id)
          VALUES ($1, $2, 'builder', 10, 'first', NULL)`,
         [jobId, ORG_ID],
       );
@@ -165,7 +165,7 @@ describe('restored schema indexes (live Postgres)', () => {
     const [recA, recB] = [recRows[0].id as string, recRows[1].id as string];
     const insertAt10 = (recordId: string) =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, kind, ordinal, brief, parent_thread_id, decision_record_id)
+        `INSERT INTO threads (job_id, org_id, role, ordinal, brief, parent_thread_id, decision_record_id)
          VALUES ($1, $2, 'builder', 10, 'lane', NULL, $3)`,
         [jobId, ORG_ID, recordId],
       );

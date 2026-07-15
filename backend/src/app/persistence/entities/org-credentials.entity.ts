@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   Entity,
   Index,
@@ -22,6 +23,7 @@ import { OrganizationEntity } from './organization.entity';
  */
 @Entity({ name: 'org_credentials' })
 @Index(['org_id'])
+@Check('chk_org_credentials_github_auth_mode', "github_auth_mode IN ('pat', 'app')")
 export class OrgCredentialsEntity extends TimestampedEntity {
   /** The owning org (FK → organizations). */
   @PrimaryColumn({ type: 'uuid' })
