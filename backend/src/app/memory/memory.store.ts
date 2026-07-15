@@ -161,8 +161,47 @@ export class MemoryStore {
     }));
   }
 
-  /** Soft-delete a fact by id. */
-  async forget(id: string): Promise<void> {
-    await this.facts.softDelete(id);
+  /** Soft-delete a fact by id, scoped to its owning org (a foreign/already-gone id is a no-op). */
+  async forget(id: string, orgId: string): Promise<{ deleted: boolean }> {
+    const res = await this.facts
+      .createQueryBuilder()
+      .softDelete()
+      .where('id = :id', { id })
+      .andWhere('org_id = :org', { org: orgId })
+      .andWhere('deleted_at IS NULL')
+      .execute();
+    return { deleted: (res.affected ?? 0) > 0 };
+  }
+
+  /** Rewrite a fact by id (re-embeds), scoped to its owning org; a forgotten/foreign row is a no-op. */
+  async updateFact(
+    id: string,
+    fact: string,
+    orgId: string,
+  ): Promise<{ updated: boolean }> {
+    const existing = await this.facts
+      .createQueryBuilder('f')
+      .select('f.id', 'id')
+      .where('f.id = :id', { id })
+      .andWhere('f.org_id = :org', { org: orgId })
+      .andWhere('f.deleted_at IS NULL')
+      .getRawOne<{ id: string }>();
+    if (!existing) return { updated: false };
+
+    const qv = vecSql(await this.embedder.embed(fact, orgId));
+    const res = await this.facts
+      .createQueryBuilder()
+      .update(MemoryEntity)
+      .set({
+        fact,
+        embedding: () => ':qv::vector',
+        embed_model: this.embedder.model,
+      })
+      .where('id = :id', { id })
+      .andWhere('org_id = :org', { org: orgId })
+      .andWhere('deleted_at IS NULL')
+      .setParameter('qv', qv)
+      .execute();
+    return { updated: (res.affected ?? 0) > 0 };
   }
 }

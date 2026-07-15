@@ -3553,10 +3553,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       usageService, // usage (OauthUsageService)
-      new SelfSufficiencyToolsService(
-        store,
-        {} as unknown as MemoryStore,
-      ), // selfSufficiency
+      new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail({ liveTurns }),
     );
     return {
@@ -6214,7 +6211,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
 
     const prefix = await manager.buildMemoryRecallPrefix(stimulus);
 
-    expect(prefix).toContain('uses pnpm for package management');
+    expect(prefix).toContain('  • [fact-1] uses pnpm for package management');
     expect(recall).toHaveBeenCalledWith(
       stimulus.body,
       expect.objectContaining({

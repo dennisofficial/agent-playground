@@ -103,6 +103,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   list_convention_profiles: {},
   recall: { query: 'ledger schema' },
   remember: { fact: 'The ledger uses Postgres.', scope: 'repo' },
+  forget: { id: 'm1' },
+  update_memory: { id: 'm1', fact: 'The ledger uses Postgres 16.' },
   ask_question: {
     question: 'Which option should we go with?',
     options: [

@@ -3612,6 +3612,10 @@ export class AgentSessionManager
 
       remember: this.selfSufficiencyTools(stimulus).remember,
 
+      forget: this.selfSufficiencyTools(stimulus).forget,
+
+      update_memory: this.selfSufficiencyTools(stimulus).update_memory,
+
       ask_question: async (args) => {
         const question = String(args['question'] ?? '').trim();
         if (!question) return { ok: false, reason: 'question is required' };
@@ -4684,6 +4688,8 @@ export class AgentSessionManager
         set_job_kind: tools.set_job_kind,
         recall: tools.recall,
         remember: tools.remember,
+        forget: tools.forget,
+        update_memory: tools.update_memory,
         list_jobs: tools.list_jobs,
         create_job: tools.create_job,
         link_job_dependency: tools.link_job_dependency,
@@ -4703,6 +4709,8 @@ export class AgentSessionManager
       withdraw_question: tools.withdraw_question,
       recall: tools.recall,
       remember: tools.remember,
+      forget: tools.forget,
+      update_memory: tools.update_memory,
       list_jobs: tools.list_jobs,
       create_job: tools.create_job,
       link_job_dependency: tools.link_job_dependency,
@@ -7412,7 +7420,7 @@ export class AgentSessionManager
       const fresh = facts.filter((f) => !seen.has(f.id));
       if (fresh.length === 0) return null;
       const body = renderMemoryRecall(
-        fresh.map((f) => ({ fact: f.fact, scope: f.scope })),
+        fresh.map((f) => ({ id: f.id, fact: f.fact, scope: f.scope })),
       );
       if (!body) return null;
       for (const f of fresh) seen.add(f.id);

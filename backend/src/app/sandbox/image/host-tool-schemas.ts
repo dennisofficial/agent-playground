@@ -118,6 +118,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     fact: z.string(),
     scope: z.string().optional(),
   },
+  forget: { id: z.string() },
+  update_memory: { id: z.string(), fact: z.string() },
   ask_question: {
     question: z.string(),
     options: z
@@ -438,6 +440,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'List the convention (house-style) profiles for this repo.',
   recall: 'Recall stored facts relevant to an optional query.',
   remember: 'Store a durable fact at the given scope for later recall.',
+  forget: 'Delete (soft) a stored memory by its id.',
+  update_memory: 'Rewrite a stored memory fact by its id (re-embeds).',
   ask_question:
     'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',

@@ -30,6 +30,8 @@ export const ATLAS_HOST_BRIDGE_TOOLS = [
   'get_decision_record',
   'recall',
   'remember',
+  'forget',
+  'update_memory',
   'ask_question',
   'create_decision',
   'withdraw_question',
