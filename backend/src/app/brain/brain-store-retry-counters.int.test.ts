@@ -179,7 +179,10 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the driver's own lane columns directly (no DriverStoreService in scope here) to prove
     // clearBrainRetryCounters doesn't reach across lanes.
-    await jobs.update({ id: jobId }, { auth_retry_attempts: 3, driver_transient_retries: 4 });
+    await jobs.update(
+      { id: jobId },
+      { auth_retry_attempts: 3, driver_transient_retries: 4, session_limit_text_misfires_build: 2 },
+    );
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
     expect(stampBefore).toBeInstanceOf(Date);
@@ -189,10 +192,11 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     const after = await jobs.findOne({ where: { id: jobId } });
     expect(after?.benign_abort_redrives).toBe(0);
     expect(after?.transient_retry_redrives).toBe(0);
-    expect(after?.session_limit_text_misfires).toBe(0);
+    expect(after?.session_limit_text_misfires_main).toBe(0);
     // Untouched by the brain-lane clear.
     expect(after?.retry_last_attempt_at).toEqual(stampBefore);
     expect(after?.auth_retry_attempts).toBe(3);
     expect(after?.driver_transient_retries).toBe(4);
+    expect(after?.session_limit_text_misfires_build).toBe(2);
   });
 });

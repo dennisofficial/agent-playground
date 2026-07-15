@@ -1335,7 +1335,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the brain's own lane columns directly (no BrainStoreService in scope here) to prove
     // clearDriverRetryCounters doesn't reach across lanes.
-    await jobs.update({ id: jobId }, { benign_abort_redrives: 3, transient_retry_redrives: 4 });
+    await jobs.update(
+      { id: jobId },
+      { benign_abort_redrives: 3, transient_retry_redrives: 4, session_limit_text_misfires_main: 2 },
+    );
     const before = await jobs.findOne({ where: { id: jobId } });
     const stampBefore = before!.retry_last_attempt_at;
     expect(stampBefore).toBeInstanceOf(Date);
@@ -1345,11 +1348,12 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const after = await jobs.findOne({ where: { id: jobId } });
     expect(after?.auth_retry_attempts).toBe(0);
     expect(after?.driver_transient_retries).toBe(0);
-    expect(after?.session_limit_text_misfires).toBe(0);
+    expect(after?.session_limit_text_misfires_build).toBe(0);
     // Untouched by the driver-lane clear.
     expect(after?.retry_last_attempt_at).toEqual(stampBefore);
     expect(after?.benign_abort_redrives).toBe(3);
     expect(after?.transient_retry_redrives).toBe(4);
+    expect(after?.session_limit_text_misfires_main).toBe(2);
   });
 
   it('driverTransientRetryState reads back the count + last-attempt timestamp (null/0 on a fresh job)', async () => {

@@ -321,10 +321,20 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'timestamptz', nullable: true })
   retry_last_attempt_at!: Date | null;
 
-  /** Consecutive UNCORROBORATED text-fallback session-limit misfires (reset on a clean drive or a durable
-   *  park). Escalates a lane to a durable park once it hits `SESSION_LIMIT_TEXT_MISFIRE_MAX`. */
+  /** Consecutive UNCORROBORATED text-fallback session-limit misfires for the MAIN (brain) lane (reset on a
+   *  clean turn or a durable park). Escalates the lane to a durable park once it hits
+   *  `SESSION_LIMIT_TEXT_MISFIRE_MAX`. Deliberately separate from {@link session_limit_text_misfires_build}
+   *  — brain and driver run concurrently on the same job row (fire-and-forget dispatch), so sharing one
+   *  counter would let a clean main-lane turn reset the driver's escalation progress (and vice versa),
+   *  exactly like `benign_abort_redrives`/`transient_retry_redrives` vs `auth_retry_attempts`/
+   *  `driver_transient_retries` are split per lane. */
   @Column({ type: 'int', default: 0 })
-  session_limit_text_misfires!: number;
+  session_limit_text_misfires_main!: number;
+
+  /** Consecutive UNCORROBORATED text-fallback session-limit misfires for the BUILD (driver) lane. See
+   *  {@link session_limit_text_misfires_main}. */
+  @Column({ type: 'int', default: 0 })
+  session_limit_text_misfires_build!: number;
 
   /**
    * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the
