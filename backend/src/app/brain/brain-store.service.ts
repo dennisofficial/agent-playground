@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Not, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Not, type ObjectLiteral, Repository } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
 import { nextDecisionId } from '../domain';
 import type {
@@ -24,11 +24,11 @@ import type { AgentMessage } from '../prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';
+import { JobBootstrapService } from '../job-bootstrap';
 import {
-  CodexReviewEntity,
   DecisionRecordEntity,
   MessageEntity,
-  StepEntity,
+  StageEntity,
   ThreadEntity,
   StimulusEntity,
   JobEntity,
@@ -52,6 +52,23 @@ export interface PersistedPlan {
 
 /** Thread briefs are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
+
+/** The highest `ordinal` among a job's rows in `repo` (0 when none), for append-only gap numbering. The
+ *  optional `extraWhere` narrows the pool (e.g. only top-level threads, which share the job-wide unique
+ *  ordinal index). Aliased `t`, so `extraWhere` references `t.<column>`. */
+async function maxOrdinal<T extends ObjectLiteral>(
+  repo: Repository<T>,
+  jobId: string,
+  extraWhere?: string,
+): Promise<number> {
+  const qb = repo
+    .createQueryBuilder('t')
+    .select('MAX(t.ordinal)', 'max')
+    .where('t.job_id = :jobId', { jobId });
+  if (extraWhere) qb.andWhere(extraWhere);
+  const row = await qb.getRawOne<{ max: number | null }>();
+  return row?.max ?? 0;
+}
 
 /**
  * W3 — the BRAIN's persistence. The single place the brain reads the thread transcript and writes the
@@ -77,17 +94,27 @@ export class BrainStoreService {
     private readonly records: Repository<DecisionRecordEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StepEntity, DB_CONNECTION)
-    private readonly steps: Repository<StepEntity>,
+    @InjectRepository(StageEntity, DB_CONNECTION)
+    private readonly stages: Repository<StageEntity>,
     @InjectRepository(StimulusEntity, DB_CONNECTION)
     private readonly stimuli: Repository<StimulusEntity>,
-    @InjectRepository(CodexReviewEntity, DB_CONNECTION)
-    private readonly reviews: Repository<CodexReviewEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
     private readonly jobDeps: JobDependencyService,
+    // The planning-stage bootstrap now lives in `JobBootstrapService` (every job-creation seam, not just
+    // this brain-module one, needs it — see its module doc for the cycle it avoids). `ensurePlanningStage`
+    // below thin-delegates to it. @Optional (trailing) so the existing direct-construction unit tests
+    // (positional args) keep compiling without a trailing argument.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
+
+  /** The job's planning-stage thread id — the anchor every main-lane message row is stamped onto
+   *  (`messages.thread_id` is NOT NULL). Wired in prod via DI; throws loudly if absent at use. */
+  private async planningThreadId(jobId: string): Promise<string> {
+    if (!this.jobBootstrap) throw new Error('brain-store: JobBootstrapService not wired');
+    return this.jobBootstrap.planningThreadId(jobId);
+  }
 
   /**
    * Resolve the thread an EVENT stimulus seeded (the intake seam opened it but the in-memory
@@ -127,6 +154,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -150,6 +178,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -167,6 +196,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'System',
         author_id: 'system',
         author_bot_id: null,
@@ -227,6 +257,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -247,6 +278,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -271,6 +303,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -310,7 +343,10 @@ export class BrainStoreService {
     framing?: string;
     createdAt?: Date;
   }): Promise<void> {
-    return writeSystemChunk(this.messages, input);
+    return writeSystemChunk(this.messages, {
+      ...input,
+      threadId: await this.planningThreadId(input.jobId),
+    });
   }
 
   /**
@@ -358,6 +394,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -506,6 +543,7 @@ export class BrainStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -767,6 +805,7 @@ export class BrainStoreService {
       await messages.save(
         messages.create({
           job_id: jobId,
+          thread_id: await this.planningThreadId(jobId),
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',
@@ -1084,6 +1123,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1233,6 +1273,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1281,6 +1322,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1331,6 +1373,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1383,6 +1426,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1430,6 +1474,7 @@ export class BrainStoreService {
     await this.messages.save(
       this.messages.create({
         job_id: jobId,
+        thread_id: await this.planningThreadId(jobId),
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',
@@ -1545,13 +1590,17 @@ export class BrainStoreService {
   /**
    * A conversational turn is ending: settle `activity` to `idle` UNLESS a Codex plan review is still
    * running for this job (a `review_plan` review can OUTLIVE the turn it nested inside — the durable
-   * `codex_reviews` row is the source of truth), in which case it stays `plan_review` so the dot stays
-   * suppressed until the review itself finalizes. Best-effort — the caller swallows errors.
+   * `plan_review` thread is the source of truth, its `config.status` folded off the retired `codex_reviews`
+   * row), in which case it stays `plan_review` so the dot stays suppressed until the review itself
+   * finalizes. Best-effort — the caller swallows errors.
    */
   async endTurnActivity(jobId: string): Promise<void> {
-    const reviewing = await this.reviews.exists({
-      where: { job_id: jobId, status: 'running' },
-    });
+    const reviewing = await this.threads
+      .createQueryBuilder('t')
+      .where('t.job_id = :jobId', { jobId })
+      .andWhere("t.role = 'plan_review'")
+      .andWhere("t.config ->> 'status' = 'running'")
+      .getExists();
     // A pending host-backstop retry park keeps the indicator alive: settling to `idle` here would flip
     // `deriveNeedsYou` true and hide the live "Reconnecting…" countdown during the 10s backoff wait. Settle
     // to `retrying` instead so the dot stays mounted until the re-drive sets `activity:'turn'` (or the budget
@@ -1784,46 +1833,52 @@ export class BrainStoreService {
     // the transaction (one network call, fail-soft to a trimmed first line) so the txn stays fast.
     const title = await this.titler.titleFor(input.title, input.orgId);
 
-    // The whole persist runs in ONE transaction: delete prior draft threads (their steps cascade),
-    // supersede the prior draft record, write the new record + threads (+ authored step rows), and
-    // flip the thread — so a crash mid-write can never leave a half-proposed plan. A re-propose
-    // (request_changes → reopenPlanning → propose again) reuses the SAME thread, so prior DRAFT
-    // threads/record are cleared first; idempotent on the first proposal.
+    // The job's ONE planning stage + thread exists from bootstrap (create-if-absent) — cards posted during
+    // planning anchor to it, and it is NOT (re)created here. Idempotent; its own find-or-create, so it runs
+    // outside the plan transaction.
+    await this.ensurePlanningStage(input.jobId, input.orgId);
+
+    // The whole persist runs in ONE transaction: clear the current revision's build pipeline stages (their
+    // threads cascade), supersede the prior draft record, write the new record + `build`/`master_review`
+    // stages (each owning its threads), and flip the job status — so a crash mid-write can never leave a
+    // half-proposed plan. A re-propose (request_changes → reopenPlanning → propose again) reuses the SAME
+    // job, so the prior DRAFT revision's build stages are cleared first; idempotent on the first proposal.
     const decisionRecordId = await this.dataSource.transaction(async (m) => {
       const jobs = m.getRepository(JobEntity);
       const records = m.getRepository(DecisionRecordEntity);
       const threads = m.getRepository(ThreadEntity);
-      const steps = m.getRepository(StepEntity);
+      const stages = m.getRepository(StageEntity);
 
       // PLAN VERSIONING — decide whether this re-propose forms a NEW immutable revision or overwrites the
-      // current (never-built) one. The rule: a revision becomes browsable history ONLY if it has at least
-      // one `done` builder. This keeps the whole feature a no-op for the common planning loop (propose →
-      // request_changes → reopen → propose again over never-built threads) and confines versioning to
-      // exactly the "re-propose/direct-build after work already shipped" case.
+      // current (never-built) one. The rule is unchanged: a revision becomes browsable history ONLY if it
+      // has at least one `done` builder. Plan-revision scoping moved off the thread onto its STAGE (d7), so
+      // a `done` builder is now found under a build stage carrying the prior revision's `decision_record_id`.
       const currentJob = await jobs.findOne({ where: { id: input.jobId } });
       const priorRecordId = currentJob?.decision_record_id ?? null;
       const priorHasDone = priorRecordId
-        ? (await threads.count({
-            where: {
-              job_id: input.jobId,
-              decision_record_id: priorRecordId,
-              status: 'done',
-            },
-          })) > 0
+        ? await threads
+            .createQueryBuilder('t')
+            .innerJoin(StageEntity, 's', 's.id = t.stage_id')
+            .where('t.job_id = :jobId', { jobId: input.jobId })
+            .andWhere('s.decision_record_id = :priorRecordId', { priorRecordId })
+            .andWhere("t.role = 'builder'")
+            .andWhere("t.status = 'done'")
+            .getExists()
         : false;
 
       if (!priorHasDone) {
-        // Common case: no completed work to preserve. Behave exactly as before — clear the current
-        // revision's executable threads (their step rows cascade) so new ones re-use ordinals 10/20/30
-        // without a UNIQUE collision. The job-level singletons (`main`/`plan_review`, NULL record) survive.
-        await threads.delete({
+        // Common case: no completed work to preserve. Clear the current revision's build pipeline STAGES —
+        // their threads cascade via `fk_threads_stage_id_stages ON DELETE CASCADE` — so the fresh stages
+        // append cleanly. Mirrors the old thread-level `In(['builder','master_review'])` delete at the stage
+        // level; the `planning`/`plan_review` singletons survive (only build-lifecycle kinds are cut).
+        await stages.delete({
           job_id: input.jobId,
-          kind: In(['builder', 'master_review']),
+          kind: In(['build', 'direct_build', 'master_review']),
         });
       }
-      // else (priorHasDone): DELETE NOTHING. The prior revision's threads keep their `decision_record_id`
-      // and become immutable history the moment `jobs.decision_record_id` is repointed at the tail below.
-      // The new revision's threads get the new record id (set below) so they never collide on ordinal.
+      // else (priorHasDone): DELETE NOTHING. The prior revision's stages/threads keep their
+      // `decision_record_id` and become immutable history the moment `jobs.decision_record_id` is repointed
+      // at the new record below (`threadsForJob` scopes to the active revision, so history is never re-driven).
 
       await records.update(
         { job_id: input.jobId, status: 'draft' },
@@ -1844,103 +1899,86 @@ export class BrainStoreService {
         }),
       );
 
-      // Save threads first (to get ids), setting `plan` from any authored steps so `hasPlan` is true
-      // in the pipeline view (the authored path never hits the driver's `setThreadPlan`).
-      const featureThreads = input.threadTitles.map((brief, i) => {
-        const authored = input.stepsByThread?.[i];
-        return threads.create({
-          job_id: input.jobId,
-          org_id: input.orgId,
-          // The new revision owns these threads (the versioning key). A prior revision's builders keep
-          // THEIR record id as history, so reusing ordinal 10/20/30 here never collides.
-          decision_record_id: record.id,
-          ordinal: (i + 1) * ORDINAL_GAP,
-          brief,
-          // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
-          type: coerceThreadType(input.threadTypes?.[i]),
-          // Feature threads are `builder` kind; the master-review row below is `master_review`. The `kind`
-          // column is the first-class differentiator (subsumes `is_master_review`).
-          kind: 'builder',
-          plan: authored?.length ? renderPlan(authored) : null,
-          handoff_in: null,
-          handoff_out: null,
-          status: 'pending',
-        });
-      });
-
-      // Append the ONE pre-configured master-review thread — a Codex `execute` thread that reviews the whole
-      // merged diff AND applies fixes, running LAST (before ship/PR). GATED to the full thread-driven path:
-      // `threadTitles.length > 0` (direct build passes `[]`; onboarding/event never persist a plan) — the one
-      // gate that satisfies all three skips. No authored steps (the driver plans its single anchor step).
+      // Build path only (`threadTitles.length > 0`; direct build passes `[]` and onboarding/event never
+      // persist a plan). One `build` STAGE per plan section — each owning its FIRST builder thread carrying
+      // the authored plan — then ONE `master_review` stage after them. Direct build gets its own
+      // `direct_build` stage at dispatch time (a separate seam), so persistPlan skips stage creation for it.
       if (input.threadTitles.length > 0) {
-        featureThreads.push(
-          threads.create({
-            job_id: input.jobId,
-            org_id: input.orgId,
-            decision_record_id: record.id,
-            ordinal: (input.threadTitles.length + 1) * ORDINAL_GAP,
-            brief: 'Master review — whole-diff review & fix',
-            type: 'general',
-            kind: 'master_review',
-            plan: null,
-            handoff_in: null,
-            handoff_out: null,
-            status: 'pending',
-          }),
-        );
-      }
+        let stageOrdinal = (await maxOrdinal(stages, input.jobId)) + ORDINAL_GAP;
+        // Top-level threads (parent null) share a job-wide UNIQUE(job_id, parent_thread_id, ordinal) index
+        // (d7 dropped decision_record_id from it), so their ordinals must be job-GLOBAL-unique — not
+        // stage-local. Start after the highest existing top-level ordinal (planning/plan_review, and any
+        // preserved prior-revision history) and gap-number from there.
+        let threadOrdinal =
+          (await maxOrdinal(threads, input.jobId, 't.parent_thread_id IS NULL')) + ORDINAL_GAP;
 
-      // The MAIN root thread — a first-class, render/identity-only row for the job's brain session (the
-      // operator conversation). The driver never executes it (its `main` kind is render-only); it just gives
-      // the brain session a place in the thread tree. Appended LAST (after the master review) with ordinal 0
-      // so it never disturbs the `savedSections[i]` ↔ `threadTitles[i]` step-locking alignment below
-      // (indices ≥ threadTitles.length have no authored steps). CREATE-IF-ABSENT (revision-agnostic, NULL
-      // record): the delete above no longer removes it, so recreating would collide on the (job, NULL, NULL,
-      // 0) unique index. It carries no durable state (its live state is the AgentSessionManager session +
-      // the job's `main_tasks`), so keeping the one existing row across re-proposes is correct.
-      const existingMain = await threads.findOne({
-        where: { job_id: input.jobId, kind: 'main' },
-      });
-      if (!existingMain) {
-        featureThreads.push(
-          threads.create({
-            job_id: input.jobId,
-            org_id: input.orgId,
-            decision_record_id: null,
-            ordinal: 0,
-            brief: 'Main',
-            type: 'general',
-            kind: 'main',
-            plan: null,
-            handoff_in: null,
-            handoff_out: null,
-            status: 'pending',
-          }),
-        );
-      }
-
-      const savedSections = await threads.save(featureThreads);
-
-      // Lock the authored steps as `steps` rows — same gap-numbered convention as
-      // `DriverStoreService.lockSteps` (ordinal (i+1)*GAP, step 'build', status 'pending') so the
-      // driver's resume/fast-forward cursor reads them identically. Order of savedSections matches the
-      // input order (single save call), so index alignment holds.
-      if (input.stepsByThread?.length) {
-        const phaseRows = savedSections.flatMap((thread, i) =>
-          (input.stepsByThread?.[i] ?? []).map((p, j) =>
-            steps.create({
-              thread_id: thread.id,
+        for (let i = 0; i < input.threadTitles.length; i++) {
+          const brief = input.threadTitles[i];
+          const authored = input.stepsByThread?.[i];
+          const stage = await stages.save(
+            stages.create({
               job_id: input.jobId,
               org_id: input.orgId,
-              ordinal: (j + 1) * ORDINAL_GAP,
-              title: p.title,
-              brief: p.brief,
-              stage: 'build',
+              ordinal: stageOrdinal,
+              kind: 'build',
+              // The slice name labels the stage (titleRequired:true); its review-selection type moves here.
+              title: brief,
+              type: input.threadTypes?.[i] ?? null,
+              decision_record_id: record.id,
+              config: {},
+            }),
+          );
+          stageOrdinal += ORDINAL_GAP;
+          await threads.save(
+            threads.create({
+              stage_id: stage.id,
+              job_id: input.jobId,
+              org_id: input.orgId,
+              role: 'builder',
+              ordinal: threadOrdinal,
+              brief,
+              // Scope type selects the review agents; default 'general' for arg-less callers (bugfix/direct).
+              type: coerceThreadType(input.threadTypes?.[i]),
+              // A thread's single step IS its own row (steps are retired): setting `plan` here LOCKS it, so
+              // the driver finds it already planned and skips its just-in-time plan turn.
+              plan: authored?.length ? renderPlan(authored) : null,
+              handoff_in: null,
+              handoff_out: null,
               status: 'pending',
             }),
-          ),
+          );
+          threadOrdinal += ORDINAL_GAP;
+        }
+
+        // The ONE whole-diff master review — a Codex execute stage that reviews AND fixes the merged diff,
+        // running LAST (before ship/PR). No title (titleRequired:false); the driver plans its single turn.
+        const masterStage = await stages.save(
+          stages.create({
+            job_id: input.jobId,
+            org_id: input.orgId,
+            ordinal: stageOrdinal,
+            kind: 'master_review',
+            title: null,
+            type: null,
+            decision_record_id: record.id,
+            config: {},
+          }),
         );
-        if (phaseRows.length) await steps.save(phaseRows);
+        await threads.save(
+          threads.create({
+            stage_id: masterStage.id,
+            job_id: input.jobId,
+            org_id: input.orgId,
+            role: 'master_review',
+            ordinal: threadOrdinal,
+            brief: 'Master review — whole-diff review & fix',
+            type: 'general',
+            plan: null,
+            handoff_in: null,
+            handoff_out: null,
+            status: 'pending',
+          }),
+        );
       }
 
       await jobs.update(
@@ -1958,6 +1996,20 @@ export class BrainStoreService {
 
     const thread = await this.loadJob(input.jobId);
     return { thread, decisionRecordId };
+  }
+
+  /**
+   * Ensure the job's ONE `planning` stage + `planning`-role thread exist (idempotent create-if-absent).
+   * Every job owns exactly one planning stage from bootstrap (d7): the brain's conversation session IS this
+   * thread's session, and it anchors the job-level card messages (question/ship/amend/merge) that have no
+   * build-lane thread of their own (see {@link DriverStoreService.planningThreadId}). Safe to call
+   * repeatedly — a second call with the stage already present is a no-op. Thin delegate over
+   * `JobBootstrapService` (the shared owner of this logic — see its module doc) so `persistPlan` and
+   * `createFollowUpJob` keep calling it as `this.ensurePlanningStage(...)`; every OTHER job-creation seam
+   * calls `JobBootstrapService` directly (a `BrainModule` import would cycle back through `StimulusModule`).
+   */
+  async ensurePlanningStage(jobId: string, orgId: string): Promise<void> {
+    await this.jobBootstrap?.ensurePlanningStage(jobId, orgId);
   }
 
   /** Load a draft/approved decision record (overview + decisions + thread titles) for the approval card. */
@@ -2071,7 +2123,7 @@ export class BrainStoreService {
     const threads = await this.threads.find({ where: { job_id: jobId } });
     return threads
       .filter(
-        (t) => t.parent_thread_id == null && isDriverExecutableKind(t.kind),
+        (t) => t.parent_thread_id == null && isDriverExecutableKind(t.role),
       )
       .every((t) => t.status === 'pending');
   }
@@ -2134,6 +2186,9 @@ export class BrainStoreService {
           : null,
       }),
     );
+    // Bootstrap the job's one planning stage + thread up front (d7) so its card/message anchor resolves from
+    // the first turn — idempotent, so a later persistPlan is a no-op on it.
+    await this.ensurePlanningStage(row.id, input.orgId);
     return row.id;
   }
 }

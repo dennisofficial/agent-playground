@@ -31,6 +31,7 @@ import { pipelineJob, type JobRef } from "@/lib/api/job-api";
 import {
   APPROVE_ACTION_ID,
   SHIP_ACTION_ID,
+  pipelineMainDefaultFooter,
   type JobKind,
   type JobStatus,
   type WebApprovalCard,
@@ -73,7 +74,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // both. `mutate` is referentially stable, so the context value doesn't churn.
   const sayMutate = useSay(ref).mutate;
   const markdownActions = useMemo(
-    () => ({ sendToThread: (text: string) => sayMutate(text) }),
+    () => ({ sendToThread: (text: string) => sayMutate({ text }) }),
     [sayMutate],
   );
 
@@ -220,8 +221,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   }, [shipCard, job, status]);
   const awaitingShip = status === "awaiting_ship_review" && Boolean(shipValue);
   const specCount = context?.specs?.length ?? 0;
-  const stepCount =
-    job?.threads.reduce((n, t) => n + (t.steps?.length ?? 0), 0) ?? 0;
+  // Plan-time size preview: a build stage's `tasks` fold from the SDK's TaskCreate/TaskUpdate calls made
+  // DURING execution, so they're always empty at the pre-build approval gate — count the plan's proposed
+  // threads instead (the same list `PlanDoc` renders as "Sections"/"Changes"), which IS known at approval time.
+  const stepCount = approvalCard?.threads.length ?? 0;
+  // Main's transcript is the planning stage's own thread (undefined pre-plan, where the single brain thread
+  // needs no scoping) — see `Conversation`'s `mainThreadId`.
+  const mainThreadId = job?.stages.find((s) => s.kind === "planning")
+    ?.threads[0]?.id;
 
   const meta: JobMeta = {
     title: inboxThread?.title ?? job?.title ?? "Thread",
@@ -313,7 +320,8 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
         blocked={status === "blocked"}
         blockedBy={meta.blockedBy}
         blockedSeedMessage={meta.blockedSeedMessage}
-        mainDefaultFooter={pipeline?.mainDefaultFooter}
+        mainThreadId={mainThreadId}
+        mainDefaultFooter={pipelineMainDefaultFooter(pipeline)}
         onOpenPlan={onOpenPlan}
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}

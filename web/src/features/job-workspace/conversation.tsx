@@ -6,7 +6,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
 import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from "./idle-premeasure";
 import { compensateAboveViewportResize } from "./scroll-compensation";
-import { liveTurnVisibleForLeg } from "./live-turn-visibility";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
   buildLiveTurnItems,
@@ -34,18 +33,8 @@ import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
 import { AttachmentsCardView } from "./attachments-card";
 import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
-import {
-  AgentPromptBlock,
-  BuildInstruction,
-  BuildStepCard,
-  indexPhaseBlocks,
-} from "./phases";
-import {
-  CodexReviewCard,
-  codexReviewNode,
-  indexCodexReviewBlocks,
-} from "./codex-review";
-import { indexAutofixBlocks } from "./review-lane";
+import { AgentPromptBlock } from "./phases";
+import { indexCodexReviewBlocks } from "./codex-review";
 import { Composer, type ComposerFooter } from "./composer";
 import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
@@ -70,6 +59,7 @@ export function Conversation({
   blocked = false,
   blockedBy = [],
   blockedSeedMessage = null,
+  mainThreadId,
   mainDefaultFooter,
   onOpenPlan,
   onSelectNode,
@@ -86,6 +76,9 @@ export function Conversation({
   blockedBy?: JobBlocker[];
   /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
   blockedSeedMessage?: string | null;
+  /** The planning stage's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
+   *  job, where every message belongs to the single brain thread and no scoping is needed. */
+  mainThreadId?: string;
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */
   mainDefaultFooter?: LaneDefaultFooter;
   onOpenPlan?: () => void;
@@ -109,6 +102,7 @@ export function Conversation({
         jobRef={jobRef}
         messages={messages}
         lane={MAIN_LANE}
+        threadId={mainThreadId}
         composer
         blocked={blocked}
         isLoading={isLoading}
@@ -133,9 +127,7 @@ export function TranscriptView({
   jobRef,
   messages,
   lane = MAIN_LANE,
-  phaseIds,
-  legOrdinal,
-  legIsLive,
+  threadId,
   composer = false,
   readOnly = false,
   blocked = false,
@@ -148,17 +140,15 @@ export function TranscriptView({
 }: {
   jobRef: JobRef;
   messages: JobMessage[];
-  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `thread:<threadId>`. */
+  /** Which lane's transcript this renders — `'main'` | `codex-review:<jobId>` | `thread:<threadId>` |
+   *  `autofix:<parentId>:<lensId>`. Used for the LIVE-turn subscription; the DURABLE log is scoped by
+   *  {@link threadId} (a plain per-message field) instead. */
   lane?: string;
-  /** For a build THREAD lane: the phase anchor ids to aggregate (the `lane` still picks the live turn). */
-  phaseIds?: Set<string>;
-  /** For a per-LEG view of a build thread: show only rows tagged `meta.legOrdinal === this` (untagged = Leg 1).
-   *  Each rotated session is its own navigable node; the Leg's handoff + continuation-seed rows ride this tag. */
-  legOrdinal?: number;
-  /** For a per-LEG view: whether THIS Leg is the active (live) one. The in-flight turn is subscribed on
-   *  the thread's stable lane — shared by every Leg — so only the live Leg may render the live tail +
-   *  spinner; a rotated Leg passes `false` to suppress it. Ignored for non-Leg lanes (legOrdinal unset). */
-  legIsLive?: boolean;
+  /** The real thread id this lane's DURABLE transcript belongs to — the log is filtered to
+   *  `message.threadId === threadId` (its subagents ride the same threadId and are peeled into cards).
+   *  Undefined only for the out-of-scope Codex review lane and a pre-plan Main, where the unfiltered log is
+   *  already single-thread. */
+  threadId?: string;
   /** Show the composer. On Main it's interactive; on every other lane pass `readOnly` alongside. */
   composer?: boolean;
   /** Read-only lane (not Main): the composer's input + Send are disabled, but its footer stays live. */
@@ -200,12 +190,17 @@ export function TranscriptView({
   // Cursor for cycling the pinned "awaiting you" chip through multiple open questions on repeated clicks.
   const cycleRef = useRef(0);
 
+  // The durable transcript, scoped to THIS lane's real thread by the message's own `threadId` field (its
+  // subagents ride the same threadId and stay in, to be peeled into cards below). Undefined threadId (the
+  // Codex review lane, or a pre-plan Main) leaves the already-single-thread log unfiltered.
+  const scoped = useMemo(
+    () =>
+      threadId ? messages.filter((m) => m.threadId === threadId) : messages,
+    [messages, threadId],
+  );
+
   const liveTurn = useLiveTurn(jobRef.jobId, lane);
   const liveBlockCount = liveTurn?.blocks.length ?? 0;
-
-  // The in-flight turn is shared across every Leg of a thread (one lane). A rotated Leg's pane must NOT
-  // render it — only the live Leg (or a non-Leg lane) may show the live tail, spinner, and context ring.
-  const liveAllowed = liveTurnVisibleForLeg(legOrdinal, legIsLive);
 
   // The AUTHORITATIVE turn signal: the server-owned realtime `needsYou` (true = the AI is idle / awaiting
   // you — a turn is NOT running). If it flips true while a stale live turn still lingers (a dropped
@@ -228,20 +223,20 @@ export function TranscriptView({
   // wherever it lands in `log` — unless we split it out and time-merge it into the LIVE window instead (see
   // `trailing` below). Fallback (no live turn / startedAt unknown): behave exactly as today, one flat log.
   const startedAt = liveTurn?.startedAt;
-  const liveWindowActive = !!liveTurn?.active && startedAt != null && liveAllowed;
+  const liveWindowActive = !!liveTurn?.active && startedAt != null;
   const midTurnRows = useMemo(
     () =>
       liveWindowActive
-        ? messages.filter((m) => messagePostedMs(m) >= startedAt!)
+        ? scoped.filter((m) => messagePostedMs(m) >= startedAt!)
         : [],
-    [messages, liveWindowActive, startedAt],
+    [scoped, liveWindowActive, startedAt],
   );
   const log = useMemo(
     () =>
       liveWindowActive
-        ? messages.filter((m) => messagePostedMs(m) < startedAt!)
-        : messages,
-    [messages, liveWindowActive, startedAt],
+        ? scoped.filter((m) => messagePostedMs(m) < startedAt!)
+        : scoped,
+    [scoped, liveWindowActive, startedAt],
   );
 
   // A turn-failure "Resume" card is only actionable while the thread is STILL halted (the failure is
@@ -253,11 +248,11 @@ export function TranscriptView({
   const outstandingRetryTs = useMemo<string | null>(() => {
     if (openThreadHalted === false) return null;
     let ts: string | null = null;
-    for (const m of messages) {
+    for (const m of scoped) {
       if (m.source === "system_operator" && m.meta?.retryable === true) ts = m.ts;
     }
     return ts;
-  }, [messages, openThreadHalted]);
+  }, [scoped, openThreadHalted]);
 
   // The composer footer — model · effort (from the latest `turn_meta`, else the lane's config default) + the
   // context ring. Computed for every lane that shows a composer (Main + read-only), scoped to the lane. The
@@ -266,9 +261,10 @@ export function TranscriptView({
   // at turn end; it falls back to the durable `turn_meta` occupancy between turns.
   const footer = useMemo(() => {
     if (!composer) return null;
-    const base = laneFooterMeta(messages, lane, phaseIds, legOrdinal) ?? defaultFooterAsComposer(defaultFooter);
+    const base =
+      laneFooterMeta(scoped, lane) ?? defaultFooterAsComposer(defaultFooter);
     const liveContext =
-      turnActive && liveAllowed && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
+      turnActive && typeof liveTurn?.contextTokens === "number" && liveTurn.contextLimit
         ? {
             tokens: liveTurn.contextTokens,
             limit: liveTurn.contextLimit,
@@ -279,12 +275,10 @@ export function TranscriptView({
     return { ...(base ?? {}), context: liveContext };
   }, [
     composer,
-    messages,
+    scoped,
     lane,
-    phaseIds,
     defaultFooter,
     turnActive,
-    liveAllowed,
     liveTurn?.contextTokens,
     liveTurn?.contextLimit,
     liveTurn?.contextModel,
@@ -294,8 +288,8 @@ export function TranscriptView({
   // cards, bubbles), SCOPED to this lane. Windowed: on a long thread only the on-screen rows render.
   const items = useMemo(
     () =>
-      buildLogItems(log, jobRef, { lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode }),
-    [log, jobRef, lane, phaseIds, legOrdinal, outstandingRetryTs, onOpenPlan, onSelectNode],
+      buildLogItems(log, jobRef, { lane, outstandingRetryTs, onOpenPlan, onSelectNode }),
+    [log, jobRef, lane, outstandingRetryTs, onOpenPlan, onSelectNode],
   );
 
   // The LIVE window: the in-flight turn's streaming blocks, time-merged with any mid-turn durable row (a
@@ -310,8 +304,6 @@ export function TranscriptView({
       Number.POSITIVE_INFINITY;
     const midItems = buildLogItems(midTurnRows, jobRef, {
       lane,
-      phaseIds,
-      legOrdinal,
       outstandingRetryTs,
       onOpenPlan,
       onSelectNode,
@@ -322,8 +314,6 @@ export function TranscriptView({
     liveWindowActive,
     midTurnRows,
     lane,
-    phaseIds,
-    legOrdinal,
     outstandingRetryTs,
     jobRef,
     onOpenPlan,
@@ -334,11 +324,11 @@ export function TranscriptView({
   // can jump to a buried one via the pinned chip below instead of scrolling the transcript to hunt for it.
   const openQuestions = useMemo(() => {
     if (!composer || readOnly) return [] as JobMessage[];
-    return messages.filter((m) => {
+    return scoped.filter((m) => {
       const c = m.card;
       return c?.type === "question_card" && !c.answer && !c.withdrawnAt;
     });
-  }, [messages, composer, readOnly]);
+  }, [scoped, composer, readOnly]);
 
   // `pin` snaps the view to the bottom for the virtualized case (see useTailFollow). Assigned into a ref so
   // the callback passed to useTailFollow stays stable while still reaching the freshly-built `virtualizer`
@@ -501,7 +491,7 @@ export function TranscriptView({
           {trailing.map((it) => (
             <div key={it.key}>{it.node}</div>
           ))}
-          {(live || turnActive) && liveAllowed ? (
+          {live || turnActive ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
@@ -526,6 +516,8 @@ export function TranscriptView({
         <Composer
           jobRef={jobRef}
           attach={attach}
+          lane={lane === MAIN_LANE ? undefined : lane}
+          threadId={threadId}
           onHeightChange={setComposerHeight}
           footer={footer}
           readOnly={readOnly}
@@ -731,13 +723,9 @@ function buildLogItems(
   log: JobMessage[],
   jobRef: JobRef,
   opts: {
-    /** Which lane to build items for — scopes membership + peeling. */
+    /** Which lane to build items for — decides subagent-only peeling vs the out-of-scope Codex lane. The
+     *  durable log is already thread-scoped by the caller ({@link TranscriptView}'s `threadId` filter). */
     lane?: string;
-    /** For a build THREAD lane (an aggregate of several phases): the anchor step ids to include. When set it
-     *  supersedes the single `phase:<id>` derived from `lane` (the lane still picks the live turn). */
-    phaseIds?: Set<string>;
-    /** For a per-LEG view: show only build rows tagged `meta.legOrdinal === this` (untagged rows = Leg 1). */
-    legOrdinal?: number;
     /** The `ts` of the currently-OUTSTANDING retryable failure card (the only one whose "Resume" button is
      *  live). Null when the thread has resumed — every failure card then shows a muted "Resumed" instead. */
     outstandingRetryTs?: string | null;
@@ -745,33 +733,19 @@ function buildLogItems(
     onSelectNode?: (node: string) => void;
   } = {},
 ): LogItem[] {
-  const { lane = MAIN_LANE, legOrdinal, outstandingRetryTs = null, onOpenPlan, onSelectNode } = opts;
+  const { lane = MAIN_LANE, outstandingRetryTs = null, onOpenPlan, onSelectNode } = opts;
   const nodes: LogItem[] = [];
   let pending: Array<{ key: string; tool: ToolItem }> = [];
 
-  // Nesting indices — computed once, then interpreted RELATIVE to the current lane below. A block that is a
-  // "child" of a deeper lane is peeled out (hidden) here and rendered in ITS lane; the block that ANCHORS a
-  // deeper lane (a Task tool, a build_anchor, a Codex findings summary) renders as a compact card that opens
-  // that lane. This is the whole "all lanes are the same, just nested" model in one place.
+  // The log arrives already scoped to ONE thread (Main, a build thread, or a review child) via the message's
+  // `threadId` field. The only nested activity still peeled here is the thread's OWN spawned subagents: a
+  // Task block becomes a compact card opening the run's sub-page, its child blocks render on that sub-page.
   const sub = indexDurableSubagents(log);
-  const phase = indexPhaseBlocks(log);
+  // The out-of-scope Codex plan-review lane is NOT thread-scoped by the caller, so it still selects its own
+  // stream by `meta.codexReviewId` (see the `isCodexLane` branch below).
   const codex = indexCodexReviewBlocks(log);
-  const autofix = indexAutofixBlocks(log);
 
-  // Decompose the lane once (shared with the footer selector so membership never drifts). A build
-  // thread/step lane streams on the STABLE `thread:<id>` lane and always passes `phaseIds` (the step
-  // anchors to render); the legacy `phase:<id>` derivation is a fallback for any old lane string. An
-  // auto-fix sub-page lane is `autofix:<autofixId>:<lensId>` (a review lens) OR `autofix:<autofixId>:fix`
-  // (the post-review fix turn) — a lens block carries `meta.lensId`, the fix turn carries `meta.fixTurn`.
-  const {
-    isMain,
-    isCodexLane,
-    phaseSet,
-    isAutofixLane,
-    reviewAutofixId,
-    reviewLensId,
-    isFixLane,
-  } = parseLane(lane, opts.phaseIds);
+  const { isMain, isCodexLane } = parseLane(lane);
 
   const flush = () => {
     if (pending.length === 0) return;
@@ -807,153 +781,39 @@ function buildLogItems(
 
   for (const message of log) {
     // ── the initial-prompt block: THIS turn's "first message" (the exact task the engine received) ──
-    // It's tagged with its lane's peel key (codexReviewId / phaseId / autofixId), or none for the brain's
-    // `main` turn. Render it INLINE at its chronological position (a Codex review is ONE lane across many
-    // rounds; the gate shares the build lane across iterations — so each round/iteration opens with its own
-    // prompt, never hoisted). Handled here, before `classifyMessage`, else an atlas-authored row falls
-    // through as a normal bubble. A prompt that doesn't belong to THIS lane is simply skipped.
+    // Rendered INLINE at its chronological position on every agent lane (a build thread, a review child).
+    // Handled here, before `classifyMessage`, else an atlas-authored row falls through as a normal bubble.
     if (message.kind === "agent_prompt") {
-      const m = message.meta ?? {};
-      const cid = typeof m.codexReviewId === "string" ? m.codexReviewId : null;
-      const pid = typeof m.phaseId === "string" ? m.phaseId : null;
-      const aid = typeof m.autofixId === "string" ? m.autofixId : null;
-      let show = false;
-      if (isMain)
-        // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
-        // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
-        // duplication here and is NOT rendered. It stays on the agent sub-lanes below, which have no
-        // per-chunk rows, so the prompt is their only record of what the sub-agent was asked.
-        show = false;
-      else if (isCodexLane) show = cid != null;
-      else if (phaseSet) show = pid != null && phaseSet.has(pid);
-      else if (isAutofixLane)
-        show =
-          aid === reviewAutofixId &&
-          (isFixLane ? m.fixTurn === true : m.lensId === reviewLensId);
+      // The brain's Main transcript mirrors the agent's turns via typed durable rows (operator bubble,
+      // system_notice/system_reminder/untrusted pills) — so the raw serialized prompt snapshot is pure
+      // duplication there and is NOT rendered. On the out-of-scope Codex lane it belongs only when tagged.
+      const cid =
+        typeof message.meta?.codexReviewId === "string"
+          ? message.meta.codexReviewId
+          : null;
+      const show = isMain ? false : isCodexLane ? cid != null : true;
       if (show) {
         flush();
         nodes.push({
           key: message.ts,
-          // Collapsed on Main (the operator's message bubble already shows the gist; the disclosure reveals
-          // the folded context); expanded on the agent sub-lanes (seeing the prompt is the whole point).
-          node: (
-            <AgentPromptBlock
-              key={message.ts}
-              text={message.text}
-              defaultOpen={!isMain}
-            />
-          ),
-          estimate: isMain ? 96 : 200,
+          node: <AgentPromptBlock key={message.ts} text={message.text} />,
+          estimate: 200,
         });
       }
       continue;
     }
-    // ── lane membership: which blocks THIS lane renders + which anchors become cards ──
-    if (isMain) {
-      // Deeper lanes' blocks are peeled out; their anchors render as cards.
-      if (sub.childKeys.has(message.ts)) continue;
-      if (phase.childKeys.has(message.ts)) continue;
-      if (codex.childKeys.has(message.ts)) continue;
-      // Auto-fix review blocks + the stage anchor row are peeled too — no card surface exists yet (see
-      // `review-lane.ts`), so they simply don't render in Main; the full transcript lives in the `rev:`
-      // sub-page. The stage's plain "Reviewing the diff — …" notice line (a separate, untagged message)
-      // still renders normally, so the operator isn't left with zero signal.
-      if (autofix.childKeys.has(message.ts)) continue;
-      if (autofix.anchorKeys.has(message.ts)) continue;
-      if (codex.anchorKeys.has(message.ts)) {
-        flush();
-        nodes.push({
-          key: message.ts,
-          node: (
-            <CodexReviewCard
-              key={message.ts}
-              jobId={jobRef.jobId}
-              message={message}
-              onOpen={() => onSelectNode?.(codexReviewNode(jobRef.jobId))}
-            />
-          ),
-          estimate: 148,
-        });
-        continue;
-      }
-      if (phase.anchorKeys.has(message.ts)) {
-        flush();
-        const phaseId =
-          typeof message.meta?.phaseId === "string" ? message.meta.phaseId : "";
-        const anchor = phase.anchorByPhase.get(phaseId);
-        if (anchor)
-          nodes.push({
-            key: message.ts,
-            node: (
-              <BuildStepCard
-                key={message.ts}
-                jobId={jobRef.jobId}
-                anchor={anchor}
-                durableToolCount={
-                  (phase.blocksByPhase.get(phaseId) ?? []).filter(
-                    (m) => m.kind === "tool",
-                  ).length
-                }
-                onOpen={() => onSelectNode?.(phaseId)}
-              />
-            ),
-            estimate: 148,
-          });
-        continue;
-      }
-      if (sub.anchorKeys.has(message.ts)) {
-        pushSubagentCard(message);
-        continue;
-      }
-    } else if (isCodexLane) {
-      // The Codex review lane shows ONLY its own review stream (the summary cards live in Main).
+    // ── lane membership: peel this thread's own subagents; the Codex lane self-selects its stream ──
+    if (isCodexLane) {
+      // The out-of-scope Codex review lane isn't thread-scoped, so it shows ONLY its own review stream.
       if (!codex.childKeys.has(message.ts)) continue;
-    } else if (phaseSet) {
-      // A build lane shows its phase(s)' blocks; a subagent spawned within it peels to its own sub-page.
-      if (sub.childKeys.has(message.ts)) continue;
-      // Per-LEG slice: when a specific Leg is selected, drop rows tagged to a DIFFERENT Leg. Untagged rows
-      // (pre-legOrdinal history) default to Leg 1. Checked BEFORE the anchor branch so the Leg-1 build
-      // instruction doesn't leak into a later Leg's view.
-      if (legOrdinal != null) {
-        const lo =
-          typeof message.meta?.legOrdinal === "number" ? message.meta.legOrdinal : 1;
-        if (lo !== legOrdinal) continue;
-      }
-      const pid =
-        typeof message.meta?.phaseId === "string" ? message.meta.phaseId : "";
-      // The synthetic build_anchor row → the phase's INPUT bubble (the instruction the engine received),
-      // rendered exactly like an operator prompt so every lane opens with "what was asked".
-      if (phase.anchorKeys.has(message.ts)) {
-        if (!phaseSet.has(pid)) continue;
-        const anchor = phase.anchorByPhase.get(pid);
-        if (anchor?.prompt) {
-          flush();
-          nodes.push({
-            key: message.ts,
-            node: <BuildInstruction key={message.ts} text={anchor.prompt} />,
-            estimate: 200,
-          });
-        }
-        continue;
-      }
-      if (!(phase.childKeys.has(message.ts) && phaseSet.has(pid))) continue;
-      if (sub.anchorKeys.has(message.ts)) {
-        pushSubagentCard(message);
-        continue;
-      }
-    } else if (isAutofixLane) {
-      // An auto-fix sub-lane shows only its OWN blocks: the fix turn matches `meta.fixTurn` (no lensId), a
-      // review lens matches `meta.lensId`. A subagent spawned within it peels to its own sub-page.
-      const m = message.meta ?? {};
-      if (m.autofixId !== reviewAutofixId) continue;
-      if (isFixLane ? m.fixTurn !== true : m.lensId !== reviewLensId) continue;
-      if (sub.childKeys.has(message.ts)) continue;
-      if (sub.anchorKeys.has(message.ts)) {
-        pushSubagentCard(message);
-        continue;
-      }
     } else {
-      continue; // an unknown lane renders nothing
+      // Every thread-scoped lane (Main, a build thread, a review child): the log is already this thread's,
+      // so render it all — only the thread's own spawned subagents peel out into cards.
+      if (sub.childKeys.has(message.ts)) continue;
+      if (sub.anchorKeys.has(message.ts)) {
+        pushSubagentCard(message);
+        continue;
+      }
     }
 
     // ── shared rendering (IDENTICAL across every lane) ──
@@ -1158,78 +1018,38 @@ function useThreadHalted(jobId: string | null): boolean | undefined {
 }
 
 /** The parsed identity of a transcript lane — the ONE place a lane string is decomposed, shared by
- *  `buildLogItems` (membership/peeling) and `laneMetaBelongs` (footer selection) so they never drift. */
+ *  `buildLogItems` (subagent-vs-codex peeling) and `laneMetaBelongs` (footer selection) so they never drift. */
 interface ParsedLane {
   isMain: boolean;
   isCodexLane: boolean;
-  /** For a build THREAD/step lane: the anchor step ids this lane aggregates (else null). */
-  phaseSet: Set<string> | null;
-  isAutofixLane: boolean;
-  reviewAutofixId: string | null;
-  reviewLensId: string | null;
-  isFixLane: boolean;
 }
 
-/** Decompose a lane token (+ optional explicit build `phaseIds`) into its {@link ParsedLane} identity. */
-function parseLane(lane: string, phaseIds?: Set<string>): ParsedLane {
-  const isMain = lane === MAIN_LANE;
-  const isCodexLane = lane.startsWith("codex-review:");
-  const phaseAnchor = lane.startsWith("phase:")
-    ? lane.slice("phase:".length)
-    : null;
-  const phaseSet: Set<string> | null =
-    phaseIds ?? (phaseAnchor ? new Set([phaseAnchor]) : null);
-  const isAutofixLane = lane.startsWith("autofix:");
-  const autofixParts = isAutofixLane ? lane.split(":") : null; // ['autofix', autofixId, lensId|'fix']
-  const reviewAutofixId = autofixParts?.[1] ?? null;
-  const reviewLensId = autofixParts?.[2] ?? null;
-  const isFixLane = reviewLensId === "fix";
+/** Decompose a lane token into its {@link ParsedLane} identity. */
+function parseLane(lane: string): ParsedLane {
   return {
-    isMain,
-    isCodexLane,
-    phaseSet,
-    isAutofixLane,
-    reviewAutofixId,
-    reviewLensId,
-    isFixLane,
+    isMain: lane === MAIN_LANE,
+    isCodexLane: lane.startsWith("codex-review:"),
   };
 }
 
 /** The lane-tag fields the backend stamps on a `turn_meta` block (via the harness `metaTag`). */
 interface LaneMeta {
-  phaseId?: string | null;
-  legOrdinal?: number | null;
   codexReviewId?: string | null;
-  autofixId?: string | null;
-  lensId?: string | null;
-  fixTurn?: boolean | null;
-  shipId?: string | null;
 }
 
-/** Does a `turn_meta`'s lane tag belong to `lane`? Mirrors `buildLogItems`' membership exactly. */
+/**
+ * Does a `turn_meta` belong to `lane`'s footer? The durable log is already thread-scoped for every lane
+ * EXCEPT the out-of-scope Codex review lane, which self-selects by `meta.codexReviewId`. So a thread-scoped
+ * lane accepts any `turn_meta` (they're all this thread's); the Codex lane accepts only its tagged ones.
+ */
 function laneMetaBelongs(meta: LaneMeta, p: ParsedLane): boolean {
   if (p.isCodexLane) return meta.codexReviewId != null;
-  if (p.isAutofixLane)
-    return (
-      meta.autofixId === p.reviewAutofixId &&
-      (p.isFixLane ? meta.fixTurn === true : meta.lensId === p.reviewLensId)
-    );
-  if (p.phaseSet)
-    return typeof meta.phaseId === "string" && p.phaseSet.has(meta.phaseId);
-  // Main (the brain): no lane tag at all — crucially INCLUDING no `shipId` (the build-ship lane writes
-  // `turn_meta` with only `{ shipId }`, which would otherwise masquerade as the brain's footer).
-  return (
-    meta.phaseId == null &&
-    meta.codexReviewId == null &&
-    meta.autofixId == null &&
-    meta.shipId == null
-  );
+  return true;
 }
 
 /**
  * The composer footer for a given lane — the model/effort/engine of the lane's most recent reporting
- * turn, plus its last reported context occupancy. Scans `messages` (the FULL unscoped list) backward,
- * scoped to the lane via {@link laneMetaBelongs}:
+ * turn, plus its last reported context occupancy. Scans the (already thread-scoped) `messages` backward:
  *  - model/effort/engine: taken from the latest matching `turn_meta`'s `usage` (regardless of context
  *    numbers — a Codex lane carries no occupancy but still has a model/effort to show).
  *  - context: the latest matching block that carries usable `contextTokens`+`contextLimit` (may be an
@@ -1239,10 +1059,8 @@ function laneMetaBelongs(meta: LaneMeta, p: ParsedLane): boolean {
 function laneFooterMeta(
   messages: JobMessage[],
   lane: string,
-  phaseIds?: Set<string>,
-  legOrdinal?: number,
 ): ComposerFooter | null {
-  const p = parseLane(lane, phaseIds);
+  const p = parseLane(lane);
   let model: string | undefined;
   let effort: string | undefined;
   let engine: string | undefined;
@@ -1261,11 +1079,6 @@ function laneFooterMeta(
       };
     };
     if (!laneMetaBelongs(meta, p)) continue;
-    // Per-Leg footer ring: only the selected Leg's turn_meta counts (untagged = Leg 1).
-    if (legOrdinal != null && p.phaseSet) {
-      const lo = typeof meta.legOrdinal === "number" ? meta.legOrdinal : 1;
-      if (lo !== legOrdinal) continue;
-    }
     const u = meta.usage ?? {};
     if (model === undefined && engine === undefined) {
       // First (newest) matching block wins the model/effort/engine. Prefer `contextModel` (the MAIN

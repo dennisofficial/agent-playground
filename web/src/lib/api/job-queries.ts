@@ -247,14 +247,21 @@ interface SayContext {
  */
 export function useSay(ref: JobRef) {
   const qc = useQueryClient();
-  return useMutation<{ ts: string }, Error, string, SayContext>({
-    mutationFn: (text: string) => sayMessage(ref, text),
-    onMutate: async (text) => {
+  return useMutation<
+    { ts: string },
+    Error,
+    { text: string; lane?: string; threadId?: string },
+    SayContext
+  >({
+    mutationFn: ({ text, lane }) => sayMessage(ref, text, lane),
+    onMutate: async ({ text, threadId }) => {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
+        threadId: threadId ?? ref.jobId,
+        subagentId: null,
         author: "user",
         authorId: "me",
         authorName: "You",
@@ -267,7 +274,7 @@ export function useSay(ref: JobRef) {
       qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
       return { prev };
     },
-    onError: (_e, _text, ctx) => {
+    onError: (_e, _input, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
     },
     onSettled: () => {
@@ -287,6 +294,8 @@ export interface PendingAttachment {
 interface SayWithAttachmentsInput {
   text: string;
   attachments: PendingAttachment[];
+  lane?: string;
+  threadId?: string;
 }
 
 /**
@@ -307,6 +316,7 @@ export function useSayWithAttachments(ref: JobRef) {
         ref,
         input.text,
         input.attachments.map((a) => a.file),
+        input.lane,
       ),
     onMutate: async (input) => {
       const key = qk.threadMessages(ref);
@@ -325,6 +335,8 @@ export function useSayWithAttachments(ref: JobRef) {
       };
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
+        threadId: input.threadId ?? ref.jobId,
+        subagentId: null,
         author: "user",
         authorId: "me",
         authorName: "You",
@@ -365,6 +377,7 @@ export function useStop(ref: JobRef) {
 interface ReviewCommentsSendInput {
   items: ReviewCommentItemBody[];
   message?: string;
+  threadId?: string;
 }
 
 /**
@@ -392,6 +405,8 @@ export function useSendReviewComments(ref: JobRef) {
       };
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
+        threadId: input.threadId ?? ref.jobId,
+        subagentId: null,
         author: "user",
         authorId: "me",
         authorName: "You",

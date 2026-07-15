@@ -280,6 +280,8 @@ describe("composerStore", () => {
     function messageFor(card: JobMessage["card"]): JobMessage {
       return {
         ts: "ts1",
+        threadId: "t1",
+        subagentId: null,
         author: "atlas",
         authorId: "atlas",
         authorName: "Atlas",

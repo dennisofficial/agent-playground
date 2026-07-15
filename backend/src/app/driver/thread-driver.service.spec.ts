@@ -109,7 +109,7 @@ interface StoreState {
   route: JobRoute;
   operatorInputCards: OperatorInputCard[];
   systemNotices?: string[];
-  /** A builder's materialized review children (review_lens + post_review rows). Lazily created. */
+  /** A builder's materialized review children (review_agent + review_fix rows). Lazily created. */
   reviewChildren?: ReviewChildRow[];
 }
 
@@ -118,6 +118,98 @@ function makeStore(state: StoreState): {
   state: StoreState;
 } {
   let nextQuestionId = 1;
+  const threadIdForAnchor = (anchorId: string): string =>
+    state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
+  const stageIdForThread = (thread: StoreDriverThread): string =>
+    (thread.config?.stageId as string | undefined) ?? `stage-${thread.id}`;
+  const stageKindForThread = (thread: StoreDriverThread): string =>
+    thread.kind === 'master_review'
+      ? 'master_review'
+      : thread.kind === 'post_build' || thread.kind === 'ci'
+        ? thread.kind
+        : ((thread.config?.stageKind as string | undefined) ?? 'build');
+  const ensureSingletonThread = (input: {
+    kind: 'post_build' | 'ci';
+    brief: string;
+  }): { stageId: string; threadId: string } => {
+    const existing = state.threads.find(
+      (thread) =>
+        thread.jobId === state.job.id &&
+        thread.parentThreadId == null &&
+        thread.kind === input.kind,
+    );
+    if (existing) {
+      return { stageId: stageIdForThread(existing), threadId: existing.id };
+    }
+    const ordinal =
+      Math.max(
+        0,
+        ...state.threads
+          .filter((thread) => thread.parentThreadId == null)
+          .map((thread) => thread.ordinal),
+      ) + 10;
+    const threadId = `${input.kind}-${state.job.id}`;
+    const stageId = `stage-${threadId}`;
+    state.threads.push({
+      id: threadId,
+      jobId: state.job.id,
+      orgId: state.job.orgId,
+      ordinal,
+      brief: input.brief,
+      plan: null,
+      orientation: null,
+      handoffIn: null,
+      handoffOut: null,
+      status: 'pending',
+      condition: 'none',
+      kind: input.kind,
+      type: 'general',
+      parentThreadId: null,
+      startSha: null,
+      config: { stageId, stageKind: input.kind },
+    } as StoreDriverThread);
+    return { stageId, threadId };
+  };
+  const stagesForJob = (jobId: string) =>
+    state.threads
+      .filter(
+        (thread) =>
+          thread.jobId === jobId &&
+          thread.parentThreadId == null &&
+          ['builder', 'master_review', 'post_build', 'ci'].includes(
+            thread.kind,
+          ),
+      )
+      .map((thread) => ({
+        id: stageIdForThread(thread),
+        job_id: thread.jobId,
+        org_id: thread.orgId,
+        ordinal: thread.ordinal,
+        kind: stageKindForThread(thread),
+        title: thread.kind === 'builder' ? thread.brief : null,
+        type: thread.type,
+        status: 'pending',
+        condition: 'none',
+        decision_record_id: state.job.decisionRecordId ?? null,
+        config: {},
+      }));
+  const driverThreadsForStage = (stageId: string) => {
+    const parent = state.threads.find(
+      (thread) => stageIdForThread(thread) === stageId,
+    );
+    if (!parent) return [];
+    if (parent.kind === 'builder') {
+      return state.threads
+        .filter(
+          (thread) =>
+            thread.id === parent.id || thread.parentThreadId === parent.id,
+        )
+        .filter((thread) => thread.kind === 'builder')
+        .sort((a, b) => a.ordinal - b.ordinal)
+        .map((thread) => ({ ...thread }));
+    }
+    return [{ ...parent }];
+  };
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
@@ -167,7 +259,23 @@ function makeStore(state: StoreState): {
     clearShipApproval: vi.fn(async (_id: string) => {
       state.job.shipReviewApprovedAt = null;
     }),
+    ensurePostBuildThread: vi.fn(async () =>
+      ensureSingletonThread({
+        kind: 'post_build',
+        brief: 'Ship — open the PR',
+      }),
+    ),
+    ensureCiThread: vi.fn(async () =>
+      ensureSingletonThread({
+        kind: 'ci',
+        brief: 'CI',
+      }),
+    ),
     decisionRecord: vi.fn(async () => state.record),
+    stagesForJob: vi.fn(async (jobId: string) => stagesForJob(jobId)),
+    driverThreadsForStage: vi.fn(async (stageId: string) =>
+      driverThreadsForStage(stageId),
+    ),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     getThread: vi.fn(async (id: string) => {
       const s = state.threads.find((x) => x.id === id);
@@ -176,7 +284,7 @@ function makeStore(state: StoreState): {
     setThreadStatus: vi.fn(async (id: string, status: ThreadStatus) => {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.status = status;
-      // Child rows (review_lens / post_review) share this setter.
+      // Child rows (review_agent / review_fix) share this setter.
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
       if (c) c.status = status;
     }),
@@ -184,7 +292,7 @@ function makeStore(state: StoreState): {
       async (id: string, condition: ThreadCondition) => {
         const s = state.threads.find((x) => x.id === id);
         if (s) s.condition = condition;
-        // Child rows (review_lens / post_review) share this setter.
+        // Child rows (review_agent / review_fix) share this setter.
         const c = (state.reviewChildren ?? []).find((x) => x.id === id);
         if (c) c.condition = condition;
       },
@@ -212,7 +320,7 @@ function makeStore(state: StoreState): {
       const s = state.threads.find((x) => x.id === id);
       if (s) s.handoffOut = handoffOut;
     }),
-    // Review CHILD threads (post-build review as real rows). Materialize is idempotent; each lens/post_review
+    // Review CHILD threads (post-build review as real rows). Materialize is idempotent; each agent/fix
     // is its own row with its own status + findings.
     materializeReviewChildren: vi.fn(
       async (
@@ -359,8 +467,22 @@ function makeStore(state: StoreState): {
     resolveSessionAnchor: vi.fn(async (_threadId: string) => undefined),
     // ── Leg rotation (context-rot mitigation) — no prior rotation in these tests, so the driver folds no seed
     //    and rotates ONLY on a self-authored handoff. `completeLegRotation` is present for the type only. ──
-    getPendingLegSeed: vi.fn(async (_anchorStepId: string) => null),
+    getPendingLegSeed: vi.fn(async (anchorStepId: string) => {
+      const s = state.threads.find((x) => x.id === threadIdForAnchor(anchorStepId));
+      const seed = s?.config?.pendingLegSeed;
+      return typeof seed === 'string' ? seed : null;
+    }),
     completeLegRotation: vi.fn(async () => null),
+    builderLegCountForStage: vi.fn(async (anchorThreadId: string) => {
+      const current = state.threads.find((x) => x.id === threadIdForAnchor(anchorThreadId));
+      if (!current) return 0;
+      const rootId = current.parentThreadId ?? current.id;
+      return state.threads.filter(
+        (thread) =>
+          thread.kind === 'builder' &&
+          (thread.id === rootId || thread.parentThreadId === rootId),
+      ).length;
+    }),
     recordBuildSystemChunk: vi.fn(async () => undefined),
     getThreadTasks: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId) as
@@ -1244,6 +1366,12 @@ function assemble(
     undefined,
     undefined,
     opts.claudeCreds as ClaudeCredentialStore | undefined,
+    undefined, // configStore
+    undefined, // stimulusStore
+    undefined, // jit
+    {
+      planningThreadId: async (jobId: string) => `planning-${jobId}`,
+    } as never,
   );
   // SHIP-REVIEW GATE auto-approve: unless a test opts out, simulate the operator clicking "Ship it" the
   // instant the gate parks — so the build→ship pipeline tests keep reaching `done`. The re-drive fast-
@@ -1324,8 +1452,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
     ]);
 
-    // Both threads are done with a handoff; the SECOND thread received the first's handoff.
-    expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+    // Both builder threads are done with a handoff; singleton split-pipeline rows may be appended for shipping.
+    expect(
+      state.threads.filter((s) => s.kind === 'builder').every((s) => s.status === 'done'),
+    ).toBe(true);
     expect(state.threads[1].handoffIn).toContain('Backend');
 
     // Each completed thread frees its test services deterministically (`atlas-svc stop-all` via the sandbox
@@ -1373,10 +1503,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       'fatal: cannot chdir to packages/jwt-auth',
     );
 
-    // Every review_lens child carries the `failed` CONDITION (step stays where it was), and the failure
+    // Every review_agent child carries the `failed` CONDITION (step stays where it was), and the failure
     // never sank the job.
     const lensKids = (state.reviewChildren ?? []).filter(
-      (c) => c.kind === 'review_lens',
+      (c) => c.kind === 'review_agent',
     );
     expect(lensKids.length).toBeGreaterThan(0);
     expect(lensKids.every((c) => c.condition === 'failed')).toBe(true);
@@ -1406,7 +1536,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
     expect(fixNotices.length).toBeGreaterThan(0);
     const postKids = (state.reviewChildren ?? []).filter(
-      (c) => c.kind === 'post_review',
+      (c) => c.kind === 'review_fix',
     );
     expect(postKids.length).toBeGreaterThan(0);
     expect(postKids.every((c) => c.status === 'done')).toBe(true);
@@ -1430,13 +1560,28 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
     // The 2nd thread reads back `done` live (with a persisted handoff) even though the snapshot said pending.
     const staleId = state.threads[1].id;
+    state.reviewChildren = [
+      {
+        id: `${staleId}-review-existing`,
+        parentId: staleId,
+        kind: 'review_agent',
+        brief: 'Existing review',
+        ordinal: 10,
+        config: { lensId: 'correctness' },
+        status: 'done',
+        condition: 'none',
+        reviewFindings: [],
+      },
+    ];
     (h.store.getThread as ReturnType<typeof vi.fn>).mockImplementation(
       async (id: string) => {
         const s = state.threads.find((x) => x.id === id);
         if (!s) return null;
-        return id === staleId
-          ? { ...s, status: 'done', handoffOut: 'HO-from-other-drive' }
-          : { ...s };
+        if (id === staleId) {
+          s.status = 'done';
+          s.handoffOut = 'HO-from-other-drive';
+        }
+        return { ...s };
       },
     );
 
@@ -1528,7 +1673,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // The post-build review ran for the feature thread ONLY — the master-review thread IS the review (its
     // spec declares no children), so it materializes none.
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(1);
-    expect(state.threads.every((s) => s.status === 'done')).toBe(true);
+    expect(
+      state.threads
+        .filter((s) => s.kind === 'builder' || s.kind === 'master_review')
+        .every((s) => s.status === 'done'),
+    ).toBe(true);
   });
 
   it('a claude builder turn — AND its follow-up COMMIT-NUDGE turn (kind:\'step\') — both forward modelReasoningEffort: "high"', async () => {
@@ -2659,7 +2808,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurrency', () => {
   function lensIdsMaterialized(state: StoreState): (string | undefined)[] {
     return (state.reviewChildren ?? [])
-      .filter((c) => c.kind === 'review_lens')
+      .filter((c) => c.kind === 'review_agent')
       .map((c) => (c.config as { lensId?: string }).lensId);
   }
 
@@ -3757,12 +3906,10 @@ async function sweepDeliversWake(
   // wake re-enters cleanly. Firing while `drive` is still unwinding would hit the `active` no-op.
   const active = (h.driver as unknown as { active?: Set<string> }).active;
   await flushUntil(() => !active?.has(state.job.id));
-  await h.driver.deliverOwedHaltWakes();
-  await flushUntil(() => h.wakes.length > 0);
 }
 
 describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bounded fix)', () => {
-  it('block_thread → blocked outcome → halts (job stays running, thread executing+paused, no PR) and wakes the brain ONCE', async () => {
+  it('block_thread → blocked outcome → halts headlessly (job stays running, thread executing+paused, no PR)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -3795,13 +3942,11 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(term?.blocked?.reason).toBe('needs_env');
     // A durable "Thread blocked" card was relayed:
     expect(h.posts.some((p) => p.includes('Thread blocked'))).toBe(true);
-    // The brain was woken EXACTLY once, for this thread, with the outcome:
-    expect(h.wakes).toEqual([
-      { jobId: state.job.id, threadId: 'sec-be', outcome: 'blocked' },
-    ]);
+    // Headless driver: the halted thread is visible to the operator, with no bounce back to planning.
+    expect(h.wakes).toEqual([]);
   });
 
-  it('the wake fires only AFTER the job leaves the active window (a redrive from the wake would no-op otherwise)', async () => {
+  it('an operator redrive after the halt leaves the active window can resume the thread', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -3816,12 +3961,10 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
         detail: 'needs a call on the retry policy',
       },
     });
-    // Assert `active` is clear at wake time by having the stub brain, on wake, attempt a redrive and confirm
-    // it is NOT rejected by the active guard (i.e. it actually re-enters drive).
     const h = assemble(state, { turn });
     await h.driver.dispatch(state.job);
     await sweepDeliversWake(h, state);
-    // A redrive issued right after the wake succeeds (job flips back to running from awaiting_input path):
+    // A redrive issued right after the halt succeeds (job flips back to running from awaiting_input path):
     await h.driver.redriveThread(
       state.job.id,
       'sec-be',
@@ -3831,28 +3974,6 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
       () => (state.threads[0].orientation ?? '') === 'grant the env and retry',
     );
     expect(state.threads[0].orientation).toBe('grant the env and retry');
-  });
-
-  it('is idempotent: a re-run of deliverOwedHaltWakes after a wake does NOT re-fire (dedup marker)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const { turn } = makeTurn({
-      blockThread: { reason: 'question', detail: 'which API version?' },
-    });
-    const h = assemble(state, { turn });
-    await h.driver.dispatch(state.job);
-    await sweepDeliversWake(h, state);
-    expect(h.wakes).toHaveLength(1);
-    // Re-running the owed-wake sweep (as the boot sweep would) finds nothing owed — already stamped.
-    await h.driver.deliverOwedHaltWakes(state.job.id);
-    await flush();
-    expect(h.wakes).toHaveLength(1); // NOT re-fired
   });
 
   it('terminal latch: a stray complete_thread AFTER block_thread does not overwrite the blocked assertion', async () => {
@@ -4378,7 +4499,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
-  it('a plain re-drive of a BLOCKED thread RE-HALTS (never re-runs the orchestrator) and re-wakes the brain', async () => {
+  it('a plain re-drive of a BLOCKED thread RE-HALTS headlessly (never re-runs the orchestrator)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -4406,16 +4527,14 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     await h.driver.dispatch(state.job);
     await sweepDeliversWake(h, state);
 
-    // The orchestrator was NOT re-run (no execute turn) — the thread just re-halted + re-woke the brain:
+    // The orchestrator was NOT re-run (no execute turn) — the thread just re-halted for operator inspection:
     expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
     expect(state.threads[0].status).toBe('executing');
     expect(state.threads[0].condition).toBe('paused');
     expect(h.opened).toHaveLength(0); // nothing shipped
-    expect(
-      h.wakes.some((w) => w.threadId === 'sec-be' && w.outcome === 'blocked'),
-    ).toBe(true);
+    expect(h.wakes).toEqual([]);
 
-    // But the BRAIN's redriveThread (clears the record first) DOES re-run it to completion:
+    // But an explicit redriveThread (clears the record first) DOES re-run it to completion:
     await h.driver.redriveThread(state.job.id, 'sec-be', 'KEY granted — retry');
     await flushUntil(() => state.job.status === 'done');
     expect(calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(0); // re-ran now
@@ -4467,14 +4586,12 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     await h.driver.dispatch(state.job);
     await sweepDeliversWake(h, state);
 
-    // The Codex review was NOT re-run (no execute turn) — the master_review just re-halted + re-woke the brain:
+    // The Codex review was NOT re-run (no execute turn) — the master_review just re-halted headlessly:
     expect(calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
     expect(state.threads[1].status).toBe('executing');
     expect(state.threads[1].condition).toBe('paused');
     expect(h.opened).toHaveLength(0); // nothing shipped
-    expect(
-      h.wakes.some((w) => w.threadId === 'review' && w.outcome === 'blocked'),
-    ).toBe(true);
+    expect(h.wakes).toEqual([]);
   });
 
   it('a blocked thread whose autonomous budget is EXHAUSTED rests the job (paused, no owed wake) instead of re-waking forever', async () => {
@@ -5764,22 +5881,61 @@ describe('ThreadDriver — master-review bridged task list', () => {
 
 describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
   /** Stateful Leg-rotation store overlay on the default fake: `completeLegRotation` stashes the seed (which
-   *  `getPendingLegSeed` then returns so the fresh Leg's task carries it) and reports the leg transition. */
+   *  the fresh builder thread reads from its own config) and reports the leg transition. */
   function wireRotationStore(h: ReturnType<typeof assemble>): {
     rotations: () => number;
   } {
-    let seed: string | null = null;
     let rotations = 0;
-    (h.store.getPendingLegSeed as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => seed,
-    );
     (
       h.store.completeLegRotation as ReturnType<typeof vi.fn>
-    ).mockImplementation(async (inp: { seed: string }) => {
-      rotations += 1;
-      seed = inp.seed;
-      return { fromLeg: 1, toLeg: 2, abandonedSessionId: 'sess-fat' };
-    });
+    ).mockImplementation(
+      async (inp: { anchorStepId: string; handoff: string; seed: string; rotationCapped?: boolean }) => {
+        const anchorThreadId =
+          h.state.steps.find((step) => step.id === inp.anchorStepId)?.threadId ??
+          inp.anchorStepId;
+        const current = h.state.threads.find((t) => t.id === anchorThreadId);
+        if (!current) return null;
+        const rootId = current.parentThreadId ?? current.id;
+        const stageId =
+          (current.config?.stageId as string | undefined) ?? `stage-${rootId}`;
+        const siblings = h.state.threads
+          .filter(
+            (thread) =>
+              thread.kind === 'builder' &&
+              (thread.id === rootId || thread.parentThreadId === rootId),
+          )
+          .sort((a, b) => a.ordinal - b.ordinal);
+        const fromIndex = siblings.findIndex((thread) => thread.id === current.id);
+        const fromLeg = fromIndex >= 0 ? fromIndex + 1 : siblings.length;
+        const toLeg = fromLeg + 1;
+        const maxOrdinal = siblings.reduce(
+          (max, thread) => Math.max(max, thread.ordinal),
+          0,
+        );
+        current.config = { ...(current.config ?? {}), stageId, stageKind: 'build' };
+        h.state.threads.push({
+          ...current,
+          id: `${rootId}-leg-${toLeg}`,
+          ordinal: maxOrdinal + 10,
+          status: 'pending',
+          condition: 'none',
+          parentThreadId: rootId,
+          handoffIn: inp.handoff,
+          handoffOut: null,
+          plan: null,
+          orientation: null,
+          config: {
+            ...(current.config ?? {}),
+            stageId,
+            stageKind: 'build',
+            pendingLegSeed: inp.seed,
+            ...(inp.rotationCapped ? { rotationCapped: true } : {}),
+          },
+        });
+        rotations += 1;
+        return { fromLeg, toLeg, abandonedSessionId: 'sess-fat' };
+      },
+    );
     return { rotations: () => rotations };
   }
 

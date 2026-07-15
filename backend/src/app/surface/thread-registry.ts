@@ -65,7 +65,7 @@ export const THREAD_REGISTRY: readonly ThreadDescriptor[] = [
   },
   {
     kind: 'builder',
-    input: 'none',
+    input: 'operator',
     lane: (threadId) => `thread:${threadId}`,
     match: (lane) => (lane.startsWith('thread:') ? [lane.slice('thread:'.length)] : null),
     taskScope: ({ ids }) => ({ kind: 'thread', id: ids[0] }),

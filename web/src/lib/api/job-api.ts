@@ -85,6 +85,12 @@ function threadPath(ref: JobRef, suffix = ""): string {
 export interface RawThreadMessage {
   /** The row's uuid — a stable React key (transcript blocks have no surface `ts`). */
   id?: string;
+  /** The owning thread — the web filters a thread's transcript by this (replaces the old `meta.phaseId` peel). */
+  threadId: string;
+  /** The subagent this block belongs to (a spawned Task tool run), or null for a block that belongs directly
+   *  to the thread. Joins the same way `meta.id`/`meta.parentToolUseId` always has — this is an additional,
+   *  denormalized cross-check field. */
+  subagentId: string | null;
   ts: string | null;
   author: string;
   authorId: string;
@@ -115,6 +121,11 @@ export interface RawThreadMessage {
 export interface JobMessage {
   /** Stable key (synthetic monotonic ts; a local optimistic post gets a `local-*` key). */
   ts: string;
+  /** The owning thread — used to filter a thread's transcript. */
+  threadId: string;
+  /** The subagent this block belongs to (a spawned Task tool run), or null for a block that belongs directly
+   *  to the thread. */
+  subagentId: string | null;
   /** `atlas` (the agent) or `user` (a human — the operator). Drives bubble alignment. */
   author: "atlas" | "user";
   authorId: string;
@@ -147,6 +158,8 @@ export interface JobMessage {
 export function normalizeMessage(r: RawThreadMessage): JobMessage {
   return {
     ts: r.ts ?? r.id ?? `srv-${r.postedAt}`,
+    threadId: r.threadId,
+    subagentId: r.subagentId,
     author: r.isAtlas ? "atlas" : "user",
     authorId: r.authorId,
     authorName: r.author,
@@ -165,10 +178,14 @@ export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
   );
 }
 
-export function sayMessage(ref: JobRef, text: string): Promise<{ ts: string }> {
+export function sayMessage(
+  ref: JobRef,
+  text: string,
+  lane?: string,
+): Promise<{ ts: string }> {
   return webJson(threadPath(ref, "/say"), {
     method: "POST",
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, ...(lane ? { lane } : {}) }),
   });
 }
 
@@ -180,9 +197,11 @@ export function sayMessageWithFiles(
   ref: JobRef,
   text: string,
   files: File[],
+  lane?: string,
 ): Promise<{ ts: string }> {
   const form = new FormData();
   form.append("text", text);
+  if (lane) form.append("lane", lane);
   for (const f of files) form.append("files", f, f.name);
   return webJson(threadPath(ref, "/say"), { method: "POST", body: form });
 }

@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import { BrainStoreService } from './brain-store.service';
-import type { CodexReviewEntity, JobEntity } from '../persistence/entities';
+import type { JobEntity, ThreadEntity } from '../persistence/entities';
 import type { JobDependencyService } from '../job-deps';
 
 /**
  * `BrainStoreService.endTurnActivity` — the turn-tail activity settle. Mirrors the mocking pattern in
- * `brain-store.build-not-started.spec.ts`'s `makeStore` (bare-bones `jobs`/`reviews` repo stubs, everything
- * else a `never`-cast stub since `endTurnActivity` only reads `this.reviews` + `this.jobs`).
+ * `brain-store.build-not-started.spec.ts`'s `makeStore` (bare-bones `jobs`/`threads` repo stubs, everything
+ * else a `never`-cast stub since `endTurnActivity` only reads `this.threads` (a `plan_review` thread's
+ * `config.status`, folded off the retired `codex_reviews` row per d7) + `this.jobs`).
  */
 
 function fakeJobsRepo() {
@@ -20,27 +21,29 @@ function fakeJobsRepo() {
   };
 }
 
-function fakeReviewsRepo(running: boolean) {
+function fakeThreadsRepo(reviewing: boolean) {
   return {
-    exists: vi.fn(async () => running),
-  } as unknown as Repository<CodexReviewEntity> & {
-    exists: ReturnType<typeof vi.fn>;
-  };
+    createQueryBuilder: () => {
+      const qb: Record<string, unknown> = {};
+      for (const m of ['where', 'andWhere']) qb[m] = () => qb;
+      qb.getExists = vi.fn(async () => reviewing);
+      return qb;
+    },
+  } as unknown as Repository<ThreadEntity>;
 }
 
 function makeStore(opts: {
   jobs: ReturnType<typeof fakeJobsRepo>;
-  reviews: ReturnType<typeof fakeReviewsRepo>;
+  threads: ReturnType<typeof fakeThreadsRepo>;
 }) {
   const stub = {} as never;
   return new BrainStoreService(
     opts.jobs,
     stub, // messages
     stub, // records
-    stub, // threads
-    stub, // steps
+    opts.threads,
+    stub, // stages
     stub, // stimuli
-    opts.reviews as never, // reviews
     stub, // dataSource
     stub, // titler
     {
@@ -53,8 +56,8 @@ describe('BrainStoreService.endTurnActivity', () => {
   it('settles to idle when no review is running and the job has no retry park', async () => {
     const jobs = fakeJobsRepo();
     jobs.findOne.mockResolvedValue({ id: 'job-1', session_resume: null });
-    const reviews = fakeReviewsRepo(false);
-    const store = makeStore({ jobs, reviews });
+    const threads = fakeThreadsRepo(false);
+    const store = makeStore({ jobs, threads });
 
     await store.endTurnActivity('job-1');
 
@@ -66,8 +69,8 @@ describe('BrainStoreService.endTurnActivity', () => {
 
   it('settles to plan_review when a review is running — the existing carve-out, regardless of session_resume', async () => {
     const jobs = fakeJobsRepo();
-    const reviews = fakeReviewsRepo(true);
-    const store = makeStore({ jobs, reviews });
+    const threads = fakeThreadsRepo(true);
+    const store = makeStore({ jobs, threads });
 
     await store.endTurnActivity('job-1');
 
@@ -91,8 +94,8 @@ describe('BrainStoreService.endTurnActivity', () => {
         kind: 'retry',
       },
     });
-    const reviews = fakeReviewsRepo(false);
-    const store = makeStore({ jobs, reviews });
+    const threads = fakeThreadsRepo(false);
+    const store = makeStore({ jobs, threads });
 
     await store.endTurnActivity('job-1');
 
@@ -114,8 +117,8 @@ describe('BrainStoreService.endTurnActivity', () => {
         kind: 'session_limit',
       },
     });
-    const reviews = fakeReviewsRepo(false);
-    const store = makeStore({ jobs, reviews });
+    const threads = fakeThreadsRepo(false);
+    const store = makeStore({ jobs, threads });
 
     await store.endTurnActivity('job-1');
 

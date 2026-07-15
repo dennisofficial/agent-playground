@@ -179,10 +179,15 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — accept refuse', 'running')`,
     [JOB_ACCEPT_REFUSE, ORG, REPO],
   );
+  const [stageAcceptRefuse] = await ds.query(
+    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    [JOB_ACCEPT_REFUSE, ORG],
+  );
   await threads.save(
     threads.create({
       id: THREAD_ACCEPT_REFUSE,
-      kind: 'builder',
+      stage_id: stageAcceptRefuse.id,
+      role: 'builder',
       job_id: JOB_ACCEPT_REFUSE,
       org_id: ORG,
       ordinal: 10,
@@ -200,10 +205,15 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — retry refuse', 'running')`,
     [JOB_RETRY_REFUSE, ORG, REPO],
   );
+  const [stageRetryRefuse] = await ds.query(
+    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    [JOB_RETRY_REFUSE, ORG],
+  );
   await threads.save(
     threads.create({
       id: THREAD_RETRY_REFUSE,
-      kind: 'builder',
+      stage_id: stageRetryRefuse.id,
+      role: 'builder',
       job_id: JOB_RETRY_REFUSE,
       org_id: ORG,
       ordinal: 10,
@@ -221,10 +231,15 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Recovery HTTP e2e — accept happy path', 'running')`,
     [JOB_ACCEPT_OK, ORG, REPO],
   );
+  const [stageAcceptOk] = await ds.query(
+    `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    [JOB_ACCEPT_OK, ORG],
+  );
   await threads.save(
     threads.create({
       id: THREAD_ACCEPT_OK,
-      kind: 'builder',
+      stage_id: stageAcceptOk.id,
+      role: 'builder',
       job_id: JOB_ACCEPT_OK,
       org_id: ORG,
       ordinal: 10,

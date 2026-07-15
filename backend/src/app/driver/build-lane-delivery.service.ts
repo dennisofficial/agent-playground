@@ -1,11 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import type { CollectedPending, DeliveryLane } from '../stimulus';
 import { DeliveryPump, StimulusStoreService } from '../stimulus';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TurnRunnerService } from '../runner';
-import { laneFor } from '../surface';
+import { laneFor, ThreadInputService } from '../surface';
 import { fromExternal } from '../prompt-kit/message';
 import { DriverStoreService } from './driver-store.service';
+import type { ThreadDriver } from './thread-driver.service';
 
 /** DI token a host-seed dispatcher (`JitHostExecutor`) binds to reach the build-lane seed path without a
  *  SurfaceModule↔DriverModule cycle. Bound to {@link BuildLaneDeliveryService}. */
@@ -36,11 +38,14 @@ export interface LaneSeeder {
  * live turn) stay pending and drain into the next Leg's task at kick time (the driver owns Leg cadence, so the
  * descriptor's `drainFreshTurn` is a NO-OP that leaves the batch pending — it never self-starts a turn).
  *
- * Build lanes stay operator-read-only (d1): producers are HOST code calling {@link seedLane}; there is no
- * operator surface and `canPost('thread:<id>')` stays false.
+ * Build lanes carry BOTH kinds of producer over the one pump: HOST code calling {@link seedLane}, and now the
+ * OPERATOR — a human can post into a running builder lane and it steers mid-turn (or, if the thread is halted,
+ * the message becomes retry guidance that re-drives it). The operator path is registered on the shared
+ * {@link ThreadInputService} seam at boot ({@link onApplicationBootstrap}), so `canPost('thread:<id>')` is true
+ * whenever a builder lane is input-enabled.
  */
 @Injectable()
-export class BuildLaneDeliveryService implements LaneSeeder {
+export class BuildLaneDeliveryService implements LaneSeeder, OnApplicationBootstrap {
   private readonly logger = new Logger(BuildLaneDeliveryService.name);
 
   constructor(
@@ -49,7 +54,80 @@ export class BuildLaneDeliveryService implements LaneSeeder {
     private readonly turnRegistry: TurnRegistry,
     private readonly turnRunner: TurnRunnerService,
     private readonly driverStore: DriverStoreService,
+    private readonly threadInput: ThreadInputService,
+    // Lazily resolved (avoiding a static module cycle: thread-driver.service.ts pulls in this file
+    // transitively via jit-host-executor) — same pattern as surface/resolve-merge-approval.ts.
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  private async resolveThreadDriver(): Promise<ThreadDriver> {
+    const { ThreadDriver } = await import('./thread-driver.service.js');
+    return this.moduleRef.get(ThreadDriver, { strict: false });
+  }
+
+  /**
+   * Register the OPERATOR transport for every builder-lane thread on the shared send seam, so a generic
+   * caller (the web `/say` route) can `postToThread('thread:<id>', …)` without knowing the driver. Every
+   * top-level driven thread — builder, master review, post-build, ci, direct build — resolves to the one
+   * `builder` kind, so this single registration enables operator input across all of them.
+   *
+   * The handler first guards that the thread belongs to the posting job (never touch another job's thread on
+   * a client-supplied id), then splits on halt state: a HALTED thread folds the operator's text into its
+   * orientation and re-drives ({@link ThreadDriver.redriveThread}); a live/pending thread persists the
+   * operator bubble on the lane and pumps — steering a live steerable Leg, else leaving the row pending for
+   * the next Leg's drain (the exact {@link seedLane} delivery path, minus the host-seed framing).
+   */
+  onApplicationBootstrap(): void {
+    this.threadInput.register('builder', {
+      post: async ({ jobId, orgId, repoId, ids, author }, message) => {
+        const threadId = ids[0];
+        const ownerJobId = await this.driverStore.threadJobId(threadId).catch(() => null);
+        if (ownerJobId !== jobId) {
+          throw new Error(`postToThread: thread ${threadId} is not part of job ${jobId}`);
+        }
+
+        const halted = (await this.driverStore.haltOutcome(threadId).catch(() => null)) != null;
+        if (halted) {
+          // Persist the operator's own bubble first — mirrors the live/pending branch below, so the
+          // message shows up in the thread's transcript even though this branch drives it via
+          // `redriveThread`'s orientation fold rather than the delivery pump.
+          await this.stimulusStore.recordChatStimulus({
+            orgId,
+            repoId,
+            jobId,
+            author: author ?? { id: 'U-SYSTEM', displayName: 'System' },
+            replyRoute: { surfaceId: 'web', jobRef: jobId },
+            body: message,
+            lane: laneFor('builder', threadId),
+          });
+          const threadDriver = await this.resolveThreadDriver();
+          const result = await threadDriver.redriveThread(
+            jobId,
+            threadId,
+            message,
+          );
+          if (!result.ok) {
+            throw new Error(
+              `postToThread: redrive of halted thread ${threadId} failed: ${result.reason ?? 'unknown reason'}`,
+            );
+          }
+          return;
+        }
+
+        const target = { jobId, orgId, repoId, threadId };
+        await this.stimulusStore.recordChatStimulus({
+          orgId,
+          repoId,
+          jobId,
+          author: author ?? { id: 'U-SYSTEM', displayName: 'System' },
+          replyRoute: { surfaceId: 'web', jobRef: jobId },
+          body: message,
+          lane: laneFor('builder', threadId),
+        });
+        await this.deliveryPump.pump(this.laneDescriptor(target));
+      },
+    });
+  }
 
   /**
    * The build lane's descriptor for {@link DeliveryPump.pump}. `resolveLiveTurn` is Thread 1's

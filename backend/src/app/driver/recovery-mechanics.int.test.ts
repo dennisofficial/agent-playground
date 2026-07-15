@@ -35,7 +35,6 @@ import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ENTITIES,
-  StepEntity,
   ThreadEntity,
   JobEntity,
   MessageEntity,
@@ -131,7 +130,7 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE steps, threads, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function seedJob(): Promise<JobEntity> {
@@ -148,50 +147,84 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     );
   }
 
+  /**
+   * Seeds a single stage-owned thread (every thread now requires a non-null `stage_id`). Columns the store's
+   * create surface doesn't take (status/condition/terminal_record/halt_fix_attempts) are stamped directly so
+   * the tests can reproduce the exact wedged-row shapes.
+   */
+  async function seedThread(
+    jobId: string,
+    opts: {
+      role?: string;
+      ordinal: number;
+      brief: string;
+      status?: string;
+      condition?: string;
+      config?: Record<string, unknown>;
+      terminalRecord?: ThreadTerminalRecord | null;
+      haltFixAttempts?: number;
+    },
+  ): Promise<ThreadEntity> {
+    const stage = await store.createStage({ jobId, orgId: ORG_ID, kind: 'build' });
+    const thread = await store.createThreadInStage({
+      stageId: stage.id,
+      jobId,
+      orgId: ORG_ID,
+      role: opts.role ?? 'builder',
+      brief: opts.brief,
+      ordinal: opts.ordinal,
+      config: opts.config,
+    });
+    const patch = {
+      ...(opts.status !== undefined ? { status: opts.status } : {}),
+      ...(opts.condition !== undefined ? { condition: opts.condition } : {}),
+      ...(opts.terminalRecord !== undefined ? { terminal_record: opts.terminalRecord } : {}),
+      ...(opts.haltFixAttempts !== undefined ? { halt_fix_attempts: opts.haltFixAttempts } : {}),
+    };
+    if (Object.keys(patch).length) await threads.update({ id: thread.id }, patch);
+    return threads.findOneOrFail({ where: { id: thread.id } });
+  }
+
   // ── 1. Read-model wire fields — the exact payload the web console gates the recovery buttons on ─────
 
   it('maps blockReason + acceptableOnJudgeOutage from terminal_record jsonb (d4 accept-safety split)', async () => {
     const job = await seedJob();
 
     // Thread A — mirrors wedged prod row 0d029126: LIVE judge was down, static build+tests PASSED.
-    const acceptable = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — live judge down, static passed',
-        status: 'executing',
-        condition: 'paused',
-        terminal_record: judgeUnavailableRecord(true),
-        halt_fix_attempts: 20,
-      }),
-    );
+    const acceptable = await seedThread(job.id, {
+      role: 'builder',
+      ordinal: 10,
+      brief: 'Backend — live judge down, static passed',
+      status: 'executing',
+      condition: 'paused',
+      terminalRecord: judgeUnavailableRecord(true),
+      haltFixAttempts: 20,
+    });
 
     // Thread B — same block reason, but the STATIC judge was the one down → accept must NOT be offered.
-    const notAcceptable = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 20,
-        brief: 'Backend — static judge down, unverified',
-        status: 'executing',
-        condition: 'paused',
-        terminal_record: judgeUnavailableRecord(false),
-        halt_fix_attempts: 20,
-      }),
-    );
+    const notAcceptable = await seedThread(job.id, {
+      role: 'builder',
+      ordinal: 20,
+      brief: 'Backend — static judge down, unverified',
+      status: 'executing',
+      condition: 'paused',
+      terminalRecord: judgeUnavailableRecord(false),
+      haltFixAttempts: 20,
+    });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      threads: Array<{
-        id: string;
-        blockReason: string | null;
-        acceptableOnJudgeOutage: boolean;
+      stages: Array<{
+        threads: Array<{
+          id: string;
+          blockReason: string | null;
+          acceptableOnJudgeOutage: boolean;
+        }>;
       }>;
     };
 
-    const byId = new Map(state.threads.map((t) => [t.id, t]));
+    const byId = new Map(
+      state.stages.flatMap((s) => s.threads).map((t) => [t.id, t]),
+    );
     const a = byId.get(acceptable.id);
     const b = byId.get(notAcceptable.id);
 
@@ -208,16 +241,12 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
   it('recordThreadTermination persists the acceptRequested jsonb marker (no-migration round-trip)', async () => {
     const job = await seedJob();
-    const thread = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — accept marker round-trip',
-        status: 'executing',
-      }),
-    );
+    const thread = await seedThread(job.id, {
+      role: 'builder',
+      ordinal: 10,
+      brief: 'Backend — accept marker round-trip',
+      status: 'executing',
+    });
 
     const record: ThreadTerminalRecord = {
       ...judgeUnavailableRecord(true),
@@ -233,20 +262,16 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
   it('setHaltBudgetReason persists the judge budget owner without clobbering other thread config', async () => {
     const job = await seedJob();
-    const thread = await threads.save(
-      threads.create({
-        kind: 'review_lens',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — budget-owner marker',
-        status: 'executing',
-        config: {
-          lensId: 'security',
-          recovery: { keep: 'existing' },
-        },
-      }),
-    );
+    const thread = await seedThread(job.id, {
+      role: 'review_agent',
+      ordinal: 10,
+      brief: 'Backend — budget-owner marker',
+      status: 'executing',
+      config: {
+        lensId: 'security',
+        recovery: { keep: 'existing' },
+      },
+    });
 
     await store.setHaltBudgetReason(thread.id, 'judge_unavailable');
 
@@ -271,16 +296,12 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
     expect(JUDGE_UNAVAILABLE_REDRIVE_CAP).toBe(20);
 
     const job = await seedJob();
-    const thread = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — judge redrive cap',
-        status: 'executing',
-      }),
-    );
+    const thread = await seedThread(job.id, {
+      role: 'builder',
+      ordinal: 10,
+      brief: 'Backend — judge redrive cap',
+      status: 'executing',
+    });
 
     // From halt_fix_attempts=0, the first claim succeeds and increments.
     expect(await store.claimHaltFixAttempt(thread.id, JUDGE_UNAVAILABLE_REDRIVE_CAP)).toEqual({
@@ -308,18 +329,14 @@ describe('Recovery mechanics — judge_unavailable read model + halt CAS (live P
 
   it('rearmHaltedThreads resets halt_fix_attempts to 0 (what "Retry now" calls)', async () => {
     const job = await seedJob();
-    const thread = await threads.save(
-      threads.create({
-        kind: 'builder',
-        job_id: job.id,
-        org_id: ORG_ID,
-        ordinal: 10,
-        brief: 'Backend — rearm',
-        status: 'executing',
-        condition: 'paused',
-        halt_fix_attempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
-      }),
-    );
+    const thread = await seedThread(job.id, {
+      role: 'builder',
+      ordinal: 10,
+      brief: 'Backend — rearm',
+      status: 'executing',
+      condition: 'paused',
+      haltFixAttempts: JUDGE_UNAVAILABLE_REDRIVE_CAP,
+    });
 
     const rearmed = await store.rearmHaltedThreads(job.id);
     expect(rearmed).toBe(1);

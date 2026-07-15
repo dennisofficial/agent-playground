@@ -1,26 +1,49 @@
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { JobEntity } from './job.entity';
+import { ThreadEntity } from './thread.entity';
+import { SubagentEntity } from './subagent.entity';
 
 /**
- * One message in a thread's append-only log. Many histories = ONE `messages` table partitioned
- * by `job_id` (the index below). Threads are isolated; coherence across them is shared memory, not
- * shared transcript.
+ * One message in a thread's append-only log. `thread_id` is the real partition key (d3) — every message
+ * belongs to exactly one thread, and a job's conversation log is the UNION of its threads' messages.
+ * `job_id` stays denormalized for job-wide queries. Rendering is uniform via "messages for this node": a
+ * node is either a thread (`subagent_id IS NULL`) or a subagent (`subagent_id = X`, d4).
  */
 @Entity({ name: 'messages' })
 @Index(['job_id', 'created_at'])
+@Index(['thread_id', 'created_at'])
+@Index(['subagent_id'])
 @Index('ux_messages_idem_key', ['idem_key'], { unique: true, where: `"idem_key" IS NOT NULL` })
 export class MessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  /** The thread this message belongs to — the partition key (FK → threads). */
+  /** The owning job — denormalized for job-wide queries (FK → jobs.id). */
   @Column({ type: 'uuid' })
   job_id!: string;
 
   @ManyToOne(() => JobEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
+
+  /** The thread this message belongs to — the real partition key (FK → threads.id, d3). NOT NULL after
+   *  the migration's backfill. */
+  @Column({ type: 'uuid' })
+  thread_id!: string;
+
+  @ManyToOne(() => ThreadEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_id' })
+  threadRef?: ThreadEntity;
+
+  /** The subagent this message belongs to, when it's a subagent transcript block; null for a plain
+   *  thread-level message (FK → subagents.id, d4). */
+  @Column({ type: 'uuid', nullable: true })
+  subagent_id!: string | null;
+
+  @ManyToOne(() => SubagentEntity, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'subagent_id' })
+  subagent?: SubagentEntity | null;
 
   /** Display name ("Dennis", "Atlas"). */
   @Column({ type: 'text' })

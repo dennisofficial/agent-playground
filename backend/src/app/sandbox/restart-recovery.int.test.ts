@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngineRunnerPort, RunEngineArgs } from '../engine';
 import type { FeatureSandbox } from '../git';
 import { agentMessage } from '../prompt-kit/message';
-import type { StepEntity } from '../persistence/entities';
+import type { ThreadEntity } from '../persistence/entities';
 import { TurnRunnerService } from '../runner/turn-runner.service';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
@@ -30,16 +30,16 @@ import type { Repository } from 'typeorm';
 const env = (v: Record<string, string | undefined> = {}) =>
   ({ get: (k: string) => v[k] }) as unknown as EnvService;
 
-/** Map-backed steps repository that survives across TurnRunnerService instances (models Postgres). */
+/** Map-backed threads repository that survives across TurnRunnerService instances (models Postgres). */
 function makeDurablePhaseRepo(initial: { id: string; session_id: string | null }) {
   const row: { id: string; session_id: string | null } = { ...initial };
   const repo = {
-    findOne: vi.fn(async () => ({ session_id: row.session_id } as StepEntity)),
+    findOne: vi.fn(async () => ({ session_id: row.session_id } as ThreadEntity)),
     update: vi.fn(async (_where: { id: unknown }, patch: { session_id?: string }) => {
       if (patch.session_id !== undefined) row.session_id = patch.session_id;
       return { affected: 1 } as never;
     }),
-  } as unknown as Repository<StepEntity>;
+  } as unknown as Repository<ThreadEntity>;
   return { repo, row };
 }
 
@@ -116,7 +116,7 @@ describe('Docker restart recovery + durable session (integration, needs Docker)'
       // Ensure the sandbox image is present before any manager attaches.
       await builder1.ensureImage();
 
-      // ── Durable steps row (survives the "restart") ───────────────────────────────────────
+      // ── Durable thread row (survives the "restart") ───────────────────────────────────────
       const { repo: fakePhases, row: phaseRow } = makeDurablePhaseRepo({
         id: 'ph1',
         session_id: null,

@@ -147,6 +147,13 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedRow?: SeedRow;
   /**
+   * SESSION RE-HOME (opt-in): when set, this turn resumes/persists `threads.session_id` for THIS thread id
+   * instead of `job_sandboxes.session_id`. Absent (the default, used by every existing call site including
+   * planning) means unchanged job-level session behavior. In-memory only, mirrored onto
+   * `active_turns.ctx.resumeThreadId` for reattach (see `reattachOne`).
+   */
+  resumeThreadId?: string;
+  /**
    * COMPACTION turn: a synthetic, Atlas-authored turn (enqueued e.g. by `dispatch_build`) whose ONLY job is
    * to compact the brain session — summarize the current (fat) session into a lean handoff, then null the
    * session id + stash the summary as the next turn's seed. It runs a summarization engine turn, NOT a
@@ -200,4 +207,13 @@ export interface EventStimulus extends BaseStimulus {
    * `feature_branch`/`current_branch` and `prNumber` against its `pr_number`. Absent → seed as before.
    */
   correlation?: { branch?: string | null; prNumber?: number | null };
+  /**
+   * SESSION RE-HOME (mirrors {@link ChatStimulus.resumeThreadId}): when the owning job already has a live
+   * `ci` stage-thread, this event resumes/persists THAT thread's session instead of the job's planning
+   * thread — so a GitHub/CI webhook wakes the `ci` thread post-ship rather than dragging planning back in.
+   * Derived at read time from the persisted `stimuli.lane` (`thread:<ciThreadId>`), same durable coordinate
+   * `recordChatStimulus` already uses for chat — so a sweep re-drive resolves it identically to the first
+   * delivery attempt. Absent (pre-ship, no `ci` thread yet) delivers to planning exactly as before.
+   */
+  resumeThreadId?: string;
 }

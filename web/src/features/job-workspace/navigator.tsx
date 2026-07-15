@@ -49,12 +49,7 @@ import {
   useShipWithoutReview,
 } from "@/lib/api/job-queries";
 import { threadHref } from "@/lib/routes";
-import {
-  Divider,
-  PipelineTree,
-  TasksBody,
-  haltThreadIdx,
-} from "./pipeline-tree";
+import { Divider, PipelineTree, TasksBody } from "./pipeline-tree";
 import { codexReviewNode } from "./codex-review";
 import {
   NavigatorApproveButton,
@@ -843,12 +838,17 @@ function ThreadRows({
   // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
   // build over already-DONE work can leave the active lanes empty while history persists — show history then.
   const prior = job?.priorRevisions ?? [];
-  if (!job || (job.threads.length === 0 && prior.length === 0)) {
+  // The tree renders every stage EXCEPT planning/plan_review (those are pinned above), so "no lanes yet" is
+  // the absence of any buildable stage — not just an empty stage list.
+  const hasBuildStages =
+    job != null &&
+    job.stages.some((s) => s.kind !== "planning" && s.kind !== "plan_review");
+  if (!job || (!hasBuildStages && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
     <>
-      {job.threads.length > 0 ? (
+      {hasBuildStages ? (
         <PipelineTree
           job={job}
           status={status}
@@ -890,7 +890,7 @@ function PriorRevisionSection({
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const revJob: PipelineJob = { ...job, threads: revision.threads, halt: null };
+  const revJob: PipelineJob = { ...job, stages: revision.stages, halt: null };
   return (
     <details className="mt-1 opacity-70">
       <summary className="cursor-pointer list-none px-2 py-1.5 text-[10.5px] font-medium uppercase tracking-wide text-dim">
@@ -1325,9 +1325,11 @@ function StateBanner({
   // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
   // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
   // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
-  const stuck = job?.threads?.find(
-    (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
-  );
+  const stuck = job?.stages
+    .flatMap((s) => s.threads)
+    .find(
+      (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
+    );
   if (stuck) {
     const pending = retryVerification.isPending || acceptThread.isPending;
     // The endpoints return HTTP 200 with `{ ok:false, reason }` for expected refusals (hold isn't
@@ -1363,7 +1365,7 @@ function StateBanner({
         <div className="mb-1 flex items-center gap-1.5">
           <Hourglass size={11} className="text-dim" />
           <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
-            VERIFICATION UNAVAILABLE · §{stuck.ordinal}
+            VERIFICATION UNAVAILABLE
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
@@ -1452,7 +1454,6 @@ function StateBanner({
       job.halt.kind === "budget_exhausted" ||
       job.halt.kind === "incomplete")
   ) {
-    const haltNo = job ? haltSectionNo(job) : null;
     return (
       <div
         className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
@@ -1464,7 +1465,7 @@ function StateBanner({
         <div className="mb-1 flex items-center gap-1.5">
           <AlertTriangle size={11} className="text-red" />
           <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
-            HALTED{haltNo ? ` · §${haltNo}` : ""}
+            HALTED
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
@@ -1516,11 +1517,6 @@ function StateBanner({
     );
   }
   return null;
-}
-
-function haltSectionNo(job: PipelineJob): number | null {
-  const idx = haltThreadIdx(job.threads);
-  return idx === -1 ? null : idx + 1;
 }
 
 function BannerBtn({

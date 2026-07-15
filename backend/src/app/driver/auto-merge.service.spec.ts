@@ -13,6 +13,7 @@ import type { JobLifecycleService } from './job-lifecycle.service';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import type { DriverStoreService } from './driver-store.service';
+import type { JobBootstrapService } from '../job-bootstrap';
 import type {
   JobEntity,
   RepoEntity,
@@ -115,6 +116,12 @@ function make(
     ownerUserId,
   } as unknown as DriverStoreService;
 
+  const planningThreadId = vi.fn(async () => 'thread-1');
+  const jobBootstrap = {
+    planningThreadId,
+    ensurePlanningStage: vi.fn(async () => undefined),
+  } as unknown as JobBootstrapService;
+
   const svc = new AutoMergeService(
     jobs,
     repos,
@@ -125,6 +132,7 @@ function make(
     turns,
     stimulusStore,
     driverStore,
+    jobBootstrap,
   );
 
   return {

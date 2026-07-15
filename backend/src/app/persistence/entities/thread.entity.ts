@@ -2,26 +2,30 @@ import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } 
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
-import { DecisionRecordEntity } from './decision-record.entity';
+import { StageEntity } from './stage.entity';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
- * One THREAD of a job — a first-class, typed lane differentiated only by `kind` (`main | builder |
- * master_review | review_lens | post_review | plan_review`) and related by `parent_thread_id` (a builder
- * is the parent of its `review_lens`/`post_review` children). Builders stack on the job's one feature
- * branch and run sequentially (ORDER BY ordinal); children hang off their builder. `status` is the
+ * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planning | builder |
+ * master_review | review_agent | review_fix | plan_review | post_build | ci`) and related by
+ * `parent_thread_id` (a builder is the parent of its `review_agent`/`review_fix` siblings, now grouped
+ * primarily via `stage_id` per d2). Builders stack on the job's one feature branch and run sequentially
+ * (ORDER BY ordinal) as the stage's rotating legs (d1); non-build roles are singletons. `status` is the
  * explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
  *
- * Which kinds the driver actually EXECUTES vs merely renders is owned by the `thread-kind` registry
- * (`ThreadKindSpec`), not this row — the row is just typed state + tree structure.
+ * Which roles the driver actually EXECUTES vs merely renders is owned by the `thread-kind`/role registry
+ * (thread 2), not this row — the row is just typed state + tree structure. Every thread belongs to
+ * exactly one stage (`stage_id` NOT NULL, d7) — stages are the pipeline unit; threads are its rows.
  */
 @Entity({ name: 'threads' })
 @Index(['job_id'])
+@Index(['stage_id'])
 @Index(['parent_thread_id'])
 // Hands-off: uq_threads_job_parent_ordinal is UNIQUE(job_id, decision_record_id, parent_thread_id, ordinal)
-// … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The `decision_record_id` column makes it
-// revision-aware so two plan revisions can reuse ordinals 10/20/30 without colliding. The DDL lives in the
-// migrations; this only tells migration:generate never to DROP it.
+// … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The DDL lives in the migrations; this only
+// tells migration:generate never to DROP it. `decision_record_id` moved to `stages` (d7); this legacy
+// index name is kept as-is (renaming it is cosmetic, not load-bearing) but now only covers
+// (job_id, parent_thread_id, ordinal).
 @Index('uq_threads_job_parent_ordinal', { synchronize: false })
 export class ThreadEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -35,16 +39,28 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
+  /** The owning stage (FK → stages.id) — every thread belongs to exactly one stage (d2/d7). NOT NULL:
+   *  there is no job-level ungrouped thread. */
+  @Column({ type: 'uuid' })
+  stage_id!: string;
+
+  @ManyToOne(() => StageEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'stage_id' })
+  stage?: StageEntity;
+
   /**
-   * The thread KIND — `main | builder | master_review | review_lens | post_review | plan_review`. The
-   * single differentiator across all thread-like concepts (subsumes `is_master_review`). The `thread-kind`
-   * registry binds each kind to a prompt-kit `Agent`, an engine, a driver mode, and its children. Executable
-   * kinds (`builder`, `master_review`) are driven as top-level sections; `review_lens`/`post_review` are
-   * driven as children; `main`/`plan_review` are render/identity-only (their runtime lives elsewhere).
-   * No column default — every write site sets it explicitly (persistPlan / the child-thread materializer).
+   * The thread ROLE — `planning | builder | master_review | review_agent | review_fix | plan_review |
+   * post_build | ci`. The single differentiator across all thread-like concepts (subsumes
+   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `stage.kind`). The role
+   * registry (thread 2) binds each role to a prompt-kit `Agent`, an engine, a driver mode, and the
+   * operator-chat toggle (d12). Executable roles (`builder`, `master_review`) are driven as top-level
+   * stage members; `review_agent`/`review_fix` are driven as stage-scoped children; `planning`/
+   * `plan_review`/`post_build`/`ci` reuse the brain's prompting (d14). No column default — every write
+   * site sets it explicitly (persistPlan / the child-thread materializer). Stays `text` (no DB enum); the
+   * union type lives in code (thread 2).
    */
   @Column({ type: 'text' })
-  kind!: string;
+  role!: string;
 
   /**
    * Self-FK (→ threads.id) — the parent thread in the tree. A `builder` is the parent of its `review_lens`
@@ -131,33 +147,21 @@ export class ThreadEntity extends TimestampedEntity {
   condition!: string;
 
   /**
-   * The PLAN REVISION this thread belongs to (FK → decision_records.id) — the versioning key. A re-propose
-   * over already-DONE work creates a NEW revision and points `jobs.decision_record_id` at it; the prior
-   * revision's threads keep THEIR record id and become immutable, browsable history (see `persistPlan`). The
-   * "active" revision is always `jobs.decision_record_id`; the driver scopes to it (`threadsForJob`) so old
-   * revisions are never re-run. NULL for job-level singletons (`main`/`plan_review`) and legacy rows — these
-   * are revision-agnostic. It is part of the `uq_threads_job_parent_ordinal` unique index (job_id,
-   * decision_record_id, parent_thread_id, ordinal) so two revisions can reuse ordinals 10/20/30 without
-   * colliding. `onDelete: CASCADE` so pruning a never-built draft record clears its threads.
+   * The engine session this thread's live turn resumes (relocated from `steps.session_id`, d5 — the
+   * resume source of truth, read as `priorSessionId` in turn-runner). Null until the thread's first turn
+   * runs.
    */
-  @Column({ type: 'uuid', nullable: true })
-  @Index()
-  decision_record_id!: string | null;
-
-  @ManyToOne(() => DecisionRecordEntity, { onDelete: 'CASCADE', nullable: true })
-  @JoinColumn({ name: 'decision_record_id' })
-  decisionRecord?: DecisionRecordEntity | null;
+  @Column({ type: 'text', nullable: true })
+  session_id!: string | null;
 
   /**
-   * The thread's LLM-authored task list — folded incrementally from the orchestrating session's
-   * `TaskCreate`/`TaskUpdate` tool calls at the shared transcript harness (see `TurnHarnessFactory`), so
-   * the navigator's TASKS section renders durable state instead of the client refolding the transcript.
-   * `[]` until the session creates its first task — there is no fixed/expected set, so `getPipelineState`
-   * does NOT fall back to a computed default here. LITERAL default — a `() => '[]'::jsonb` function default
-   * makes `migration:generate` loop forever (see the jsonb-default-loop memory).
+   * Set on commit, mirroring the old `steps.commit_sha` batch-anchor marker (relocated by d5). Per d13
+   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build stage reviewers
+   * receive the range `start_sha..commit_sha` (the stage's cumulative diff). Sentinel `(nothing)` =
+   * "committed, empty diff". Null on non-build roles and before the thread's first commit.
    */
-  @Column({ type: 'jsonb', default: [] })
-  tasks!: TaskItem[];
+  @Column({ type: 'text', nullable: true })
+  commit_sha!: string | null;
 
   /**
    * The RUNNING log of out-of-scope fixes the orchestrator made INLINE while building this thread — each a

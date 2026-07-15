@@ -40,6 +40,7 @@ import {
 } from '../persistence/entities';
 import { CHAT_SURFACE } from '../surface/chat-surface.port';
 import type { ChatStimulus } from '../domain/stimulus';
+import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 
 const ORG_ID = '31111111-1111-4111-8111-111111111111';
@@ -116,6 +117,15 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         ProdDiagnosticsService,
         { provide: CHAT_SURFACE, useValue: surface },
         { provide: EnvService, useValue: { get: () => undefined } },
+        // The durable approval card anchors on the job's planning thread (messages.thread_id is NOT NULL);
+        // every test seeds exactly one thread per job, so return it to satisfy the FK.
+        {
+          provide: JobBootstrapService,
+          useValue: {
+            planningThreadId: async (jobId: string) =>
+              (await threads.findOneOrFail({ where: { job_id: jobId } })).id,
+          },
+        },
       ],
     }).compile();
 
@@ -148,7 +158,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     surface.post.mockClear();
     surface.seedSystemNotification.mockClear();
     await ds.query(
-      'TRUNCATE prod_maintenance_write, messages, steps, threads, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE prod_maintenance_write, messages, tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -164,9 +174,14 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         base_branch: BASE_BRANCH,
       }),
     );
+    const [stage] = await ds.query(
+      `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+      [job.id, ORG_ID],
+    );
     const thread = await threads.save(
       threads.create({
-        kind: 'builder',
+        stage_id: stage.id,
+        role: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
         ordinal: 10,

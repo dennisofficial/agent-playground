@@ -63,7 +63,7 @@ function makeMessages(seed: Row[] = []) {
 describe('backfillThreadFromTurns', () => {
   it('inserts a turn\'s blocks, dropping the interrupted (unpaired) tool call', async () => {
     const { repo, saved } = makeMessages();
-    const inserted = await backfillThreadFromTurns(repo, 'th', turnsOf());
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf());
     expect(inserted).toBe(2);
     expect(saved.map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text', 'b-read']);
     expect(saved.map((r) => r.kind)).toEqual(['chat', 'tool']);
@@ -72,7 +72,7 @@ describe('backfillThreadFromTurns', () => {
 
   it('assigns strictly-increasing created_at seeded from the SDK timestamps', async () => {
     const { repo, saved } = makeMessages();
-    await backfillThreadFromTurns(repo, 'th', turnsOf());
+    await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf());
     const times = saved.map((r) => (r.created_at as Date).getTime());
     expect(times).toEqual([Date.parse('2026-06-30T12:00:01.000Z'), Date.parse('2026-06-30T12:00:02.000Z')]);
     expect(times[1]).toBeGreaterThan(times[0]);
@@ -80,7 +80,7 @@ describe('backfillThreadFromTurns', () => {
 
   it('skips a whole turn whose final reply is already persisted', async () => {
     const { repo, saved } = makeMessages([{ author_id: 'atlas', text: 'hi there', kind: 'chat' }]);
-    const inserted = await backfillThreadFromTurns(repo, 'th', turnsOf());
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf());
     expect(inserted).toBe(0);
     expect(saved).toHaveLength(1); // only the seed
   });
@@ -95,7 +95,7 @@ describe('backfillThreadFromTurns', () => {
       line({ type: 'assistant', uuid: 'b-text', sessionId: 's', timestamp: '2026-06-30T12:00:02.000Z', message: { content: [{ type: 'text', text: 'done reading' }] } }),
     ].join('\n');
     const { repo, saved } = makeMessages([{ author_id: 'atlas', text: 'earlier', kind: 'tool', meta: { sdkUuid: 'b-read', id: 'tr' } }]);
-    const inserted = await backfillThreadFromTurns(repo, 'th', parseSessionTranscriptTurns(jsonl).turns);
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', parseSessionTranscriptTurns(jsonl).turns);
     expect(inserted).toBe(1);
     expect(saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text']);
   });
@@ -110,16 +110,16 @@ describe('backfillThreadFromTurns', () => {
       line({ type: 'assistant', uuid: 'b-text', sessionId: 's', timestamp: '2026-06-30T12:00:02.000Z', message: { content: [{ type: 'text', text: 'done reading' }] } }),
     ].join('\n');
     const { repo, saved } = makeMessages([{ author_id: 'atlas', text: 'earlier', kind: 'tool', meta: { id: 'tr' } }]);
-    const inserted = await backfillThreadFromTurns(repo, 'th', parseSessionTranscriptTurns(jsonl).turns);
+    const inserted = await backfillThreadFromTurns(repo, 'th', 'thread-1', parseSessionTranscriptTurns(jsonl).turns);
     expect(inserted).toBe(1);
     expect(saved.slice(1).map((r) => (r.meta as { sdkUuid: string }).sdkUuid)).toEqual(['b-text']);
   });
 
   it('is idempotent — a second run inserts nothing', async () => {
     const { repo, saved } = makeMessages();
-    expect(await backfillThreadFromTurns(repo, 'th', turnsOf())).toBe(2);
+    expect(await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf())).toBe(2);
     const afterFirst = saved.length;
-    expect(await backfillThreadFromTurns(repo, 'th', turnsOf())).toBe(0);
+    expect(await backfillThreadFromTurns(repo, 'th', 'thread-1', turnsOf())).toBe(0);
     expect(saved.length).toBe(afterFirst);
   });
 });

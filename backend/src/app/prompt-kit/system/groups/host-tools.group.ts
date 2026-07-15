@@ -40,8 +40,6 @@ export class HostToolsGroup {
       `  - mcp__${BRIDGE_SERVER_NAME}__finalize_build       — (gated) ship an approved direct build: commit → review → open PR`,
       `  - mcp__${BRIDGE_SERVER_NAME}__dispatch_build       — (gated) start the approved build after the base-check`,
       `  - mcp__${BRIDGE_SERVER_NAME}__hold_build           — (gated) hold the build & return to planning if the rebased base invalidates the plan`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__retry_thread         — re-drive a HALTED build thread you were woken about, passing {threadId, guidance} (your fix note); bounded attempts, then escalate (see HALTED THREADS)`,
-      `  - mcp__${BRIDGE_SERVER_NAME}__note_cleared_block   — record that you CLEARED a halt by RETRIEVING an existing answer, passing {threadId, reason, evidence} (the source you cited); call BEFORE retry_thread (see HALTED THREADS)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo; optionally born blocked with dependsOn (see CREATE_JOB below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__list_jobs            — list this repo's sibling jobs to discover ids for peer dependencies (see CREATE_JOB below)`,
       `  - mcp__${BRIDGE_SERVER_NAME}__link_job_dependency  — explicitly mark one existing same-repo job as blocked by another`,

@@ -131,8 +131,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     decisions: [decisionItemPayload],
     threads: [threadItemPayload],
   },
-  retry_thread: { threadId: 't1', guidance: 'Try the alternate approach.' },
-  note_cleared_block: { threadId: 't1', reason: 'Creds arrived.', evidence: 'Secret request answered.' },
   start_direct_build: {
     summary: 'Fix the typo in the README.',
     changeOutline: ['Fix typo'],

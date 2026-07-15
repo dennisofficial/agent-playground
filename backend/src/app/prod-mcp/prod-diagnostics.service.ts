@@ -4,6 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 import { EnvService } from '@core/config/env/env.service';
 import { atlasAgentHomeBase } from '../engine/engine-home';
 import type { ChatStimulus } from '../domain/stimulus';
+import { JobBootstrapService } from '../job-bootstrap';
 import {
   DB_CONNECTION,
   MCP_READER_CONNECTION,
@@ -56,6 +57,9 @@ export class ProdDiagnosticsService {
     @Inject(CHAT_SURFACE)
     private readonly surface: ChatSurface,
     private readonly env: EnvService,
+    // Resolves the job's planning-stage thread id — the anchor the approval card row is stamped onto
+    // (`messages.thread_id` is NOT NULL). The @Global JobBootstrapModule supplies it live.
+    private readonly jobBootstrap: JobBootstrapService,
   ) {}
 
   private roots(): ToolRoots {
@@ -169,9 +173,11 @@ export class ProdDiagnosticsService {
         : 'unavailable';
 
     // 1. DURABLE — persist the card row so it survives a restart / is visible on refresh.
+    const threadId = await this.jobBootstrap.planningThreadId(stimulus.jobId);
     await this.messages.save(
       this.messages.create({
         job_id: stimulus.jobId,
+        thread_id: threadId,
         author: 'Atlas',
         author_id: 'atlas',
         author_bot_id: 'atlas',

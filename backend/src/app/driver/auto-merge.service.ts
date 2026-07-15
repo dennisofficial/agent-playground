@@ -1,7 +1,8 @@
-import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity, MessageEntity, RepoEntity } from '../persistence/entities';
 import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
@@ -73,6 +74,10 @@ export class AutoMergeService {
     // class yet at the point this module's decorator runs.
     @Inject(forwardRef(() => DriverStoreService))
     private readonly driverStore: DriverStoreService,
+    // Resolves the job's planning-stage thread id — the anchor the operator note row is stamped onto
+    // (`messages.thread_id` is NOT NULL). @Optional so the positional-construction unit test keeps
+    // compiling; the @Global JobBootstrapModule supplies it live.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /** Brain settled — the AUTO-only extra guard on top of {@link prMergeReady}. MUST include the durable
@@ -226,10 +231,13 @@ export class AutoMergeService {
       where: { job_id: job.id, ts },
     });
     if (existing) return;
+    if (!this.jobBootstrap) throw new Error('auto-merge: JobBootstrapService not wired');
+    const threadId = await this.jobBootstrap.planningThreadId(job.id);
     await this.messages
       .save(
         this.messages.create({
           job_id: job.id,
+          thread_id: threadId,
           author: 'Atlas',
           author_id: 'atlas',
           author_bot_id: 'atlas',

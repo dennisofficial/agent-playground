@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Repository } from 'typeorm';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { MessageEntity, JobSandboxEntity } from '../persistence/entities';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox/sandbox-provider.port';
@@ -56,6 +57,9 @@ export class TurnRecoveryService implements OnModuleDestroy {
     private readonly sandboxRows: Repository<JobSandboxEntity>,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxes: SandboxProvider,
     private readonly turnRegistry: TurnRegistry,
+    // Resolves the job's planning-stage thread id — the anchor recovered brain-lane blocks are stamped
+    // onto (`messages.thread_id` is NOT NULL). The @Global JobBootstrapModule supplies it live.
+    private readonly jobBootstrap: JobBootstrapService,
   ) {}
 
   onModuleDestroy(): void {
@@ -200,7 +204,8 @@ export class TurnRecoveryService implements OnModuleDestroy {
     const lastEndedClean = turns[turns.length - 1].endedClean;
     const recoverable = turns.filter((t, i) => t.endedClean || i < turns.length - 1);
 
-    const inserted = await backfillThreadFromTurns(this.messages, jobId, recoverable);
+    const threadId = await this.jobBootstrap.planningThreadId(jobId);
+    const inserted = await backfillThreadFromTurns(this.messages, jobId, threadId, recoverable);
     if (inserted > 0) this.logger.log(`Turn recovery: back-filled ${inserted} block(s) for thread=${jobId}`);
 
     // `incomplete` keeps the watcher polling until the tail turn completes; otherwise recovered/already.

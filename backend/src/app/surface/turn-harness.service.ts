@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
@@ -5,7 +6,14 @@ import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engi
 import { foldTaskEvent } from '../driver/task-fold';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, MessageEntity, ThreadEntity } from '../persistence/entities';
+import {
+  MessageEntity,
+  StageEntity,
+  SubagentEntity,
+  TaskEntity,
+  type TaskItem,
+  ThreadEntity,
+} from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope, taskScopeForLane } from './thread-registry';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -16,16 +24,23 @@ import { OauthUsageService } from '../onboarding/oauth-usage.service';
  * module (and the cycle that would create). Implemented by {@link MessageBlockSink}.
  */
 export interface BlockSink {
+  /** Returns the written row's `id` (or the existing row's `id`, on an idempotent no-op) so a caller can
+   *  resolve a just-written block's row — e.g. a subagent's spawning anchor's `id` becomes that subagent's
+   *  `subagents.parent_message_id`. */
   appendBlock(
     jobId: string,
     block: {
       kind: string;
+      threadId: string;
       text?: string;
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
       idemKey?: string;
+      /** The subagent this block belongs to (its OWN transcript, not its spawning anchor) — stamped onto
+       *  `messages.subagent_id`. Absent for a block that isn't part of a subagent's own transcript. */
+      subagentId?: string;
     },
-  ): Promise<void>;
+  ): Promise<string | undefined>;
   /**
    * Insert-once by a durable idempotency key: append the block ONLY if no `agent_prompt` row for this
    * job already carries `meta.promptKey === promptKey`. This is what makes the per-turn prompt block
@@ -35,7 +50,7 @@ export interface BlockSink {
   appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void>;
 }
 
@@ -59,41 +74,50 @@ export class MessageBlockSink implements BlockSink {
     jobId: string,
     block: {
       kind: string;
+      threadId: string;
       text?: string;
       meta?: Record<string, unknown> | null;
       createdAt?: Date;
       idemKey?: string;
+      subagentId?: string;
     },
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const row = {
       job_id: jobId,
+      thread_id: block.threadId,
       author: 'Atlas',
       author_id: 'atlas',
       author_bot_id: 'atlas',
       text: block.text ?? '',
       kind: block.kind,
       meta: block.meta ?? null,
+      subagent_id: block.subagentId ?? null,
       engine_git_sha: this.version.sha,
       ...(block.createdAt ? { created_at: block.createdAt } : {}),
     };
     if (block.idemKey) {
       // ON CONFLICT DO NOTHING on the partial unique index `ux_messages_idem_key`: a repeat write of the same
       // `${turn_id}:${ordinal}` (two racing finishers, a redelivery) is a no-op instead of a duplicate row.
-      await this.messages
+      const result = await this.messages
         .createQueryBuilder()
         .insert()
         .values({ ...row, idem_key: block.idemKey } as QueryDeepPartialEntity<MessageEntity>)
         .orIgnore()
         .execute();
-    } else {
-      await this.messages.save(this.messages.create(row));
+      const insertedId = result.identifiers?.[0]?.id as string | undefined;
+      if (insertedId) return insertedId;
+      // A conflict (ON CONFLICT DO NOTHING) may not report an id — look up the existing row by its key.
+      const existing = await this.messages.findOne({ where: { idem_key: block.idemKey }, select: { id: true } });
+      return existing?.id;
     }
+    const saved = await this.messages.save(this.messages.create(row));
+    return saved.id;
   }
 
   async appendBlockOnce(
     jobId: string,
     promptKey: string,
-    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
+    block: { kind: string; threadId: string; text?: string; meta?: Record<string, unknown> | null; createdAt?: Date },
   ): Promise<void> {
     // A job accumulates only a handful of `agent_prompt` rows (one per brain turn / review round / gate
     // iteration / lens), so loading them and filtering by `meta.promptKey` in JS is cheap and avoids
@@ -107,7 +131,7 @@ export class MessageBlockSink implements BlockSink {
     }
     // Stamp the key into meta so the dedup read above finds it on the NEXT call — the single source of
     // truth, whether the caller went through the harness's `emitPrompt` or wrote the block directly.
-    await this.appendBlock(jobId, { ...block, meta: { ...(block.meta ?? {}), promptKey } });
+    await this.appendBlock(jobId, { ...block, threadId: block.threadId, meta: { ...(block.meta ?? {}), promptKey } });
   }
 }
 
@@ -130,14 +154,37 @@ export interface TaskEventSink {
 /** DI token for {@link TaskEventSink}. */
 export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
 
-/** The default {@link TaskEventSink} — read-modify-writes the scope's tasks jsonb column directly. */
+/**
+ * One scope's in-memory fold snapshot — the SDK-id-space {@link TaskItem} list `foldTaskEvent` operates
+ * on (byte-identical to the old jsonb blob's shape), plus the mapping from an SDK-authored task id (the
+ * `#8` parsed out of `"Task #8 created…"`, scoped to ONE engine session) to the durable `tasks` row it
+ * became. The SDK's own task-tool id space is only unique WITHIN a session — reconciling it against a
+ * real table (whose PK is a DB-generated uuid, see `TaskEntity.id`) needs this side-map so a later
+ * `TaskUpdate({taskId: "8"})` in the SAME session finds the row `TaskCreate` produced. Rows preloaded
+ * from the DB (the stage's tasks from an earlier session, e.g. after rotation or a process restart) are
+ * seeded with an identity mapping (their own row id doubles as its "sdk id") — a genuine SDK id never
+ * collides with a uuid, so this is a safe, allocation-free default.
+ */
+interface TaskFoldCache {
+  items: TaskItem[];
+  rowIdBySdkId: Map<string, string>;
+}
+
+/**
+ * The default {@link TaskEventSink} — folds `TaskCreate`/`TaskUpdate` tool events (via the existing
+ * `foldTaskEvent`, unchanged) into an in-memory per-scope snapshot, then reconciles that snapshot against
+ * the stage's durable `tasks` rows (d6) — replacing the old direct read-modify-write of the
+ * `threads.tasks` / `jobs.main_tasks` jsonb blobs those columns used to hold.
+ */
 @Injectable()
 export class EntityTaskEventSink implements TaskEventSink {
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(JobEntity, DB_CONNECTION)
-    private readonly jobs: Repository<JobEntity>,
+    @InjectRepository(StageEntity, DB_CONNECTION)
+    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(TaskEntity, DB_CONNECTION)
+    private readonly tasks: Repository<TaskEntity>,
   ) {}
 
   /**
@@ -149,6 +196,10 @@ export class EntityTaskEventSink implements TaskEventSink {
    */
   private readonly chains = new Map<string, Promise<void>>();
 
+  /** The in-memory fold snapshot per scope key (see {@link TaskFoldCache}) — lazily seeded from the
+   *  stage's current `tasks` rows on this scope's first event since process start. */
+  private readonly cache = new Map<string, TaskFoldCache>();
+
   applyTaskEvent(
     scope: TaskScope,
     toolName: string,
@@ -157,7 +208,7 @@ export class EntityTaskEventSink implements TaskEventSink {
   ): Promise<void> {
     const key = `${scope.kind}:${scope.id}`;
     const run = (this.chains.get(key) ?? Promise.resolve()).then(() =>
-      this.apply(scope, toolName, input, result),
+      this.apply(key, scope, toolName, input, result),
     );
     // Keep the chain alive past a rejection, and drop the map entry once this tail settles (no growth).
     const tail = run.catch(() => undefined).finally(() => {
@@ -167,24 +218,214 @@ export class EntityTaskEventSink implements TaskEventSink {
     return run;
   }
 
+  /** Resolve the stage that owns this scope's shared checklist: a `thread` scope's own `stage_id`, or a
+   *  `main` scope's job's `planning` stage (mirrors `DriverStoreService.planningThreadId`'s lookup). */
+  private async resolveStageId(scope: TaskScope): Promise<{ stageId: string; orgId: string } | null> {
+    if (scope.kind === 'thread') {
+      const thread = await this.threads.findOne({
+        where: { id: scope.id },
+        select: { id: true, stage_id: true, org_id: true },
+      });
+      return thread ? { stageId: thread.stage_id, orgId: thread.org_id } : null;
+    }
+    // scope.kind === 'main' — the job's planning stage owns the brain's own checklist.
+    const stage = await this.stages.findOne({
+      where: { job_id: scope.id, kind: 'planning' },
+      order: { ordinal: 'ASC' },
+      select: { id: true, org_id: true },
+    });
+    return stage ? { stageId: stage.id, orgId: stage.org_id } : null;
+  }
+
+  private async seedCache(key: string, stageId: string): Promise<TaskFoldCache> {
+    const existing = this.cache.get(key);
+    if (existing) return existing;
+    const rows = await this.tasks.find({ where: { stage_id: stageId }, order: { ordinal: 'ASC' } });
+    const rowIdBySdkId = new Map<string, string>();
+    const items = rows.map((row) => {
+      rowIdBySdkId.set(row.id, row.id); // identity seed — see TaskFoldCache's doc comment
+      return toTaskItem(row);
+    });
+    const seeded: TaskFoldCache = { items, rowIdBySdkId };
+    this.cache.set(key, seeded);
+    return seeded;
+  }
+
   private async apply(
+    key: string,
     scope: TaskScope,
     toolName: string,
     input: Record<string, unknown>,
     result: unknown,
   ): Promise<void> {
-    if (scope.kind === 'thread') {
-      const thread = await this.threads.findOne({ where: { id: scope.id } });
-      if (!thread) return;
-      const tasks = foldTaskEvent(thread.tasks ?? [], toolName, input, result);
-      await this.threads.update({ id: scope.id }, { tasks });
-      return;
+    const resolved = await this.resolveStageId(scope);
+    if (!resolved) return;
+    const { stageId, orgId } = resolved;
+    const before = await this.seedCache(key, stageId);
+    const after = foldTaskEvent(before.items, toolName, input, result);
+    if (after === before.items) return; // a read-only task tool (TaskList/TaskGet) — no-op fold
+
+    const rowIdBySdkId = new Map(before.rowIdBySdkId);
+    const beforeById = new Map(before.items.map((t) => [t.id, t]));
+    const afterIds = new Set(after.map((t) => t.id));
+
+    // Resolve an item's DB row id (blockedBy edges reference OTHER items by their sdk/pseudo id) — an
+    // edge that doesn't resolve within this scope's known rows is dropped rather than left dangling.
+    const resolveRowId = (sdkId: string): string | undefined => rowIdBySdkId.get(sdkId);
+
+    // Deletions: an id that fell out of the fold is gone from the checklist (foldTaskEvent's `deleted`
+    // semantics) — remove its row.
+    for (const prev of before.items) {
+      if (afterIds.has(prev.id)) continue;
+      const rowId = resolveRowId(prev.id);
+      if (rowId) await this.tasks.delete({ id: rowId });
+      rowIdBySdkId.delete(prev.id);
     }
-    // scope.kind === 'main' — the brain's own checklist on `jobs.main_tasks`.
-    const job = await this.jobs.findOne({ where: { id: scope.id } });
-    if (!job) return;
-    const main_tasks = foldTaskEvent(job.main_tasks ?? [], toolName, input, result);
-    await this.jobs.update({ id: scope.id }, { main_tasks });
+
+    // Creates + updates, in the fold's own order (its ordinal). Only look up the stage's current max
+    // ordinal when there's at least one genuine create to gap-number — a pure update/delete fold never
+    // touches it.
+    const hasCreate = after.some((item) => !resolveRowId(item.id));
+    let ordinal = hasCreate ? await this.maxTaskOrdinal(stageId) : 0;
+    for (const item of after) {
+      const blockedBy = (item.blockedBy ?? [])
+        .map((b) => resolveRowId(b))
+        .filter((id): id is string => Boolean(id));
+      const prev = beforeById.get(item.id);
+      const rowId = resolveRowId(item.id);
+      if (!rowId) {
+        ordinal += 10;
+        const created = await this.tasks.save(
+          this.tasks.create({
+            stage_id: stageId,
+            org_id: orgId,
+            ordinal,
+            title: item.subject,
+            brief: item.description ?? null,
+            active_form: item.activeForm ?? null,
+            status: item.status,
+            blocked_by: blockedBy,
+          }),
+        );
+        rowIdBySdkId.set(item.id, created.id);
+        continue;
+      }
+      if (
+        !prev ||
+        prev.subject !== item.subject ||
+        prev.status !== item.status ||
+        prev.description !== item.description ||
+        prev.activeForm !== item.activeForm ||
+        JSON.stringify(prev.blockedBy ?? []) !== JSON.stringify(blockedBy)
+      ) {
+        await this.tasks.update(
+          { id: rowId },
+          {
+            title: item.subject,
+            brief: item.description ?? null,
+            active_form: item.activeForm ?? null,
+            status: item.status,
+            blocked_by: blockedBy,
+          },
+        );
+      }
+    }
+
+    this.cache.set(key, { items: after, rowIdBySdkId });
+  }
+
+  private async maxTaskOrdinal(stageId: string): Promise<number> {
+    const row = await this.tasks
+      .createQueryBuilder('t')
+      .select('MAX(t.ordinal)', 'max')
+      .where('t.stage_id = :stageId', { stageId })
+      .getRawOne<{ max: number | null }>();
+    return row?.max ?? 0;
+  }
+}
+
+/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
+ *  `DriverStoreService`'s own copy — kept local to avoid a cross-module dependency on the driver). */
+function toTaskItem(row: TaskEntity): TaskItem {
+  return {
+    id: row.id,
+    subject: row.title,
+    status: row.status as TaskItem['status'],
+    ...(row.brief != null ? { description: row.brief } : {}),
+    ...(row.active_form != null ? { activeForm: row.active_form } : {}),
+    ...(row.blocked_by?.length ? { blockedBy: row.blocked_by } : {}),
+  };
+}
+
+/**
+ * The destination for one subagent's lifecycle row — a narrow port (mirrors {@link BlockSink}) so the
+ * harness can populate `subagents` (d4) WITHOUT a module cycle. Implemented by {@link EntitySubagentStore}.
+ */
+export interface SubagentStore {
+  /**
+   * Insert (or, on a repeat call with the SAME `id`, upsert) one subagent's row. The harness generates
+   * `id` client-side once per spawn and always upserts that SAME id, so a re-drive/re-persist of the same
+   * turn converges instead of duplicating. Best-effort — never throws into the turn.
+   */
+  upsert(input: {
+    id: string;
+    threadId: string;
+    parentMessageId: string;
+    toolUseId: string;
+    agentType: string | null;
+    model: string | null;
+    status: 'running' | 'done' | 'failed';
+    startedAt: Date;
+    endedAt: Date | null;
+  }): Promise<void>;
+}
+
+/** DI token for {@link SubagentStore}. */
+export const SUBAGENT_STORE = Symbol('SUBAGENT_STORE');
+
+/** A no-op {@link SubagentStore} — the constructor default for a call site that builds a
+ *  {@link TurnHarnessFactory} directly (bypassing Nest DI, e.g. an existing test) without one. */
+const NOOP_SUBAGENT_STORE: SubagentStore = { upsert: async () => undefined };
+
+/** The default {@link SubagentStore} — upserts straight into `subagents`. */
+@Injectable()
+export class EntitySubagentStore implements SubagentStore {
+  private readonly logger = new Logger(EntitySubagentStore.name);
+
+  constructor(
+    @InjectRepository(SubagentEntity, DB_CONNECTION)
+    private readonly subagents: Repository<SubagentEntity>,
+  ) {}
+
+  async upsert(input: {
+    id: string;
+    threadId: string;
+    parentMessageId: string;
+    toolUseId: string;
+    agentType: string | null;
+    model: string | null;
+    status: 'running' | 'done' | 'failed';
+    startedAt: Date;
+    endedAt: Date | null;
+  }): Promise<void> {
+    try {
+      await this.subagents.upsert(
+        {
+          id: input.id,
+          thread_id: input.threadId,
+          parent_message_id: input.parentMessageId,
+          tool_use_id: input.toolUseId,
+          agent_type: input.agentType,
+          model: input.model,
+          status: input.status,
+          started_at: input.startedAt,
+          ended_at: input.endedAt,
+        },
+        ['id'],
+      );
+    } catch (err) {
+      this.logger.warn(`subagent upsert failed (ignored): ${err}`);
+    }
   }
 }
 
@@ -233,6 +474,8 @@ export interface TurnHarness {
 export interface TurnHarnessOptions {
   /** The thread whose durable log + live stream this turn writes to. */
   jobId: string;
+  /** The real `threads.id` row every durable block from this turn is stamped onto (NOT NULL on `messages`). */
+  threadId: string;
   /** The org this turn runs under — the key `rate_limit` frames harvest into {@link OauthUsageService}.
    *  Optional: when absent (e.g. an org-less internal turn), rate-limit frames are simply not harvested. */
   orgId?: string;
@@ -273,6 +516,7 @@ export class TurnHarnessFactory {
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
     @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
     private readonly usage: OauthUsageService,
+    @Inject(SUBAGENT_STORE) private readonly subagentStore: SubagentStore = NOOP_SUBAGENT_STORE,
   ) {}
 
   /**
@@ -295,7 +539,7 @@ export class TurnHarnessFactory {
   }
 
   create(options: TurnHarnessOptions): TurnHarness {
-    const { jobId, orgId, channel } = options;
+    const { jobId, orgId, channel, threadId } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
     let persistTurnId = options.turnId;
@@ -309,6 +553,18 @@ export class TurnHarnessFactory {
       emittedAt: Date;
     };
     const blocks: DurableBlock[] = [];
+
+    type PendingSubagent = {
+      id: string;
+      toolUseId: string;
+      agentType: string | null;
+      model: string | null;
+      status: 'running' | 'done' | 'failed';
+      startedAt: Date;
+      endedAt: Date | null;
+    };
+    const subagentsByToolUse = new Map<string, PendingSubagent>();
+
     let lastEmitMs = 0;
     // Strictly-monotonic emission stamps so blocks never tie within a turn (ms granularity); an interleaved
     // mid-turn user message (persisted at its real send time) then sorts correctly against them.
@@ -334,15 +590,40 @@ export class TurnHarnessFactory {
       for (let i = 0; i < blocks.length; i++) {
         const b = blocks[i];
         const idemKey = persistTurnId ? `${persistTurnId}:${i}` : undefined;
-        await this.sink
+        const parentToolUseId = b.meta?.parentToolUseId as string | undefined;
+        const subagentId = parentToolUseId ? subagentsByToolUse.get(parentToolUseId)?.id : undefined;
+        const messageId = await this.sink
           .appendBlock(jobId, {
             kind: b.kind,
+            threadId,
             createdAt: b.emittedAt,
             ...(b.text != null ? { text: b.text } : {}),
             ...(b.meta ? { meta: b.meta } : {}),
             ...(idemKey ? { idemKey } : {}),
+            ...(subagentId ? { subagentId } : {}),
           })
-          .catch((err) => this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`));
+          .catch((err) => {
+            this.logger.warn(`appendBlock failed for thread=${jobId} lane=${lane}: ${err}`);
+            return undefined;
+          });
+
+        // This block IS a subagent's spawning anchor (a tracked Task tool_use) — now that its own message
+        // row is persisted, upsert the `subagents` row with a real `parent_message_id`. Best-effort/
+        // fire-and-forget: never blocks or fails the turn.
+        const pending = b.kind === 'tool' && b.toolId ? subagentsByToolUse.get(b.toolId) : undefined;
+        if (pending && messageId) {
+          void this.subagentStore.upsert({
+            id: pending.id,
+            threadId,
+            parentMessageId: messageId,
+            toolUseId: pending.toolUseId,
+            agentType: pending.agentType,
+            model: pending.model,
+            status: pending.status,
+            startedAt: pending.startedAt,
+            endedAt: pending.endedAt,
+          });
+        }
       }
       this.liveTurns.end(channel, jobId, lane); // fans turn_end + drops the in-flight buffer
     };
@@ -353,6 +634,7 @@ export class TurnHarnessFactory {
         await this.sink
           .appendBlockOnce(jobId, promptKey, {
             kind: 'agent_prompt',
+            threadId,
             text: task,
             // `metaTag` (the lane's peel keys — codexReviewId / phaseId / autofixId) FIRST so the web routes
             // this block into the right sub-lane; `agentPrompt` + `promptKey` mark it + dedup it.
@@ -401,6 +683,22 @@ export class TurnHarnessFactory {
               },
               emittedAt: stamp(),
             });
+            // A subagent SPAWN: a top-level `Task` tool_use (not itself a subagent's own nested Task call — a
+            // subagent spawning a subagent is out of scope). Track it so its children can be tagged with
+            // `subagent_id` and its `subagents` row created once its own anchor message is persisted (persistAll).
+            if (e.name === 'Task' && !e.parentToolUseId) {
+              const rawInput = e.input as { subagent_type?: unknown } | undefined;
+              const agentType = typeof rawInput?.subagent_type === 'string' ? rawInput.subagent_type : null;
+              subagentsByToolUse.set(toolId, {
+                id: randomUUID(),
+                toolUseId: toolId,
+                agentType,
+                model: null,
+                status: 'running',
+                startedAt: new Date(),
+                endedAt: null,
+              });
+            }
             break;
           }
           case 'tool_result': {
@@ -442,6 +740,8 @@ export class TurnHarnessFactory {
             // still shows its context ring + real model after the turn ends. Untagged (main-agent) usage
             // stays live-only — the turn-end `turn_meta` already carries the orchestrator's occupancy.
             if (e.parentToolUseId) {
+              const pendingUsage = subagentsByToolUse.get(e.parentToolUseId);
+              if (pendingUsage && e.contextModel) pendingUsage.model = e.contextModel;
               for (let i = blocks.length - 1; i >= 0; i--) {
                 const b = blocks[i];
                 if (b.kind === 'tool' && b.meta?.id === e.parentToolUseId) {
@@ -453,6 +753,19 @@ export class TurnHarnessFactory {
                   };
                   break;
                 }
+              }
+            }
+            break;
+          }
+          case 'bg_task': {
+            // Settlement of a backgrounded Task SUBAGENT (not a bare bg Bash task, which carries no
+            // `parentToolUseId`). 'stopped' (operator/host cancel) is folded into 'failed' — the subagents
+            // lifecycle is a 3-state (running|done|failed), not a superset of the SDK's task states.
+            if (e.parentToolUseId && (e.status === 'completed' || e.status === 'failed' || e.status === 'stopped')) {
+              const pending = subagentsByToolUse.get(e.parentToolUseId);
+              if (pending) {
+                pending.status = e.status === 'completed' ? 'done' : 'failed';
+                pending.endedAt = new Date();
               }
             }
             break;
@@ -549,6 +862,16 @@ export class TurnHarnessFactory {
               ...(workedMs != null ? { workedMs } : {}),
             },
           });
+        }
+        // Best-effort: a subagent still 'running' when the turn finishes naturally (no explicit bg_task
+        // settlement observed) is treated as done — the engine holds the turn open until backgrounded
+        // subagents settle, so by a natural `finish` they should already be settled; this is a defensive
+        // fallback.
+        for (const pending of subagentsByToolUse.values()) {
+          if (pending.status === 'running') {
+            pending.status = 'done';
+            pending.endedAt = new Date();
+          }
         }
         await persistAll();
       },

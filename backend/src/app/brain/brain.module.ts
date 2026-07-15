@@ -2,13 +2,13 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DecisionGateModule } from '../decision-gate';
 import { GitModule } from '../git';
+import { JobBootstrapModule } from '../job-bootstrap';
 import { MemoryModule } from '../memory';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  CodexReviewEntity,
-  StepEntity,
+  StageEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
@@ -51,16 +51,16 @@ import { TurnRecoveryService } from './turn-recovery.service';
   imports: [
     DecisionGateModule,
     GitModule,
+    JobBootstrapModule,
     MemoryModule,
     StimulusModule,
     TypeOrmModule.forFeature(
       [
         JobEntity,
         MessageEntity,
-        CodexReviewEntity,
+        StageEntity,
         DecisionRecordEntity,
         ThreadEntity,
-        StepEntity,
         StimulusEntity,
         RepoEntity,
         JobSandboxEntity,

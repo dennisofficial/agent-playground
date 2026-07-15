@@ -65,11 +65,43 @@ import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
 import type { EnvService } from '@core/config/env/env.service';
 import { retryResumeNudge } from '../prompt-kit/harness';
+import type { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 
 /** Mirrors the private `TurnDeliveryOpts` shape (not exported) — just enough for the pump tests. */
 interface TurnDeliveryOptsLike {
   onRegistered?: () => void;
 }
+
+const mockJobBootstrap = {
+  planningThreadId: vi.fn(async (jobId: string) => `planning-${jobId}`),
+} as unknown as JobBootstrapService;
+
+const optionalTail = (
+  opts: {
+    env?: EnvService;
+    jit?: JitHostExecutor;
+    liveTurns?: LiveTurnStore;
+  } = {},
+) =>
+  [
+    undefined, // usageProjector
+    opts.env, // env
+    undefined, // conventions
+    undefined, // workspaceProfile
+    undefined, // skills
+    undefined, // skillStore
+    undefined, // skillFiles
+    undefined, // skillInstaller
+    undefined, // mcpStore
+    undefined, // scheduler
+    undefined, // brainGateway
+    undefined, // reattachRegistry
+    opts.jit, // jit
+    undefined, // prodDiagnostics
+    undefined, // repoRows
+    opts.liveTurns, // liveTurns
+    mockJobBootstrap, // jobBootstrap
+  ] as const;
 
 /**
  * R3 GATE TESTS — two assertions:
@@ -597,19 +629,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
-      undefined, // usageProjector
-      undefined, // env
-      undefined, // conventions
-      undefined, // workspaceProfile
-      undefined, // skills
-      undefined, // skillStore
-      undefined, // skillFiles
-      undefined, // skillInstaller
-      undefined, // mcpStore
-      undefined, // scheduler
-      undefined, // brainGateway
-      undefined, // reattachRegistry
-      mockJit, // jit
+      ...optionalTail({ jit: mockJit }),
     );
   });
 
@@ -3262,474 +3282,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(withdrawOrder).toBeLessThan(cancelOrder);
   });
 
-  // ── ADR 0004 Phase 3 — retry_thread tool + notifyThreadHalted wake ───────────────────────────────
-  describe('ADR 0004 Phase 3 — halt wake + bounded fix', () => {
-    const fn = (m: unknown) => m as ReturnType<typeof vi.fn>;
-
-    it('retry_thread delegates to redriveThread (which owns budget+validation) with the cap + guidance', async () => {
-      fn(mockDispatcher.redriveThread).mockResolvedValue({
-        ok: true,
-        attempt: 1,
-      });
-      const tools = manager.buildTools(fakeStimulus);
-      const r = (await tools['retry_thread']({
-        threadId: 'th-x',
-        guidance: 'return JSON',
-      })) as {
-        ok?: boolean;
-        attempt?: number;
-        message?: string;
-      };
-      // The cap (HALT_FIX_ATTEMPT_CAP=2) is passed so the DRIVER claims budget only when it will re-drive.
-      // The judge-cap PROMOTION lives inside redriveThread (a judge_unavailable thread gets the higher cap
-      // there), so the brain still hands over the defect cap here — and its success message no longer hardcodes
-      // `/2`, which would misreport the budget for a judge hold.
-      expect(mockDispatcher.redriveThread).toHaveBeenCalledWith(
-        THREAD_ID,
-        'th-x',
-        'return JSON',
-        2,
-      );
-      expect(r.ok).toBe(true);
-      expect(r.attempt).toBe(1);
-      expect(r.message).toContain('attempt 1');
-      expect(r.message).not.toContain('/2');
-    });
-
-    it('retry_thread escalates when redriveThread refuses (budget exhausted / active / wrong job)', async () => {
-      fn(mockDispatcher.redriveThread).mockResolvedValue({
-        ok: false,
-        reason: 're-drive budget exhausted (2/2)',
-      });
-      const tools = manager.buildTools(fakeStimulus);
-      const r = (await tools['retry_thread']({
-        threadId: 'th-x',
-        guidance: 'again',
-      })) as {
-        ok?: boolean;
-        reason?: string;
-      };
-      expect(r.ok).toBe(false);
-      expect(r.reason).toMatch(/budget exhausted|escalate/i);
-    });
-
-    it('retry_thread requires a threadId (never touches the driver)', async () => {
-      const tools = manager.buildTools(fakeStimulus);
-      const r = (await tools['retry_thread']({ guidance: 'x' })) as {
-        ok?: boolean;
-      };
-      expect(r.ok).toBe(false);
-      expect(mockDispatcher.redriveThread).not.toHaveBeenCalled();
-    });
-
-    it('notifyThreadHalted wakes the brain with a TRUSTED seed carrying seedHaltWake + the fenced record', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'response format',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'blocked',
-        summary: 'response format undecided',
-        blocked: { reason: 'decision', detail: 'JSON vs plain text' },
-      });
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
-
-      expect(spy).toHaveBeenCalledTimes(1);
-      const stim = spy.mock.calls[0][0];
-      expect(stim.trust).toBe('trusted'); // NOT the untrusted event lane
-      expect(stim.seed).toBe(true);
-      expect(stim.seedHaltWake).toEqual({ threadId: 'th-x', gen: 3 });
-      // Trusted framing OUTSIDE the fence, the model-authored record fenced INSIDE:
-      expect(stim.body).toContain('build thread'); // framing
-      expect(stim.body).toContain('retry_thread'); // the fix instruction
-      expect(stim.body).toContain('JSON vs plain text'); // the record detail…
-      expect(stim.body).toContain('<untrusted'); // …fenced as data (the <untrusted> tag)
-      // The seed row's trusted framing is carried SEPARATELY from the fenced record (`label`) — the
-      // untrusted pill's `fullBody` must never absorb the whole framed+fenced engine body.
-      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
-      expect(seedRow.kind).toBe('untrusted');
-      expect(seedRow.framing).toBeTruthy();
-      expect(seedRow.framing).toContain('retry_thread');
-      expect(seedRow.label).not.toContain(seedRow.framing as string);
-      spy.mockRestore();
-    });
-
-    it('notifyThreadHalted re-keys all undelivered build-lane host seeds onto the main lane, including leased ones', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({ id: 'job1', orgId: 'org1', repoId: 'repo1' });
-      fn(mockDriverStore.getThread).mockResolvedValue({ id: 'th-x', ordinal: 10, brief: 'response format' });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'blocked',
-        summary: 'response format undecided',
-        blocked: { reason: 'decision', detail: 'JSON vs plain text' },
-      });
-      // A still-undelivered host seed on the halting thread's build lane (`thread:th-x`) must be re-keyed
-      // onto `main` — NOT stamped delivered, NOT appended to the wake body — so a dropped wake (draining /
-      // blocked job) can't lose it: the brain's main pump/sweep re-drives it at-least-once.
-      const store = (manager as unknown as {
-        stimulusStore: {
-          undeliveredChatForLane: (j: string, lane: string) => Promise<Array<{ id: string; body: string }>>;
-          rekeyLaneToMain: (id: string, labeledBody: string) => Promise<void>;
-          markChatDelivered: (id: string) => Promise<void>;
-        };
-      }).stimulusStore;
-      const rekeyed: Array<{ id: string; labeledBody: string }> = [];
-      const stamped: string[] = [];
-      store.undeliveredChatForLane = async (_j, lane) =>
-        lane === 'thread:th-x' ? [{ id: 'seed-1', body: 'leftover host seed body' }] : [];
-      store.rekeyLaneToMain = async (id, labeledBody) => {
-        rekeyed.push({ id, labeledBody });
-      };
-      store.markChatDelivered = async (id) => {
-        stamped.push(id);
-      };
-      const spy = vi.spyOn(manager, 'handleChatTurn').mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 3);
-
-      expect(rekeyed).toHaveLength(1);
-      expect(rekeyed[0].id).toBe('seed-1');
-      expect(rekeyed[0].labeledBody).toContain('Undelivered host seed from build thread th-x'); // origin label
-      expect(rekeyed[0].labeledBody).toContain('leftover host seed body'); // original body preserved
-      expect(stamped).toHaveLength(0); // never speculatively stamped delivered
-
-      const stim = spy.mock.calls[0][0] as ChatStimulus;
-      expect(stim.body).not.toContain('leftover host seed body'); // wake body stays untouched
-      spy.mockRestore();
-    });
-
-    it('notifyThreadHalted carries the transcript anchor (atlas-tx line + Leg) resolved from steps/legs', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'response format',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'blocked',
-        summary: 'blocked on a missing secret',
-        blocked: { reason: 'needs_env', detail: 'no API key' },
-      });
-      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({
-        sessionId: 'sess-abc',
-        legOrdinal: 2,
-      });
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 1);
-
-      const stim = spy.mock.calls[0][0];
-      expect(stim.body).toContain('atlas-tx show sess-abc');
-      expect(stim.body).toContain('session sess-abc');
-      expect(stim.body).toContain('Leg 2');
-      // The forensic orientation bullet appears in the framing.
-      expect(stim.body).toMatch(/READ THE HALTED LANE'S OWN TRANSCRIPT/);
-      // The d2 autonomy boundary is stated explicitly.
-      expect(stim.body).toMatch(
-        /may NOT edit\/push code or ship without the operator/,
-      );
-      spy.mockRestore();
-    });
-
-    it('notifyThreadHalted still carries the transcript anchor for an INCOMPLETE halt (null terminal record)', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'ran out of budget',
-      });
-      // The `incomplete` class ends WITHOUT a terminal record — the anchor must come from steps/legs, not term.
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue(null);
-      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({
-        sessionId: 'sess-inc',
-      });
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('job1', 'th-x', 'incomplete', 0);
-
-      const stim = spy.mock.calls[0][0];
-      expect(stim.body).toContain('atlas-tx show sess-inc');
-      expect(stim.body).toContain('no terminal record');
-      spy.mockRestore();
-    });
-
-    it('notifyThreadHalted is a no-op when the thread already shipped (record already done)', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'o',
-        repoId: 'r',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 20,
-        brief: 'shipped thread',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'done',
-        summary: 'shipped',
-      });
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('job1', 'th-x', 'blocked', 0);
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
-    });
-
-    it('notifyThreadHalted is a no-op when the job is gone', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue(null);
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadHalted('gone', 'th-x', 'blocked', 0);
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
-    });
-  });
-
-  // ── Decision d1 — selective completion wake (FINAL + NOTABLE), mirrors the halt wake above ─────────
-  describe('decision d1 — completion wake (final + notable)', () => {
-    const fn = (m: unknown) => m as ReturnType<typeof vi.fn>;
-
-    it('renderDoneDelivery states the d2 autonomy boundary + the atlas-tx pointer for BOTH reasons', () => {
-      const thread = { id: 'th-x', ordinal: 10, brief: 'response format' };
-      const anchor = { sessionId: 'sess-final', legOrdinal: 2 };
-      const term = { status: 'done' as const, summary: 'shipped cleanly' };
-
-      const finalBody = renderDoneDelivery(thread, 'final', term, anchor);
-      expect(finalBody).toMatch(
-        /may NOT edit\/push code or ship without the operator/,
-      );
-      expect(finalBody).toMatch(/Ship it/);
-      expect(finalBody).toContain('atlas-tx');
-      // final ALSO triggers the ship-gate live-preview offer (the "Spin up preview" button prep)
-      expect(finalBody).toMatch(/offer the operator a live preview/);
-      expect(finalBody).toContain('Spin up preview');
-      // final tells the brain to free the RAM the builders/master review left behind (backstop to the
-      // deterministic per-thread driver teardown)
-      expect(finalBody).toContain('atlas-svc stop-all');
-
-      const notableBody = renderDoneDelivery(thread, 'notable', term, anchor);
-      expect(notableBody).toMatch(
-        /may NOT edit\/push code or ship without the operator/,
-      );
-      expect(notableBody).toContain('atlas-tx show sess-final --errors');
-      // notable does NOT carry the preview offer — that is a ship-gate concern only
-      expect(notableBody).not.toMatch(/offer the operator a live preview/);
-      expect(notableBody).not.toContain('LIVE PREVIEW AT THE SHIP GATE');
-      // notable is a single-lane wake, not the whole-build parking — no fleet teardown instruction
-      expect(notableBody).not.toContain('atlas-svc stop-all');
-    });
-
-    it('renderDoneDelivery (final) surfaces the master-review summary + per-thread gaps', () => {
-      const thread = { id: 'th-final', ordinal: 99, brief: 'master review' };
-      const term = {
-        status: 'done' as const,
-        summary: 'all lanes reviewed, no blockers',
-      };
-      const body = renderDoneDelivery(thread, 'final', term, undefined, [
-        { brief: 'Backend — auth', gaps: ['rate limiting not load-tested'] },
-      ]);
-      expect(body).toContain('all lanes reviewed, no blockers');
-      expect(body).toContain('Backend — auth');
-      expect(body).toContain('rate limiting not load-tested');
-      expect(body).toMatch(/Ship it/);
-    });
-
-    it('doneRecordBody projects summary + gaps + the transcript line (mirrors haltRecordBody)', () => {
-      const term = {
-        status: 'done' as const,
-        summary: 'done with a caveat',
-        gaps: ['auth edge case unverified'],
-      };
-      const projection = doneRecordBody(term, {
-        sessionId: 'sess-1',
-        legOrdinal: 3,
-      });
-      expect(projection).toContain('summary: done with a caveat');
-      expect(projection).toContain('gaps:\n- auth edge case unverified');
-      expect(projection).toContain('atlas-tx show sess-1 --errors');
-      expect(projection).toContain('Leg 3');
-    });
-
-    it('notifyThreadDone wakes the brain with a TRUSTED seed carrying seedDoneWake + the fenced record (notable)', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'auth lane',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'done',
-        summary: 'done, but left a gap',
-        gaps: ['rate limiting not load-tested'],
-      });
-      fn(mockDriverStore.resolveSessionAnchor).mockResolvedValue({
-        sessionId: 'sess-notable',
-      });
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadDone('job1', 'th-x', 'notable');
-
-      expect(spy).toHaveBeenCalledTimes(1);
-      const stim = spy.mock.calls[0][0];
-      expect(stim.trust).toBe('trusted');
-      expect(stim.seed).toBe(true);
-      expect(stim.seedDoneWake).toEqual({
-        threadId: 'th-x',
-        reason: 'notable',
-        gen: 1,
-      });
-      expect(stim.body).toContain('<untrusted');
-      expect(stim.body).toContain('rate limiting not load-tested');
-      expect(stim.body).toMatch(
-        /may NOT edit\/push code or ship without the operator/,
-      );
-      // The seed row's trusted framing rides separately from the fenced (untrusted) record `label`.
-      const seedRow = stim.seedRow as Extract<ChatStimulus['seedRow'], object>;
-      expect(seedRow.kind).toBe('untrusted');
-      expect(seedRow.framing).toBeTruthy();
-      expect(seedRow.framing).toMatch(
-        /may NOT edit\/push code or ship without the operator/,
-      );
-      expect(seedRow.label).not.toContain(seedRow.framing as string);
-      spy.mockRestore();
-    });
-
-    it('notifyThreadDone (final) gathers per-thread gaps across the job for the master-review carrier', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-mr',
-        ordinal: 99,
-        brief: 'master review',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockImplementation((id: string) =>
-        Promise.resolve(
-          id === 'th-mr'
-            ? { status: 'done', summary: 'build reviewed and clean' }
-            : { status: 'done', summary: 'ok', gaps: ['left a TODO'] },
-        ),
-      );
-      fn(mockDriverStore.threadsForJob).mockResolvedValue([
-        { id: 'th-mr', ordinal: 99, brief: 'master review' },
-        { id: 'th-a', ordinal: 10, brief: 'Backend — auth' },
-      ]);
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadDone('job1', 'th-mr', 'final');
-
-      const stim = spy.mock.calls[0][0];
-      expect(stim.seedDoneWake).toEqual({
-        threadId: 'th-mr',
-        reason: 'final',
-        gen: 1,
-      });
-      expect(stim.body).toContain('build reviewed and clean');
-      expect(stim.body).toContain('Backend — auth');
-      expect(stim.body).toContain('left a TODO');
-      spy.mockRestore();
-    });
-
-    it('notifyThreadDone is a no-op when the job is gone', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue(null);
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadDone('gone', 'th-x', 'notable');
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
-    });
-
-    it('notifyThreadDone claims a gen and supersedes prior partials before delivering', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'auth lane',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'done',
-        summary: 'ok',
-      });
-      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(3);
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadDone('job1', 'th-x', 'notable');
-
-      expect(mockDriverStore.claimDoneWakeGen).toHaveBeenCalledWith('th-x');
-      expect(mockDriverStore.supersedeDoneWakeMessages).toHaveBeenCalledWith(
-        'job1',
-        'th-x',
-        3,
-      );
-      const stim = spy.mock.calls[0][0];
-      expect(stim.seedDoneWake).toEqual({
-        threadId: 'th-x',
-        reason: 'notable',
-        gen: 3,
-      });
-      spy.mockRestore();
-    });
-
-    it('notifyThreadDone no-ops (no delivery) when the wake is no longer owed (claim returns null)', async () => {
-      fn(mockDriverStore.loadJob).mockResolvedValue({
-        id: 'job1',
-        orgId: 'org1',
-        repoId: 'repo1',
-      });
-      fn(mockDriverStore.getThread).mockResolvedValue({
-        id: 'th-x',
-        ordinal: 10,
-        brief: 'auth lane',
-      });
-      fn(mockDriverStore.getTerminalRecord).mockResolvedValue({
-        status: 'done',
-        summary: 'ok',
-      });
-      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(null); // already delivered by a racing sweep
-      const spy = vi
-        .spyOn(manager, 'handleChatTurn')
-        .mockResolvedValue(undefined);
-      await manager.notifyThreadDone('job1', 'th-x', 'notable');
-
-      expect(mockDriverStore.supersedeDoneWakeMessages).not.toHaveBeenCalled();
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
-      fn(mockDriverStore.claimDoneWakeGen).mockResolvedValue(1); // restore default for later tests
-    });
-  });
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
@@ -3944,26 +3496,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
-      // The remaining tail params (usageProjector, env, conventions, workspaceProfile, skills, skillStore,
-      // skillFiles, skillInstaller, mcpStore, scheduler, brainGateway, reattachRegistry, jit,
-      // prodDiagnostics, repoRows) are all @Optional — omitted (undefined) except the LAST, `liveTurns`,
-      // which the host-retry backstop tests need to assert on.
-      undefined, // usageProjector
-      undefined, // env
-      undefined, // conventions
-      undefined, // workspaceProfile
-      undefined, // skills
-      undefined, // skillStore
-      undefined, // skillFiles
-      undefined, // skillInstaller
-      undefined, // mcpStore
-      undefined, // scheduler
-      undefined, // brainGateway
-      undefined, // reattachRegistry
-      undefined, // jit
-      undefined, // prodDiagnostics
-      undefined, // repoRows
-      liveTurns,
+      ...optionalTail({ liveTurns }),
     );
     return {
       manager,
@@ -5373,6 +4906,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return { manager, store };
   }
@@ -5586,6 +5120,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return { manager, store, lifecycle, ship, repos };
   }
@@ -5716,6 +5251,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
       { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
+      ...optionalTail(),
     );
     return {
       manager,
@@ -5968,6 +5504,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
+      ...optionalTail(),
     );
     return {
       manager,
@@ -6253,6 +5790,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         { register: () => undefined } as never, // threadInput (29)
         { judge: async () => undefined } as never, // liveVerificationJudge (30)
         { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        ...optionalTail(),
       );
       // The nudge would otherwise run a real engine turn — stub it; we assert on the stimulus it receives.
       const handleChatTurn = vi
@@ -6432,8 +5970,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       { register: () => undefined } as never, // threadInput (ThreadInputService)
       {} as unknown as LiveVerificationJudge,
       { getResetAt: () => undefined } as unknown as OauthUsageService,
-      undefined, // usageProjector
-      env,
+      ...optionalTail({ env }),
     );
     return manager as unknown as {
       buildMemoryRecallPrefix(

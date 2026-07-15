@@ -250,18 +250,37 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      await threads.save(
-        threads.create({
-          job_id: job.id,
-          org_id: ORG_ID,
-          kind: 'builder',
-          ordinal: 10,
-          brief: 'Backend — stream-closed self-heal',
-          status: 'pending',
-          condition: 'none',
-          decision_record_id: record.id,
-        }),
-      );
+      // Every job carries one planning stage-thread at job start — the anchor job-level operator notices are
+      // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
+      const planningStage = await store.createStage({
+        jobId: job.id,
+        orgId: ORG_ID,
+        kind: 'planning',
+        title: 'Planning',
+      });
+      await store.createThreadInStage({
+        stageId: planningStage.id,
+        jobId: job.id,
+        orgId: ORG_ID,
+        role: 'planning',
+        ordinal: 0,
+        brief: 'Main',
+      });
+      const stage = await store.createStage({
+        jobId: job.id,
+        orgId: ORG_ID,
+        kind: 'build',
+        title: 'Backend',
+        decisionRecordId: record.id,
+      });
+      await store.createThreadInStage({
+        stageId: stage.id,
+        jobId: job.id,
+        orgId: ORG_ID,
+        role: 'builder',
+        ordinal: 10,
+        brief: 'Backend — stream-closed self-heal',
+      });
 
       // ── assemble the real driver ────────────────────────────────────────────────────────────────────
       const { turn, calls } = makeStreamClosedTurn();
@@ -387,9 +406,16 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         judge,
         staticJudge,
         taskSink,
-        undefined,
-        undefined,
-        undefined,
+        undefined, // exposure
+        undefined, // conventions
+        undefined, // claudeCreds
+        undefined, // configStore
+        undefined, // stimulusStore
+        undefined, // jit
+        {
+          planningThreadId: async (jid: string) =>
+            (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+        } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
       // Spy on the REAL store's setJobHalt so we can assert a `failed` halt was NEVER stamped, while the
@@ -433,7 +459,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       expect(finalRow.halt).toBeNull();
       expect(finalRow.pr_url).toBeTruthy();
 
-      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, kind: 'builder' } });
+      const threadRow = await threads.findOneOrFail({ where: { job_id: job.id, role: 'builder' } });
       expect(threadRow.status).toBe('done');
     },
     90_000,

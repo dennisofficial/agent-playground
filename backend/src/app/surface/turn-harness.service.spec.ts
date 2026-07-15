@@ -4,6 +4,7 @@ import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import {
   type BlockSink,
   EntityTaskEventSink,
+  type SubagentStore,
   type TaskEventSink,
   TurnHarnessFactory,
 } from './turn-harness.service';
@@ -15,10 +16,14 @@ import {
  */
 function setup() {
   const live = new LiveTurnStore();
-  const persisted: Array<{ jobId: string; block: { kind: string; text?: string; meta?: Record<string, unknown> | null } }> = [];
+  const persisted: Array<{
+    jobId: string;
+    block: { kind: string; text?: string; meta?: Record<string, unknown> | null; subagentId?: string };
+  }> = [];
   const sink: BlockSink = {
     appendBlock: vi.fn(async (jobId, block) => {
       persisted.push({ jobId, block });
+      return `msg-${persisted.length - 1}`;
     }),
     appendBlockOnce: vi.fn(async (jobId, promptKey, block) => {
       // Mirror MessageBlockSink: skip if an agent_prompt row already carries this key; else stamp it in.
@@ -34,13 +39,26 @@ function setup() {
   };
   const taskSink: TaskEventSink = { applyTaskEvent: vi.fn(async () => undefined) };
   const usage = { applyHarvest: vi.fn().mockResolvedValue(undefined) } as unknown as OauthUsageService;
-  return { live, persisted, taskSink, factory: new TurnHarnessFactory(live, sink, taskSink, usage) };
+  const subagentUpserts: Array<Parameters<SubagentStore['upsert']>[0]> = [];
+  const subagentStore: SubagentStore = {
+    upsert: vi.fn(async (input) => {
+      subagentUpserts.push(input);
+    }),
+  };
+  return {
+    live,
+    persisted,
+    taskSink,
+    subagentStore,
+    subagentUpserts,
+    factory: new TurnHarnessFactory(live, sink, taskSink, usage, subagentStore),
+  };
 }
 
 describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('finish: streams live then persists authoritative blocks tagged with the role metaTag, and ends the lane', async () => {
     const { live, persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1', batchOrdinal: 2 } });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1', batchOrdinal: 2 } });
     h.onEvent({ kind: 'thinking', text: 'plan' });
     h.onEvent({ kind: 'text', text: 'hi' });
     h.onEvent({ kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a' } });
@@ -84,7 +102,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('usage: a subagent-tagged occupancy stamps its anchor Task block; a main-agent one does not', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'main' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R', lane: 'main' });
     // The orchestrator spawns a subagent (the Task anchor, meta.id === 'task-1').
     h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
     // Two subagent round-trips report their OWN occupancy — the LAST wins on the durable anchor.
@@ -104,7 +122,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('emitPrompt: persists an agent_prompt block tagged with the lane metaTag + promptKey, and dedups by key', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'codex-review:T', metaTag: { codexReviewId: 'T' } });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R', lane: 'codex-review:T', metaTag: { codexReviewId: 'T' } });
     await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
     // A second emit with the SAME key is a no-op (survives restart/re-kick/re-drive).
     await h.emitPrompt('review THIS plan', 'codex:T:0', { reviewRound: 0 });
@@ -122,14 +140,14 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('emitPrompt: an empty/whitespace task writes nothing', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     await h.emitPrompt('   ', 'brain:s1');
     expect(persisted).toHaveLength(0);
   });
 
   it('abort: persists partials, ends the lane, is idempotent, and drops late events', async () => {
     const { live, persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
     h.onEvent({ kind: 'text', text: 'partial' });
     await h.abort();
 
@@ -146,7 +164,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('discard: ends the lane but persists NOTHING (the partial will be re-delivered in full)', async () => {
     const { live, persisted, factory } = setup();
     const h = factory.create({
-      jobId: 'T',
+      jobId: 'T', threadId: 'th1',
       channel: 'R',
       lane: 'main',
       metaTag: { doneWakeGen: 2, doneWakeThreadId: 'th-x' },
@@ -168,7 +186,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('metaTag doneWakeGen/doneWakeThreadId tags every completion-wake block (chat/thinking/tool)', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({
-      jobId: 'T',
+      jobId: 'T', threadId: 'th1',
       channel: 'R',
       lane: 'main',
       metaTag: { doneWakeGen: 3, doneWakeThreadId: 'th-mr' },
@@ -189,7 +207,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('brain lane (no metaTag): blocks carry no phase tag; a subagent block keeps its parentToolUseId', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R' }); // default `main` lane, no metaTag
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' }); // default `main` lane, no metaTag
     h.onEvent({ kind: 'text', text: 'brain' });
     h.onEvent({ kind: 'text', text: 'sub', parentToolUseId: 'tu1' });
     await h.finish();
@@ -200,7 +218,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish turn_meta: appends a turn_meta block LAST carrying usage + context occupancy when usage is given', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply', {
       usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 1100, costUsd: 0.02, model: 'claude-opus-4-8' },
@@ -223,7 +241,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   it('finish turn_meta: carries no workedMs when the turn pushed no events (no live start captured)', async () => {
     const { persisted, factory } = setup();
     // No `onEvent` at all → no live turn state → `snapshot` is null → duration is simply omitted.
-    const h = factory.create({ jobId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     await h.finish('reply', {
       usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, model: 'claude-opus-4-8' },
     });
@@ -233,7 +251,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish turn_meta: persists engine diagnostics from turn_debug even without usage', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     h.onEvent({ kind: 'text', text: 'reply' });
     h.onEvent({ kind: 'turn_debug', terminalReason: 'completed', stopReason: 'end_turn' });
     h.onEvent({ kind: 'turn_debug', streamClosedCount: 2 });
@@ -249,7 +267,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish without usage: no turn_meta block is written', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R' });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply');
     expect(persisted.map((p) => p.block.kind)).toEqual(['chat']);
@@ -257,7 +275,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
   it('finish text fallback: a turn that emitted no text persists the final report as a chat block', async () => {
     const { persisted, factory } = setup();
-    const h = factory.create({ jobId: 'T', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R', lane: 'phase:s1', metaTag: { phaseId: 's1' } });
     h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: {} });
     h.onEvent({ kind: 'tool_result', id: 't1', result: 'done' });
     await h.finish('summary report');
@@ -269,7 +287,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   describe('task-event capture (LLM-authored task list)', () => {
     it('folds TaskCreate on the stable thread:<id> lane into thread scope', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'thread:TH1', metaTag: { phaseId: 's1' } });
+      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R', lane: 'thread:TH1', metaTag: { phaseId: 's1' } });
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskCreate', input: { subject: 'Do the thing' } });
       h.onEvent({ kind: 'tool_result', id: 't1', result: { task: { id: 'tsk1' } } });
       await h.finish();
@@ -284,7 +302,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
     it('does NOT fold tasks on an autofix:* lane (not a task-tracked session)', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'autofix:AF1:fix' });
+      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R', lane: 'autofix:AF1:fix' });
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskUpdate', input: { taskId: 'tsk1', status: 'completed' } });
       h.onEvent({ kind: 'tool_result', id: 't1', result: {} });
       await h.finish();
@@ -294,7 +312,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
     it('ignores a subagent’s own TaskCreate (parentToolUseId set)', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'thread:TH1' });
+      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R', lane: 'thread:TH1' });
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskCreate', input: { subject: 'x' }, parentToolUseId: 'tu1' });
       h.onEvent({ kind: 'tool_result', id: 't1', result: { task: { id: 'tsk1' } } });
       await h.finish();
@@ -304,7 +322,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
     it('folds TaskCreate on the default main lane into main scope (the brain’s own checklist)', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R' }); // default `main` lane
+      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R' }); // default `main` lane
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskCreate', input: { subject: 'Draft the plan' } });
       h.onEvent({ kind: 'tool_result', id: 't1', result: { task: { id: 'tsk1' } } });
       await h.finish();
@@ -320,7 +338,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     it('ignores task tool calls on lanes that are not task-tracked (phase, autofix, subagent)', async () => {
       const { taskSink, factory } = setup();
       for (const lane of ['phase:s1', 'autofix:J:correctness', 'subagent:tu1']) {
-        const h = factory.create({ jobId: 'J', channel: 'R', lane });
+        const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R', lane });
         h.onEvent({ kind: 'tool_use', id: 't1', name: 'TaskCreate', input: { subject: 'x' } });
         h.onEvent({ kind: 'tool_result', id: 't1', result: { task: { id: 'tsk1' } } });
         await h.finish();
@@ -330,7 +348,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
 
     it('ignores non-task tool calls even on a task-tracked lane', async () => {
       const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', channel: 'R', lane: 'thread:TH1' });
+      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R', lane: 'thread:TH1' });
       h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } });
       h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
       await h.finish();
@@ -338,28 +356,101 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
     });
   });
+
+  describe('subagent tracking (d4)', () => {
+    it('a spawned Task upserts a subagents row on finish, and tags its child blocks with the same subagent_id', async () => {
+      const { persisted, subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      h.onEvent({ kind: 'text', text: 'exploring…', parentToolUseId: 'task-1' });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0]).toMatchObject({ agentType: 'explore', status: 'done', threadId: 'th1' });
+      expect(subagentUpserts[0].parentMessageId).toBeTruthy();
+
+      const child = persisted.find((p) => p.block.kind === 'chat')!;
+      expect(child.block.subagentId).toBe(subagentUpserts[0].id);
+
+      const anchor = persisted.find((p) => p.block.kind === 'tool')!;
+      expect(anchor.block.subagentId).toBeUndefined();
+    });
+
+    it('an explicit bg_task settlement before finish wins over the finish-sweep', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'implement' } });
+      h.onEvent({ kind: 'bg_task', status: 'failed', parentToolUseId: 'task-1' });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].status).toBe('failed');
+    });
+
+    it('abort leaves a still-running subagent as running (no fabricated completion)', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      await h.abort();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].status).toBe('running');
+    });
+
+    it('resolves the eventual model from the LATEST subagent-tagged usage frame', async () => {
+      const { subagentUpserts, factory } = setup();
+      const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+      h.onEvent({ kind: 'tool_use', id: 'task-1', name: 'Task', input: { subagent_type: 'explore' } });
+      h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 5_000, contextModel: 'claude-sonnet-5', contextLimit: 1_000_000 });
+      h.onEvent({ kind: 'usage', parentToolUseId: 'task-1', contextTokens: 9_000, contextModel: 'claude-opus-4-8', contextLimit: 1_000_000 });
+      await h.finish();
+
+      expect(subagentUpserts).toHaveLength(1);
+      expect(subagentUpserts[0].model).toBe('claude-opus-4-8');
+    });
+  });
 });
 
 describe('EntityTaskEventSink — the per-scope task fold writer', () => {
+  /** A minimal in-memory `tasks` table stand-in, keyed by row id. */
+  function fakeTasksRepo(seed: Array<{ id: string; title: string; status: string; blocked_by?: string[] }>) {
+    const rows = new Map(seed.map((r) => [r.id, { org_id: 'O', ordinal: 10, brief: null, active_form: null, blocked_by: [], ...r }]));
+    let nextId = 100;
+    return {
+      rows,
+      find: vi.fn(async () => [...rows.values()]),
+      create: vi.fn((partial: Record<string, unknown>) => ({ ...partial })),
+      save: vi.fn(async (partial: Record<string, unknown>) => {
+        const id = String(nextId++);
+        const row = { id, ...partial } as { id: string };
+        rows.set(id, row as never);
+        return row;
+      }),
+      update: vi.fn(async (where: { id: string }, patch: Record<string, unknown>) => {
+        const row = rows.get(where.id);
+        if (row) rows.set(where.id, { ...row, ...patch });
+      }),
+      delete: vi.fn(async (where: { id: string }) => {
+        rows.delete(where.id);
+      }),
+      createQueryBuilder: () => ({
+        select: () => ({
+          where: () => ({ getRawOne: async () => ({ max: 10 }) }),
+        }),
+      }),
+    };
+  }
+
   it('serializes concurrent folds on one scope so a batch of updates never loses a write', async () => {
     // A batch turn fires task events fire-and-forget; unserialized, both folds read the same snapshot
     // and the second write erases the first's change (live-observed as "deleted tasks still showing").
-    let row: { id: string; tasks: unknown[]; main_tasks: Array<{ id: string; subject: string; status: string }> } = {
-      id: 'J',
-      tasks: [],
-      main_tasks: [
-        { id: '1', subject: 'a', status: 'pending' },
-        { id: '2', subject: 'b', status: 'pending' },
-      ],
-    };
-    const jobs = {
-      findOne: vi.fn(async () => ({ ...row, main_tasks: [...row.main_tasks] })),
-      update: vi.fn(async (_where: unknown, patch: Record<string, unknown>) => {
-        row = { ...row, ...(patch as Partial<typeof row>) };
-      }),
-    };
-    const threads = { findOne: vi.fn(), update: vi.fn() };
-    const sink = new EntityTaskEventSink(threads as never, jobs as never);
+    const tasks = fakeTasksRepo([
+      { id: '1', title: 'a', status: 'pending' },
+      { id: '2', title: 'b', status: 'pending' },
+    ]);
+    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threads = { findOne: vi.fn() };
+    const sink = new EntityTaskEventSink(threads as never, stages as never, tasks as never);
 
     await Promise.all([
       sink.applyTaskEvent({ kind: 'main', id: 'J' }, 'taskupdate', { taskId: '1', status: 'deleted' }, {}),
@@ -367,6 +458,23 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
     ]);
 
     // Deletes REMOVE tasks; without serialization one of the two removals is lost.
-    expect(row.main_tasks).toEqual([]);
+    expect([...tasks.rows.keys()]).toEqual([]);
+  });
+
+  it('creates a row for a TaskCreate then updates the SAME row on a later TaskUpdate by its SDK id', async () => {
+    const tasks = fakeTasksRepo([]);
+    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threads = { findOne: vi.fn(async () => ({ id: 'th1', stage_id: 'S', org_id: 'O' })) };
+    const sink = new EntityTaskEventSink(threads as never, stages as never, tasks as never);
+    const scope = { kind: 'thread' as const, id: 'th1' };
+
+    await sink.applyTaskEvent(scope, 'taskcreate', { subject: 'Write tests' }, 'Task #8 created successfully');
+    expect([...tasks.rows.values()]).toHaveLength(1);
+    const [created] = [...tasks.rows.values()];
+    expect((created as { title: string }).title).toBe('Write tests');
+
+    await sink.applyTaskEvent(scope, 'taskupdate', { taskId: '8', status: 'in_progress' }, 'Task #8 updated');
+    expect([...tasks.rows.values()]).toHaveLength(1);
+    expect((tasks.rows.get((created as { id: string }).id) as { status: string }).status).toBe('in_progress');
   });
 });

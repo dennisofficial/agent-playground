@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { JobBootstrapModule } from '../job-bootstrap';
 import {
   MessageEntity,
   RepoEntity,
@@ -36,6 +37,7 @@ import { TestBridgeController } from './test-bridge.controller';
       ],
       DB_CONNECTION,
     ),
+    JobBootstrapModule,
   ],
   controllers: [TestBridgeController],
 })

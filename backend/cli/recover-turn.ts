@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { AppDataSource } from './data-source';
-import { MessageEntity } from '../src/app/persistence/entities';
+import { MessageEntity, StageEntity, ThreadEntity } from '../src/app/persistence/entities';
 import { atlasAgentHomeBase } from '../src/app/engine/engine-home';
 import { parseSessionTranscriptTurns } from '../src/app/brain/session-transcript';
 import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
@@ -93,7 +93,21 @@ async function main(): Promise<void> {
   await AppDataSource.initialize();
   try {
     const messages = AppDataSource.getRepository(MessageEntity);
-    const inserted = await backfillThreadFromTurns(messages, jobId, recoverable);
+    const stage = await AppDataSource.getRepository(StageEntity).findOne({
+      where: { job_id: jobId, kind: 'planning' },
+      order: { ordinal: 'ASC' },
+    });
+    const planningThread = stage
+      ? await AppDataSource.getRepository(ThreadEntity).findOne({
+          where: { stage_id: stage.id },
+          order: { ordinal: 'ASC' },
+        })
+      : null;
+    if (!planningThread) {
+      console.error(`recover-turn: job ${jobId} has no planning-stage thread to anchor recovered messages`);
+      process.exit(1);
+    }
+    const inserted = await backfillThreadFromTurns(messages, jobId, planningThread.id, recoverable);
     console.log(`recover-turn: back-filled ${inserted} block(s) into messages`);
   } finally {
     await AppDataSource.destroy();

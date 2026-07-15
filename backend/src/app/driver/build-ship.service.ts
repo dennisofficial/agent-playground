@@ -103,6 +103,11 @@ export class BuildShipService {
     // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
     // AWAITS the brain turn to completion. No host "opening the PR" system
     // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
+    const postBuild = await this.store.ensurePostBuildThread({
+      jobId: job.id,
+      orgId: job.orgId,
+      decisionRecordId: job.decisionRecordId ?? null,
+    });
     await this.brainGateway.openPrAtShip({
       jobId: job.id,
       orgId: job.orgId,
@@ -110,6 +115,7 @@ export class BuildShipService {
       branch: shipBranch,
       defaultBranch: repo.defaultBranch,
       title: prTitle,
+      threadId: postBuild.threadId,
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
@@ -189,6 +195,13 @@ export class BuildShipService {
     const confirmed = await this.discoverOpenPr(repo, sandbox);
     if (confirmed) {
       await this.store.setPrReady(job.id, confirmed.url, confirmed.number);
+      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` stage-thread exists so inbound
+      // GitHub/CI events have somewhere to route (the routing itself is thread 4's §CI-routing seam).
+      await this.store.ensureCiThread({
+        jobId: job.id,
+        orgId: job.orgId,
+        decisionRecordId: job.decisionRecordId ?? null,
+      });
       return confirmed;
     }
     this.logger.warn(

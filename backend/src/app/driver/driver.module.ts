@@ -15,17 +15,18 @@ import { AutoFixModule } from '../autofix';
 import { JOB_DISPATCHER } from '../brain';
 import { LeaderElectionService } from '../cluster';
 import { DecisionGateModule } from '../decision-gate';
+import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  StepEntity,
+  StageEntity,
+  TaskEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
   JobEntity,
   JobSandboxEntity,
-  CodexReviewEntity,
 } from '../persistence/entities';
 import { RunnerModule } from '../runner';
 import { TurnReattachRegistry } from '../sandbox/turn-reattach.registry';
@@ -90,18 +91,19 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     RunnerModule,
     DecisionGateModule,
     AutoFixModule,
+    JobBootstrapModule,
     StimulusModule, // the reconciler routes GitHub state-changes back to the owning brain via StimulusIntake
     TypeOrmModule.forFeature(
       [
         ThreadEntity,
-        StepEntity,
+        StageEntity,
+        TaskEntity,
         DecisionRecordEntity,
         JobEntity,
         RepoEntity,
         JobSandboxEntity,
         MessageEntity,
         StimulusEntity,
-        CodexReviewEntity,
       ],
       DB_CONNECTION,
     ),

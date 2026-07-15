@@ -10,6 +10,8 @@ import type { AgentMessage } from '../prompt-kit/message';
  */
 export interface SystemChunkInput {
   jobId: string;
+  /** The `threads.id` row this chunk belongs to (`messages.thread_id` is NOT NULL). */
+  threadId: string;
   kind: 'system_notice' | 'system_reminder' | 'untrusted';
   text: AgentMessage;
   chunkKey: string;
@@ -49,6 +51,7 @@ export async function writeSystemChunk(
   await repo.save(
     repo.create({
       job_id: input.jobId,
+      thread_id: input.threadId,
       author: 'System',
       author_id: 'U-SYSTEM',
       author_bot_id: null,

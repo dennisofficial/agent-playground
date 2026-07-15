@@ -84,6 +84,8 @@ export interface ComposerFooter {
 export function Composer({
   jobRef,
   attach,
+  lane,
+  threadId,
   placeholder = "Message Atlas — ask, plan, or steer…",
   onHeightChange,
   footer,
@@ -95,6 +97,15 @@ export function Composer({
   /** The attachment tray API, owned by {@link TranscriptView} so a pane-wide file drop feeds the same tray.
    *  Optional: the `subagent` variant has no input/attach, so callers there omit it. */
   attach?: AttachmentsApi;
+  /** The lane this composer posts to — omitted (undefined) for Main, where the backend defaults to Main.
+   *  On an operator-writable non-Main lane (a builder/master_review thread) this routes the send to that
+   *  thread instead of Main. */
+  lane?: string;
+  /** The real thread id this lane's durable transcript is scoped to (mirrors {@link TranscriptView}'s
+   *  `threadId`) — stamped onto the optimistic message so it matches the transcript's `threadId` filter
+   *  instead of being scoped out until the send settles. Omitted for a pre-plan (`no_job`) Main, where the
+   *  log is unfiltered anyway. */
+  threadId?: string;
   placeholder?: string;
   /** Reports the composer overlay's rendered height so the transcript can reserve matching space. */
   onHeightChange?: (height: number) => void;
@@ -290,6 +301,7 @@ export function Composer({
             ...(c.lines ? { lines: c.lines } : {}),
           })),
           message: trimmed || undefined,
+          threadId,
         },
         {
           onError: (e) =>
@@ -304,7 +316,7 @@ export function Composer({
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
       // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
       sayWithAttachments.mutate(
-        { text: trimmed, attachments },
+        { text: trimmed, attachments, lane, threadId },
         {
           onError: (e) =>
             reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
@@ -315,10 +327,13 @@ export function Composer({
       return;
     }
     if (!trimmed) return;
-    say.mutate(trimmed, {
-      onError: (e) =>
-        reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
-    });
+    say.mutate(
+      { text: trimmed, lane, threadId },
+      {
+        onError: (e) =>
+          reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
+      },
+    );
     composerStore.clearDraft(jobRef.jobId);
   }
 

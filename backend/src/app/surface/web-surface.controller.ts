@@ -76,6 +76,7 @@ import { AgentSessionManager } from '../brain/agent-session-manager.service';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
+import { ThreadInputService } from './thread-input.service';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
 import { resolveMergeApproval } from './resolve-merge-approval';
@@ -90,6 +91,7 @@ import { AutoMergeService } from '../driver/auto-merge.service';
 import { resolveSafeTarget } from '../driver/worktree-path-guard';
 import { LocalGitService } from '../git/local-git.service';
 import { parseGitDiff, buildDiffSummary, type JobDiff, type JobDiffSummary } from './job-diff';
+import { JobBootstrapService } from '../job-bootstrap';
 import { JobDependencyService } from '../job-deps';
 import type { ServiceLivenessProbe } from '../sandbox';
 import { ExposureService } from '../exposure/exposure.service';
@@ -374,6 +376,10 @@ function coerceOperatorKind(raw: string | undefined): JobKind | null {
 
 interface SayDto {
   text: string;
+  /** Target thread coordinate (`thread:<threadId>`). Absent or `'main'` targets the job's planning thread
+   *  (today's behavior, unchanged); a `thread:<id>` lane targets that builder thread — steering it mid-turn or
+   *  re-driving it if halted. */
+  lane?: string;
 }
 /** One highlighted-and-annotated selection in a review-comments batch. */
 interface ReviewCommentItemDto {
@@ -746,6 +752,14 @@ export class WebSurfaceController {
     // preview recipe to splice into the seed. From the @Global OnboardingModule. @Optional (trailing),
     // same reason as `exposure`/`jit` above.
     @Optional() private readonly configStore?: WorkspaceConfigStore,
+    // Bootstraps the new thread's ONE planning stage + thread right after `createJob` inserts the bare
+    // `JobEntity` row (d7: `stage_id` is never null). From the @Global JobBootstrapModule. @Optional
+    // (trailing), same reason as `exposure`/`jit`/`configStore` above.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
+    // The shared thread-input send seam — routes a lane-targeted `/say` (`lane=thread:<id>`) into the thread
+    // that owns the lane (steer-if-live / re-drive-if-halted), instead of always the planning brain. From the
+    // @Global LiveTurnModule. @Optional (trailing), same reason as `exposure`/`jit` above.
+    @Optional() private readonly threadInput?: ThreadInputService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -977,6 +991,9 @@ export class WebSurfaceController {
           : {}),
       }),
     );
+    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for a job
+    // that never gets a plan proposed.
+    await this.jobBootstrap?.ensurePlanningStage(thread.id, org.id);
     const operatorText = text ?? '';
     // Write any attachments to the job's /context/uploads (visible in-sandbox) and PREPEND an
     // <uploaded-files> block to the body so the brain reads them; persist a card for the web transcript.
@@ -1076,6 +1093,11 @@ export class WebSurfaceController {
     });
     return rows.map((m) => ({
       id: m.id,
+      // The owning thread (d3) + optional subagent (d4) — the web filters a thread's transcript by
+      // `threadId` and joins a spawned subagent's blocks by `subagentId` (replaces the old
+      // `meta.phaseId`/`meta.parentToolUseId↔meta.id` peel).
+      threadId: m.thread_id,
+      subagentId: m.subagent_id,
       ts: m.ts,
       author: m.author,
       authorId: m.author_id,
@@ -1146,6 +1168,33 @@ export class WebSurfaceController {
       ? await this.ingestAttachments(org.id, jobId, files)
       : null;
     const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
+
+    // A lane-targeted message (`thread:<id>`) routes through the shared send seam to the thread that owns the
+    // lane — steering a live builder turn, or re-driving a halted one with the text as guidance. Absent or
+    // `'main'` keeps the byte-identical planning-brain path below.
+    const targetLane = body?.lane;
+    if (targetLane && targetLane !== 'main') {
+      const seam = this.threadInput;
+      if (!seam) {
+        throw new ServiceUnavailableException('thread messaging is unavailable — retry momentarily.');
+      }
+      if (!seam.canPost(targetLane)) {
+        throw new BadRequestException(`thread "${targetLane}" is not accepting messages right now`);
+      }
+      const author = operatorAuthor(user);
+      await seam.postToThread(
+        targetLane,
+        {
+          jobId,
+          orgId: org.id,
+          repoId: thread.repo_id,
+          author: { id: author.authorId, displayName: author.authorName },
+        },
+        bodyText,
+      );
+      return { ts: new Date().toISOString() };
+    }
+
     const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
       orgId: org.id,
       threadTs: jobId,

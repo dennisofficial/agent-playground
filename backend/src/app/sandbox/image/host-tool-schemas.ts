@@ -180,15 +180,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
   },
-  retry_thread: {
-    threadId: z.string(),
-    guidance: z.string().optional(),
-  },
-  note_cleared_block: {
-    threadId: z.string(),
-    reason: z.string().optional(),
-    evidence: z.string(),
-  },
   start_direct_build: {
     summary: z.string(),
     changeOutline: z.array(z.string()).optional(),
@@ -450,8 +441,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   delete_decision: 'Delete a decision by id.',
   review_plan: 'Review and revise the current plan overview, goal, decisions, and threads.',
   propose_plan: 'Propose a plan: an overview, goal, decisions, and the threads to build.',
-  retry_thread: 'Retry a failed or blocked thread, optionally with fresh guidance.',
-  note_cleared_block: 'Record that a thread block is cleared, with the evidence that cleared it.',
   start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
   create_job:
     'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',

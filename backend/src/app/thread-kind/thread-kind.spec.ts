@@ -19,10 +19,19 @@ describe('thread-kind registry', () => {
     expect(() => validateThreadKinds()).not.toThrow();
   });
 
-  it('defines all six kinds exactly once', () => {
+  it('defines all eight roles exactly once', () => {
     const kinds = THREAD_KIND_SPECS.map((s) => s.kind).sort();
     expect(kinds).toEqual(
-      ['builder', 'main', 'master_review', 'plan_review', 'post_review', 'review_lens'].sort(),
+      [
+        'builder',
+        'ci',
+        'master_review',
+        'planning',
+        'plan_review',
+        'post_build',
+        'review_agent',
+        'review_fix',
+      ].sort(),
     );
   });
 
@@ -30,29 +39,41 @@ describe('thread-kind registry', () => {
     expect([...driverExecutableKinds].sort()).toEqual(['builder', 'master_review']);
     expect(isDriverExecutableKind('builder')).toBe(true);
     expect(isDriverExecutableKind('master_review')).toBe(true);
-    expect(isDriverExecutableKind('main')).toBe(false);
-    expect(isDriverExecutableKind('review_lens')).toBe(false);
-    expect(isDriverExecutableKind('post_review')).toBe(false);
+    expect(isDriverExecutableKind('planning')).toBe(false);
+    expect(isDriverExecutableKind('review_agent')).toBe(false);
+    expect(isDriverExecutableKind('review_fix')).toBe(false);
     expect(isDriverExecutableKind('plan_review')).toBe(false);
+    expect(isDriverExecutableKind('post_build')).toBe(false);
+    expect(isDriverExecutableKind('ci')).toBe(false);
   });
 
-  it('main + plan_review are render-only; review_lens + post_review are children', () => {
-    expect(threadKindSpec('main').execution).toBe('render-only');
+  it('planning/plan_review/post_build/ci are render-only; review_agent + review_fix are children', () => {
+    expect(threadKindSpec('planning').execution).toBe('render-only');
     expect(threadKindSpec('plan_review').execution).toBe('render-only');
-    expect(threadKindSpec('review_lens').execution).toBe('child');
-    expect(threadKindSpec('post_review').execution).toBe('child');
+    expect(threadKindSpec('post_build').execution).toBe('render-only');
+    expect(threadKindSpec('ci').execution).toBe('render-only');
+    expect(threadKindSpec('review_agent').execution).toBe('child');
+    expect(threadKindSpec('review_fix').execution).toBe('child');
   });
 
-  it("a builder's factory owns only the post_review child — lens selection is the driver's (reviewAgentsForThread)", () => {
+  it("a builder's factory owns only the review_fix child — lens selection is the driver's (reviewAgentsForThread)", () => {
     const kids = threadKindSpec('builder').children!({ id: 'b1', config: {} });
-    expect(kids.filter((k) => k.kind === 'review_lens')).toHaveLength(0);
-    const posts = kids.filter((k) => k.kind === 'post_review');
+    expect(kids.filter((k) => k.kind === 'review_agent')).toHaveLength(0);
+    const posts = kids.filter((k) => k.kind === 'review_fix');
     expect(posts).toHaveLength(1);
     expect((posts[0].config as { minSeverity?: string }).minSeverity).toBeTruthy();
   });
 
   it('threadKindSpec throws on an unknown kind', () => {
     expect(() => threadKindSpec('nope')).toThrow(/unknown kind/);
+  });
+
+  it('operatorInput (d12): enabled for builder + planning, read-only elsewhere by default', () => {
+    expect(threadKindSpec('builder').operatorInput).toBe(true);
+    expect(threadKindSpec('planning').operatorInput).toBe(true);
+    for (const role of ['plan_review', 'review_agent', 'review_fix', 'master_review', 'post_build', 'ci']) {
+      expect(threadKindSpec(role).operatorInput).toBe(false);
+    }
   });
 
   it('validateThreadKinds rejects an unknown Agent', () => {
@@ -80,7 +101,7 @@ describe('thread-kind registry', () => {
   });
 
   it("laneDefaultFooter surfaces each kind's reasoning effort — 'high' for the Claude lanes, 'xhigh' for master review", () => {
-    expect(laneDefaultFooter('main').effort).toBe('high');
+    expect(laneDefaultFooter('planning').effort).toBe('high');
     expect(laneDefaultFooter('builder').effort).toBe('high');
     expect(laneDefaultFooter('master_review').effort).toBe('xhigh');
   });

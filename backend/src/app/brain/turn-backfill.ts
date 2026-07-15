@@ -28,6 +28,7 @@ const FINAL_REPLY_FINGERPRINT_LEN = 160;
 export async function backfillThreadFromTurns(
   messages: Repository<MessageEntity>,
   jobId: string,
+  threadId: string,
   turns: TurnSlice[],
 ): Promise<number> {
   const seenSdkUuids = await persistedSdkUuids(messages, jobId);
@@ -50,7 +51,7 @@ export async function backfillThreadFromTurns(
       const base =
         b.emittedAt instanceof Date && !Number.isNaN(b.emittedAt.getTime()) ? b.emittedAt.getTime() : Date.now();
       lastMs = Math.max(base, lastMs + 1);
-      await appendBlock(messages, jobId, b, new Date(lastMs));
+      await appendBlock(messages, jobId, threadId, b, new Date(lastMs));
       // Track in-memory so a duplicate later in the SAME run (a re-issued call) is also deduped.
       if (typeof b.meta.sdkUuid === 'string') seenSdkUuids.add(b.meta.sdkUuid);
       if (b.kind === 'tool' && typeof b.meta.id === 'string' && b.meta.id) seenToolIds.add(b.meta.id);
@@ -80,12 +81,14 @@ function isFresh(b: RecoveredBlock, seenSdkUuids: Set<string>, seenToolIds: Set<
 async function appendBlock(
   messages: Repository<MessageEntity>,
   jobId: string,
+  threadId: string,
   block: RecoveredBlock,
   createdAt: Date,
 ): Promise<void> {
   await messages.save(
     messages.create({
       job_id: jobId,
+      thread_id: threadId,
       author: 'Atlas',
       author_id: 'atlas',
       author_bot_id: 'atlas',

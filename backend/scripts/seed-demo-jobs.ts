@@ -6,7 +6,8 @@ import {
   JobEntity,
   MessageEntity,
   RepoEntity,
-  StepEntity,
+  StageEntity,
+  TaskEntity,
   ThreadEntity,
 } from '../src/app/persistence/entities';
 import { DEV_SEED_IDS } from '../seeds/_shared/dev-seed-ids';
@@ -34,10 +35,12 @@ const jobId = (n: number): string =>
   `da700000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
 const threadId = (n: number): string =>
   `da700000-0000-4000-8000-000000002${String(n).padStart(3, '0')}`;
-const stepId = (n: number): string =>
+const taskId = (n: number): string =>
   `da700000-0000-4000-8000-000000003${String(n).padStart(3, '0')}`;
 const messageId = (n: number): string =>
   `da700000-0000-4000-8000-000000004${String(n).padStart(3, '0')}`;
+const stageId = (n: number): string =>
+  `da700000-0000-4000-8000-000000005${String(n).padStart(3, '0')}`;
 
 type DemoJob = {
   id: string;
@@ -187,66 +190,92 @@ const DEMO_JOBS: DemoJob[] = [
   },
 ];
 
-type DemoThread = {
+type DemoStage = {
   id: string;
   ordinal: number;
-  kind: 'main' | 'builder' | 'master_review';
+  kind: 'planning' | 'build' | 'master_review';
+  title: string | null;
+};
+
+/** The rich job's pipeline: a planning stage, one build stage (two sequential builder legs), and a
+ *  master_review stage — mirrors the job -> stages -> threads shape the migration collapsed onto. */
+const RICH_STAGES: DemoStage[] = [
+  { id: stageId(1), ordinal: 100, kind: 'planning', title: null },
+  { id: stageId(2), ordinal: 200, kind: 'build', title: 'Presence + remote cursors' },
+  { id: stageId(3), ordinal: 300, kind: 'master_review', title: null },
+];
+
+type DemoThread = {
+  id: string;
+  stage_id: string;
+  ordinal: number;
+  role: 'planning' | 'builder' | 'master_review';
   brief: string;
 };
 
 const RICH_THREADS: DemoThread[] = [
-  { id: threadId(1), ordinal: 100, kind: 'main', brief: 'Main conversation' },
+  {
+    id: threadId(1),
+    stage_id: stageId(1),
+    ordinal: 100,
+    role: 'planning',
+    brief: 'Main conversation',
+  },
   {
     id: threadId(2),
-    ordinal: 200,
-    kind: 'builder',
+    stage_id: stageId(2),
+    ordinal: 100,
+    role: 'builder',
     brief: 'Wire up presence websocket channel',
   },
   {
     id: threadId(3),
-    ordinal: 300,
-    kind: 'builder',
+    stage_id: stageId(2),
+    ordinal: 200,
+    role: 'builder',
     brief: 'Render remote cursors in the editor',
   },
   {
     id: threadId(4),
-    ordinal: 400,
-    kind: 'master_review',
+    stage_id: stageId(3),
+    ordinal: 100,
+    role: 'master_review',
     brief: 'Master review of the full diff',
   },
 ];
 
-type DemoStep = {
+type DemoTask = {
   id: string;
-  thread_id: string;
+  stage_id: string;
   ordinal: number;
-  brief: string;
+  title: string;
 };
 
-const RICH_STEPS: DemoStep[] = [
+/** The build stage's shared checklist (d6) — stage-owned, not per-leg, so it survives leg rotation. */
+const RICH_TASKS: DemoTask[] = [
   {
-    id: stepId(1),
-    thread_id: threadId(2),
+    id: taskId(1),
+    stage_id: stageId(2),
     ordinal: 100,
-    brief: 'Add presence channel to the realtime gateway',
+    title: 'Add presence channel to the realtime gateway',
   },
   {
-    id: stepId(2),
-    thread_id: threadId(2),
+    id: taskId(2),
+    stage_id: stageId(2),
     ordinal: 200,
-    brief: 'Broadcast cursor position on pointermove',
+    title: 'Broadcast cursor position on pointermove',
   },
   {
-    id: stepId(3),
-    thread_id: threadId(3),
-    ordinal: 100,
-    brief: 'Subscribe to peer cursor events client-side',
+    id: taskId(3),
+    stage_id: stageId(2),
+    ordinal: 300,
+    title: 'Subscribe to peer cursor events client-side',
   },
   {
-    id: stepId(4),
-    thread_id: threadId(3),
-    ordinal: 200,
-    brief: 'Paint remote cursors with author color + label',
+    id: taskId(4),
+    stage_id: stageId(2),
+    ordinal: 400,
+    title: 'Paint remote cursors with author color + label',
   },
 ];
 
@@ -406,6 +435,22 @@ async function upsertJob(ds: DataSource, demo: DemoJob): Promise<void> {
   );
 }
 
+async function upsertRichStages(ds: DataSource): Promise<void> {
+  const stages = ds.getRepository(StageEntity);
+  for (const s of RICH_STAGES) {
+    const row =
+      (await stages.findOne({ where: { id: s.id } })) ??
+      stages.create({ id: s.id });
+    row.job_id = RICH_JOB_ID;
+    row.org_id = ORG_ID;
+    row.ordinal = s.ordinal;
+    row.kind = s.kind;
+    row.title = s.title;
+    await stages.save(row);
+  }
+  console.log(`  seeded ${RICH_STAGES.length} stages on rich job`);
+}
+
 async function upsertRichThreads(ds: DataSource): Promise<void> {
   const threads = ds.getRepository(ThreadEntity);
   for (const t of RICH_THREADS) {
@@ -414,31 +459,29 @@ async function upsertRichThreads(ds: DataSource): Promise<void> {
       threads.create({ id: t.id });
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
+    row.stage_id = t.stage_id;
     row.ordinal = t.ordinal;
     row.brief = t.brief;
-    row.kind = t.kind;
+    row.role = t.role;
     row.config = {};
     await threads.save(row);
   }
   console.log(`  seeded ${RICH_THREADS.length} threads on rich job`);
 }
 
-async function upsertRichSteps(ds: DataSource): Promise<void> {
-  const steps = ds.getRepository(StepEntity);
-  for (const s of RICH_STEPS) {
+async function upsertRichTasks(ds: DataSource): Promise<void> {
+  const tasks = ds.getRepository(TaskEntity);
+  for (const t of RICH_TASKS) {
     const row =
-      (await steps.findOne({ where: { id: s.id } })) ??
-      steps.create({ id: s.id });
-    row.thread_id = s.thread_id;
-    row.job_id = RICH_JOB_ID;
+      (await tasks.findOne({ where: { id: t.id } })) ??
+      tasks.create({ id: t.id });
+    row.stage_id = t.stage_id;
     row.org_id = ORG_ID;
-    row.ordinal = s.ordinal;
-    row.brief = s.brief;
-    await steps.save(row);
+    row.ordinal = t.ordinal;
+    row.title = t.title;
+    await tasks.save(row);
   }
-  console.log(
-    `  seeded ${RICH_STEPS.length} steps on rich job's builder threads`,
-  );
+  console.log(`  seeded ${RICH_TASKS.length} tasks on rich job's build stage`);
 }
 
 async function upsertRichMessages(ds: DataSource): Promise<void> {
@@ -455,6 +498,8 @@ async function upsertRichMessages(ds: DataSource): Promise<void> {
       (await messages.findOne({ where: { id: m.id } })) ??
       messages.create({ id: m.id });
     row.job_id = RICH_JOB_ID;
+    // Every message hangs off the rich job's main conversation thread (`messages.thread_id` is NOT NULL).
+    row.thread_id = threadId(1);
     row.author = m.author;
     row.author_id = m.author_id;
     row.author_bot_id = m.author_bot_id;
@@ -473,8 +518,9 @@ async function main(): Promise<void> {
     for (const demo of DEMO_JOBS) {
       await upsertJob(ds, demo);
     }
+    await upsertRichStages(ds);
     await upsertRichThreads(ds);
-    await upsertRichSteps(ds);
+    await upsertRichTasks(ds);
     await upsertRichMessages(ds);
     console.log(
       `seed-demo-jobs: done — ${DEMO_JOBS.length} jobs, rich job = ${RICH_JOB_ID}`,

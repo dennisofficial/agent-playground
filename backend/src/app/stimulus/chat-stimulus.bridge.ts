@@ -4,11 +4,13 @@ import {
   Logger,
   OnApplicationBootstrap,
   OnApplicationShutdown,
+  Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
 import type { ChatStimulus } from '../domain';
+import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import {
@@ -43,6 +45,10 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
     private readonly intake: StimulusIntake,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
+    // Bootstraps a freshly-opened chat-origin thread's ONE planning stage + thread (d7: `stage_id` is never
+    // null). @Optional (trailing) so the existing direct-construction unit tests (positional args) keep
+    // compiling without a trailing argument.
+    @Optional() private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -120,7 +126,7 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
       if (existing) return existing;
     }
     if (!msg.orgId || !msg.channel) return null;
-    return this.jobs.save(
+    const thread = await this.jobs.save(
       this.jobs.create({
         org_id: msg.orgId,
         repo_id: msg.channel,
@@ -129,5 +135,9 @@ export class ChatStimulusBridge implements OnApplicationBootstrap, OnApplication
         title: null,
       }),
     );
+    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for a
+    // chat-origin thread that never gets a plan proposed.
+    await this.jobBootstrap?.ensurePlanningStage(thread.id, msg.orgId);
+    return thread;
   }
 }

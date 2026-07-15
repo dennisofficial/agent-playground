@@ -18,12 +18,11 @@ import { codexReviewLane } from "./codex-review";
 export type NodeResolution = "loading" | "found" | "not_found";
 
 // ── node-id builders ─────────────────────────────────────────────────────────────────────────────
-/** Every conversational thread — a build thread/step leaf AND a review CHILD thread (a `review_lens` or the
- *  `post_review` fix turn) — is a BARE id (no prefix); it opens in the LEFT lane pane. The old
+/** Every conversational thread — a build/leg thread AND a review CHILD thread (a `review_agent` or the
+ *  `review_fix` turn) — is a BARE id (no prefix); it opens in the LEFT lane pane. The old
  *  `rev:<tid>:<agent>` / `fix:<tid>` synthetic ids are gone: review children are real thread rows, so they
  *  are addressed by their own id and their lane comes from the pipeline data (`PipelineReviewChild.lane`). */
 export const threadNode = (threadId: string): string => threadId;
-export const stepNode = (stepId: string): string => stepId;
 
 // ── stacked repo-file view id (rides its own `?file=` param, like `subagent:` rides `?sub=`) ─────────
 /** A stacked repo-file view id: `file:<path>` with an optional `::L<a>[-<b>]` line target. */
@@ -73,8 +72,8 @@ const ID_FREE_NODES = new Set([
 ]);
 
 /**
- * Classify a node token against the live job. Job-derived tokens (`secplan:`/`rev:`/`fix:` carry a thread
- * id; a bare token is a thread or step id) become `not_found` when their id is gone — otherwise a stale URL
+ * Classify a node token against the live job. Job-derived tokens (`secplan:` carries a thread id; a bare
+ * token is a thread id or a review-child id) become `not_found` when their id is gone — otherwise a stale URL
  * would render a misleading generic placeholder or a silently-empty view. `spec:`/`artifact:` self-handle a
  * missing file inside `FileView`, so they stay `found`.
  *
@@ -114,42 +113,22 @@ export function resolveNode(
     return hasThread(job, node.slice("secplan:".length))
       ? "found"
       : "not_found";
-  // A per-Leg node (`<threadId>~leg<ordinal>`) resolves when the thread has that Leg.
-  const legRef = parseLegNode(node);
-  if (legRef) {
-    const t = job.threads.find((s) => s.id === legRef.threadId);
-    return t && (t.legs ?? []).some((l) => l.ordinal === legRef.ordinal)
-      ? "found"
-      : "not_found";
-  }
-  // Bare token — a thread, a step leaf, or a review CHILD thread (a `review_lens` / `post_review` row). A
-  // review child legitimately exists even before its lens has run (an empty transcript is a TranscriptView
-  // empty-state, not a not-found).
-  const matches = job.threads.some(
-    (s) =>
-      s.id === node ||
-      s.steps.some((p) => p.id === node) ||
-      (s.children ?? []).some((c) => c.id === node),
+  // Bare token — a thread (a builder leg is just an ordinary thread row) or a review CHILD thread (a
+  // `review_agent` / `review_fix` row). A review child legitimately exists even before its lens has run (an
+  // empty transcript is a TranscriptView empty-state, not a not-found).
+  const matches = job.stages.some((st) =>
+    st.threads.some(
+      (t) => t.id === node || (t.children ?? []).some((c) => c.id === node),
+    ),
   );
   return matches ? "found" : "not_found";
 }
 
 function hasThread(job: PipelineJob, id: string): boolean {
-  return id.length > 0 && job.threads.some((s) => s.id === id);
-}
-
-/** A per-Leg navigable node id: `<threadId>~leg<ordinal>`. Each rotated build session (Leg) is its own
- *  left-pane node, opening the thread's lane filtered to that Leg's `meta.legOrdinal`. */
-export function legNodeId(threadId: string, ordinal: number): string {
-  return `${threadId}~leg${ordinal}`;
-}
-
-/** Parse a `<threadId>~leg<ordinal>` node back to its parts, or null if it isn't a Leg node. */
-export function parseLegNode(
-  node: string,
-): { threadId: string; ordinal: number } | null {
-  const m = /^(.+)~leg(\d+)$/.exec(node);
-  return m ? { threadId: m[1], ordinal: Number(m[2]) } : null;
+  return (
+    id.length > 0 &&
+    job.stages.some((st) => st.threads.some((t) => t.id === id))
+  );
 }
 
 // ── conversation /context link → node id ────────────────────────────────────────────────────────
@@ -197,23 +176,15 @@ export function nodeLane(
 ): string | null {
   if (node.startsWith("codex-review:")) return codexReviewLane(jobId);
   if (!job) return null;
-  // A review CHILD thread (review_lens / post_review) → the lane the backend already computed for it
+  const threads = job.stages.flatMap((s) => s.threads);
+  // A review CHILD thread (review_agent / review_fix) → the lane the backend already computed for it
   // (`autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix`), carried on the pipeline data.
-  for (const s of job.threads) {
-    const child = (s.children ?? []).find((c) => c.id === node);
+  for (const t of threads) {
+    const child = (t.children ?? []).find((c) => c.id === node);
     if (child) return child.lane;
   }
-  // A per-Leg node → its owning thread's stable lane (the transcript is sliced to the Leg downstream).
-  const legRef = parseLegNode(node);
-  if (legRef) {
-    const t = job.threads.find((s) => s.id === legRef.threadId);
-    return t ? threadLane(t.id) : null;
-  }
-  // A bare thread id → its stable thread lane.
-  const thread = job.threads.find((s) => s.id === node);
+  // A bare thread id (a builder leg is just an ordinary thread) → its stable thread lane.
+  const thread = threads.find((t) => t.id === node);
   if (thread) return threadLane(thread.id);
-  // A bare step id → its owning thread's lane (the transcript is filtered to the step's anchor downstream).
-  const owning = job.threads.find((s) => s.steps.some((p) => p.id === node));
-  if (owning) return threadLane(owning.id);
   return null;
 }

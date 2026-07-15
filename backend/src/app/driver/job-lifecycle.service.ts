@@ -8,6 +8,7 @@ import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
 import { BrainGateway } from '../brain-gateway';
+import { JobBootstrapService } from '../job-bootstrap';
 import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity, JobEntity, JobSandboxEntity } from '../persistence/entities';
@@ -140,6 +141,11 @@ export class JobLifecycleService {
     // outside `AutoMergeService.mergeNow`. No DI cycle: DriverStoreService doesn't depend on this service.
     @Optional()
     private readonly driverStore?: DriverStoreService,
+    // Bootstraps the job's ONE planning stage + thread right after the bare `JobEntity` row is inserted
+    // (d7: `stage_id` is never null, even for a job that never gets a plan). @Optional (trailing), same
+    // reason as `driverStore` above.
+    @Optional()
+    private readonly jobBootstrap?: JobBootstrapService,
   ) {}
 
   /**
@@ -201,6 +207,10 @@ export class JobLifecycleService {
       }),
     );
     this.logger.log(`created thread ${thread.id} for ${orgId}/${project.slug} on ${baseBranch}`);
+
+    // Bootstrap the job's ONE planning stage + thread — d7: `stage_id` is never null, even for a job
+    // that never gets a plan proposed.
+    await this.jobBootstrap?.ensurePlanningStage(thread.id, orgId);
 
     // Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);
@@ -893,13 +903,12 @@ export class JobLifecycleService {
           (attached.containerId ? ` container=${attached.containerId.slice(0, 12)}` : ' (local)'),
       );
 
-      // A brand-new job whose setup script failed on this cold create has NO brain turn yet — proactively
-      // WAKE the brain to fix it (the specific error rides into that turn via the `setup_error` drain). Never
-      // let a wake hiccup break job creation. Not done on the re-attach paths (`ensureContainer`/
-      // `rehydrateThread`) — those run around a brain turn that drains the notice on its own.
+      // A brand-new job whose setup script failed on this cold create halts here. The specific error is
+      // already persisted durably on the sandbox row (`setup_error`) and surfaced to the operator, who
+      // retries/steers it directly — the build driver no longer wakes the brain to auto-fix it.
       if (row.setup_error) {
-        await this.wakeBrainForSetupFailure(thread.id, thread.org_id, project.id).catch((err) =>
-          this.logger.warn(`setup-failure wake skipped for thread ${thread.id}: ${err}`),
+        this.logger.warn(
+          `setup script failed on cold bring-up for thread ${thread.id} — recorded (setup_error); awaiting operator`,
         );
       }
     } catch (err) {
@@ -924,16 +933,6 @@ export class JobLifecycleService {
       { onboarded_at: new Date() },
     );
     this.logger.log(`repo ${repoId} (org ${orgId}) marked onboarded`);
-  }
-
-  /**
-   * WAKE the job brain to deal with a cold-boot setup-script failure — reached through the neutral
-   * `BrainGateway` (the brain binds itself into it on bootstrap), which avoids the DI construction cycle a
-   * direct brain dependency would form. The concrete error is delivered into the woken turn from the
-   * sandbox row's `setup_error`.
-   */
-  private async wakeBrainForSetupFailure(jobId: string, orgId: string, repoId: string): Promise<void> {
-    await this.brainGateway.wakeForProvisioningFailure(jobId, orgId, repoId);
   }
 
   /** Resolve the `ProjectRepo` (clone path + token) for a sandbox row — keyed by the repo's SLUG. */
