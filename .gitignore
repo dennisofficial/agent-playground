@@ -39,3 +39,13 @@ ds-bundle/
 
 # design-sync staged scripts + isolated deps (never commit)
 .ds-sync/
+
+# Stale pre-migration checkouts: these repos are real content now ONLY under `submodules/*`
+# (see .gitmodules) since "Move git submodules from packages/ to submodules/ directory" — these
+# `packages/*` copies are leftover sandbox checkout artifacts (each its own nested .git) from
+# before that migration was applied here. Never track them; a `pnpm install` against them
+# regresses pnpm-lock.yaml's `submodules/*` paths back to `packages/*`.
+/packages/ai-testing/
+/packages/jwt-auth/
+/packages/nestjs-ai-essentials/
+/packages/nestjs-core-essentials/
