@@ -483,7 +483,7 @@ export const HOST_TRANSPORT_TRANSIENT_RE =
   /econnreset|econnrefused|etimedout|epipe|socket hang up|connection reset|connection refused|network error|no such container|container .*(not running|is not running|gone)|exec failed|failed to (start|create) (the )?container|redis|stream .*(closed|reset)|xread|503|502|temporarily unavailable|index\.lock|another git process seems to be running/;
 
 /** API failures that already spent the SDK's own retry loop. Keep them out of the host retry allowlist. */
-const SDK_RETRY_EXHAUSTED_API_RE =
+export const SDK_RETRY_EXHAUSTED_API_RE =
   /\bapi error\b|\boverloaded(?:_error)?\b|\brate[ _-]?limit(?:ed|_error)?\b|\bserver[ _-]?error\b|\b(?:claude|anthropic)\b.*\b(?:api|502|503|504|529|bad gateway)\b|\b(?:api|502|503|504|529|bad gateway)\b.*\b(?:claude|anthropic)\b/;
 
 /**
@@ -492,6 +492,10 @@ const SDK_RETRY_EXHAUSTED_API_RE =
  * FALSE (surface as today) for: a deterministic-fatal/NO_ENGINE_CREDENTIAL auth error, a session limit, a
  * detached turn, an unresumable session, a phase-timeout, and ANY unrecognized error (d3 — never silently
  * retry a genuine bug). NOTE: overloaded/5xx are the SDK's own retry, NOT matched here.
+ * Classification-consistency check (post-#231): a Claude session limit thrown mid-turn is now latched into
+ * a clean `result.sessionLimit` by engine-core's outer catch BEFORE it would ever reach this predicate as a
+ * thrown `err` — the `isSessionLimitError(err)` guard above is a defensive backstop for the OTHER lanes that
+ * still throw `EngineSessionLimitError` directly (e.g. the build-lane `turn-runner.service.ts`), not dead code.
  */
 export function isRetryableTransientError(err: unknown): boolean {
   if (err instanceof EngineAuthError) return isTransientAuthError(err);

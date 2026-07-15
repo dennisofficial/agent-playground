@@ -207,6 +207,8 @@ import type {
   RunEngineArgs,
   EngineRunResult,
 } from '../engine/engine.types';
+import { summarizeTurnFailure } from '../engine/turn-failure-summary';
+import type { TurnFailureCategory } from '../engine/turn-failure-summary';
 import type { EngineHomeKey } from '../engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
@@ -3081,10 +3083,17 @@ export class AgentSessionManager
       // resume option (retrying truly can't help — the transcript is gone, see `isUnresumableSessionMessage`);
       // any other failure is just the raw error, marked `retryable` so the web offers a "Resume" button
       // that re-pokes the SAME engine session (`POST …/retry-turn`) without a new operator message.
+      // Classification-consistency check (post-#231): a Claude session limit that hit mid-turn is latched
+      // into a clean `result.sessionLimit` by engine-core's outer catch BEFORE this `catch (err)` block ever
+      // runs — a thrown `err` reaching here can never be the session-limit shape, so none of the branches
+      // below (nor `isRetryableTransientError`) needs its own session-limit exclusion beyond the defensive
+      // one `isRetryableTransientError` already carries.
       if (isUnresumableSessionMessage(String(err))) {
+        const { category, summary } = summarizeTurnFailure(err);
         await this.saySystemOperator(
           stimulus,
           `${String(err)}\n\nThis thread can't continue — its engine session state is gone. Please start a new thread to pick this back up.`,
+          { category, summary },
         );
       } else if (benignAbort) {
         // A self-recovering SDK stream abort (`aborted_streaming`) — NOT a real failure the operator must
@@ -3117,8 +3126,11 @@ export class AgentSessionManager
           this.logger.warn(
             `benign aborted_streaming recurred ${n}× for thread=${stimulus.jobId} — surfacing retryable box`,
           );
+          const { category, summary } = summarizeTurnFailure(err);
           await this.saySystemOperator(stimulus, String(err), {
             retryable: true,
+            category,
+            summary,
           });
         }
       } else if (isRetryableTransientError(err)) {
@@ -3150,13 +3162,19 @@ export class AgentSessionManager
           this.logger.warn(
             `retryable transient error recurred ${n}× for thread=${stimulus.jobId} — surfacing retryable box`,
           );
+          const { category, summary } = summarizeTurnFailure(err);
           await this.saySystemOperator(stimulus, String(err), {
             retryable: true,
+            category,
+            summary,
           });
         }
       } else {
+        const { category, summary } = summarizeTurnFailure(err);
         await this.saySystemOperator(stimulus, String(err), {
           retryable: true,
+          category,
+          summary,
         });
       }
       return;
@@ -3270,6 +3288,8 @@ export class AgentSessionManager
         {
           retryable: false,
           sessionLimit: true,
+          category: 'session_limit',
+          summary: "You've hit your Claude session limit — it auto-resumes at reset.",
           ...(resumeAt ? { resumeAt } : {}),
         },
       );
@@ -7865,6 +7885,8 @@ export class AgentSessionManager
       retryable?: boolean;
       sessionLimit?: boolean;
       resumeAt?: string;
+      category?: TurnFailureCategory;
+      summary?: string;
     } = {},
   ): Promise<void> {
     const route = await this.store.route({
@@ -7892,6 +7914,8 @@ export class AgentSessionManager
       ...(opts.retryable ? { retryable: true } : {}),
       ...(opts.sessionLimit ? { sessionLimit: true } : {}),
       ...(opts.resumeAt ? { resumeAt: opts.resumeAt } : {}),
+      ...(opts.category ? { category: opts.category } : {}),
+      ...(opts.summary ? { summary: opts.summary } : {}),
     };
     try {
       await this.surface.post(channel, text, {

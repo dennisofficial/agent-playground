@@ -47,6 +47,7 @@ import {
   INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '../engine/engine.types';
 import { ProfileAwarenessService } from '../workspace-profile';
+import { summarizeTurnFailure } from '../engine/turn-failure-summary';
 import { defaultResumeAt } from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
@@ -226,6 +227,11 @@ type StageDriveResult =
  * via its `terminal_record`/report — so a raw exception at the driver level is almost always infra. The few
  * exceptions that are genuinely terminal (auth → paused; detached → boot re-attach; unresumable session; a
  * runaway PHASE_TIMEOUT that must not re-run for another full timeout) are excluded so drive() handles them.
+ * Classification-consistency check (post-#231): the build lane's own `turn-runner.service.ts` still throws a
+ * typed `EngineSessionLimitError` directly (unlike the brain's engine-core, which now latches a mid-turn
+ * limit into a clean `result.sessionLimit`), and `drive()`'s catch classifies `isSessionLimitError(err)`
+ * BEFORE this predicate is ever consulted — so the `EngineSessionLimitError` exclusion below is real
+ * defense-in-depth, not dead code, and no session-limit error can fall through to a `retryable`/`failed` box.
  */
 function isTransientDriveError(err: unknown): boolean {
   if (err instanceof EngineAuthError) return false; // → paused
@@ -1214,13 +1220,14 @@ export class ThreadDriver implements JobDispatcher {
       overrideText != null
         ? `:lock: Build paused — ${overrideText}\n_Your work + the engine session are saved; resume (or reply here) to continue the SAME session._`
         : `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
+    const { summary } = summarizeTurnFailure(err);
     const threadId = await this.planningThreadId(jobId);
     await this.blockSink
       .appendBlock(jobId, {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'warning' },
+        meta: { source: 'system_operator', severity: 'warning', category: 'auth', summary },
       })
       .catch((e) =>
         this.logger.error(`could not durably record pause for job=${jobId}: ${e}`),
@@ -1256,6 +1263,8 @@ export class ThreadDriver implements JobDispatcher {
             source: 'system_operator',
             severity: 'warning',
             sessionLimit: true,
+            category: 'session_limit',
+            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         })
@@ -1274,6 +1283,8 @@ export class ThreadDriver implements JobDispatcher {
             source: 'system_operator',
             severity: 'warning',
             sessionLimit: true,
+            category: 'session_limit',
+            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         });
