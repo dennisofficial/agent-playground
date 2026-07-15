@@ -281,6 +281,7 @@ const MIME_BY_EXT: Record<string, { mime: string; binary: boolean }> = {
   '.gif': { mime: 'image/gif', binary: true },
   '.webp': { mime: 'image/webp', binary: true },
   '.avif': { mime: 'image/avif', binary: true },
+  '.zip': { mime: 'application/zip', binary: true },
 };
 
 /**
@@ -454,16 +455,18 @@ const MAX_FILE_UPLOAD_BYTES = 512 * 1024;
 /** Per-file cap for composer attachments (images can be large screenshots). Enforced by multer + here. */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** Max attachments per message. */
-const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENTS = 25;
 /**
  * The extensions an operator may attach in the composer. Images (Read renders them visually) + a
- * conservative set of text/doc types the brain's Read tool can parse. Anything else is rejected — we don't
- * want the brain fed opaque binaries it can't use. `.pdf` isn't in `MIME_BY_EXT` (added just here).
+ * conservative set of text/doc types the brain's Read tool can parse, plus `.zip` — attachments land in
+ * `/context/uploads/` and are Read on demand, so the brain can unzip an archive itself when it needs to.
+ * Anything else is rejected. `.pdf` isn't in `MIME_BY_EXT` (added just here).
  */
 const ATTACHMENT_EXTS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', // images
   '.txt', '.md', '.markdown', '.log', '.json', '.csv', '.xml', '.yaml', '.yml', // text
   '.html', '.htm', '.css', '.js', '.ts', '.tsx', '.pdf', // code + pdf
+  '.zip', // archive — Read on demand, extracted by the brain
 ]);
 
 /** The multipart file shape multer hands us (subset we use — avoids depending on global Express.Multer types). */
