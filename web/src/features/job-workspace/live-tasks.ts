@@ -1,21 +1,23 @@
 import type { LiveTurn } from "@/lib/api/job-stream";
 import type { TaskItem } from "@/lib/api/types";
+import { isBridgeTool, mcpName } from "./tool-calls/util";
 
 /**
- * REALTIME task overlay — the client-side twin of the backend's `task-fold.ts`, applied to a lane's LIVE
- * turn blocks on top of the last-fetched durable list. The server folds every `TaskCreate`/`TaskUpdate`
- * into the entity's tasks column as it happens, but the web's pipeline query only refetches on `/events`
+ * REALTIME task overlay — the client-side twin of the backend's `task_create`/`task_update` host-bridge
+ * handlers, applied to a lane's LIVE turn blocks on top of the last-fetched durable list. The handler
+ * writes the stage's `tasks` row as it happens, but the web's pipeline query only refetches on `/events`
  * frames (turn end) — mid-turn the checklist would sit frozen. The live turn stream already carries the
- * same tool blocks token-by-token, so re-applying them here makes the navigator tick in realtime, and
- * because both folds share semantics the overlay is IDEMPOTENT over whatever the durable snapshot already
- * absorbed (double-applying an event lands on the same state). The durable refetch reconciles at turn end.
+ * same tool blocks (`mcp__atlas-host-bridge__task_create`/`_update`) token-by-token, so re-applying them
+ * here makes the navigator tick in realtime, and because both folds share semantics the overlay is
+ * IDEMPOTENT over whatever the durable snapshot already absorbed (double-applying an event lands on the
+ * same state). The durable refetch reconciles at turn end.
  */
 
 const isStr = (v: unknown): v is string => typeof v === "string";
 const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 
-/** The created task's id from a TaskCreate result — the SDK returns a STRING ("Task #8 created…"); a
+/** The created task's id from a `task_create` result — it returns a STRING ("Task #8 created…"); a
  *  structured `{ task: { id } }` shape is kept as a fallback. Mirrors the backend `createdTaskId`. */
 function createdTaskId(result: unknown): string | null {
   if (isStr(result)) {
@@ -85,7 +87,7 @@ function applyCall(
       byId.set(target, rest.length > 0 ? { ...bare, blockedBy: rest } : bare);
     }
   };
-  if (name === "taskcreate") {
+  if (name === "task_create") {
     const id = createdTaskId(result);
     if (!id) return; // result not streamed yet — the row appears the moment it lands
     const subject = isStr(input.subject)
@@ -101,7 +103,7 @@ function applyCall(
       ...blockedEdges(),
     });
     applyInverseEdges(id);
-  } else if (name === "taskupdate") {
+  } else if (name === "task_update") {
     const id = isStr(input.taskId) ? input.taskId : null;
     if (!id) return;
     if (input.status === "deleted") {
@@ -138,8 +140,8 @@ export function overlayLiveTasks(
   );
   for (const b of live?.blocks ?? []) {
     if (b.kind !== "tool" || b.parentToolUseId) continue;
-    const name = b.name.toLowerCase();
-    if (name !== "taskcreate" && name !== "taskupdate") continue;
+    const name = (isBridgeTool(b.name) ? mcpName(b.name) : b.name).toLowerCase();
+    if (name !== "task_create" && name !== "task_update") continue;
     applyCall(byId, name, asRecord(b.input as unknown), b.result as unknown);
   }
   return [...byId.values()];

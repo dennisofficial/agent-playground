@@ -43,6 +43,9 @@ import {
   type ChatSurface,
   type DecisionApprovalCard,
   TurnHarnessFactory,
+  TASK_EVENT_SINK,
+  type TaskEventSink,
+  makeTaskTools,
   ThreadInputService,
   laneFor,
   SYSTEM_SEED_AUTHOR,
@@ -252,6 +255,15 @@ type InjectedMemoryDedupState = {
  *   - On approve → `JOB_DISPATCHER.dispatch`; on deny/request_changes → keep talking.
  *   - session_id is persisted on the `thread_sandboxes` row so it survives host restarts.
  */
+/** A no-op {@link TaskEventSink} — the constructor default for a test that builds this manager directly
+ *  (bypassing Nest DI) without wiring a real sink. In prod the @Global LiveTurnModule always supplies the
+ *  real {@link EntityTaskEventSink}; a call through this default degrades gracefully instead of throwing. */
+const NOOP_TASK_EVENT_SINK: TaskEventSink = {
+  createTask: async () => ({ id: 'noop' }),
+  updateTask: async () => ({ ok: false, error: 'task sink not wired' }),
+  readTasks: async () => [],
+};
+
 @Injectable()
 export class AgentSessionManager
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -505,6 +517,11 @@ export class AgentSessionManager
     // @Optional so unit tests can construct the manager without it (undefined → the `__profile_awareness`
     // tool is a silent no-op); DI (the @Global WorkspaceProfileModule) supplies it live.
     @Optional() private readonly profileAwareness?: ProfileAwarenessService,
+    // The durable task store behind `task_create`/`task_update`/`task_list`/`task_get`. A default (not
+    // @Optional) lets the many positional `new AgentSessionManager(...)` test call sites keep compiling
+    // without reaching this param; DI (@Global LiveTurnModule) supplies the real EntityTaskEventSink live.
+    @Inject(TASK_EVENT_SINK)
+    private readonly taskSink: TaskEventSink = NOOP_TASK_EVENT_SINK,
   ) {}
 
   /** The job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are stamped
@@ -3570,6 +3587,13 @@ export class AgentSessionManager
   ): Record<string, ToolImpl> {
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
+    // The brain's own live checklist — the SAME `task_*` host-bridge tools the build threads register,
+    // scoped to the job's planning stage. Carried by all three branches (normal/review/onboarding) since
+    // every persona prompt teaches the task-list discipline.
+    const taskTools = makeTaskTools(this.taskSink, {
+      kind: 'main',
+      id: stimulus.jobId,
+    });
     // CREATE a decision (the `create_decision` tool). Auto-attaches
     // the question the operator just answered — sourced AUTHORITATIVELY from the thread's human-input gate
     // pointer (no "latest answered card" race), persists with a fresh stable id, re-renders the generated
@@ -4863,6 +4887,7 @@ export class AgentSessionManager
         create_job: tools.create_job,
         link_job_dependency: tools.link_job_dependency,
         ...intake,
+        ...taskTools,
         ...atlasProd,
       };
     }
@@ -4870,7 +4895,7 @@ export class AgentSessionManager
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
     // ceremony-only: it stamps `onboarded_at` and opens the ceremony's OWN dedicated config PR, which only
     // makes sense when there is no other in-flight build PR to fold the config change into.
-    if (!onboarding) return { ...tools, ...intake, ...atlasProd };
+    if (!onboarding) return { ...tools, ...intake, ...taskTools, ...atlasProd };
     return {
       [INTERNAL_PROFILE_AWARENESS_TOOL]: tools[INTERNAL_PROFILE_AWARENESS_TOOL],
       ask_question: tools.ask_question,
@@ -4887,6 +4912,7 @@ export class AgentSessionManager
       propose_convention_profile_change:
         this.buildProposeConventionProfileChangeTool(stimulus),
       finish_onboarding: this.buildFinishOnboardingTool(stimulus),
+      ...taskTools,
       ...atlasProd,
     };
   }

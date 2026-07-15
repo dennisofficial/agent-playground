@@ -1,14 +1,16 @@
 "use client";
 
 import type { IconKind, ToolDescriptor, ToolHandler, ToolItem } from "../types";
-import { asRecord, formatPayload, str } from "../util";
+import { asRecord, formatPayload, isBridgeTool, mcpName, str } from "../util";
 import { StructuredPanel } from "../ui";
 
 /**
  * The remaining native Claude Code tools that aren't a file edit / shell / search — TodoWrite, Task,
- * WebFetch, WebSearch, BashOutput, KillShell, ExitPlanMode, SlashCommand. Without this they'd hit the
- * generic catch-all and render as a misleading blue `mcp · name` row; here they get a proper icon +
- * label (`isMcp: false`). TodoWrite gets a checklist body; the rest use the default structured panel.
+ * WebFetch, WebSearch, BashOutput, KillShell, ExitPlanMode, SlashCommand — plus the Atlas host-bridge
+ * `task_*` tools (the orchestrator's live task list, unified across engines; distinct from the
+ * subagent-spawning bare `task`). Without this they'd hit the generic catch-all and render as a
+ * misleading blue `mcp · name` row; here they get a proper icon + label (`isMcp: false`). TodoWrite
+ * gets a checklist body; the rest use the default structured panel.
  */
 
 interface NativeSpec {
@@ -34,26 +36,27 @@ const NATIVE: Record<string, NativeSpec> = {
     color: "var(--accent)",
     arg: todoSummary,
   },
-  // The SDK task tools (the orchestrator's live task list) — distinct from the subagent-spawning `task`.
-  taskcreate: {
+  // The unified Atlas host-bridge task tools (the orchestrator's live task list) — distinct from the
+  // subagent-spawning `task`. Arrive as `mcp__atlas-host-bridge__task_*`; `nativeKey` strips the prefix.
+  task_create: {
     label: "Add task",
     icon: "todo",
     color: "var(--accent)",
     arg: (i) => str(i.subject),
   },
-  taskupdate: {
+  task_update: {
     label: "Update task",
     icon: "todo",
     color: "var(--accent)",
     arg: (i) => str(i.status) || str(i.subject),
   },
-  tasklist: {
+  task_list: {
     label: "Tasks",
     icon: "todo",
     color: "var(--accent)",
     arg: () => "",
   },
-  taskget: {
+  task_get: {
     label: "Task",
     icon: "todo",
     color: "var(--accent)",
@@ -184,13 +187,18 @@ function MiscBody({ tool }: { tool: ToolItem }) {
   );
 }
 
+/** The `NATIVE` lookup key: strip the `mcp__atlas-host-bridge__` prefix off the unified `task_*` tools
+ *  before lowercasing, so both the bare SDK names and the bridged names resolve to the same entry. */
+const nativeKey = (name: string): string =>
+  (isBridgeTool(name) ? mcpName(name) : name).toLowerCase();
+
 /** Misc native tools — proper label/icon so they don't render as `mcp · name`. */
 export const nativeMiscHandler: ToolHandler = {
   id: "native-misc",
   match: (name) =>
-    Object.prototype.hasOwnProperty.call(NATIVE, name.toLowerCase()),
+    Object.prototype.hasOwnProperty.call(NATIVE, nativeKey(name)),
   describe: (tool): ToolDescriptor => {
-    const spec = NATIVE[tool.name.toLowerCase()];
+    const spec = NATIVE[nativeKey(tool.name)];
     const arg = spec.arg(asRecord(tool.input));
     return {
       icon: spec.icon,

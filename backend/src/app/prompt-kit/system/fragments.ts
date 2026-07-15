@@ -76,32 +76,22 @@ export const SANDBOX_FILESYSTEM_MAP_NOTE = [
 
 /**
  * Task-list discipline shared by every Atlas session that rides a task-tracked lane (the job brain on
- * `main`, a build thread's orchestrator on `thread:<id>`, PR Review on `pr-review:<jobId>` — see
- * `turn-harness.service.ts` `taskScopeFor`). The native task tools fold into the owning entity's tasks
- * column and render live in the operator's navigator, so the list IS the operator's progress view.
- * Persona prompts splice this in and add their own seeding rule (what the first tasks come from).
+ * `main`, a build thread's orchestrator on `thread:<id>`, the master-review thread). Both engines expose
+ * the SAME snake_case `task_create`/`task_update`/`task_list`/`task_get` tools; they write the durable,
+ * stage-owned checklist that renders live in the operator's navigator, so the list IS the operator's
+ * progress view. Persona prompts splice this in and add their own seeding rule (what the first tasks come
+ * from); the master-review body prepends its own lead-in.
  */
 export const TASK_LIST_NOTE =
-  "LIVE TASK LIST — your native task tools (`TaskCreate`/`TaskUpdate`) render DIRECTLY in the operator's " +
-  "UI as this session's checklist; they are how the operator follows your work at a glance. Whenever the " +
-  'work in front of you has more than one meaningful step, lay the list out FIRST: `TaskCreate` one task ' +
-  'per unit of work (short, outcome-phrased subjects the operator understands), then work it — `TaskUpdate` ' +
-  'a task to `in_progress` when you start it (one at a time) and `completed` the moment it finishes, never ' +
-  'in a batch at the end. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
-  "and drop ones that become moot (`TaskUpdate` with `status:'deleted'`). A stale checklist is worse than none.";
-
-/**
- * CODEX task-list discipline — the Codex-tool-name SIBLING of {@link TASK_LIST_NOTE}. Codex threads drive the
- * live checklist through the host bridge's snake_case `task_create`/`task_update` tools (the "atlasbridge" MCP
- * server), NOT Claude Code's `TaskCreate`/`TaskUpdate`, so the two notes stay distinct. Shared by the Codex
- * master-review persona (`ship.group`) and the driver's master-review task body. Each consumer prepends its own
- * lead-in ("TASK LIST — " / "TRACK YOUR WORK: ") and appends its own seeding rule.
- */
-export const CODEX_TASK_LIST_NOTE =
-  'keep a live checklist via the `task_create` / `task_update` host tools (from the "atlasbridge" MCP ' +
-  'server) so the operator can watch your progress: `task_create` returns a task id, and ' +
-  '`task_update({ taskId, status: "in_progress" })` as you start each item and `"completed"` when it is ' +
-  'done, keeping exactly one task in_progress at a time.';
+  'LIVE TASK LIST — your `task_create`/`task_update`/`task_list`/`task_get` tools render DIRECTLY in the ' +
+  "operator's UI as this session's checklist; they are how the operator follows your work at a glance. " +
+  'Whenever the work in front of you has more than one meaningful step, lay the list out FIRST: ' +
+  '`task_create` one task per unit of work (short, outcome-phrased subjects the operator understands), then ' +
+  'work it — `task_update` a task to `in_progress` when you start it (one at a time) and `completed` the ' +
+  'moment it finishes, never in a batch at the end. `task_list` re-reads your live list — it is durable and ' +
+  'survives a fresh session, so trust it after a handoff instead of rebuilding from memory — and `task_get` ' +
+  'shows one task in full. Keep the list TRUTHFUL as the work reshapes: add tasks you discover mid-flight, ' +
+  "and drop ones that become moot (`task_update` with `status:'deleted'`). A stale checklist is worse than none.";
 
 /**
  * The canonical "what a code review covers" list — the single home so every review surface (the ship-time
