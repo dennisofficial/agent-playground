@@ -519,13 +519,13 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
 
     // Seed one child row in every table that references the thread; deleting the thread must remove all
     // of them via the FK ON DELETE CASCADE (RestoreReferentialIntegrity migration) — zero orphans.
-    const [stage] = await ds.query(
-      `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    const [threadGroup] = await ds.query(
+      `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
       [jobId, FAKE_TEAM_ID],
     );
     const [thread] = await ds.query(
-      `INSERT INTO threads (job_id, org_id, stage_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
-      [jobId, FAKE_TEAM_ID, stage.id],
+      `INSERT INTO threads (job_id, org_id, thread_group_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
+      [jobId, FAKE_TEAM_ID, threadGroup.id],
     );
     await ds.query(
       `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
@@ -554,7 +554,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('jobs', 'id')).toBe(0);
     expect(await count('messages')).toBe(0);
     expect(await count('threads')).toBe(0);
-    expect(await count('stages')).toBe(0);
+    expect(await count('thread_groups')).toBe(0);
     expect(await count('decision_records')).toBe(0);
     expect(await count('stimuli')).toBe(0);
     expect(await count('job_sandboxes')).toBe(0);

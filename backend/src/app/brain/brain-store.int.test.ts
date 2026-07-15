@@ -182,8 +182,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await dataSource.query(
       `UPDATE threads t
           SET status = 'done'
-         FROM stages s
-        WHERE s.id = t.stage_id
+         FROM thread_groups s
+        WHERE s.id = t.thread_group_id
           AND s.decision_record_id = $1
           AND t.role = 'builder'`,
       [first.decisionRecordId],
@@ -219,25 +219,25 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await mainCount(dataSource, jobId)).toBe(1);
 
     // getPipelineState: active lanes = the NEW revision; the old one is browsable history in priorRevisions.
-    // (Both stage arrays also carry the revision's `master_review` root — filter to builders to compare.)
+    // (Both thread group arrays also carry the revision's `master_review` root — filter to builders to compare.)
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
-      stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
+      threadGroups: Array<{ threads: Array<{ brief: string; role: string }> }>;
       priorRevisions: Array<{
         revision: number;
-        stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
+        threadGroups: Array<{ threads: Array<{ brief: string; role: string }> }>;
       }>;
     };
     const builders = (
-      stages: Array<{ threads: Array<{ brief: string; role: string }> }>,
+      threadGroups: Array<{ threads: Array<{ brief: string; role: string }> }>,
     ) =>
-      stages
+      threadGroups
         .flatMap((s) => s.threads)
         .filter((t) => t.role === 'builder')
         .map((t) => t.brief);
-    expect(builders(state.stages)).toEqual(['backend two']);
+    expect(builders(state.threadGroups)).toEqual(['backend two']);
     expect(state.priorRevisions).toHaveLength(1);
     expect(state.priorRevisions[0].revision).toBe(1);
-    expect(builders(state.priorRevisions[0].stages)).toEqual(['backend one']);
+    expect(builders(state.priorRevisions[0].threadGroups)).toEqual(['backend one']);
   }, 30_000);
 
   it('PLAN VERSIONING: a DIRECT build (empty threadTitles) over done work preserves history and creates no builders', async () => {
@@ -260,8 +260,8 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     await dataSource.query(
       `UPDATE threads t
           SET status = 'done'
-         FROM stages s
-        WHERE s.id = t.stage_id
+         FROM thread_groups s
+        WHERE s.id = t.thread_group_id
           AND s.decision_record_id = $1
           AND t.role = 'builder'`,
       [first.decisionRecordId],
@@ -291,20 +291,20 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await masterReviewCount(dataSource, jobId)).toBe(1); // only v1's master review remains
 
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
-      stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
+      threadGroups: Array<{ threads: Array<{ brief: string; role: string }> }>;
       priorRevisions: Array<{
-        stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
+        threadGroups: Array<{ threads: Array<{ brief: string; role: string }> }>;
       }>;
     };
     // Active revision has no lanes (empty direct build), but the done v1 builder is browsable history.
     expect(
-      state.stages.flatMap((s) =>
+      state.threadGroups.flatMap((s) =>
         s.threads.filter((t) => t.role === 'builder'),
       ),
     ).toEqual([]);
     expect(state.priorRevisions).toHaveLength(1);
     expect(
-      state.priorRevisions[0].stages
+      state.priorRevisions[0].threadGroups
         .flatMap((s) => s.threads)
         .filter((t) => t.role === 'builder')
         .map((t) => t.brief),
@@ -652,7 +652,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(plans1[1]).toContain('add the page at page.tsx:1');
 
     // Re-propose WITHOUT stepsByThread (e.g. a direct-build-style re-shape): prior build threads are
-    // cascade-cleared with their stages, and no new thread plan is created.
+    // cascade-cleared with their thread groups, and no new thread plan is created.
     await store.reopenPlanning(jobId);
     await store.persistPlan({
       orgId: TEAM_ID,
@@ -1491,7 +1491,7 @@ async function builderBriefsForRecord(
   const rows: Array<{ brief: string }> = await ds.query(
     `SELECT t.brief
        FROM threads t
-       JOIN stages s ON s.id = t.stage_id
+       JOIN thread_groups s ON s.id = t.thread_group_id
       WHERE s.decision_record_id = $1 AND t.role = 'builder'
       ORDER BY t.ordinal ASC`,
     [recordId],
@@ -1634,32 +1634,32 @@ async function ensurePlanningThread(
   jobId: string,
   orgId: string,
 ): Promise<string> {
-  const existing: Array<{ stage_id: string; thread_id: string | null }> =
+  const existing: Array<{ thread_group_id: string; thread_id: string | null }> =
     await ds.query(
-      `SELECT s.id AS stage_id, t.id AS thread_id
-         FROM stages s
-         LEFT JOIN threads t ON t.stage_id = s.id AND t.role = 'planning'
+      `SELECT s.id AS thread_group_id, t.id AS thread_id
+         FROM thread_groups s
+         LEFT JOIN threads t ON t.thread_group_id = s.id AND t.role = 'planning'
         WHERE s.job_id = $1 AND s.kind = 'planning'
         ORDER BY s.ordinal ASC
         LIMIT 1`,
       [jobId],
     );
-  let stageId = existing[0]?.stage_id;
-  if (!stageId) {
-    const [stage]: Array<{ id: string }> = await ds.query(
-      `INSERT INTO stages (job_id, org_id, ordinal, kind, title)
+  let threadGroupId = existing[0]?.thread_group_id;
+  if (!threadGroupId) {
+    const [threadGroup]: Array<{ id: string }> = await ds.query(
+      `INSERT INTO thread_groups (job_id, org_id, ordinal, kind, title)
          VALUES ($1, $2, 10, 'planning', 'Planning')
          RETURNING id`,
       [jobId, orgId],
     );
-    stageId = stage.id;
+    threadGroupId = threadGroup.id;
   }
   if (existing[0]?.thread_id) return existing[0].thread_id;
   const [thread]: Array<{ id: string }> = await ds.query(
-    `INSERT INTO threads (stage_id, job_id, org_id, role, ordinal, brief, type, status)
+    `INSERT INTO threads (thread_group_id, job_id, org_id, role, ordinal, brief, type, status)
        VALUES ($1, $2, $3, 'planning', 0, 'Main', 'general', 'pending')
        RETURNING id`,
-    [stageId, jobId, orgId],
+    [threadGroupId, jobId, orgId],
   );
   return thread.id;
 }

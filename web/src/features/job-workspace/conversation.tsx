@@ -81,7 +81,7 @@ export function Conversation({
   blockedBy?: JobBlocker[];
   /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
   blockedSeedMessage?: string | null;
-  /** The planning stage's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
+  /** The planning thread group's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
    *  job, where every message belongs to the single brain thread and no scoping is needed. */
   mainThreadId?: string;
   /** The Main (brain) lane's pre-turn footer default ("Opus 4.8") — shown before the first brain turn. */

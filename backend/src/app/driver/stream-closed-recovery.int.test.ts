@@ -281,31 +281,31 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         }),
       ]);
       await jobs.update({ id: job.id }, { decision_record_id: record.id });
-      // Every job carries one planning stage-thread at job start — the anchor job-level operator notices are
+      // Every job carries one planning thread group at job start — the anchor job-level operator notices are
       // stamped onto (messages.thread_id is NOT NULL). The driver never executes it; it's render-only.
-      const planningStage = await store.createStage({
+      const planningThreadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
         kind: 'planning',
         title: 'Planning',
       });
-      await store.createThreadInStage({
-        stageId: planningStage.id,
+      await store.createThreadInThreadGroup({
+        threadGroupId: planningThreadGroup.id,
         jobId: job.id,
         orgId: ORG_ID,
         role: 'planning',
         ordinal: 0,
         brief: 'Main',
       });
-      const stage = await store.createStage({
+      const threadGroup = await store.createThreadGroup({
         jobId: job.id,
         orgId: ORG_ID,
         kind: 'build',
         title: 'Backend',
         decisionRecordId: record.id,
       });
-      await store.createThreadInStage({
-        stageId: stage.id,
+      await store.createThreadInThreadGroup({
+        threadGroupId: threadGroup.id,
         jobId: job.id,
         orgId: ORG_ID,
         role: 'builder',

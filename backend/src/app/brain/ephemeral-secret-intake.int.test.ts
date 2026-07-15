@@ -123,7 +123,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     jobId = thread.id;
 
     const bootstrap = app.get(JobBootstrapService);
-    await bootstrap.ensurePlanningStage(jobId, ORG_ID);
+    await bootstrap.ensurePlanningThreadGroup(jobId, ORG_ID);
   });
 
   afterAll(async () => {

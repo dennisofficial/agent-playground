@@ -2,13 +2,13 @@
  * DriverStoreService.getPipelineState — the web `/pipeline` read model.
  *
  * Proves (against live Postgres) that the payload the operator console renders the navigator from carries
- * the job's ordinal-ordered STAGES, each stage's threads (root builder legs + their review children) with
- * the thread `hasPlan` flag, the stage's task checklist, and the PR + branch on the job. Also exercises the
- * driver's write surface: stage/thread/task CRUD, builder-leg rotation, the halt/done-wake CAS methods, and
+ * the job's ordinal-ordered THREAD GROUPS, each thread group's threads (root builder legs + their review children) with
+ * the thread `hasPlan` flag, the thread group's task checklist, and the PR + branch on the job. Also exercises the
+ * driver's write surface: thread-group/thread/task CRUD, builder-leg rotation, the halt/done-wake CAS methods, and
  * the ship-review gate.
  *
  * Integration: real Postgres (atlas_test schema), no fakes (the methods only touch repositories). Seeds an
- * org/repo/job + stages/threads/tasks (via the store's own CRUD where practical), then asserts the mapped
+ * org/repo/job + thread groups/threads/tasks (via the store's own CRUD where practical), then asserts the mapped
  * read model.
  */
 
@@ -102,7 +102,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
   beforeEach(async () => {
     await ds.query(
-      'TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -121,14 +121,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         pr_number: 43,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -143,7 +143,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       prNumber: number | null;
       featureBranch: string | null;
       baseBranch: string | null;
-      stages: Array<{
+      threadGroups: Array<{
         threads: Array<{
           id: string;
           hasPlan: boolean;
@@ -159,18 +159,18 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.featureBranch).toBe('atlas/feature-stripe');
     expect(state.baseBranch).toBe(BASE_BRANCH);
 
-    expect(state.stages).toHaveLength(1);
-    expect(state.stages[0].threads).toHaveLength(1);
-    const [sec] = state.stages[0].threads;
+    expect(state.threadGroups).toHaveLength(1);
+    expect(state.threadGroups[0].threads).toHaveLength(1);
+    const [sec] = state.threadGroups[0].threads;
     expect(sec.hasPlan).toBe(true);
     expect(sec.status).toBe('executing');
-    // Before the review stage materializes child rows, the read model exposes NO children — the current
+    // Before the review thread group materializes child rows, the read model exposes NO children — the current
     // code does not synthesize a preview child. Materialized review rows are covered by the next test.
     expect(sec.children).toEqual([]);
   });
 
-  it('surfaces the committed `build_path` as `buildPath` — direct builds carry no stages', async () => {
-    // A DIRECT build: approved fast path, committed `build_path='direct'`, done, with NO stages.
+  it('surfaces the committed `build_path` as `buildPath` — direct builds carry no thread groups', async () => {
+    // A DIRECT build: approved fast path, committed `build_path='direct'`, done, with NO thread groups.
     // The navigator reads `buildPath` to suppress its plan-oriented placeholders for exactly this shape.
     const direct = await jobs.save(
       jobs.create({
@@ -186,10 +186,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     const directState = (await store.getPipelineState(direct.id, ORG_ID)) as {
       buildPath: string | null;
-      stages: unknown[];
+      threadGroups: unknown[];
     };
     expect(directState.buildPath).toBe('direct');
-    expect(directState.stages).toHaveLength(0);
+    expect(directState.threadGroups).toHaveLength(0);
 
     // A job that never committed a path (still convertible) reports `buildPath: null` — the navigator keeps
     // its placeholders in that case.
@@ -222,14 +222,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -294,7 +294,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     await store.setThreadStatus(lenses[2].id, 'executing'); // third still running
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      stages: Array<{
+      threadGroups: Array<{
         threads: Array<{
           children: Array<{
             id: string;
@@ -307,10 +307,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         }>;
       }>;
     };
-    // The child rows are NOT stage roots (they nest under their builder as `children`).
-    expect(state.stages).toHaveLength(1);
-    expect(state.stages[0].threads).toHaveLength(1);
-    const lensRows = state.stages[0].threads[0].children.filter(
+    // The child rows are NOT thread group roots (they nest under their builder as `children`).
+    expect(state.threadGroups).toHaveLength(1);
+    expect(state.threadGroups[0].threads).toHaveLength(1);
+    const lensRows = state.threadGroups[0].threads[0].children.filter(
       (c) => c.role === 'review_agent',
     );
     const byLens = new Map(lensRows.map((c) => [c.lensId, c]));
@@ -329,7 +329,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       `autofix:${thread.id}:best_practices`,
     );
     expect(
-      state.stages[0].threads[0].children.find((c) => c.role === 'review_fix')
+      state.threadGroups[0].threads[0].children.find((c) => c.role === 'review_fix')
         ?.lane,
     ).toBe(`autofix:${thread.id}:fix`);
 
@@ -342,7 +342,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(fresh.find((c) => c.kind === 'review_fix')).toBeTruthy();
   });
 
-  it('surfaces the stage-owned task checklist through the pipeline read model and the thread→stage join', async () => {
+  it('surfaces the thread-group-owned task checklist through the pipeline read model and the thread→thread group join', async () => {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -354,14 +354,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -369,30 +369,30 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
     await store.setThreadStatus(thread.id, 'executing');
 
-    // An un-touched stage: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
+    // An un-touched thread group: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
     // fixed/expected set for pure LLM output).
     const empty = (await store.getPipelineState(job.id, ORG_ID)) as {
-      stages: Array<{ tasks: unknown[] }>;
+      threadGroups: Array<{ tasks: unknown[] }>;
     };
-    expect(empty.stages[0].tasks).toEqual([]);
+    expect(empty.threadGroups[0].tasks).toEqual([]);
 
-    // The build turn's TaskCreate writes a real stage-owned task row (no jsonb read-modify-write).
+    // The build turn's TaskCreate writes a real thread-group-owned task row (no jsonb read-modify-write).
     const task = await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Write the migration',
     });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      stages: Array<{
+      threadGroups: Array<{
         tasks: Array<{ id: string; subject: string; status: string }>;
       }>;
     };
     // Mapped through `toTaskItem` — no `description`/`activeForm`/`blockedBy` keys since none were supplied.
-    expect(state.stages[0].tasks).toEqual([
+    expect(state.threadGroups[0].tasks).toEqual([
       { id: task.id, subject: 'Write the migration', status: 'pending' },
     ]);
-    // The thread → stage → tasks join returns the SAME list (the fresh Leg reads it via its stage).
+    // The thread → thread group → tasks join returns the SAME list (the fresh Leg reads it via its thread group).
     expect(await store.getThreadTasks(thread.id)).toEqual([
       { id: task.id, subject: 'Write the migration', status: 'pending' },
     ]);
@@ -410,31 +410,31 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
       brief: 'Backend — drop open tasks',
     });
     const t1 = await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Done work',
     });
     const t2 = await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Forgotten tick',
     });
     const t3 = await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Never started',
     });
@@ -466,14 +466,14 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -522,7 +522,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
   });
 
-  it('nests stages → threads → review children + tasks (the full pipeline read shape)', async () => {
+  it('nests thread groups → threads → review children + tasks (the full pipeline read shape)', async () => {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -534,22 +534,22 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Foundation',
     });
-    // Two builder legs side by side (as a rotation would leave them) — both are stage roots.
-    const leg1 = await store.createThreadInStage({
-      stageId: stage.id,
+    // Two builder legs side by side (as a rotation would leave them) — both are thread group roots.
+    const leg1 = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
       brief: 'Foundation — leg 1',
     });
-    const leg2 = await store.createThreadInStage({
-      stageId: stage.id,
+    const leg2 = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
@@ -568,18 +568,18 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       ],
     );
     await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Write the migration',
     });
     await store.createTask({
-      stageId: stage.id,
+      threadGroupId: threadGroup.id,
       orgId: ORG_ID,
       title: 'Wire the handler',
     });
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
-      stages: Array<{
+      threadGroups: Array<{
         kind: string;
         title: string | null;
         ordinal: number;
@@ -592,13 +592,13 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }>;
     };
 
-    expect(state.stages).toHaveLength(1);
-    const [stg] = state.stages;
+    expect(state.threadGroups).toHaveLength(1);
+    const [stg] = state.threadGroups;
     expect(stg.kind).toBe('build');
     expect(stg.title).toBe('Foundation');
     expect(typeof stg.ordinal).toBe('number');
 
-    // Only the two builders are stage roots — the review children nest under their own parent, not the stage.
+    // Only the two builders are thread group roots — the review children nest under their own parent, not the thread group.
     expect(stg.threads).toHaveLength(2);
     const byId = new Map(stg.threads.map((t) => [t.id, t]));
     expect(
@@ -620,7 +620,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
   async function seedJobThread(): Promise<{
     jobId: string;
-    stageId: string;
+    threadGroupId: string;
     threadId: string;
   }> {
     const job = await jobs.save(
@@ -634,21 +634,21 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
       brief: 'Backend — halt',
     });
     await store.setThreadStatus(thread.id, 'executing');
-    return { jobId: job.id, stageId: stage.id, threadId: thread.id };
+    return { jobId: job.id, threadGroupId: threadGroup.id, threadId: thread.id };
   }
 
   it('setHaltOwed → threadsAwaitingHaltWake selects it; markHaltWaked (matching gen) dedups it', async () => {
@@ -714,10 +714,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   // ── Decision d1 — completion-wake store methods (mirrors the halt trio, WITH a generation CAS) ─────
 
   it('setDoneWakeOwed → threadsAwaitingDoneWake selects only owed+un-waked rows', async () => {
-    const { jobId, stageId, threadId } = await seedJobThread();
+    const { jobId, threadGroupId, threadId } = await seedJobThread();
     // A second thread on the SAME job, already waked — must never resurface as owed.
-    const otherThread = await store.createThreadInStage({
-      stageId,
+    const otherThread = await store.createThreadInThreadGroup({
+      threadGroupId,
       jobId,
       orgId: ORG_ID,
       role: 'builder',
@@ -772,9 +772,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it("supersedeDoneWakeMessages deletes only THIS thread's below-gen rows — spares other threads and untagged rows", async () => {
-    const { jobId, stageId, threadId } = await seedJobThread();
-    const otherThread = await store.createThreadInStage({
-      stageId,
+    const { jobId, threadGroupId, threadId } = await seedJobThread();
+    const otherThread = await store.createThreadInThreadGroup({
+      threadGroupId,
       jobId,
       orgId: ORG_ID,
       role: 'builder',
@@ -826,20 +826,20 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const { jobId } = await seedJobThread();
     expect(await store.masterReviewThreadId(jobId)).toBeNull();
 
-    // master_review is a singleton stage kind — give it its own stage.
-    const masterStage = await store.createStage({
+    // master_review is a singleton thread group kind — give it its own thread group.
+    const masterThreadGroup = await store.createThreadGroup({
       jobId,
       orgId: ORG_ID,
       kind: 'master_review',
     });
-    const masterReview = await store.createThreadInStage({
-      stageId: masterStage.id,
+    const masterReview = await store.createThreadInThreadGroup({
+      threadGroupId: masterThreadGroup.id,
       jobId,
       orgId: ORG_ID,
       role: 'master_review',
       // A distinct ordinal from the seed builder — `uq_threads_job_parent_ordinal` is UNIQUE
       // (job_id, parent_thread_id, ordinal) NULLS NOT DISTINCT, so two root threads on the same job
-      // can't share an ordinal even across stages.
+      // can't share an ordinal even across thread groups.
       ordinal: 20,
       brief: 'master review',
     });
@@ -847,11 +847,11 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
   });
 
-  // ── Leg rotation (context-rot: one build stage → many sequential builder-thread legs) ──────────────
+  // ── Leg rotation (context-rot: one build thread group → many sequential builder-thread legs) ──────────────
 
   async function seedRotationThread(sessionId: string | null): Promise<{
     jobId: string;
-    stageId: string;
+    threadGroupId: string;
     threadId: string;
   }> {
     const seeded = await seedJobThread();
@@ -861,7 +861,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   }
 
   it('completeLegRotation inserts the next builder leg, stashes the seed, and leaves the old row untouched', async () => {
-    const { stageId, threadId } = await seedRotationThread('sess-1');
+    const { threadGroupId, threadId } = await seedRotationThread('sess-1');
 
     const res = await store.completeLegRotation({
       anchorStepId: threadId,
@@ -873,7 +873,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     // Rotation INSERTS the next builder leg; the OLD row is untouched (its session is NOT nulled — a
     // rotation must never look like a committed batch that mutated the current leg).
-    const rows = await store.threadsForStage(stageId);
+    const rows = await store.threadsForThreadGroup(threadGroupId);
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe(threadId);
     expect(rows[0].session_id).toBe('sess-1');
@@ -893,25 +893,25 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
   });
 
-  it('completeLegRotation allocates a JOB-UNIQUE ordinal, so a rotation in one stage of a multi-stage job never collides with a sibling stage (regression)', async () => {
-    // The rotating builder is at ordinal 10 in its own build stage. A stage-LOCAL allocation (the bug) would
-    // pick `max(stage siblings)+GAP = 20`. But `uq_threads_job_parent_ordinal` is UNIQUE(job_id,
-    // parent_thread_id, ordinal) NULLS NOT DISTINCT — JOB-global — and a SIBLING build stage in the SAME job
+  it('completeLegRotation allocates a JOB-UNIQUE ordinal, so a rotation in one thread group of a multi-thread-group job never collides with a sibling thread group (regression)', async () => {
+    // The rotating builder is at ordinal 10 in its own build thread group. A thread-group-LOCAL allocation (the bug) would
+    // pick `max(thread group siblings)+GAP = 20`. But `uq_threads_job_parent_ordinal` is UNIQUE(job_id,
+    // parent_thread_id, ordinal) NULLS NOT DISTINCT — JOB-global — and a SIBLING build thread group in the SAME job
     // already occupies ordinal 20 (both root threads, parent_thread_id null). Pre-fix, the INSERT hit the
     // unique index, the txn threw, and rotation silently failed ("handoff rotation isn't working").
-    const { jobId, stageId, threadId } = await seedRotationThread('sess-1');
-    const siblingStage = await store.createStage({
+    const { jobId, threadGroupId, threadId } = await seedRotationThread('sess-1');
+    const siblingThreadGroup = await store.createThreadGroup({
       jobId,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Frontend',
     });
-    await store.createThreadInStage({
-      stageId: siblingStage.id,
+    await store.createThreadInThreadGroup({
+      threadGroupId: siblingThreadGroup.id,
       jobId,
       orgId: ORG_ID,
       role: 'builder',
-      ordinal: 20, // the ordinal a stage-local allocation would (wrongly) reuse for the new leg
+      ordinal: 20, // the ordinal a thread-group-local allocation would (wrongly) reuse for the new leg
       brief: 'Frontend',
     });
 
@@ -923,8 +923,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
     expect(res).toEqual({ fromLeg: 1, toLeg: 2, abandonedSessionId: 'sess-1' });
 
-    // The new leg lands in the ROTATING thread's stage, at a job-unique ordinal past the sibling's 20.
-    const rows = await store.threadsForStage(stageId);
+    // The new leg lands in the ROTATING thread's thread group, at a job-unique ordinal past the sibling's 20.
+    const rows = await store.threadsForThreadGroup(threadGroupId);
     expect(rows).toHaveLength(2);
     const leg2 = rows[1];
     expect(leg2.role).toBe('builder');
@@ -933,7 +933,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   });
 
   it('completeLegRotation is a no-op (returns null) when there is no live session to rotate', async () => {
-    const { stageId, threadId } = await seedRotationThread(null);
+    const { threadGroupId, threadId } = await seedRotationThread(null);
     const res = await store.completeLegRotation({
       anchorStepId: threadId,
       handoff: 'x',
@@ -941,7 +941,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     });
     expect(res).toBeNull();
     // Nothing inserted — the lone builder leg is unchanged.
-    expect(await store.threadsForStage(stageId)).toHaveLength(1);
+    expect(await store.threadsForThreadGroup(threadGroupId)).toHaveLength(1);
   });
 
   it('recordActiveLeg records the live session and keeps the PEAK context occupancy', async () => {
@@ -958,7 +958,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   // ── Transcript anchor (the halt-wake's session pointer) ────────────────────────────────────────────
 
   it("resolveSessionAnchor returns the thread's session id + its builder-leg ordinal (no terminal record needed)", async () => {
-    const { stageId, threadId } = await seedRotationThread('sess-1');
+    const { threadGroupId, threadId } = await seedRotationThread('sess-1');
 
     // A lone builder leg resolves to legOrdinal 1, straight off its own session — no terminal record needed.
     expect(await store.getTerminalRecord(threadId)).toBeNull();
@@ -973,7 +973,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       handoff: 'h',
       seed: 's',
     });
-    const leg2 = (await store.threadsForStage(stageId))[1];
+    const leg2 = (await store.threadsForThreadGroup(threadGroupId))[1];
     await threads.update({ id: leg2.id }, { session_id: 'sess-2' });
     expect(await store.resolveSessionAnchor(leg2.id)).toEqual({
       sessionId: 'sess-2',
@@ -1030,13 +1030,13 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       }),
     );
     // A card row's `thread_id` is NOT NULL (d3) — seed a thread to anchor the durable ship card on.
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'planning',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'main',
@@ -1116,13 +1116,13 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
     // parkForShipReview anchors its ship card on the job's planning thread (messages.thread_id is NOT
     // NULL) — every job gets exactly one at job start (d7); seed it directly here.
-    const planningStage = await store.createStage({
+    const planningThreadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'planning',
     });
-    await store.createThreadInStage({
-      stageId: planningStage.id,
+    await store.createThreadInThreadGroup({
+      threadGroupId: planningThreadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'planning',

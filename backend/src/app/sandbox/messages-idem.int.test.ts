@@ -88,10 +88,10 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
       [TEAM_ID, repo.id, 'chat'],
     );
     jobA = job.id as string;
-    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning stage + thread so every
+    // messages.thread_id is NOT NULL (FK → threads.id) — seed the job's planning thread group + thread so every
     // block below has a real thread to anchor onto.
     const bootstrap = app.get(JobBootstrapService);
-    await bootstrap.ensurePlanningStage(jobA, TEAM_ID);
+    await bootstrap.ensurePlanningThreadGroup(jobA, TEAM_ID);
     threadA = await bootstrap.planningThreadId(jobA);
   }, 60_000);
 

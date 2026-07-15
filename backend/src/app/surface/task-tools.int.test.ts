@@ -4,12 +4,12 @@
  * Against real Postgres, this reproduces the exact bug the change fixes: after a builder-leg rotation the
  * OLD SDK-native `TaskList` read a per-session in-memory store that was empty post-rotation ("No tasks
  * found"), and the OLD dual-id fold couldn't `task_update` by an id that came from `task_list`. Here the
- * tools do direct CRUD on the stage-owned `tasks` rows in ONE durable uuid id space, so:
+ * tools do direct CRUD on the thread-group-owned `tasks` rows in ONE durable uuid id space, so:
  *   (b) a FRESH sink instance (a new session/leg — no in-memory cache carries over) still lists both rows
  *       and can `task_update` one BY THE UUID `task_list` reported. That is the precise case the old
  *       design failed.
  *
- * Integration: real Postgres (atlas_test schema); seeds org/repo/job + a build stage/thread via the
+ * Integration: real Postgres (atlas_test schema); seeds org/repo/job + a build thread group/thread via the
  * store's own CRUD (mirrors `driver-store.int.test.ts`), then drives the tools end-to-end.
  */
 
@@ -26,7 +26,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ENTITIES,
   JobEntity,
-  StageEntity,
+  ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
 } from '../persistence/entities';
@@ -69,13 +69,13 @@ describe('task_* host-bridge tools — durable single-id-space CRUD (live Postgr
   let store: DriverStoreService;
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
-  let stages: Repository<StageEntity>;
+  let threadGroups: Repository<ThreadGroupEntity>;
   let tasks: Repository<TaskEntity>;
   let repoId: string;
 
   /** Build a NEW sink (fresh session — no in-memory state carries over) over the live repos. */
   const freshSink = () =>
-    new EntityTaskEventSink(threads, stages, tasks);
+    new EntityTaskEventSink(threads, threadGroups, tasks);
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
@@ -93,7 +93,7 @@ describe('task_* host-bridge tools — durable single-id-space CRUD (live Postgr
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
-    stages = mod.get(getRepositoryToken(StageEntity, DB_CONNECTION));
+    threadGroups = mod.get(getRepositoryToken(ThreadGroupEntity, DB_CONNECTION));
     tasks = mod.get(getRepositoryToken(TaskEntity, DB_CONNECTION));
 
     await ds.query(
@@ -115,10 +115,10 @@ describe('task_* host-bridge tools — durable single-id-space CRUD (live Postgr
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE tasks, threads, stages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE');
   });
 
-  async function seedThreadScope(): Promise<{ stageId: string; scope: TaskScope }> {
+  async function seedThreadScope(): Promise<{ threadGroupId: string; scope: TaskScope }> {
     const job = await jobs.save(
       jobs.create({
         org_id: ORG_ID,
@@ -130,31 +130,31 @@ describe('task_* host-bridge tools — durable single-id-space CRUD (live Postgr
         base_branch: BASE_BRANCH,
       }),
     );
-    const stage = await store.createStage({
+    const threadGroup = await store.createThreadGroup({
       jobId: job.id,
       orgId: ORG_ID,
       kind: 'build',
       title: 'Backend',
     });
-    const thread = await store.createThreadInStage({
-      stageId: stage.id,
+    const thread = await store.createThreadInThreadGroup({
+      threadGroupId: threadGroup.id,
       jobId: job.id,
       orgId: ORG_ID,
       role: 'builder',
       brief: 'Backend — task list',
     });
-    return { stageId: stage.id, scope: { kind: 'thread', id: thread.id } };
+    return { threadGroupId: threadGroup.id, scope: { kind: 'thread', id: thread.id } };
   }
 
   it('creates → lists (fresh session) → updates by the listed uuid → gets → deletes, all in one durable id space', async () => {
-    const { stageId, scope } = await seedThreadScope();
+    const { threadGroupId, scope } = await seedThreadScope();
 
     // (a) Two creates through one tool instance.
     const tools = makeTaskTools(freshSink(), scope);
     const idA = createdId(await tools.task_create({ subject: 'A' }));
     const idB = createdId(await tools.task_create({ subject: 'B' }));
 
-    const rows = await tasks.find({ where: { stage_id: stageId } });
+    const rows = await tasks.find({ where: { thread_group_id: threadGroupId } });
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.title).sort()).toEqual(['A', 'B']);
 
@@ -185,10 +185,10 @@ describe('task_* host-bridge tools — durable single-id-space CRUD (live Postgr
       ok: true,
     });
     expect(await tasks.findOne({ where: { id: idA } })).toBeNull();
-    expect(await tasks.find({ where: { stage_id: stageId } })).toHaveLength(1);
+    expect(await tasks.find({ where: { thread_group_id: threadGroupId } })).toHaveLength(1);
   });
 
-  it('task_list on an empty stage returns the exact "No tasks found." string', async () => {
+  it('task_list on an empty thread group returns the exact "No tasks found." string', async () => {
     const { scope } = await seedThreadScope();
     expect(await makeTaskTools(freshSink(), scope).task_list({})).toBe(
       'No tasks found.',

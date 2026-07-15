@@ -116,7 +116,7 @@ export function resolveNode(
   // Bare token — a thread (a builder leg is just an ordinary thread row) or a review CHILD thread (a
   // `review_agent` / `review_fix` row). A review child legitimately exists even before its lens has run (an
   // empty transcript is a TranscriptView empty-state, not a not-found).
-  const matches = job.stages.some((st) =>
+  const matches = job.threadGroups.some((st) =>
     st.threads.some(
       (t) => t.id === node || (t.children ?? []).some((c) => c.id === node),
     ),
@@ -127,7 +127,7 @@ export function resolveNode(
 function hasThread(job: PipelineJob, id: string): boolean {
   return (
     id.length > 0 &&
-    job.stages.some((st) => st.threads.some((t) => t.id === id))
+    job.threadGroups.some((st) => st.threads.some((t) => t.id === id))
   );
 }
 
@@ -176,7 +176,7 @@ export function nodeLane(
 ): string | null {
   if (node.startsWith("codex-review:")) return codexReviewLane(jobId);
   if (!job) return null;
-  const threads = job.stages.flatMap((s) => s.threads);
+  const threads = job.threadGroups.flatMap((s) => s.threads);
   // A review CHILD thread (review_agent / review_fix) → the lane the backend already computed for it
   // (`autofix:<parentId>:<lensId>` / `autofix:<parentId>:fix`), carried on the pipeline data.
   for (const t of threads) {

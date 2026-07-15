@@ -13,7 +13,7 @@ export * from './message.entity';
 export * from './active-turn.entity';
 export * from './tool-execution.entity';
 export * from './stimulus.entity';
-export * from './stage.entity';
+export * from './thread-group.entity';
 export * from './thread.entity';
 export * from './task.entity';
 export * from './subagent.entity';
@@ -43,7 +43,7 @@ import { MessageEntity } from './message.entity';
 import { ActiveTurnEntity } from './active-turn.entity';
 import { ToolExecutionEntity } from './tool-execution.entity';
 import { StimulusEntity } from './stimulus.entity';
-import { StageEntity } from './stage.entity';
+import { ThreadGroupEntity } from './thread-group.entity';
 import { ThreadEntity } from './thread.entity';
 import { TaskEntity } from './task.entity';
 import { SubagentEntity } from './subagent.entity';
@@ -75,7 +75,7 @@ export const ENTITIES = [
   ActiveTurnEntity,
   ToolExecutionEntity,
   StimulusEntity,
-  StageEntity,
+  ThreadGroupEntity,
   ThreadEntity,
   TaskEntity,
   SubagentEntity,

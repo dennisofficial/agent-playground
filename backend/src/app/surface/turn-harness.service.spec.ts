@@ -492,8 +492,8 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   });
 });
 
-describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows', () => {
-  /** A minimal in-memory `tasks` table stand-in, keyed by row id. Honors the `stage_id` filter on
+describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tasks rows', () => {
+  /** A minimal in-memory `tasks` table stand-in, keyed by row id. Honors the `thread_group_id` filter on
    *  find/findOne and ordinal ordering on find, so the sink's queries behave as they would against PG. */
   function fakeTasksRepo(
     seed: Array<{
@@ -506,7 +506,7 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
   ) {
     type Row = {
       id: string;
-      stage_id: string;
+      thread_group_id: string;
       org_id: string;
       ordinal: number;
       title: string;
@@ -519,7 +519,7 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
       seed.map((r) => [
         r.id,
         {
-          stage_id: 'S',
+          thread_group_id: 'S',
           org_id: 'O',
           ordinal: 10,
           brief: null,
@@ -533,7 +533,7 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
     let maxOrdinal = seed.reduce((m, r) => Math.max(m, r.ordinal ?? 10), 0);
     const matches = (row: Row, where: Partial<Row> = {}) =>
       (where.id === undefined || row.id === where.id) &&
-      (where.stage_id === undefined || row.stage_id === where.stage_id);
+      (where.thread_group_id === undefined || row.thread_group_id === where.thread_group_id);
     return {
       rows,
       find: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) =>
@@ -571,13 +571,13 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
   }
 
   const threadSink = (tasks: ReturnType<typeof fakeTasksRepo>) => {
-    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threadGroups = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
     const threads = {
-      findOne: vi.fn(async () => ({ id: 'th1', stage_id: 'S', org_id: 'O' })),
+      findOne: vi.fn(async () => ({ id: 'th1', thread_group_id: 'S', org_id: 'O' })),
     };
     return new EntityTaskEventSink(
       threads as never,
-      stages as never,
+      threadGroups as never,
       tasks as never,
     );
   };
@@ -655,7 +655,7 @@ describe('EntityTaskEventSink — direct uuid CRUD on the stage-owned tasks rows
     expect(tasks.rows.get('1')?.blocked_by).toEqual([id]);
   });
 
-  it('createTask/updateTask drop blockedBy ids that are not rows in this stage', async () => {
+  it('createTask/updateTask drop blockedBy ids that are not rows in this thread group', async () => {
     const tasks = fakeTasksRepo([{ id: '1', title: 'a', status: 'pending' }]);
     const sink = threadSink(tasks);
 

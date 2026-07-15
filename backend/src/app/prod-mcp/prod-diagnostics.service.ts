@@ -60,7 +60,7 @@ export class ProdDiagnosticsService {
     @Inject(CHAT_SURFACE)
     private readonly surface: ChatSurface,
     private readonly env: EnvService,
-    // Resolves the job's planning-stage thread id — the anchor the approval card row is stamped onto
+    // Resolves the job's planning thread group thread id — the anchor the approval card row is stamped onto
     // (`messages.thread_id` is NOT NULL). The @Global JobBootstrapModule supplies it live.
     private readonly jobBootstrap: JobBootstrapService,
   ) {}

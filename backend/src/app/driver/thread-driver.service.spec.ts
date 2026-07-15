@@ -147,18 +147,18 @@ function makeStore(state: StoreState): {
   };
   const threadIdForAnchor = (anchorId: string): string =>
     state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
-  const stageIdForThread = (thread: StoreDriverThread): string =>
-    (thread.config?.stageId as string | undefined) ?? `stage-${thread.id}`;
-  const stageKindForThread = (thread: StoreDriverThread): string =>
+  const threadGroupIdForThread = (thread: StoreDriverThread): string =>
+    (thread.config?.threadGroupId as string | undefined) ?? `thread-group-${thread.id}`;
+  const threadGroupKindForThread = (thread: StoreDriverThread): string =>
     thread.kind === 'master_review'
       ? 'master_review'
       : thread.kind === 'post_build' || thread.kind === 'ci'
         ? thread.kind
-        : ((thread.config?.stageKind as string | undefined) ?? 'build');
+        : ((thread.config?.threadGroupKind as string | undefined) ?? 'build');
   const ensureSingletonThread = (input: {
     kind: 'post_build' | 'ci';
     brief: string;
-  }): { stageId: string; threadId: string } => {
+  }): { threadGroupId: string; threadId: string } => {
     const existing = state.threads.find(
       (thread) =>
         thread.jobId === state.job.id &&
@@ -166,7 +166,7 @@ function makeStore(state: StoreState): {
         thread.kind === input.kind,
     );
     if (existing) {
-      return { stageId: stageIdForThread(existing), threadId: existing.id };
+      return { threadGroupId: threadGroupIdForThread(existing), threadId: existing.id };
     }
     const ordinal =
       Math.max(
@@ -176,7 +176,7 @@ function makeStore(state: StoreState): {
           .map((thread) => thread.ordinal),
       ) + 10;
     const threadId = `${input.kind}-${state.job.id}`;
-    const stageId = `stage-${threadId}`;
+    const threadGroupId = `thread-group-${threadId}`;
     state.threads.push({
       id: threadId,
       jobId: state.job.id,
@@ -193,11 +193,11 @@ function makeStore(state: StoreState): {
       type: 'general',
       parentThreadId: null,
       startSha: null,
-      config: { stageId, stageKind: input.kind },
+      config: { threadGroupId, threadGroupKind: input.kind },
     });
-    return { stageId, threadId };
+    return { threadGroupId, threadId };
   };
-  const stagesForJob = (jobId: string) =>
+  const threadGroupsForJob = (jobId: string) =>
     state.threads
       .filter(
         (thread) =>
@@ -208,11 +208,11 @@ function makeStore(state: StoreState): {
           ),
       )
       .map((thread) => ({
-        id: stageIdForThread(thread),
+        id: threadGroupIdForThread(thread),
         job_id: thread.jobId,
         org_id: thread.orgId,
         ordinal: thread.ordinal,
-        kind: stageKindForThread(thread),
+        kind: threadGroupKindForThread(thread),
         title: thread.kind === 'builder' ? thread.brief : null,
         type: thread.type,
         status: 'pending',
@@ -220,9 +220,9 @@ function makeStore(state: StoreState): {
         decision_record_id: state.job.decisionRecordId ?? null,
         config: {},
       }));
-  const driverThreadsForStage = (stageId: string) => {
+  const driverThreadsForThreadGroup = (threadGroupId: string) => {
     const parent = state.threads.find(
-      (thread) => stageIdForThread(thread) === stageId,
+      (thread) => threadGroupIdForThread(thread) === threadGroupId,
     );
     if (!parent) return [];
     if (parent.kind === 'builder') {
@@ -299,9 +299,9 @@ function makeStore(state: StoreState): {
       }),
     ),
     decisionRecord: vi.fn(async () => state.record),
-    stagesForJob: vi.fn(async (jobId: string) => stagesForJob(jobId)),
-    driverThreadsForStage: vi.fn(async (stageId: string) =>
-      driverThreadsForStage(stageId),
+    threadGroupsForJob: vi.fn(async (jobId: string) => threadGroupsForJob(jobId)),
+    driverThreadsForThreadGroup: vi.fn(async (threadGroupId: string) =>
+      driverThreadsForThreadGroup(threadGroupId),
     ),
     threadsForJob: vi.fn(async () => state.threads.map((s) => ({ ...s }))),
     getThread: vi.fn(async (id: string) => {
@@ -502,7 +502,7 @@ function makeStore(state: StoreState): {
       return typeof seed === 'string' ? seed : null;
     }),
     completeLegRotation: vi.fn(async () => null),
-    builderLegCountForStage: vi.fn(async (anchorThreadId: string) => {
+    builderLegCountForThreadGroup: vi.fn(async (anchorThreadId: string) => {
       const current = state.threads.find(
         (x) => x.id === threadIdForAnchor(anchorThreadId),
       );
@@ -6115,8 +6115,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         const current = h.state.threads.find((t) => t.id === anchorThreadId);
         if (!current) return null;
         const rootId = current.parentThreadId ?? current.id;
-        const stageId =
-          (current.config?.stageId as string | undefined) ?? `stage-${rootId}`;
+        const threadGroupId =
+          (current.config?.threadGroupId as string | undefined) ?? `thread-group-${rootId}`;
         const siblings = h.state.threads
           .filter(
             (thread) =>
@@ -6135,8 +6135,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         );
         current.config = {
           ...(current.config ?? {}),
-          stageId,
-          stageKind: 'build',
+          threadGroupId,
+          threadGroupKind: 'build',
         };
         h.state.threads.push({
           ...current,
@@ -6151,8 +6151,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           orientation: null,
           config: {
             ...(current.config ?? {}),
-            stageId,
-            stageKind: 'build',
+            threadGroupId,
+            threadGroupKind: 'build',
             pendingLegSeed: inp.seed,
             ...(inp.rotationCapped ? { rotationCapped: true } : {}),
           },

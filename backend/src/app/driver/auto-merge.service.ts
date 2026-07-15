@@ -80,7 +80,7 @@ export class AutoMergeService {
     // class yet at the point this module's decorator runs.
     @Inject(forwardRef(() => DriverStoreService))
     private readonly driverStore: DriverStoreService,
-    // Resolves the job's planning-stage thread id — the anchor the operator note row is stamped onto
+    // Resolves the job's planning thread group thread id — the anchor the operator note row is stamped onto
     // (`messages.thread_id` is NOT NULL). @Optional so the positional-construction unit test keeps
     // compiling; the @Global JobBootstrapModule supplies it live.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,

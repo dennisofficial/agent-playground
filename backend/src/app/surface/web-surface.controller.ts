@@ -804,8 +804,8 @@ export class WebSurfaceController {
     // preview recipe to splice into the seed. From the @Global OnboardingModule. @Optional (trailing),
     // same reason as `exposure`/`jit` above.
     @Optional() private readonly configStore?: WorkspaceConfigStore,
-    // Bootstraps the new thread's ONE planning stage + thread right after `createJob` inserts the bare
-    // `JobEntity` row (d7: `stage_id` is never null). From the @Global JobBootstrapModule. @Optional
+    // Bootstraps the new thread's ONE planning thread group + thread right after `createJob` inserts the bare
+    // `JobEntity` row (d7: `thread_group_id` is never null). From the @Global JobBootstrapModule. @Optional
     // (trailing), same reason as `exposure`/`jit`/`configStore` above.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
     // The shared thread-input send seam — routes a lane-targeted `/say` (`lane=thread:<id>`) into the thread
@@ -1052,9 +1052,9 @@ export class WebSurfaceController {
           : {}),
       }),
     );
-    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for a job
+    // Bootstrap the thread's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for a job
     // that never gets a plan proposed.
-    await this.jobBootstrap?.ensurePlanningStage(thread.id, org.id);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, org.id);
     const operatorText = text ?? '';
     // Write any attachments to the job's /context/uploads (visible in-sandbox) and PREPEND an
     // <uploaded-files> block to the body so the brain reads them; persist a card for the web transcript.

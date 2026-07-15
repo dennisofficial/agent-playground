@@ -19,7 +19,7 @@ import { UserEntity } from './user.entity';
 
 /**
  * One buffered, not-yet-conveyed pipeline milestone (the transient-moment record). `id` is an
- * idempotency key — a build stage emits the same id repeatedly (the driver fires many events per step),
+ * idempotency key — a build thread group emits the same id repeatedly (the driver fires many events per step),
  * the buffer keeps exactly one. `text` is the passive line shown to the brain; `at` orders the prefix.
  */
 export interface PipelineMarker {
@@ -231,7 +231,7 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   port_state!: 'exposed' | 'internal' | null;
 
-  /** The opened PR url; null until the PR-tail stage opens one. */
+  /** The opened PR url; null until the PR-tail thread group opens one. */
   @Column({ type: 'text', nullable: true })
   pr_url!: string | null;
 

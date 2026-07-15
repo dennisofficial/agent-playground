@@ -11,7 +11,7 @@ import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
-  StageEntity,
+  ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
   type TaskItem,
@@ -175,19 +175,19 @@ export class MessageBlockSink implements BlockSink {
 /**
  * The durable store behind the `task_create`/`task_update`/`task_list`/`task_get` host-bridge tools — a
  * narrow port (mirrors {@link BlockSink}) so the bridge handler factory ({@link makeTaskTools}) can do
- * direct CRUD on the stage-owned `tasks` table WITHOUT depending on the driver module (and the cycle that
+ * direct CRUD on the thread-group-owned `tasks` table WITHOUT depending on the driver module (and the cycle that
  * would create, since the driver already depends on {@link TurnHarnessFactory}). ONE durable id space: the
  * uuid `createTask` returns is the SAME id `readTasks` reports, so any of them is a valid `updateTask` key
  * (no per-session `#N` reconcile). Implemented by {@link EntityTaskEventSink}.
  */
 export interface TaskEventSink {
-  /** INSERT one task row into the scope's stage; returns its durable uuid. Throws if the scope's stage
+  /** INSERT one task row into the scope's thread group; returns its durable uuid. Throws if the scope's thread group
    *  can't be resolved (the caller has already validated the input). */
   createTask(
     scope: TaskScope,
     input: Record<string, unknown>,
   ): Promise<{ id: string }>;
-  /** UPDATE (or, on `status:'deleted'`, remove) the row named by `input.taskId` within the scope's stage. */
+  /** UPDATE (or, on `status:'deleted'`, remove) the row named by `input.taskId` within the scope's thread group. */
   updateTask(
     scope: TaskScope,
     input: Record<string, unknown>,
@@ -200,7 +200,7 @@ export interface TaskEventSink {
 export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
 
 /**
- * The default {@link TaskEventSink} — direct uuid-keyed CRUD on the stage-owned `tasks` rows (d6). The
+ * The default {@link TaskEventSink} — direct uuid-keyed CRUD on the thread-group-owned `tasks` rows (d6). The
  * task-tool id space IS the `TaskEntity` uuid, so no session-scoped fold/reconcile is needed: a
  * `task_update` by an id sourced from `task_list` resolves the same row it names. Reads hit the DB fresh
  * every call, so a builder-leg rotation (a fresh session with an empty in-memory store) never loses the
@@ -211,8 +211,8 @@ export class EntityTaskEventSink implements TaskEventSink {
   constructor(
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StageEntity, DB_CONNECTION)
-    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
+    private readonly threadGroups: Repository<ThreadGroupEntity>,
     @InjectRepository(TaskEntity, DB_CONNECTION)
     private readonly tasks: Repository<TaskEntity>,
   ) {}
@@ -245,18 +245,18 @@ export class EntityTaskEventSink implements TaskEventSink {
     input: Record<string, unknown>,
   ): Promise<{ id: string }> {
     return this.chain(scope, async () => {
-      const resolved = await this.resolveStageId(scope);
+      const resolved = await this.resolveThreadGroupId(scope);
       if (!resolved)
         throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
-      const { stageId, orgId } = resolved;
-      const ordinal = (await this.maxTaskOrdinal(stageId)) + 10;
+      const { threadGroupId, orgId } = resolved;
+      const ordinal = (await this.maxTaskOrdinal(threadGroupId)) + 10;
       const blockedBy = await this.validBlockedBy(
-        stageId,
+        threadGroupId,
         mergeBlockedBy([], input),
       );
       const created = await this.tasks.save(
         this.tasks.create({
-          stage_id: stageId,
+          thread_group_id: threadGroupId,
           org_id: orgId,
           ordinal,
           title: String(input.subject ?? '').trim(),
@@ -266,7 +266,7 @@ export class EntityTaskEventSink implements TaskEventSink {
           blocked_by: blockedBy,
         }),
       );
-      await this.applyInverseEdges(stageId, created.id, input);
+      await this.applyInverseEdges(threadGroupId, created.id, input);
       return { id: created.id };
     });
   }
@@ -276,12 +276,12 @@ export class EntityTaskEventSink implements TaskEventSink {
     input: Record<string, unknown>,
   ): Promise<{ ok: boolean; error?: string }> {
     return this.chain(scope, async () => {
-      const resolved = await this.resolveStageId(scope);
+      const resolved = await this.resolveThreadGroupId(scope);
       if (!resolved) return { ok: false, error: 'scope not found' };
-      const { stageId } = resolved;
+      const { threadGroupId } = resolved;
       const taskId = String(input.taskId ?? '').trim();
       const row = await this.tasks.findOne({
-        where: { id: taskId, stage_id: stageId },
+        where: { id: taskId, thread_group_id: threadGroupId },
       });
       if (!row) return { ok: false, error: `task ${taskId} not found` };
 
@@ -290,7 +290,7 @@ export class EntityTaskEventSink implements TaskEventSink {
       // a blocker.
       if (input.status === 'deleted') {
         await this.tasks.delete({ id: row.id });
-        await this.removeBlockedByReference(stageId, row.id);
+        await this.removeBlockedByReference(threadGroupId, row.id);
         return { ok: true };
       }
 
@@ -302,60 +302,60 @@ export class EntityTaskEventSink implements TaskEventSink {
       if (status) patch.status = status;
       if (hasBlockedByInput(input))
         patch.blocked_by = await this.validBlockedBy(
-          stageId,
+          threadGroupId,
           mergeBlockedBy(row.blocked_by ?? [], input),
           row.id,
         );
       if (Object.keys(patch).length)
         await this.tasks.update({ id: row.id }, patch);
 
-      await this.applyInverseEdges(stageId, row.id, input);
+      await this.applyInverseEdges(threadGroupId, row.id, input);
       return { ok: true };
     });
   }
 
   async readTasks(scope: TaskScope): Promise<TaskItem[]> {
-    const resolved = await this.resolveStageId(scope);
+    const resolved = await this.resolveThreadGroupId(scope);
     if (!resolved) return [];
     const rows = await this.tasks.find({
-      where: { stage_id: resolved.stageId },
+      where: { thread_group_id: resolved.threadGroupId },
       order: { ordinal: 'ASC' },
     });
     return rows.map(toTaskItem);
   }
 
-  /** Resolve the stage that owns this scope's shared checklist: a `thread` scope's own `stage_id`, or a
-   *  `main` scope's job's `planning` stage (mirrors `DriverStoreService.planningThreadId`'s lookup). */
-  private async resolveStageId(
+  /** Resolve the thread group that owns this scope's shared checklist: a `thread` scope's own `thread_group_id`, or a
+   *  `main` scope's job's `planning` thread group (mirrors `DriverStoreService.planningThreadId`'s lookup). */
+  private async resolveThreadGroupId(
     scope: TaskScope,
-  ): Promise<{ stageId: string; orgId: string } | null> {
+  ): Promise<{ threadGroupId: string; orgId: string } | null> {
     if (scope.kind === 'thread') {
       const thread = await this.threads.findOne({
         where: { id: scope.id },
-        select: { id: true, stage_id: true, org_id: true },
+        select: { id: true, thread_group_id: true, org_id: true },
       });
-      return thread ? { stageId: thread.stage_id, orgId: thread.org_id } : null;
+      return thread ? { threadGroupId: thread.thread_group_id, orgId: thread.org_id } : null;
     }
-    // scope.kind === 'main' — the job's planning stage owns the brain's own checklist.
-    const stage = await this.stages.findOne({
+    // scope.kind === 'main' — the job's planning thread group owns the brain's own checklist.
+    const threadGroup = await this.threadGroups.findOne({
       where: { job_id: scope.id, kind: 'planning' },
       order: { ordinal: 'ASC' },
       select: { id: true, org_id: true },
     });
-    return stage ? { stageId: stage.id, orgId: stage.org_id } : null;
+    return threadGroup ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id } : null;
   }
 
   /** Apply the INVERSE dependency edges (`addBlocks`/`removeBlocks`: "this task blocks X") onto each named
-   *  target row's `blocked_by`. A target that isn't a row in THIS stage is silently skipped (mirrors the
+   *  target row's `blocked_by`. A target that isn't a row in THIS thread group is silently skipped (mirrors the
    *  old fold's behavior — no dangling edges). */
   private async applyInverseEdges(
-    stageId: string,
+    threadGroupId: string,
     sourceId: string,
     input: Record<string, unknown>,
   ): Promise<void> {
     for (const { targetId, op } of inverseEdgeOps(input)) {
       const target = await this.tasks.findOne({
-        where: { id: targetId, stage_id: stageId },
+        where: { id: targetId, thread_group_id: threadGroupId },
       });
       if (!target) continue;
       await this.tasks.update(
@@ -365,17 +365,17 @@ export class EntityTaskEventSink implements TaskEventSink {
     }
   }
 
-  /** Keep `blocked_by` in the same stage-owned uuid id space as the rows themselves. Unknown ids are
+  /** Keep `blocked_by` in the same thread-group-owned uuid id space as the rows themselves. Unknown ids are
    *  dropped instead of being persisted as dangling blockers. */
   private async validBlockedBy(
-    stageId: string,
+    threadGroupId: string,
     ids: string[],
     selfId?: string,
   ): Promise<string[]> {
     const unique = [...new Set(ids.filter((id) => id !== selfId))];
     if (unique.length === 0) return [];
     const rows = await this.tasks.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       select: { id: true },
     });
     const valid = new Set(rows.map((row) => row.id));
@@ -383,11 +383,11 @@ export class EntityTaskEventSink implements TaskEventSink {
   }
 
   private async removeBlockedByReference(
-    stageId: string,
+    threadGroupId: string,
     sourceId: string,
   ): Promise<void> {
     const rows = await this.tasks.find({
-      where: { stage_id: stageId },
+      where: { thread_group_id: threadGroupId },
       select: { id: true, blocked_by: true },
     });
     for (const row of rows) {
@@ -397,11 +397,11 @@ export class EntityTaskEventSink implements TaskEventSink {
     }
   }
 
-  private async maxTaskOrdinal(stageId: string): Promise<number> {
+  private async maxTaskOrdinal(threadGroupId: string): Promise<number> {
     const row = await this.tasks
       .createQueryBuilder('t')
       .select('MAX(t.ordinal)', 'max')
-      .where('t.stage_id = :stageId', { stageId })
+      .where('t.thread_group_id = :threadGroupId', { threadGroupId })
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
   }
@@ -417,7 +417,7 @@ function mapTaskStatus(
     : null;
 }
 
-/** Map a stage-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
+/** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
  *  `DriverStoreService`'s own copy — kept local to avoid a cross-module dependency on the driver). */
 function toTaskItem(row: TaskEntity): TaskItem {
   return {

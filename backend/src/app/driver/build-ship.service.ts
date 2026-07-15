@@ -188,8 +188,9 @@ export class BuildShipService {
   /**
    * LATCH the completion signal after the brain opened the PR. Resolve the PR by BRANCH
    * (`findOpenPullByHead` is scoped to `sandbox.branch`, so it is authoritative for WHICH PR belongs to this
-   * build — its head IS our branch) and record `pr_url`/`pr_number` via `setPrReady` (which also flips the
-   * job `done`). Returns undefined when GitHub hasn't indexed the just-created PR yet: we deliberately do NOT
+   * build — its head IS our branch). First ensure the post-ship `ci` thread group exists, then record
+   * `pr_url`/`pr_number` via `setPrReady` (which also flips the job `done`). Returns undefined when GitHub
+   * hasn't indexed the just-created PR yet: we deliberately do NOT
    * flip `done` with a null `pr_url` — that strands the completion signal. The job stays `running` and the
    * git-state reconciler re-discovers + latches it on its next pass (or a re-drive re-runs this).
    */
@@ -200,14 +201,15 @@ export class BuildShipService {
   ): Promise<{ url: string; number: number } | undefined> {
     const confirmed = await this.discoverOpenPr(repo, sandbox);
     if (confirmed) {
-      await this.store.setPrReady(job.id, confirmed.url, confirmed.number);
-      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` stage-thread exists so inbound
-      // GitHub/CI events have somewhere to route (the routing itself is thread 4's §CI-routing seam).
+      // Post-ship seam (d14): the PR is recorded — ensure the job's `ci` thread group thread exists so inbound
+      // GitHub/CI events have somewhere to route (the routing itself is thread 4's §CI-routing seam). Do this
+      // before publishing `done`, so observers never see a PR-ready job without its CI lane.
       await this.store.ensureCiThread({
         jobId: job.id,
         orgId: job.orgId,
         decisionRecordId: job.decisionRecordId ?? null,
       });
+      await this.store.setPrReady(job.id, confirmed.url, confirmed.number);
       return confirmed;
     }
     this.logger.warn(

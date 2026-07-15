@@ -96,14 +96,14 @@ export function lensById(id: string): ReviewLens | undefined {
 }
 
 /**
- * THE single source of truth for WHICH review lenses run over a build stage's cumulative diff — the
+ * THE single source of truth for WHICH review lenses run over a build thread group's cumulative diff — the
  * deterministic selection the driver's auto-fix fan-out drives AND the navigator's rendered list both
  * read, so they never drift. Routes on TWO independent axes:
- *  - the owning STAGE's (closed-vocabulary) `type` (moved off `threads.type` onto `stage.type`, d7):
+ *  - the owning THREAD GROUP's (closed-vocabulary) `type` (moved off `threads.type` onto `threadGroup.type`, d7):
  *    - `docs` drops `correctness` (it assumes executable code — pure noise on prose), leaving `holistic`.
  *    - `data` adds `data_safety` on top of the always-on lenses.
  *    - everything else (`backend`/`frontend`/`infra`/`testing`/`general`) gets the always-on lenses.
- *  - `frameworkSkillNames`: when non-empty (≥1 opted-in `review`-surface skill matched this stage), the
+ *  - `frameworkSkillNames`: when non-empty (≥1 opted-in `review`-surface skill matched this thread group), the
  *    FRAMEWORK_LENS is appended LAST, regardless of `type`.
  * Returns an ordered, deterministic `ReviewLens[]`.
  */

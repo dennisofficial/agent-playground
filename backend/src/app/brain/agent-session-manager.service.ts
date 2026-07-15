@@ -510,7 +510,7 @@ export class AgentSessionManager
     // Live-turn fan-out for the mid-turn "Reconnecting…" indicator during a host-backstop retry. @Optional
     // so unit tests construct the manager without it; DI (@Global LiveTurnModule) supplies it live.
     @Optional() private readonly liveTurns?: LiveTurnStore,
-    // Resolves the job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are
+    // Resolves the job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are
     // stamped onto (`messages.thread_id` is NOT NULL). @Optional matching this constructor's convention;
     // the @Global JobBootstrapModule supplies it live.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
@@ -524,7 +524,7 @@ export class AgentSessionManager
     private readonly taskSink: TaskEventSink = NOOP_TASK_EVENT_SINK,
   ) {}
 
-  /** The job's planning-stage thread id — the anchor every brain-lane turn's durable blocks are stamped
+  /** The job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are stamped
    *  onto. Wired in prod via DI; throws loudly if the @Optional dependency is somehow absent at use. */
   private async planningThreadId(jobId: string): Promise<string> {
     if (!this.jobBootstrap)
@@ -8313,7 +8313,7 @@ function eventDeliveryStimulus(input: {
   repoId: string;
   body: AgentMessage;
   seedRow?: SeedRow;
-  /** SESSION RE-HOME (§CI-routing): resume the `ci` stage-thread's own session instead of planning — see
+  /** SESSION RE-HOME (§CI-routing): resume the `ci` thread group's own session instead of planning — see
    *  {@link ChatStimulus.resumeThreadId} / {@link EventStimulus.resumeThreadId}. */
   resumeThreadId?: string;
 }): ChatStimulus {

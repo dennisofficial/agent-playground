@@ -168,7 +168,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     surface.post.mockClear();
     surface.seedSystemNotification.mockClear();
     await ds.query(
-      'TRUNCATE prod_maintenance_write, messages, tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE prod_maintenance_write, messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -187,13 +187,13 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         base_branch: BASE_BRANCH,
       }),
     );
-    const [stage] = await ds.query(
-      `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    const [threadGroup] = await ds.query(
+      `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
       [job.id, ORG_ID],
     );
     const thread = await threads.save(
       threads.create({
-        stage_id: stage.id,
+        thread_group_id: threadGroup.id,
         role: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
