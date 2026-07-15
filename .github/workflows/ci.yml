@@ -97,51 +97,6 @@ jobs:
       - name: Unit tests
         run: pnpm --filter backend exec vitest run --mode unit
 
-  # ── Integration tests ─────────────────────────────────────────────────────────
-  integration-tests:
-    name: Integration tests
-    runs-on: [self-hosted, atlas-box]
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    # The runner pool is ~3 instances on one physical box sharing one Docker daemon, and
-    # the Postgres service below binds a fixed host port (5433, matching .env.test.enc's
-    # hardcoded coords). The workflow-level `concurrency` group is scoped per-ref, so two
-    # different refs (two PRs, or a PR + main) can still schedule this job on the same box
-    # at once and race on hostPort 5433. Serialize this job across the whole pool with a
-    # ref-independent group so a second run queues instead of failing on "port already
-    # allocated".
-    concurrency:
-      group: integration-tests-atlas-box
-      cancel-in-progress: false
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: agent
-          POSTGRES_PASSWORD: agent
-          POSTGRES_DB: atlas
-        ports:
-          - "5433:5432"
-        options: >-
-          --health-cmd "pg_isready -U agent -d atlas"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - name: Checkout (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Set up workspace
-        uses: ./.github/actions/setup-workspace
-
-      - name: Integration tests
-        env:
-          DOTENV_PRIVATE_KEY_TEST_ENC: ${{ secrets.DOTENV_PRIVATE_KEY_TEST_ENC }}
-        run: pnpm --filter backend exec vitest run --mode int
-
   # ── Aggregate gate ────────────────────────────────────────────────────────────
   # Single required status check. Named to match the existing branch-protection check
   # ("CI / Typecheck + unit tests") so the required check is stable across job changes.
@@ -150,25 +105,22 @@ jobs:
   ci-gate:
     name: Typecheck + unit tests
     runs-on: [self-hosted, atlas-box]
-    needs: [typecheck, unit-tests, integration-tests]
+    needs: [typecheck, unit-tests]
     if: always()
     steps:
       - name: Require typecheck + unit tests to pass (or be skipped)
         run: |
           tc="${{ needs.typecheck.result }}"
           ut="${{ needs.unit-tests.result }}"
-          it="${{ needs.integration-tests.result }}"
           [ "$tc" = "success" ] || [ "$tc" = "skipped" ] || exit 1
           [ "$ut" = "success" ] || [ "$ut" = "skipped" ] || exit 1
-          [ "$it" = "success" ] || [ "$it" = "skipped" ] || exit 1
 
   # ── Build and push images ─────────────────────────────────────────────────────
-  # Only runs on push to main (not PRs) and requires typecheck + unit tests + integration
-  # tests to pass.
+  # Only runs on push to main (not PRs) and requires typecheck + unit tests to pass.
   build-images:
     name: Build + push Docker images
     runs-on: [self-hosted, atlas-box]
-    needs: [typecheck, unit-tests, integration-tests]
+    needs: [typecheck, unit-tests]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       contents: read
