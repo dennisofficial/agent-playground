@@ -42,7 +42,11 @@ import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
 import { extractMermaidSources, mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
-import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
+import type {
+  JobBlocker,
+  LaneDefaultFooter,
+  WireJobActivity,
+} from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
 import { useComposerStagedAnswers } from "@/lib/api/composer-store";
 import { useAllJobs } from "@/lib/api/inbox";
@@ -211,6 +215,15 @@ export function TranscriptView({
   const realtimeIdle = useRealtimeIdle(composer && !readOnly ? jobRef.jobId : null);
   const turnActive = (liveTurn?.active ?? false) && !realtimeIdle;
 
+  // The server-owned realtime `activity` axis: distinguishes brain-owned work (`turn`/`plan_review`/
+  // `base_check`, where THIS Main chat is the live surface) from DRIVER-owned work (`build`/`master_review`,
+  // where a build lane owns the work and the Main brain is dormant). During a build the coarse `live` phase
+  // (`status === "running"`) stays true the whole time, so without this the Main footer keeps showing
+  // "Atlas is working…" for work a build lane is actually doing. Only consulted on the interactive Main lane
+  // (same gate as `realtimeIdle`); a build lane's own view drives its own indicator off its own live turn.
+  const activity = useRealtimeActivity(composer && !readOnly ? jobRef.jobId : null);
+  const driverOwnsWork = activity === "build" || activity === "master_review";
+
   // Stream signature — grows with streaming text/thinking so the tail follows token-by-token, not just on
   // block boundaries.
   const liveStreamSig = (liveTurn?.blocks ?? []).reduce(
@@ -358,6 +371,7 @@ export function TranscriptView({
     [
       messages.length,
       live,
+      driverOwnsWork,
       liveBlockCount,
       liveStreamSig,
       turnActive,
@@ -503,7 +517,7 @@ export function TranscriptView({
           {trailing.map((it) => (
             <div key={it.key}>{it.node}</div>
           ))}
-          {live || turnActive ? (
+          {(live && !driverOwnsWork) || turnActive ? (
             <LiveIndicator turn={turnActive ? liveTurn : undefined} />
           ) : null}
           {/* Spacer so the last line clears the floating composer (or just breathes on read-only lanes). */}
@@ -1015,6 +1029,21 @@ function useRealtimeIdle(jobId: string | null): boolean {
   const { data: threads } = useAllJobs();
   if (!jobId) return false;
   return threads?.find((t) => t.id === jobId)?.needsYou ?? false;
+}
+
+/**
+ * The server-owned realtime `activity` axis for one job, from the same inbox row (`useAllJobsRealtime`).
+ * This is what the system is DOING right now (`turn`/`plan_review`/`build`/`master_review`/`base_check`/…),
+ * orthogonal to the build PHASE (`status`). The Main indicator uses it to tell brain-owned work apart from
+ * driver-owned work (a running build lane) so it doesn't show "working…" for a dormant brain. Returns null
+ * when `jobId` is null (non-Main lanes don't consult it) or the row isn't cached yet — callers treat null
+ * as "no positive driver-owned evidence" and fall back to the coarse phase, so a cold cache never falsely
+ * SUPPRESSES a genuine indicator.
+ */
+function useRealtimeActivity(jobId: string | null): WireJobActivity | null {
+  const { data: threads } = useAllJobs();
+  if (!jobId) return null;
+  return threads?.find((t) => t.id === jobId)?.activity ?? null;
 }
 
 /**

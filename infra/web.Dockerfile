@@ -9,12 +9,12 @@
 #
 # Usage:
 #   docker build -f infra/web.Dockerfile \
-#     --build-arg NEXT_PUBLIC_HTTP_URL=https://api.atlas.dltechnologies.co \
+#     --build-arg NEXT_PUBLIC_HTTP_URL=https://api.byatlas.io \
 #     .
 
 ARG PNPM_VERSION=11.1.2
 ARG NODE_IMAGE=node:22-bookworm-slim
-ARG NEXT_PUBLIC_HTTP_URL=https://api.atlas.dltechnologies.co
+ARG NEXT_PUBLIC_HTTP_URL=https://api.byatlas.io
 ARG NEXT_PUBLIC_GIT_SHA=dev
 
 # ─── base ───────────────────────────────────────────────────────────────────────

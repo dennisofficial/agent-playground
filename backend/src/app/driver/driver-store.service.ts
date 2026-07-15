@@ -832,7 +832,26 @@ export class DriverStoreService {
       const position = siblings.findIndex((s) => s.id === current.id);
       const fromLeg = position >= 0 ? position + 1 : siblings.length;
       const toLeg = fromLeg + 1;
-      const maxOrdinal = siblings.reduce((mx, s) => Math.max(mx, s.ordinal), 0);
+      // Allocate the new leg's ordinal from the JOB-GLOBAL max for this parent scope — NOT the stage's
+      // sibling max. `uq_threads_job_parent_ordinal` is UNIQUE(job_id, parent_thread_id, ordinal) NULLS NOT
+      // DISTINCT (job-global, not per-stage), so on a multi-stage build a stage-local `max+GAP` (e.g. 30→40)
+      // collides with a SIBLING STAGE's thread already at that ordinal — the INSERT then throws a unique
+      // violation, this txn rolls back to null, and rotation silently fails (the whole "handoff rotation
+      // isn't working" bug). Scoping the max to (job_id, parent_thread_id) guarantees a free ordinal; the
+      // leg still sorts after its predecessor within the stage (its ordinal is strictly greater).
+      const parentThreadId = current.parent_thread_id;
+      const maxOrdinalRow = await threads
+        .createQueryBuilder('t')
+        .select('MAX(t.ordinal)', 'max')
+        .where('t.job_id = :jobId', { jobId: current.job_id })
+        .andWhere(
+          parentThreadId == null
+            ? 't.parent_thread_id IS NULL'
+            : 't.parent_thread_id = :parentThreadId',
+          parentThreadId == null ? {} : { parentThreadId },
+        )
+        .getRawOne<{ max: number | null }>();
+      const nextOrdinal = (maxOrdinalRow?.max ?? 0) + ORDINAL_GAP;
       await threads.save(
         threads.create({
           job_id: current.job_id,
@@ -840,7 +859,7 @@ export class DriverStoreService {
           org_id: current.org_id,
           parent_thread_id: current.parent_thread_id,
           role: 'builder',
-          ordinal: maxOrdinal + ORDINAL_GAP,
+          ordinal: nextOrdinal,
           brief: current.brief,
           type: current.type,
           handoff_in: input.handoff,

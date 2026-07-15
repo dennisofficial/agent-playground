@@ -4,7 +4,7 @@
 # TODO: replace the placeholder email with a real contact address for LE notifications.
 
 {
-    email admin@dltechnologies.co  # TODO: replace with a real email for Let's Encrypt
+    email admin@byatlas.io  # TODO: point at a real inbox that exists — LE sends cert-expiry notices here
 
     # Admin API on a UNIX SOCKET, never a TCP listener: the backend programs per-preview
     # routes through this socket over a shared same-path volume mount, so no sandbox on any
@@ -30,7 +30,7 @@
 #    (old leader draining, new leader waiting for lock). During this window new
 #    connections receive 502. In-flight SSE streams on the old leader survive
 #    (Caddy never drops established connections). Deploy at idle → ~zero gap.
-api.atlas.dltechnologies.co {
+api.byatlas.io {
     reverse_proxy backend-blue:4002 backend-green:4002 {
         lb_policy first
 
@@ -55,7 +55,7 @@ api.atlas.dltechnologies.co {
 }
 
 # ── Web operator console ────────────────────────────────────────────────────────
-atlas.dltechnologies.co {
+app.byatlas.io {
     reverse_proxy web:3000
 
     # Compress responses. Next.js standalone already gzip-compresses JS/CSS, but
@@ -63,37 +63,25 @@ atlas.dltechnologies.co {
     encode gzip zstd
 }
 
-# ── Sandbox preview exposures (wildcard) ─────────────────────────────────────────
-# Obtains and manages the ONE `*.atlas.dltechnologies.co` wildcard cert via the ACME
-# DNS-01 challenge (Cloudflare), so every ephemeral `<previewId>-<svc>.atlas...` route
-# the backend adds through the admin API reuses this single cert — no per-host issuance,
-# no Let's Encrypt rate-limit risk. Wildcard certs REQUIRE DNS-01 (CA policy), hence the
-# caddy-dns/cloudflare module baked into infra/caddy.Dockerfile.
-#
-# This block itself only (a) provisions/holds the wildcard cert and (b) is the catch-all
-# 404 for any subdomain with no live preview route. The backend inserts each exact-host
-# preview route ahead of this fallback via the admin API (routes match in authored order).
-*.atlas.dltechnologies.co {
-    tls {
-        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-    }
-    respond "no such preview" 404
-}
-
 # ── Sandbox preview exposures — DEDICATED parent (wildcard) ───────────────────────
-# Previews live under a SEPARATE subtree (`preview.dltechnologies.co`), NOT under
-# `atlas.dltechnologies.co`. A preview app issues session cookies scoped to its parent
-# (`Domain=.<PREVIEW_BASE_DOMAIN>`) so its own `-web`/`-api` subdomains can share a login — but
-# signed with the PREVIEW's JWT secret. When that parent was `atlas.dltechnologies.co` (shared with
-# prod), the browser also sent those cookies to `api.atlas.dltechnologies.co` / `atlas.dltechnologies.co`,
-# where prod couldn't verify them and, being domain-scoped, they shadowed prod's own host-only cookie
-# and wedged the operator out ("signature verification failed" on every request). Isolating previews
-# under `preview.dltechnologies.co` makes their cookies `.preview.dltechnologies.co`-scoped, which the
-# browser NEVER sends to the prod hosts — a hard guarantee that previews can't touch prod sessions.
-# Same mechanics as the block above: ONE DNS-01 wildcard cert, catch-all 404, backend inserts each
-# exact-host preview route ahead of this fallback via the admin API. Requires a `*.preview.dltechnologies.co`
-# DNS record pointing at this box (mirrors the `*.atlas.dltechnologies.co` record).
-*.preview.dltechnologies.co {
+# Previews live under a SEPARATE subtree (`preview.byatlas.io`), NOT under the prod hosts
+# (`app.byatlas.io` / `api.byatlas.io`). A preview app issues session cookies scoped to its
+# parent (`Domain=.<PREVIEW_BASE_DOMAIN>`) so its own `-web`/`-api` subdomains can share a login — but
+# signed with the PREVIEW's JWT secret. If that parent were shared with prod, the browser would also
+# send those cookies to `app.byatlas.io` / `api.byatlas.io`, where prod couldn't verify them and, being
+# domain-scoped, they would shadow prod's own host-only cookie and wedge the operator out ("signature
+# verification failed" on every request). Isolating previews under `preview.byatlas.io` makes their
+# cookies `.preview.byatlas.io`-scoped, which the browser NEVER sends to the prod hosts — a hard
+# guarantee that previews can't touch prod sessions.
+#
+# This block also obtains and holds the ONE `*.preview.byatlas.io` wildcard cert via the ACME DNS-01
+# challenge (Cloudflare), so every ephemeral `<previewId>-<svc>.preview.byatlas.io` route the backend
+# adds through the admin API reuses this single cert — no per-host issuance, no Let's Encrypt rate-limit
+# risk. Wildcard certs REQUIRE DNS-01 (CA policy), hence the caddy-dns/cloudflare module baked into
+# infra/caddy.Dockerfile. It is also the catch-all 404 for any preview subdomain with no live route; the
+# backend inserts each exact-host preview route ahead of this fallback via the admin API (routes match in
+# authored order). Requires a `*.preview.byatlas.io` DNS record pointing at this box.
+*.preview.byatlas.io {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }

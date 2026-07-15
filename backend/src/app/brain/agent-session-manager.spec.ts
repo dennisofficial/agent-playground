@@ -14,12 +14,7 @@ import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
-import type {
-  BlockSink,
-  ChatSurface,
-  LiveTurnStore,
-  TaskEventSink,
-} from '../surface';
+import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
 import { TurnHarnessFactory } from '../surface';
 
 /** A no-op transcript harness for tests that don't exercise streaming. */
@@ -700,6 +695,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     ]);
     expect(persistArgs.status).toBe('awaiting_approval');
     expect(persistArgs.kind).toBe('feature'); // default kind when none passed
+    expect(persistArgs.rename).toBe(false); // rename omitted ⇒ keep the current title
     // 3. The approval card is posted async, and the review disposition lands as a system event.
     expect(result).toMatchObject({
       ok: true,
@@ -709,6 +705,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     expect(mockStore.appendSystemEvent).toHaveBeenCalled();
+  });
+
+  it('propose_plan: rename:true is threaded into persistPlan (opt-in re-title)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (
+      mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      rename: true,
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(persistArgs.rename).toBe(true);
   });
 
   it('propose_plan: kind:"bugfix" is persisted (lights up the reproduce-first job-kind block)', async () => {
@@ -3439,18 +3456,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       appendBlock: vi.fn().mockResolvedValue(undefined),
       appendBlockOnce: vi.fn().mockResolvedValue(undefined),
     } as unknown as BlockSink;
-    const taskSink = {
-      applyTaskEvent: vi.fn().mockResolvedValue(undefined),
-    } as unknown as TaskEventSink;
     const usage = {
       applyHarvest: vi.fn().mockResolvedValue(undefined),
     } as unknown as OauthUsageService;
-    const turnHarness = new TurnHarnessFactory(
-      liveTurns,
-      blockSink,
-      taskSink,
-      usage,
-    );
+    const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
     } as unknown as DriverStoreService;
@@ -5006,7 +5015,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       expect.stringContaining('kick off the follow-up'),
     );
     expect(turn).toHaveBeenCalledOnce();
-    const ran = turn.mock.calls[0][0] as ChatStimulus;
+    const ran = turn.mock.calls[0][0];
     expect(ran).toMatchObject({
       jobId: 'th-followup',
       orgId: ORG,
@@ -5311,7 +5320,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert, // turnRecovery, secretStore, configStore, git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
-      { judge: async () => undefined } as never, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
+      { judge: async () => undefined }, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
       ...optionalTail(),
     );
@@ -5884,7 +5893,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert, // turnRecovery…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
-        { judge: async () => undefined } as never, // liveVerificationJudge (30)
+        { judge: async () => undefined }, // liveVerificationJudge (30)
         { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
         ...optionalTail(),
       );

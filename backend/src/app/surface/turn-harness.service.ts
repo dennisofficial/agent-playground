@@ -7,7 +7,6 @@ import {
   type EngineUsage,
   resolveContextLimit,
 } from '../engine';
-import { foldTaskEvent } from '../driver/task-fold';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -19,7 +18,14 @@ import {
   ThreadEntity,
 } from '../persistence/entities';
 import { LiveTurnStore } from './live-turn-store';
-import { type TaskScope, taskScopeForLane } from './thread-registry';
+import { type TaskScope } from './thread-registry';
+import {
+  applyEdge,
+  hasBlockedByInput,
+  inverseEdgeOps,
+  isStr,
+  mergeBlockedBy,
+} from './task-edges';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
 
 /**
@@ -167,45 +173,38 @@ export class MessageBlockSink implements BlockSink {
 }
 
 /**
- * The destination for a `TaskCreate`/`TaskUpdate` tool event — a narrow port (mirrors {@link BlockSink})
- * so the harness can fold LLM-authored task-list events into the owning entity's tasks jsonb column
- * WITHOUT depending on the driver module (and the cycle that would create, since the driver already
- * depends on {@link TurnHarnessFactory}). Implemented by {@link EntityTaskEventSink}.
+ * The durable store behind the `task_create`/`task_update`/`task_list`/`task_get` host-bridge tools — a
+ * narrow port (mirrors {@link BlockSink}) so the bridge handler factory ({@link makeTaskTools}) can do
+ * direct CRUD on the thread-group-owned `tasks` table WITHOUT depending on the driver module (and the cycle that
+ * would create, since the driver already depends on {@link TurnHarnessFactory}). ONE durable id space: the
+ * uuid `createTask` returns is the SAME id `readTasks` reports, so any of them is a valid `updateTask` key
+ * (no per-session `#N` reconcile). Implemented by {@link EntityTaskEventSink}.
  */
 export interface TaskEventSink {
-  applyTaskEvent(
+  /** INSERT one task row into the scope's thread group; returns its durable uuid. Throws if the scope's thread group
+   *  can't be resolved (the caller has already validated the input). */
+  createTask(
     scope: TaskScope,
-    toolName: string,
     input: Record<string, unknown>,
-    /** The tool's RAW result — the SDK task tools return a plain string ("Task #8 created…"). */
-    result: unknown,
-  ): Promise<void>;
+  ): Promise<{ id: string }>;
+  /** UPDATE (or, on `status:'deleted'`, remove) the row named by `input.taskId` within the scope's thread group. */
+  updateTask(
+    scope: TaskScope,
+    input: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error?: string }>;
+  /** The scope's current checklist, read FRESH from the durable rows (no cache) — ordinal-ordered. */
+  readTasks(scope: TaskScope): Promise<TaskItem[]>;
 }
 
 /** DI token for {@link TaskEventSink}. */
 export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
 
 /**
- * One scope's in-memory fold snapshot — the SDK-id-space {@link TaskItem} list `foldTaskEvent` operates
- * on (byte-identical to the old jsonb blob's shape), plus the mapping from an SDK-authored task id (the
- * `#8` parsed out of `"Task #8 created…"`, scoped to ONE engine session) to the durable `tasks` row it
- * became. The SDK's own task-tool id space is only unique WITHIN a session — reconciling it against a
- * real table (whose PK is a DB-generated uuid, see `TaskEntity.id`) needs this side-map so a later
- * `TaskUpdate({taskId: "8"})` in the SAME session finds the row `TaskCreate` produced. Rows preloaded
- * from the DB (the thread group's tasks from an earlier session, e.g. after rotation or a process restart) are
- * seeded with an identity mapping (their own row id doubles as its "sdk id") — a genuine SDK id never
- * collides with a uuid, so this is a safe, allocation-free default.
- */
-interface TaskFoldCache {
-  items: TaskItem[];
-  rowIdBySdkId: Map<string, string>;
-}
-
-/**
- * The default {@link TaskEventSink} — folds `TaskCreate`/`TaskUpdate` tool events (via the existing
- * `foldTaskEvent`, unchanged) into an in-memory per-scope snapshot, then reconciles that snapshot against
- * the thread group's durable `tasks` rows (d6) — replacing the old direct read-modify-write of the
- * `threads.tasks` / `jobs.main_tasks` jsonb blobs those columns used to hold.
+ * The default {@link TaskEventSink} — direct uuid-keyed CRUD on the thread-group-owned `tasks` rows (d6). The
+ * task-tool id space IS the `TaskEntity` uuid, so no session-scoped fold/reconcile is needed: a
+ * `task_update` by an id sourced from `task_list` resolves the same row it names. Reads hit the DB fresh
+ * every call, so a builder-leg rotation (a fresh session with an empty in-memory store) never loses the
+ * carried checklist — the bug this replaced.
  */
 @Injectable()
 export class EntityTaskEventSink implements TaskEventSink {
@@ -219,29 +218,19 @@ export class EntityTaskEventSink implements TaskEventSink {
   ) {}
 
   /**
-   * Per-scope FIFO chain. The harness fires task events fire-and-forget, and a batch of task calls in one
-   * turn ("deleted · deleted · deleted") lands as near-simultaneous tool_results — unserialized, their
-   * read-modify-writes clobber each other (a LOST UPDATE: two folds read the same snapshot, the second
-   * write erases the first's change; live-observed as "deleted tasks still showing"). Chaining per scope
-   * key preserves arrival order and makes each fold read its predecessor's write.
+   * Per-scope FIFO chain for MUTATIONS. A batch of task calls in one turn ("create · create · update")
+   * lands as near-simultaneous bridge dispatches — unserialized, two creates read the same max ordinal and
+   * collide, or two edits race a read-modify-write. Chaining per scope key preserves arrival order so each
+   * mutation sees its predecessor's write. Pure reads (`readTasks`) do NOT queue here — they need no
+   * serialization and shouldn't wait behind a slow write.
    */
-  private readonly chains = new Map<string, Promise<void>>();
+  private readonly chains = new Map<string, Promise<unknown>>();
 
-  /** The in-memory fold snapshot per scope key (see {@link TaskFoldCache}) — lazily seeded from the
-   *  thread group's current `tasks` rows on this scope's first event since process start. */
-  private readonly cache = new Map<string, TaskFoldCache>();
-
-  applyTaskEvent(
-    scope: TaskScope,
-    toolName: string,
-    input: Record<string, unknown>,
-    result: unknown,
-  ): Promise<void> {
+  /** Run `fn` inside this scope's mutation chain and return its result (FIFO; a rejection doesn't stall
+   *  the chain, and the map entry is dropped once this tail settles so it can't grow unbounded). */
+  private chain<T>(scope: TaskScope, fn: () => Promise<T>): Promise<T> {
     const key = `${scope.kind}:${scope.id}`;
-    const run = (this.chains.get(key) ?? Promise.resolve()).then(() =>
-      this.apply(key, scope, toolName, input, result),
-    );
-    // Keep the chain alive past a rejection, and drop the map entry once this tail settles (no growth).
+    const run = (this.chains.get(key) ?? Promise.resolve()).then(fn);
     const tail = run
       .catch(() => undefined)
       .finally(() => {
@@ -249,6 +238,90 @@ export class EntityTaskEventSink implements TaskEventSink {
       });
     this.chains.set(key, tail);
     return run;
+  }
+
+  async createTask(
+    scope: TaskScope,
+    input: Record<string, unknown>,
+  ): Promise<{ id: string }> {
+    return this.chain(scope, async () => {
+      const resolved = await this.resolveThreadGroupId(scope);
+      if (!resolved)
+        throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
+      const { threadGroupId, orgId } = resolved;
+      const ordinal = (await this.maxTaskOrdinal(threadGroupId)) + 10;
+      const blockedBy = await this.validBlockedBy(
+        threadGroupId,
+        mergeBlockedBy([], input),
+      );
+      const created = await this.tasks.save(
+        this.tasks.create({
+          thread_group_id: threadGroupId,
+          org_id: orgId,
+          ordinal,
+          title: String(input.subject ?? '').trim(),
+          brief: isStr(input.description) ? input.description : null,
+          active_form: isStr(input.activeForm) ? input.activeForm : null,
+          status: 'pending',
+          blocked_by: blockedBy,
+        }),
+      );
+      await this.applyInverseEdges(threadGroupId, created.id, input);
+      return { id: created.id };
+    });
+  }
+
+  async updateTask(
+    scope: TaskScope,
+    input: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error?: string }> {
+    return this.chain(scope, async () => {
+      const resolved = await this.resolveThreadGroupId(scope);
+      if (!resolved) return { ok: false, error: 'scope not found' };
+      const { threadGroupId } = resolved;
+      const taskId = String(input.taskId ?? '').trim();
+      const row = await this.tasks.findOne({
+        where: { id: taskId, thread_group_id: threadGroupId },
+      });
+      if (!row) return { ok: false, error: `task ${taskId} not found` };
+
+      // A deletion REMOVES the row. Keep sibling edges in the same durable id space too: old fold/reconcile
+      // dropped references to rows that no longer existed, and `task_list` should not report a deleted id as
+      // a blocker.
+      if (input.status === 'deleted') {
+        await this.tasks.delete({ id: row.id });
+        await this.removeBlockedByReference(threadGroupId, row.id);
+        return { ok: true };
+      }
+
+      const patch: QueryDeepPartialEntity<TaskEntity> = {};
+      if (isStr(input.subject)) patch.title = input.subject;
+      if (isStr(input.description)) patch.brief = input.description;
+      if (isStr(input.activeForm)) patch.active_form = input.activeForm;
+      const status = mapTaskStatus(input.status);
+      if (status) patch.status = status;
+      if (hasBlockedByInput(input))
+        patch.blocked_by = await this.validBlockedBy(
+          threadGroupId,
+          mergeBlockedBy(row.blocked_by ?? [], input),
+          row.id,
+        );
+      if (Object.keys(patch).length)
+        await this.tasks.update({ id: row.id }, patch);
+
+      await this.applyInverseEdges(threadGroupId, row.id, input);
+      return { ok: true };
+    });
+  }
+
+  async readTasks(scope: TaskScope): Promise<TaskItem[]> {
+    const resolved = await this.resolveThreadGroupId(scope);
+    if (!resolved) return [];
+    const rows = await this.tasks.find({
+      where: { thread_group_id: resolved.threadGroupId },
+      order: { ordinal: 'ASC' },
+    });
+    return rows.map(toTaskItem);
   }
 
   /** Resolve the thread group that owns this scope's shared checklist: a `thread` scope's own `thread_group_id`, or a
@@ -272,108 +345,56 @@ export class EntityTaskEventSink implements TaskEventSink {
     return threadGroup ? { threadGroupId: threadGroup.id, orgId: threadGroup.org_id } : null;
   }
 
-  private async seedCache(
-    key: string,
+  /** Apply the INVERSE dependency edges (`addBlocks`/`removeBlocks`: "this task blocks X") onto each named
+   *  target row's `blocked_by`. A target that isn't a row in THIS thread group is silently skipped (mirrors the
+   *  old fold's behavior — no dangling edges). */
+  private async applyInverseEdges(
     threadGroupId: string,
-  ): Promise<TaskFoldCache> {
-    const existing = this.cache.get(key);
-    if (existing) return existing;
-    const rows = await this.tasks.find({
-      where: { thread_group_id: threadGroupId },
-      order: { ordinal: 'ASC' },
-    });
-    const rowIdBySdkId = new Map<string, string>();
-    const items = rows.map((row) => {
-      rowIdBySdkId.set(row.id, row.id); // identity seed — see TaskFoldCache's doc comment
-      return toTaskItem(row);
-    });
-    const seeded: TaskFoldCache = { items, rowIdBySdkId };
-    this.cache.set(key, seeded);
-    return seeded;
+    sourceId: string,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    for (const { targetId, op } of inverseEdgeOps(input)) {
+      const target = await this.tasks.findOne({
+        where: { id: targetId, thread_group_id: threadGroupId },
+      });
+      if (!target) continue;
+      await this.tasks.update(
+        { id: target.id },
+        { blocked_by: applyEdge(target.blocked_by ?? [], sourceId, op) },
+      );
+    }
   }
 
-  private async apply(
-    key: string,
-    scope: TaskScope,
-    toolName: string,
-    input: Record<string, unknown>,
-    result: unknown,
+  /** Keep `blocked_by` in the same thread-group-owned uuid id space as the rows themselves. Unknown ids are
+   *  dropped instead of being persisted as dangling blockers. */
+  private async validBlockedBy(
+    threadGroupId: string,
+    ids: string[],
+    selfId?: string,
+  ): Promise<string[]> {
+    const unique = [...new Set(ids.filter((id) => id !== selfId))];
+    if (unique.length === 0) return [];
+    const rows = await this.tasks.find({
+      where: { thread_group_id: threadGroupId },
+      select: { id: true },
+    });
+    const valid = new Set(rows.map((row) => row.id));
+    return unique.filter((id) => valid.has(id));
+  }
+
+  private async removeBlockedByReference(
+    threadGroupId: string,
+    sourceId: string,
   ): Promise<void> {
-    const resolved = await this.resolveThreadGroupId(scope);
-    if (!resolved) return;
-    const { threadGroupId, orgId } = resolved;
-    const before = await this.seedCache(key, threadGroupId);
-    const after = foldTaskEvent(before.items, toolName, input, result);
-    if (after === before.items) return; // a read-only task tool (TaskList/TaskGet) — no-op fold
-
-    const rowIdBySdkId = new Map(before.rowIdBySdkId);
-    const beforeById = new Map(before.items.map((t) => [t.id, t]));
-    const afterIds = new Set(after.map((t) => t.id));
-
-    // Resolve an item's DB row id (blockedBy edges reference OTHER items by their sdk/pseudo id) — an
-    // edge that doesn't resolve within this scope's known rows is dropped rather than left dangling.
-    const resolveRowId = (sdkId: string): string | undefined =>
-      rowIdBySdkId.get(sdkId);
-
-    // Deletions: an id that fell out of the fold is gone from the checklist (foldTaskEvent's `deleted`
-    // semantics) — remove its row.
-    for (const prev of before.items) {
-      if (afterIds.has(prev.id)) continue;
-      const rowId = resolveRowId(prev.id);
-      if (rowId) await this.tasks.delete({ id: rowId });
-      rowIdBySdkId.delete(prev.id);
+    const rows = await this.tasks.find({
+      where: { thread_group_id: threadGroupId },
+      select: { id: true, blocked_by: true },
+    });
+    for (const row of rows) {
+      const next = (row.blocked_by ?? []).filter((id) => id !== sourceId);
+      if (next.length !== (row.blocked_by ?? []).length)
+        await this.tasks.update({ id: row.id }, { blocked_by: next });
     }
-
-    // Creates + updates, in the fold's own order (its ordinal). Only look up the thread group's current max
-    // ordinal when there's at least one genuine create to gap-number — a pure update/delete fold never
-    // touches it.
-    const hasCreate = after.some((item) => !resolveRowId(item.id));
-    let ordinal = hasCreate ? await this.maxTaskOrdinal(threadGroupId) : 0;
-    for (const item of after) {
-      const blockedBy = (item.blockedBy ?? [])
-        .map((b) => resolveRowId(b))
-        .filter((id): id is string => Boolean(id));
-      const prev = beforeById.get(item.id);
-      const rowId = resolveRowId(item.id);
-      if (!rowId) {
-        ordinal += 10;
-        const created = await this.tasks.save(
-          this.tasks.create({
-            thread_group_id: threadGroupId,
-            org_id: orgId,
-            ordinal,
-            title: item.subject,
-            brief: item.description ?? null,
-            active_form: item.activeForm ?? null,
-            status: item.status,
-            blocked_by: blockedBy,
-          }),
-        );
-        rowIdBySdkId.set(item.id, created.id);
-        continue;
-      }
-      if (
-        !prev ||
-        prev.subject !== item.subject ||
-        prev.status !== item.status ||
-        prev.description !== item.description ||
-        prev.activeForm !== item.activeForm ||
-        JSON.stringify(prev.blockedBy ?? []) !== JSON.stringify(blockedBy)
-      ) {
-        await this.tasks.update(
-          { id: rowId },
-          {
-            title: item.subject,
-            brief: item.description ?? null,
-            active_form: item.activeForm ?? null,
-            status: item.status,
-            blocked_by: blockedBy,
-          },
-        );
-      }
-    }
-
-    this.cache.set(key, { items: after, rowIdBySdkId });
   }
 
   private async maxTaskOrdinal(threadGroupId: string): Promise<number> {
@@ -384,6 +405,16 @@ export class EntityTaskEventSink implements TaskEventSink {
       .getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
   }
+}
+
+/** Map a `task_update` status onto a persisted status. `deleted` is handled before this (a deleted task
+ *  is REMOVED, not stored); `dropped` is a DB-only status this tool surface never sets. */
+function mapTaskStatus(
+  raw: unknown,
+): 'pending' | 'in_progress' | 'completed' | null {
+  return raw === 'pending' || raw === 'in_progress' || raw === 'completed'
+    ? raw
+    : null;
 }
 
 /** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape (mirrors
@@ -560,19 +591,10 @@ export class TurnHarnessFactory {
   constructor(
     private readonly liveTurns: LiveTurnStore,
     @Inject(BLOCK_SINK) private readonly sink: BlockSink,
-    @Inject(TASK_EVENT_SINK) private readonly taskSink: TaskEventSink,
     private readonly usage: OauthUsageService,
     @Inject(SUBAGENT_STORE)
     private readonly subagentStore: SubagentStore = NOOP_SUBAGENT_STORE,
   ) {}
-
-  /**
-   * Resolve which entity's tasks column a `TaskCreate`/`TaskUpdate` call on this harness belongs to, from
-   * the STABLE lane it rides. Delegates to the {@link THREAD_REGISTRY} single source of truth.
-   */
-  private taskScopeFor(lane: string, jobId: string): TaskScope | null {
-    return taskScopeForLane(lane, jobId);
-  }
 
   /**
    * Clear any stale live-turn state left on `lane` by a prior attempt that never reached
@@ -811,32 +833,6 @@ export class TurnHarnessFactory {
                     ? { structuredPatch: e.structuredPatch }
                     : {}),
                 };
-                // LLM-authored task list: fold TaskCreate/TaskUpdate into the owning thread's/job's `tasks`
-                // column. Excludes a writer subagent's own calls (`parentToolUseId` set) — only the
-                // orchestrating session's task list is tracked. Best-effort: never blocks/sinks the turn.
-                const toolName =
-                  typeof b.meta.name === 'string'
-                    ? b.meta.name.toLowerCase()
-                    : '';
-                if (
-                  (toolName === 'taskcreate' || toolName === 'taskupdate') &&
-                  !b.meta.parentToolUseId
-                ) {
-                  const scope = this.taskScopeFor(lane, jobId);
-                  if (scope) {
-                    const input = (b.meta.input ?? {}) as Record<
-                      string,
-                      unknown
-                    >;
-                    void this.taskSink
-                      .applyTaskEvent(scope, toolName, input, e.result ?? null)
-                      .catch((err) =>
-                        this.logger.warn(
-                          `task-event apply failed (ignored): ${err}`,
-                        ),
-                      );
-                  }
-                }
                 break;
               }
             }

@@ -360,7 +360,8 @@ export interface ReviewAgentState {
   findings?: number;
 }
 
-/** One LLM-authored task, folded from `TaskCreate`/`TaskUpdate` tool calls (see `ThreadEntity.tasks`). */
+/** One LLM-authored task, written via the `task_create`/`task_update` host-bridge tools directly into a
+ *  stage-owned `TaskEntity` row (mirrored here as the read/wire shape). */
 export interface TaskItem {
   id: string;
   subject: string;

@@ -21,6 +21,10 @@ export const BRIDGE_SERVER_NAME = 'atlas-host-bridge';
  * `AgentSessionManager.buildTools()`; the drift-guard spec fails CI if they diverge.
  */
 export const ATLAS_HOST_BRIDGE_TOOLS = [
+  'task_create',
+  'task_update',
+  'task_list',
+  'task_get',
   'report_verification',
   'get_pipeline_state',
   'get_decision_record',

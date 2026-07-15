@@ -893,6 +893,45 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     );
   });
 
+  it('completeLegRotation allocates a JOB-UNIQUE ordinal, so a rotation in one thread group of a multi-thread-group job never collides with a sibling thread group (regression)', async () => {
+    // The rotating builder is at ordinal 10 in its own build thread group. A thread-group-LOCAL allocation (the bug) would
+    // pick `max(thread group siblings)+GAP = 20`. But `uq_threads_job_parent_ordinal` is UNIQUE(job_id,
+    // parent_thread_id, ordinal) NULLS NOT DISTINCT — JOB-global — and a SIBLING build thread group in the SAME job
+    // already occupies ordinal 20 (both root threads, parent_thread_id null). Pre-fix, the INSERT hit the
+    // unique index, the txn threw, and rotation silently failed ("handoff rotation isn't working").
+    const { jobId, threadGroupId, threadId } = await seedRotationThread('sess-1');
+    const siblingThreadGroup = await store.createThreadGroup({
+      jobId,
+      orgId: ORG_ID,
+      kind: 'build',
+      title: 'Frontend',
+    });
+    await store.createThreadInThreadGroup({
+      threadGroupId: siblingThreadGroup.id,
+      jobId,
+      orgId: ORG_ID,
+      role: 'builder',
+      ordinal: 20, // the ordinal a thread-group-local allocation would (wrongly) reuse for the new leg
+      brief: 'Frontend',
+    });
+
+    // With the fix this resolves (no unique violation); pre-fix it REJECTED here.
+    const res = await store.completeLegRotation({
+      anchorStepId: threadId,
+      handoff: 'H',
+      seed: 'S',
+    });
+    expect(res).toEqual({ fromLeg: 1, toLeg: 2, abandonedSessionId: 'sess-1' });
+
+    // The new leg lands in the ROTATING thread's thread group, at a job-unique ordinal past the sibling's 20.
+    const rows = await store.threadsForThreadGroup(threadGroupId);
+    expect(rows).toHaveLength(2);
+    const leg2 = rows[1];
+    expect(leg2.role).toBe('builder');
+    expect(leg2.handoff_in).toBe('H');
+    expect(leg2.ordinal).toBeGreaterThan(20);
+  });
+
   it('completeLegRotation is a no-op (returns null) when there is no live session to rotate', async () => {
     const { threadGroupId, threadId } = await seedRotationThread(null);
     const res = await store.completeLegRotation({

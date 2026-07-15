@@ -10,7 +10,7 @@ import { McpOAuthService } from './mcp-oauth.service';
  * {@link McpOAuthService.completeAuthorization}. It is intentionally NOT under `/orgs/:orgId` — the signed state
  * carries the target identity, so one fixed redirect_uri serves every org (what DCR registered).
  *
- * The redirect_uri base is `BACKEND_HOST` (dev `http://localhost:4002`, prod `https://api.atlas.dltechnologies.co`);
+ * The redirect_uri base is `BACKEND_HOST` (dev `http://localhost:4002`, prod `https://api.byatlas.io`);
  * in prod the console lives on a DIFFERENT origin (`FRONTEND_HOST`), so the returned page `postMessage`s that
  * origin explicitly (not `*`) before closing the popup, and the console also re-polls on focus.
  */
