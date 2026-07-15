@@ -420,6 +420,14 @@ describe('webApprovalCard (pure builder)', () => {
       jobId: 'job-ship',
       title: 'Ready to ship',
       summary: 'Reviewed.',
+      verifications: [
+        {
+          title: 'Master review',
+          status: 'not_done',
+          verification: [],
+          unverified: false,
+        },
+      ],
     });
 
     const actions = new Map(card.actions.map((a) => [a.actionId, a]));
@@ -436,6 +444,9 @@ describe('webApprovalCard (pure builder)', () => {
     ).toEqual({
       jobId: 'job-ship',
     });
+    expect(card.verifications).toEqual([
+      expect.objectContaining({ title: 'Master review', status: 'not_done' }),
+    ]);
   });
 });
 

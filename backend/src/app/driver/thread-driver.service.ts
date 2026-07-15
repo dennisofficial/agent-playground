@@ -1754,10 +1754,13 @@ export class ThreadDriver implements JobDispatcher {
     for (const t of buildThreads) {
       const term = await this.store.getTerminalRecord(t.id).catch(() => null);
       const verification = term?.verification ?? [];
+      const status =
+        t.status === 'done' && term?.status === 'done' ? 'done' : 'not_done';
       summaries.push({
         title: t.brief,
+        status,
         verification,
-        unverified: verification.length === 0,
+        unverified: status === 'done' && verification.length === 0,
       });
     }
     return summaries;

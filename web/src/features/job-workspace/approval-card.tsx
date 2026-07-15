@@ -297,14 +297,18 @@ function ShipVerificationsList({
       {verifications.map((v, i) => (
         <div key={`${v.title}-${i}`} className="text-[11.5px] leading-relaxed">
           <div className="flex items-center gap-1.5 font-medium text-text">
-            {v.unverified ? (
+            {v.status === "not_done" || v.unverified ? (
               <AlertTriangle size={12} className="shrink-0 text-amber" />
             ) : (
               <CheckCircle2 size={12} className="shrink-0 text-green" />
             )}
             <span>{v.title}</span>
           </div>
-          {v.unverified ? (
+          {v.status === "not_done" ? (
+            <p className="pl-[18px] text-faint">
+              Not done — needs operator attention.
+            </p>
+          ) : v.unverified ? (
             <p className="pl-[18px] text-faint">
               No verification evidence reported.
             </p>

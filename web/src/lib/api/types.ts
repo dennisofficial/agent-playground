@@ -133,6 +133,8 @@ export interface WebCardAction {
 export interface ShipThreadVerification {
   /** The build thread's title/brief. */
   title: string;
+  /** Whether this thread asserted completion; `not_done` is advisory on the ship card. */
+  status: "done" | "not_done";
   /** The thread's captured verification evidence (command + exit code + output tail). */
   verification: {
     kind: string;

@@ -3756,6 +3756,37 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     expect(h.opened).toHaveLength(0);
   });
 
+  it('surfaces a not-done master_review as advisory on the ship-review card', async () => {
+    const state = masterReviewState();
+    const { turn } = makeTurn({ completeThread: false });
+    const h = assemble(state, { turn, autoShipApprove: false });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+
+    expect(state.job.status).toBe('awaiting_ship_review');
+    expect(state.threads[0].condition).toBe('incomplete');
+    const card = (
+      h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls[0]?.[1] as
+      | {
+          verifications?: Array<{
+            title: string;
+            status: string;
+            unverified: boolean;
+          }>;
+        }
+      | undefined;
+    expect(card?.verifications).toEqual([
+      {
+        title: 'Master review',
+        status: 'not_done',
+        verification: [],
+        unverified: false,
+      },
+    ]);
+  });
+
   it('operatorShipWithoutReview REFUSES when the job is not on a codex_review_unavailable hold', async () => {
     const state = masterReviewState(); // no halt at all
     const h = assemble(state);
