@@ -1,5 +1,10 @@
 import { ChatAnthropic } from '@langchain/anthropic';
-import { AIMessage, HumanMessage, SystemMessage, type BaseMessageLike } from '@langchain/core/messages';
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  type BaseMessageLike,
+} from '@langchain/core/messages';
 import { defineModule, scorer } from '@workspace/ai-testing';
 import { Agent, renderAgentPrompt, renderReviewIntent } from '../prompt-kit';
 import { parsePlanFindings, type ReviewFinding } from './plan-review.service';
@@ -249,7 +254,10 @@ function extractText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
-    .filter((b): b is { type: string; text: string } => (b as { type?: string })?.type === 'text')
+    .filter(
+      (b): b is { type: string; text: string } =>
+        (b as { type?: string })?.type === 'text',
+    )
     .map((b) => b.text)
     .join('\n');
 }
@@ -261,7 +269,10 @@ function buildRunnable() {
   const model = new ChatAnthropic({ model: MODEL, maxTokens: 8_000 });
   return {
     async invoke(input: In): Promise<Out> {
-      const res = await model.invoke([new SystemMessage(SYSTEM), ...input.messages]);
+      const res = await model.invoke([
+        new SystemMessage(SYSTEM),
+        ...input.messages,
+      ]);
       const raw = extractText(res.content);
       return { raw, findings: parsePlanFindings(raw) };
     },
@@ -277,8 +288,9 @@ export default defineModule<In, Out>({
         messages: [
           new HumanMessage(
             renderTask({
-              goal: 'Show each user\'s last login time on their profile.',
-              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              goal: "Show each user's last login time on their profile.",
+              overview:
+                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: CLEAN_PLAN,
               context: CLEAN_CONTEXT,
             }),
@@ -292,8 +304,9 @@ export default defineModule<In, Out>({
         messages: [
           new HumanMessage(
             renderTask({
-              goal: 'Show each user\'s last login time on their profile.',
-              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              goal: "Show each user's last login time on their profile.",
+              overview:
+                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: GAP_PLAN,
               context: GAP_CONTEXT,
             }),
@@ -315,7 +328,7 @@ export default defineModule<In, Out>({
           ),
           new AIMessage(
             'FINDING [BLOCKING]: the export endpoint has no auth guard — any anonymous caller can dump ' +
-              'every user\'s email; there is no locked decision on which guard/role gates this endpoint ' +
+              "every user's email; there is no locked decision on which guard/role gates this endpoint " +
               '(reports.controller.ts).',
           ),
           new HumanMessage(
@@ -358,7 +371,9 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'clean') return undefined; // scoped to this case only
-        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
+        const blocking = output.findings.filter(
+          (f) => f.severity === 'BLOCKING',
+        );
         return {
           key: 'no-false-blocking-on-clean-plan',
           grade: blocking.length === 0 ? 1 : 0,
@@ -373,12 +388,15 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'planted-gap') return undefined;
-        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
+        const blocking = output.findings.filter(
+          (f) => f.severity === 'BLOCKING',
+        );
         const caught = blocking.some((f) => /cache/i.test(f.text));
         return {
           key: 'catches-planted-gap',
           grade: caught ? 1 : 0,
-          comment: blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
+          comment:
+            blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
         };
       },
     }),
@@ -389,7 +407,9 @@ export default defineModule<In, Out>({
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'resume') return undefined;
-        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
+        const blocking = output.findings.filter(
+          (f) => f.severity === 'BLOCKING',
+        );
         return {
           key: 'no-escalation-after-genuine-fix',
           grade: blocking.length === 0 ? 1 : 0,
