@@ -52,7 +52,11 @@ import {
 } from '../engine/engine.types';
 import { ProfileAwarenessService } from '../workspace-profile';
 import { summarizeTurnFailure } from '../engine/turn-failure-summary';
-import { defaultResumeAt } from '../engine/session-limit';
+import {
+  defaultResumeAt,
+  isCorroboratedSessionLimit,
+  SESSION_LIMIT_TEXT_MISFIRE_MAX,
+} from '../engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -981,54 +985,88 @@ export class ThreadDriver implements JobDispatcher {
         // auto-resumes once the reset passes (the leader `SessionResumeSweep` → `resumePaused`) or on an
         // operator Force-resume (`POST …/retry`). Do NOT consume `halt_fix_attempts` — this isn't a build failure.
         const limit = err as EngineSessionLimitError;
-        this.logger.warn(
-          `job=${jobId} parked on session limit: ${limit.message}`,
-        );
         const job = await this.store.loadJob(jobId).catch(() => null);
         const orgId = job?.orgId;
-        // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
-        const resumeAt =
-          limit.resetAt ??
-          (orgId
-            ? await this.usage.getResetAt(orgId, limit.rateLimitType)
-            : undefined);
-        // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
-        // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
-        const resumeClock = resumeAt ?? defaultResumeAt();
-        // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
-        // reset — this also covers the text-fallback path, which carries no `rate_limit_event` frame to harvest.
-        if (orgId)
-          void this.usage
-            .applyHarvest(orgId, {
-              status: 'rejected',
-              rateLimitType: limit.rateLimitType,
-              resetsAt: new Date(resumeClock).getTime(),
-              utilization: 100,
-              credentialId: limit.credentialId,
+        const util =
+          limit.source === 'text' && orgId
+            ? await this.usage
+                .getUtilization(orgId, limit.rateLimitType)
+                .catch(() => undefined)
+            : undefined;
+
+        const durablePark = async (): Promise<void> => {
+          this.logger.warn(
+            `job=${jobId} parked on session limit: ${limit.message}`,
+          );
+          // Resume-clock precedence (d5): the engine's precise reset instant → the org's harvested usage window.
+          const resumeAt =
+            limit.resetAt ??
+            (orgId
+              ? await this.usage.getResetAt(orgId, limit.rateLimitType)
+              : undefined);
+          // When neither yields a precise instant, park on a BOUNDED default clock (now + shortest window) so the
+          // leader sweep still auto-resumes — a null clock would only ever be Force-resumed by hand.
+          const resumeClock = resumeAt ?? defaultResumeAt();
+          // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+          // reset — this also covers the text-fallback path, which carries no `rate_limit_event` frame to harvest.
+          if (orgId)
+            void this.usage
+              .applyHarvest(orgId, {
+                status: 'rejected',
+                rateLimitType: limit.rateLimitType,
+                resetsAt: new Date(resumeClock).getTime(),
+                utilization: 100,
+                credentialId: limit.credentialId,
+              })
+              .catch(() => undefined);
+          // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
+          // engine fell back to parsing the CLI's printed "resets …" string.
+          const resetSource: 'usage_api' | 'parsed_string' =
+            limit.rateLimitType ? 'usage_api' : 'parsed_string';
+          const at = new Date().toISOString();
+          await this.store
+            .setJobHalt(jobId, {
+              kind: 'session_limit',
+              reason: limit.message,
+              at,
+              resumeAt: resumeClock,
             })
             .catch(() => undefined);
-        // A structured `rateLimitType` means the reset came from the usage frame/API; its absence means the
-        // engine fell back to parsing the CLI's printed "resets …" string.
-        const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType
-          ? 'usage_api'
-          : 'parsed_string';
-        const at = new Date().toISOString();
-        await this.store
-          .setJobHalt(jobId, {
-            kind: 'session_limit',
-            reason: limit.message,
-            at,
-            resumeAt: resumeClock,
-          })
-          .catch(() => undefined);
-        await this.store
-          .setSessionResume(jobId, resumeClock, {
-            lane: 'build',
-            reason: limit.message,
-            resetSource,
-          })
-          .catch(() => undefined);
-        await this.relaySessionLimitPaused(jobId, resumeAt);
+          await this.store
+            .setSessionResume(jobId, resumeClock, {
+              lane: 'build',
+              reason: limit.message,
+              resetSource,
+            })
+            .catch(() => undefined);
+          await this.relaySessionLimitPaused(jobId, resumeAt);
+          await this.store
+            .clearDriverRetryCounters(jobId)
+            .catch(() => undefined);
+        };
+
+        if (isCorroboratedSessionLimit(limit.source, util)) {
+          await durablePark();
+        } else {
+          const { ok } = await this.store.claimSessionLimitTextMisfire(
+            jobId,
+            SESSION_LIMIT_TEXT_MISFIRE_MAX,
+          );
+          if (!ok) {
+            this.logger.warn(
+              `job=${jobId} text-only session limit unconfirmed x${SESSION_LIMIT_TEXT_MISFIRE_MAX} — parking`,
+            );
+            await durablePark(); // backstop escalation
+          } else {
+            this.logger.warn(
+              `job=${jobId} unconfirmed text-only session limit (util=${util ?? 'unknown'}) — quiet host-retry`,
+            );
+            await this.scheduleBuildHostRetry(
+              jobId,
+              'unconfirmed session limit (text fallback) — re-checking',
+            );
+          }
+        }
       } else if (
         isCodexReviewOutageError(err) &&
         (await this.inFlightThreadIsMasterReview(jobId))

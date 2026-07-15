@@ -152,7 +152,11 @@ import {
   WorkspaceSecretFileStore,
 } from '../onboarding';
 import { OauthUsageService } from '../onboarding/oauth-usage.service';
-import { defaultResumeAt } from '../engine/session-limit';
+import {
+  defaultResumeAt,
+  isCorroboratedSessionLimit,
+  SESSION_LIMIT_TEXT_MISFIRE_MAX,
+} from '../engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import {
@@ -3228,8 +3232,15 @@ export class AgentSessionManager
       }
       return;
     }
-    // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread.
-    await this.store.clearBrainRetryCounters(stimulus.jobId);
+    // A turn completed without throwing — clear any benign-abort auto-resume budget for this thread. Gated on
+    // `!result.sessionLimit`: a session-limit turn is handled by the dedicated branch below, which owns its
+    // own `session_limit_text_misfires` bookkeeping (increment-on-quiet-retry, reset-on-park) — clearing it
+    // here unconditionally would wipe the consecutive-misfire streak on EVERY text-fallback hit (this same
+    // "clean turn" path runs for a session-limit result too, since it doesn't throw), so the N=3 backstop
+    // could never accumulate past 1 across re-drives.
+    if (!result.sessionLimit) {
+      await this.store.clearBrainRetryCounters(stimulus.jobId);
+    }
     // …and cancel any still-pending host-retry backstop (timer + durable retry clock): this clean turn IS the
     // recovery, so a stale 10s timer must not fire a spurious 'Please continue' nudge on the now-healthy job.
     await this.clearPendingHostRetry(stimulus.jobId);
@@ -3277,74 +3288,121 @@ export class AgentSessionManager
         return;
       }
       const rlType = result.sessionLimit.rateLimitType;
-      const resumeAt =
-        result.sessionLimit.resetAt ??
-        (await this.usage.getResetAt(stimulus.orgId, rlType));
-      // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
-      // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
-      // still has something to resume — a null clock would strand the lane on manual Force-resume only.
-      const resumeClock = resumeAt ?? defaultResumeAt();
-      // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
-      // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
-      void this.usage
-        .applyHarvest(stimulus.orgId, {
-          status: 'rejected',
-          rateLimitType: rlType,
-          resetsAt: new Date(resumeClock).getTime(),
-          utilization: 100,
-          credentialId: auth?.refreshBack?.credentialId,
-        })
-        .catch(() => undefined);
-      const resetSource: 'usage_api' | 'parsed_string' = rlType
-        ? 'usage_api'
-        : 'parsed_string';
-      const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
-      await this.store
-        .setSessionResume(stimulus.jobId, resumeClock, {
-          lane: 'main',
-          reason,
-          resetSource,
-        })
-        .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
-      // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
-      // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
-      // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
-      // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
-      await streamer.finish(
-        undefined,
-        result.usage
-          ? {
-              usage: result.usage,
-              contextTokens: result.usage.contextTokens ?? null,
-              contextLimit: resolveContextLimit(
-                result.usage.contextModel ?? result.usage.model,
-              ),
-              credentialId: result.credentialId ?? null,
-            }
-          : undefined,
-      );
-      void this.usageProjector?.record(
-        {
-          jobId: stimulus.jobId,
-          orgId: stimulus.orgId,
-          lane: 'main',
-          kind: 'brain',
-          engine: 'claude',
-          credentialId: result.credentialId ?? null,
-        },
-        result.usage,
-      );
-      await this.saySystemOperator(
-        stimulus,
-        `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
-        {
-          retryable: false,
-          sessionLimit: true,
-          category: 'session_limit',
-          summary: "You've hit your Claude session limit — it auto-resumes at reset.",
-          ...(resumeAt ? { resumeAt } : {}),
-        },
-      );
+      const source = result.sessionLimit.source;
+      const util =
+        source === 'text'
+          ? await this.usage
+              .getUtilization(stimulus.orgId, rlType)
+              .catch(() => undefined)
+          : undefined;
+
+      const durablePark = async (): Promise<void> => {
+        const resumeAt =
+          result.sessionLimit?.resetAt ??
+          (await this.usage.getResetAt(stimulus.orgId, rlType));
+        // The Main lane has no `halt`, so the durable clock IS the park marker: when no precise reset is known,
+        // seed a BOUNDED default (now + shortest window) so the leader sweep auto-resumes and a process restart
+        // still has something to resume — a null clock would strand the lane on manual Force-resume only.
+        const resumeClock = resumeAt ?? defaultResumeAt();
+        // Reflect the limit in the org's usage snapshot so the composer ring reads the session as FULL until
+        // reset — covers the text-fallback path too (no `rate_limit_event` frame was harvested).
+        void this.usage
+          .applyHarvest(stimulus.orgId, {
+            status: 'rejected',
+            rateLimitType: rlType,
+            resetsAt: new Date(resumeClock).getTime(),
+            utilization: 100,
+            credentialId: auth?.refreshBack?.credentialId,
+          })
+          .catch(() => undefined);
+        const resetSource: 'usage_api' | 'parsed_string' = rlType
+          ? 'usage_api'
+          : 'parsed_string';
+        const reason = `Claude session limit${rlType ? ` (${rlType})` : ''}${resumeAt ? `; resets ${resumeAt}` : ''}`;
+        await this.store
+          .setSessionResume(stimulus.jobId, resumeClock, {
+            lane: 'main',
+            reason,
+            resetSource,
+          })
+          .catch((err) => this.logger.warn(`setSessionResume failed: ${err}`));
+        // Graceful finish, mirroring the normal success finish below — so the lane doesn't hang and the
+        // transcript flushes — WITHOUT the halt-wake / secret / file success-tail writes (no triage happened).
+        // Do not pass `result.result`: on some SDK paths that final summary is the same printed limit line the
+        // engine suppressed from text blocks, and `finish()` would persist it as a normal chat fallback.
+        await streamer.finish(
+          undefined,
+          result.usage
+            ? {
+                usage: result.usage,
+                contextTokens: result.usage.contextTokens ?? null,
+                contextLimit: resolveContextLimit(
+                  result.usage.contextModel ?? result.usage.model,
+                ),
+                credentialId: result.credentialId ?? null,
+              }
+            : undefined,
+        );
+        void this.usageProjector?.record(
+          {
+            jobId: stimulus.jobId,
+            orgId: stimulus.orgId,
+            lane: 'main',
+            kind: 'brain',
+            engine: 'claude',
+            credentialId: result.credentialId ?? null,
+          },
+          result.usage,
+        );
+        await this.saySystemOperator(
+          stimulus,
+          `You've hit your session limit — resets ${resumeAt ? this.fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`,
+          {
+            retryable: false,
+            sessionLimit: true,
+            category: 'session_limit',
+            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            ...(resumeAt ? { resumeAt } : {}),
+          },
+        );
+        await this.store.clearBrainRetryCounters(stimulus.jobId);
+      };
+
+      if (isCorroboratedSessionLimit(source, util)) {
+        await durablePark();
+      } else {
+        const { ok } = await this.store.claimSessionLimitTextMisfire(
+          stimulus.jobId,
+          SESSION_LIMIT_TEXT_MISFIRE_MAX,
+        );
+        if (!ok) {
+          this.logger.warn(
+            `job=${stimulus.jobId} text-only session limit unconfirmed x${SESSION_LIMIT_TEXT_MISFIRE_MAX} — parking`,
+          );
+          await durablePark(); // backstop escalation
+        } else {
+          this.logger.warn(
+            `job=${stimulus.jobId} unconfirmed text-only session limit (util=${util ?? 'unknown'}) — quiet host-retry`,
+          );
+          await streamer.finish(
+            undefined,
+            result.usage
+              ? {
+                  usage: result.usage,
+                  contextTokens: result.usage.contextTokens ?? null,
+                  contextLimit: resolveContextLimit(
+                    result.usage.contextModel ?? result.usage.model,
+                  ),
+                  credentialId: result.credentialId ?? null,
+                }
+              : undefined,
+          );
+          await this.scheduleHostRetry(
+            stimulus,
+            'unconfirmed session limit (text fallback)',
+          );
+        }
+      }
       return;
     }
 

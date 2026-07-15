@@ -1707,11 +1707,33 @@ export class BrainStoreService {
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
+  /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire; refuses at `cap`. Same
+   *  shape as {@link claimTransientRetryRedrive} against `session_limit_text_misfires`. */
+  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update(JobEntity)
+      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .where('id = :jobId', { jobId })
+      .andWhere('session_limit_text_misfires < :cap', { cap })
+      .returning('session_limit_text_misfires')
+      .execute();
+    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    return used != null ? { ok: true, used } : { ok: false, used: cap };
+  }
+
   /** Reset the brain's SESSION-scoped retry budgets to 0 on a clean turn (unlike the LIFETIME
    *  `halt_fix_attempts`, these reset every clean turn). Does NOT touch `retry_last_attempt_at` (an
    *  age-only cooldown backstop, never reset) nor the driver's own lane columns. */
   async clearBrainRetryCounters(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { benign_abort_redrives: 0, transient_retry_redrives: 0 });
+    await this.jobs.update(
+      { id: jobId },
+      {
+        benign_abort_redrives: 0,
+        transient_retry_redrives: 0,
+        session_limit_text_misfires: 0,
+      },
+    );
   }
 
   /**

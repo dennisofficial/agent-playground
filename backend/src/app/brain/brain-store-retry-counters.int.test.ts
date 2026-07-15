@@ -123,6 +123,28 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     expect(await store.claimTransientRetryRedrive(jobId, 2)).toEqual({ ok: false, used: 2 });
   });
 
+  it('claimSessionLimitTextMisfire is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
+    const { jobId } = await seedBareJob();
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 1 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 2 });
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: true, used: 3 });
+    // At the cap → refused, budget unchanged.
+    expect(await store.claimSessionLimitTextMisfire(jobId, 3)).toEqual({ ok: false, used: 3 });
+  });
+
+  it('two concurrent claimSessionLimitTextMisfire calls at the cap boundary — exactly one succeeds (row-level CAS)', async () => {
+    const { jobId } = await seedBareJob();
+    await store.claimSessionLimitTextMisfire(jobId, 2); // used → 1
+    // Two racing claims with cap 2: only one may take the last slot (used 1 → 2).
+    const [a, b] = await Promise.all([
+      store.claimSessionLimitTextMisfire(jobId, 2),
+      store.claimSessionLimitTextMisfire(jobId, 2),
+    ]);
+    const oks = [a, b].filter((r) => r.ok);
+    expect(oks).toHaveLength(1);
+    expect(oks[0]).toEqual({ ok: true, used: 2 });
+  });
+
   it('claimBenignAbortRedrive and claimTransientRetryRedrive both stamp retry_last_attempt_at', async () => {
     const { jobId } = await seedBareJob();
     const before = Date.now();
@@ -154,6 +176,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     const { jobId } = await seedBareJob();
     await store.claimBenignAbortRedrive(jobId, 5);
     await store.claimTransientRetryRedrive(jobId, 5);
+    await store.claimSessionLimitTextMisfire(jobId, 5);
     // Bump the driver's own lane columns directly (no DriverStoreService in scope here) to prove
     // clearBrainRetryCounters doesn't reach across lanes.
     await jobs.update({ id: jobId }, { auth_retry_attempts: 3, driver_transient_retries: 4 });
@@ -166,6 +189,7 @@ describe('BrainStoreService retry-counter durability (live Postgres)', () => {
     const after = await jobs.findOne({ where: { id: jobId } });
     expect(after?.benign_abort_redrives).toBe(0);
     expect(after?.transient_retry_redrives).toBe(0);
+    expect(after?.session_limit_text_misfires).toBe(0);
     // Untouched by the brain-lane clear.
     expect(after?.retry_last_attempt_at).toEqual(stampBefore);
     expect(after?.auth_retry_attempts).toBe(3);

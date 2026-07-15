@@ -25,7 +25,7 @@ import { structuredPatch as diffStructuredPatch } from 'diff';
 import {
   detectSessionLimitText,
   limitFromRateEvent,
-  parseResetAt,
+  textSessionLimitHit,
   type SessionLimitHit,
 } from './session-limit';
 import {
@@ -1698,7 +1698,7 @@ export class EngineCore {
               const isLimitLine = detectSessionLimitText(block.text);
               if (isLimitLine) {
                 if (!sessionLimit)
-                  sessionLimit = { resetAt: parseResetAt(block.text) };
+                  sessionLimit = textSessionLimitHit(block.text);
               } else {
                 onEvent?.({ kind: 'text', text: block.text, ...sub });
               }
@@ -1778,7 +1778,7 @@ export class EngineCore {
             errResult.result &&
             detectSessionLimitText(errResult.result)
           ) {
-            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            sessionLimit ??= textSessionLimitHit(errResult.result);
             break;
           }
           if (message.subtype === 'success') {
@@ -1863,7 +1863,7 @@ export class EngineCore {
             // engine error — it is a clean park, not a failure. Latch it (from the text if the structured
             // frame didn't already) and break so the normal return path carries `sessionLimit` back.
             if (sessionLimit || detectSessionLimitText(errorMessage)) {
-              sessionLimit ??= { resetAt: parseResetAt(errorMessage) };
+              sessionLimit ??= textSessionLimitHit(errorMessage);
               break;
             }
             throw new Error(errorMessage);
@@ -1882,7 +1882,7 @@ export class EngineCore {
       // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
       // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
       if (detectSessionLimitText(msg)) {
-        sessionLimit ??= { resetAt: parseResetAt(msg) };
+        sessionLimit ??= textSessionLimitHit(msg);
       } else if (!(streaming && abortController.signal.aborted)) {
         // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
         // graceful end — fall through to the normal post-loop return with the partial result + live session,
