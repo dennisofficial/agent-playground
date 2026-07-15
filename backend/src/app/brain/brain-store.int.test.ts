@@ -99,6 +99,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     await store.openJob({
       orgId: TEAM_ID,
       repoId,
@@ -179,7 +180,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend one'],
     });
     await dataSource.query(
-      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      `UPDATE threads t
+          SET status = 'done'
+         FROM stages s
+        WHERE s.id = t.stage_id
+          AND s.decision_record_id = $1
+          AND t.role = 'builder'`,
       [first.decisionRecordId],
     );
 
@@ -213,20 +219,25 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await mainCount(dataSource, jobId)).toBe(1);
 
     // getPipelineState: active lanes = the NEW revision; the old one is browsable history in priorRevisions.
-    // (Both `threads` arrays also carry the revision's `master_review` root — filter to builders to compare.)
+    // (Both stage arrays also carry the revision's `master_review` root — filter to builders to compare.)
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
-      threads: Array<{ brief: string; kind: string }>;
+      stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
       priorRevisions: Array<{
         revision: number;
-        threads: Array<{ brief: string; kind: string }>;
+        stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
       }>;
     };
-    const builders = (ts: Array<{ brief: string; kind: string }>) =>
-      ts.filter((t) => t.kind === 'builder').map((t) => t.brief);
-    expect(builders(state.threads)).toEqual(['backend two']);
+    const builders = (
+      stages: Array<{ threads: Array<{ brief: string; role: string }> }>,
+    ) =>
+      stages
+        .flatMap((s) => s.threads)
+        .filter((t) => t.role === 'builder')
+        .map((t) => t.brief);
+    expect(builders(state.stages)).toEqual(['backend two']);
     expect(state.priorRevisions).toHaveLength(1);
     expect(state.priorRevisions[0].revision).toBe(1);
-    expect(builders(state.priorRevisions[0].threads)).toEqual(['backend one']);
+    expect(builders(state.priorRevisions[0].stages)).toEqual(['backend one']);
   }, 30_000);
 
   it('PLAN VERSIONING: a DIRECT build (empty threadTitles) over done work preserves history and creates no builders', async () => {
@@ -247,7 +258,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend one'],
     });
     await dataSource.query(
-      `UPDATE threads SET status = 'done' WHERE decision_record_id = $1 AND kind = 'builder'`,
+      `UPDATE threads t
+          SET status = 'done'
+         FROM stages s
+        WHERE s.id = t.stage_id
+          AND s.decision_record_id = $1
+          AND t.role = 'builder'`,
       [first.decisionRecordId],
     );
     await dataSource.query(
@@ -275,17 +291,22 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(await masterReviewCount(dataSource, jobId)).toBe(1); // only v1's master review remains
 
     const state = (await driverStore.getPipelineState(jobId, TEAM_ID)) as {
-      threads: Array<{ brief: string; kind: string }>;
+      stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
       priorRevisions: Array<{
-        threads: Array<{ brief: string; kind: string }>;
+        stages: Array<{ threads: Array<{ brief: string; role: string }> }>;
       }>;
     };
     // Active revision has no lanes (empty direct build), but the done v1 builder is browsable history.
-    expect(state.threads).toEqual([]);
+    expect(
+      state.stages.flatMap((s) =>
+        s.threads.filter((t) => t.role === 'builder'),
+      ),
+    ).toEqual([]);
     expect(state.priorRevisions).toHaveLength(1);
     expect(
-      state.priorRevisions[0].threads
-        .filter((t) => t.kind === 'builder')
+      state.priorRevisions[0].stages
+        .flatMap((s) => s.threads)
+        .filter((t) => t.role === 'builder')
         .map((t) => t.brief),
     ).toEqual(['backend one']);
   }, 30_000);
@@ -314,6 +335,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
 
     // Empty title → status flips to planning but the existing title is preserved.
     await store.openJob({
@@ -407,6 +429,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoRow.id],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     const at = (sec: number) => new Date(Date.UTC(2026, 5, 24, 0, 0, sec));
 
     // The turn-1 question (persisted first).
@@ -503,6 +526,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoRow.id],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
 
     // A posted-then-answered question card.
     await store.appendCardMessage(jobId, {
@@ -592,6 +616,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     await store.openJob({
       orgId: TEAM_ID,
       repoId,
@@ -619,22 +644,15 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       ],
     });
 
-    // Step rows locked: 2 under the first thread, 1 under the second, gap-numbered + pending/build.
-    const phases1 = await phasesFor(dataSource, jobId);
-    expect(phases1.map((p) => p.brief)).toEqual([
-      'add the entity at server.entity.ts:1',
-      'add the service at server.service.ts:1',
-      'add the page at page.tsx:1',
-    ]);
-    expect(
-      phases1.every((p) => p.status === 'pending' && p.stage === 'build'),
-    ).toBe(true);
-    // thread.plan is set on BOTH threads (so the pipeline view reports hasPlan).
+    // Authored steps are now locked by rendering them into each builder thread's plan.
     const plans1 = await sectionPlans(dataSource, jobId);
     expect(plans1.every((p) => p != null && p.length > 0)).toBe(true);
+    expect(plans1[0]).toContain('add the entity at server.entity.ts:1');
+    expect(plans1[0]).toContain('add the service at server.service.ts:1');
+    expect(plans1[1]).toContain('add the page at page.tsx:1');
 
-    // Re-propose WITHOUT stepsByThread (e.g. a direct-build-style re-shape): prior step rows are
-    // cascade-cleared with their threads, and no new step rows are created.
+    // Re-propose WITHOUT stepsByThread (e.g. a direct-build-style re-shape): prior build threads are
+    // cascade-cleared with their stages, and no new thread plan is created.
     await store.reopenPlanning(jobId);
     await store.persistPlan({
       orgId: TEAM_ID,
@@ -647,7 +665,6 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       threadTitles: ['backend only'],
     });
 
-    expect(await phasesFor(dataSource, jobId)).toHaveLength(0);
     const plans2 = await sectionPlans(dataSource, jobId);
     expect(plans2).toEqual([null]); // one thread, no plan (no authored steps this time)
   }, 30_000);
@@ -673,6 +690,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     const mkCard = (id: string, q: string) => ({
       ts: id,
       text: q,
@@ -806,6 +824,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     const mkFile = (id: string, path: string) => ({
       requestId: id,
       card: {
@@ -878,6 +897,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoRow.id],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     const err = 'in-sandbox engine turn failed: monthly spend limit';
 
     // Nothing posted yet → no match.
@@ -917,6 +937,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoRow.id],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
     const at = new Date(Date.UTC(2026, 5, 24, 0, 0, 5));
 
     // The operator's message lands at `at`; the reminder rode with it, backdated 2ms earlier.
@@ -986,6 +1007,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       [TEAM_ID, repoRow.id],
     );
     const jobId = thread.id;
+    await ensurePlanningThread(dataSource, jobId, TEAM_ID);
 
     // A curated pill whose collapsed label is short, but the raw payload delivered to the engine is fuller.
     const rawPayload =
@@ -1307,10 +1329,11 @@ async function insertUserMessage(
   text: string,
   createdAt: Date,
 ): Promise<void> {
+  const threadId = await ensurePlanningThread(ds, jobId, TEAM_ID);
   await ds.query(
-    `INSERT INTO messages (job_id, author, author_id, text, kind, created_at, updated_at)
-       VALUES ($1, 'Operator', 'op', $2, 'chat', $3, $3)`,
-    [jobId, text, createdAt.toISOString()],
+    `INSERT INTO messages (job_id, thread_id, author, author_id, text, kind, created_at, updated_at)
+       VALUES ($1, $2, 'Operator', 'op', $3, 'chat', $4, $4)`,
+    [jobId, threadId, text, createdAt.toISOString()],
   );
 }
 
@@ -1352,7 +1375,7 @@ async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {
  *  `main` row (both asserted / created separately). */
 async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    `SELECT brief FROM threads WHERE job_id = $1 AND role = 'builder' ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.brief);
@@ -1361,7 +1384,7 @@ async function threadTitles(ds: DataSource, jobId: string): Promise<string[]> {
 /** The FEATURE (builder) thread types — excludes the appended master-review thread. */
 async function threadTypes(ds: DataSource, jobId: string): Promise<string[]> {
   const rows: Array<{ type: string }> = await ds.query(
-    `SELECT type FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    `SELECT type FROM threads WHERE job_id = $1 AND role = 'builder' ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.type);
@@ -1373,7 +1396,7 @@ async function masterReviewCount(
   jobId: string,
 ): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
-    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'master_review'`,
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND role = 'master_review'`,
     [jobId],
   );
   return Number(rows[0]?.n ?? '0');
@@ -1385,7 +1408,11 @@ async function builderBriefsForRecord(
   recordId: string,
 ): Promise<string[]> {
   const rows: Array<{ brief: string }> = await ds.query(
-    `SELECT brief FROM threads WHERE decision_record_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    `SELECT t.brief
+       FROM threads t
+       JOIN stages s ON s.id = t.stage_id
+      WHERE s.decision_record_id = $1 AND t.role = 'builder'
+      ORDER BY t.ordinal ASC`,
     [recordId],
   );
   return rows.map((r) => r.brief);
@@ -1394,29 +1421,10 @@ async function builderBriefsForRecord(
 /** The count of `main` rows for a job — must stay 1 across re-proposes (create-if-absent). */
 async function mainCount(ds: DataSource, jobId: string): Promise<number> {
   const rows: Array<{ n: string }> = await ds.query(
-    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND kind = 'main'`,
+    `SELECT COUNT(*)::text AS n FROM threads WHERE job_id = $1 AND role = 'planning'`,
     [jobId],
   );
   return Number(rows[0]?.n ?? '0');
-}
-
-async function phasesFor(
-  ds: DataSource,
-  jobId: string,
-): Promise<
-  Array<{
-    brief: string;
-    status: string;
-    stage: string;
-    batch_ordinal: number | null;
-  }>
-> {
-  return ds.query(
-    `SELECT p.brief, p.status, p.stage, p.batch_ordinal
-       FROM steps p JOIN threads s ON s.id = p.thread_id
-      WHERE s.job_id = $1 ORDER BY s.ordinal ASC, p.ordinal ASC`,
-    [jobId],
-  );
 }
 
 /** FEATURE (builder) thread plans — excludes the master-review thread (plan null) and the `main` row. */
@@ -1425,7 +1433,7 @@ async function sectionPlans(
   jobId: string,
 ): Promise<Array<string | null>> {
   const rows: Array<{ plan: string | null }> = await ds.query(
-    `SELECT plan FROM threads WHERE job_id = $1 AND kind = 'builder' ORDER BY ordinal ASC`,
+    `SELECT plan FROM threads WHERE job_id = $1 AND role = 'builder' ORDER BY ordinal ASC`,
     [jobId],
   );
   return rows.map((r) => r.plan);
@@ -1536,7 +1544,43 @@ async function seedJob(
        VALUES ($1, $2, 'chat', $3) RETURNING id`,
     [orgId, repoId, repoSlug],
   );
+  await ensurePlanningThread(ds, jobRow.id, orgId);
   return { jobId: jobRow.id, repoId };
+}
+
+async function ensurePlanningThread(
+  ds: DataSource,
+  jobId: string,
+  orgId: string,
+): Promise<string> {
+  const existing: Array<{ stage_id: string; thread_id: string | null }> =
+    await ds.query(
+      `SELECT s.id AS stage_id, t.id AS thread_id
+         FROM stages s
+         LEFT JOIN threads t ON t.stage_id = s.id AND t.role = 'planning'
+        WHERE s.job_id = $1 AND s.kind = 'planning'
+        ORDER BY s.ordinal ASC
+        LIMIT 1`,
+      [jobId],
+    );
+  let stageId = existing[0]?.stage_id;
+  if (!stageId) {
+    const [stage]: Array<{ id: string }> = await ds.query(
+      `INSERT INTO stages (job_id, org_id, ordinal, kind, title)
+         VALUES ($1, $2, 10, 'planning', 'Planning')
+         RETURNING id`,
+      [jobId, orgId],
+    );
+    stageId = stage.id;
+  }
+  if (existing[0]?.thread_id) return existing[0].thread_id;
+  const [thread]: Array<{ id: string }> = await ds.query(
+    `INSERT INTO threads (stage_id, job_id, org_id, role, ordinal, brief, type, status)
+       VALUES ($1, $2, $3, 'planning', 0, 'Main', 'general', 'pending')
+       RETURNING id`,
+    [stageId, jobId, orgId],
+  );
+  return thread.id;
 }
 
 /** Delete every row this test's synthetic tenant owns (FK cascade from jobs/org does the rest). */

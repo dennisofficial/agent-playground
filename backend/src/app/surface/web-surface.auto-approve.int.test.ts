@@ -47,6 +47,7 @@ import {
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { JobBootstrapService } from '../job-bootstrap';
 import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 
 const fakeCreds = {
@@ -87,6 +88,7 @@ const PASSWORD = 'auto-approve-it-pw-12345';
 
 let app: NestExpressApplication;
 let ds: DataSource;
+let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerCookie: string;
 let ownerId: string;
@@ -160,6 +162,7 @@ async function seedAwaitingApproval(
      VALUES ($1, $2, $3, 'control', $4, 'feature', 'awaiting_approval', 'idle', 'main')`,
     [jobId, ORG, REPO, title],
   );
+  await bootstrap.ensurePlanningStage(jobId, ORG);
   await ds.query(
     `INSERT INTO decision_records (id, org_id, repo_id, job_id, overview, status, thread_titles)
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,
@@ -224,6 +227,7 @@ beforeAll(async () => {
 
   server = app.getHttpServer();
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+  bootstrap = app.get(JobBootstrapService);
 
   await purge();
   const owner = await register(OWNER_EMAIL);
@@ -309,6 +313,15 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'control', 'Bad body job', 'open')`,
     [BAD_BODY_JOB, ORG, REPO],
   );
+  await Promise.all([
+    bootstrap.ensurePlanningStage(FOREIGN_JOB, FOREIGN_ORG),
+    bootstrap.ensurePlanningStage(OPEN_JOB, ORG),
+    bootstrap.ensurePlanningStage(SHIP_GATE_JOB, ORG),
+    bootstrap.ensurePlanningStage(SHIP_GATE_NO_RESOLVE_JOB, ORG),
+    bootstrap.ensurePlanningStage(SHIP_GATE_BOTH_JOB, ORG),
+    bootstrap.ensurePlanningStage(DISABLE_JOB, ORG),
+    bootstrap.ensurePlanningStage(BAD_BODY_JOB, ORG),
+  ]);
 
   if (prevSurface === undefined) delete process.env.SURFACE;
   else process.env.SURFACE = prevSurface;

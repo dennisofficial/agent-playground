@@ -216,6 +216,7 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
+    await this.jobBootstrap?.ensurePlanningStage(input.jobId, input.orgId);
     const ciThreadId =
       (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
@@ -377,6 +378,9 @@ export class StimulusStoreService {
 
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
     // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
+    if (!input.lane?.startsWith('thread:')) {
+      await this.jobBootstrap?.ensurePlanningStage(input.jobId, input.orgId);
+    }
     const threadId = input.lane?.startsWith('thread:')
       ? input.lane.slice('thread:'.length)
       : await this.planningThreadId(input.jobId);

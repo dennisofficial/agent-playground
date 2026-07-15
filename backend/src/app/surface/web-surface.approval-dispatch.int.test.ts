@@ -56,6 +56,7 @@ import {
 import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { AgentSessionManager, JOB_DISPATCHER } from '../brain';
+import { JobBootstrapService } from '../job-bootstrap';
 import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { WebSurface } from './web-surface';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
@@ -87,6 +88,7 @@ let app: NestExpressApplication;
 let ds: DataSource;
 let surface: WebSurface;
 let asm: AgentSessionManager;
+let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
 let ownerId: string;
 
@@ -147,6 +149,7 @@ async function seedAwaitingApproval(
      VALUES ($1, $2, $3, 'control', 'Add rate limiting', 'feature', 'awaiting_approval', 'idle', 'main')`,
     [jobId, ORG, REPO],
   );
+  await bootstrap.ensurePlanningStage(jobId, ORG);
   await ds.query(
     `INSERT INTO decision_records (id, org_id, repo_id, job_id, overview, status, thread_titles)
      VALUES ($1, $2, $3, $4, 'Add token-bucket rate limiting to the API.', 'draft', $5)`,
@@ -236,6 +239,7 @@ beforeAll(async () => {
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
   surface = app.get(WebSurface);
   asm = app.get(AgentSessionManager);
+  bootstrap = app.get(JobBootstrapService);
 
   await purge();
   const owner = await register(OWNER_EMAIL);

@@ -34,6 +34,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
+import { JobBootstrapService } from '../job-bootstrap';
 import { StimulusStoreService, DeliveryPump } from '../stimulus';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { ThreadInputService } from '../surface/thread-input.service';
@@ -104,7 +105,12 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
         TypeOrmModule.forRoot(dbOpts()),
         TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
       ],
-      providers: [StimulusStoreService, DeliveryPump, TurnRegistry],
+      providers: [
+        JobBootstrapService,
+        StimulusStoreService,
+        DeliveryPump,
+        TurnRegistry,
+      ],
     }).compile();
 
     store = mod.get(StimulusStoreService);

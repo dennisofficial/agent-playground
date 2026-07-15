@@ -85,6 +85,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       [ORG_ID, repoId],
     );
     jobId = thread.id;
+    await store.ensurePlanningStage(jobId, ORG_ID);
   });
 
   afterAll(async () => {
@@ -177,6 +178,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
       `INSERT INTO jobs (org_id, repo_id, origin, kind) VALUES ($1, $2, 'control', 'onboarding') RETURNING id`,
       [ORG_ID, repoId],
     );
+    await store.ensurePlanningStage(thread.id, ORG_ID);
     return thread.id;
   }
 

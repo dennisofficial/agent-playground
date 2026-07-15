@@ -37,6 +37,7 @@ import {
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
+import { JobBootstrapService } from '../job-bootstrap';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { AgentSessionManager } from './agent-session-manager.service';
 import { JitHostExecutor } from './jit-host-executor';
@@ -75,6 +76,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
   let mod: TestingModule;
   let ds: DataSource;
   let stimulusStore: StimulusStoreService;
+  let bootstrap: JobBootstrapService;
   let jobs: Repository<JobEntity>;
   let repoId: string;
 
@@ -84,10 +86,11 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
         TypeOrmModule.forRoot(dbOpts()),
         TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
       ],
-      providers: [StimulusStoreService],
+      providers: [JobBootstrapService, StimulusStoreService],
     }).compile();
 
     stimulusStore = mod.get(StimulusStoreService);
+    bootstrap = mod.get(JobBootstrapService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
 
@@ -289,6 +292,10 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       undefined, // brainGateway (42)
       undefined, // reattachRegistry (43)
       jit, // jit (44)
+      undefined, // prodDiagnostics (45)
+      undefined, // repoRows (46)
+      undefined, // liveTurns (47)
+      bootstrap, // jobBootstrap (48)
     );
 
     return {

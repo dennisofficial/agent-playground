@@ -16,6 +16,7 @@ import {
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
 import { JobTitler } from '../titling';
+import { JobBootstrapService } from '../job-bootstrap';
 import { AgentSessionManager } from './agent-session-manager.service';
 import type { ChatStimulus } from '../domain';
 
@@ -35,6 +36,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
   let app: NestExpressApplication;
   let mgr: AgentSessionManager;
   let dataSource: DataSource;
+  let bootstrap: JobBootstrapService;
 
   const prevSurface = process.env.SURFACE;
   const prevToken = process.env.CLAUDE_OAUTH_TOKEN;
@@ -66,6 +68,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 
     mgr = app.get(AgentSessionManager);
     dataSource = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+    bootstrap = app.get(JobBootstrapService);
     await purge(dataSource);
   }, 60_000);
 
@@ -101,6 +104,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       [TEAM_ID, repoId],
     );
     const jobId = job.id;
+    await bootstrap.ensurePlanningStage(jobId, TEAM_ID);
     await dataSource.query(
       `INSERT INTO job_sandboxes (org_id, job_id, repo_id, worktree_path, lifecycle, session_id)
          VALUES ($1, $2, $3, '/tmp/compaction-it-worktree', 'attached', $4)`,
@@ -271,10 +275,11 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
         contextLimit: opts?.contextLimit ?? 1_000_000,
         ...(opts?.phaseId ? { phaseId: opts.phaseId } : {}),
       };
+      const threadId = await bootstrap.planningThreadId(jobId);
       await dataSource.query(
-        `INSERT INTO messages (job_id, author, author_id, author_bot_id, text, kind, meta)
-           VALUES ($1, 'Atlas', 'atlas', 'atlas', '', 'turn_meta', $2::jsonb)`,
-        [jobId, JSON.stringify(meta)],
+        `INSERT INTO messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, meta)
+           VALUES ($1, $2, 'Atlas', 'atlas', 'atlas', '', 'turn_meta', $3::jsonb)`,
+        [jobId, threadId, JSON.stringify(meta)],
       );
     };
 

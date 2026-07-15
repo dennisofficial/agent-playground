@@ -6,18 +6,18 @@
  * migrations in `added`.
  */
 
-export interface ParsedMigration {
+export type ParsedMigration = {
   file: string;
   fileTs: number;
   nameTs: number;
   upBody: string;
-}
+};
 
-export interface Violation {
+export type Violation = {
   file: string;
   rule: string;
   message: string;
-}
+};
 
 const FILENAME_PATTERN = /^(\d+)-(.+)\.ts$/;
 const NAME_PROPERTY_PATTERN = /name\s*=\s*['"]([^'"]+)['"]/;
@@ -30,7 +30,8 @@ const ALLOW_DEFAULT_NAME_ESCAPE_HATCH = 'migration-hygiene: allow-default-name';
 const DEFAULT_NAME_CREATION_PATTERN =
   /ADD CONSTRAINT "(?:FK_|CHK_|PK_|UQ_)|CREATE (?:UNIQUE )?INDEX "(?:IDX_|UQ_|REL_)/;
 
-const GENERATE_HINT = 'run `pnpm db:migration:generate` instead of hand-writing the migration';
+const GENERATE_HINT =
+  'run `pnpm db:migration:generate` instead of hand-writing the migration';
 
 export function parseMigrationFilename(
   basename: string,
