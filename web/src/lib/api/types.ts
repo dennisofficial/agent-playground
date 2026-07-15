@@ -199,6 +199,9 @@ export interface WebQuestionCard {
    *  "withdrawn" state with no answer buttons. Terminal, like `answer`. */
   withdrawnAt?: string;
   withdrawnReason?: string;
+  /** `'build'` cards (the driver's onboarding/build-flow questions) keep the immediate answer-question POST;
+   *  `'brain'` (or absent, for older rows) cards stage in the composer tray for batched Send. */
+  origin?: "brain" | "build";
 }
 
 /**
@@ -227,6 +230,10 @@ export interface WebSecretInputCard {
   mcp?: { server: string; slot: "header" | "env"; key: string };
   provided_at?: string;
   delivered_at?: string;
+  /** Set when the brain RETRACTED this still-unprovided request (`withdraw_secret_request`) — renders a
+   *  compact "withdrawn" state with no input. Terminal, like `provided_at`. */
+  withdrawnAt?: string;
+  withdrawnReason?: string;
 }
 
 /**
@@ -785,6 +792,21 @@ export interface JobDiffFile {
 export interface JobDiff {
   files: JobDiffFile[];
   truncated: boolean;
+}
+
+/** One file's line totals/status in the cheap diff summary — mirrors the backend `JobDiffSummaryFile`. */
+export interface JobDiffSummaryFile {
+  path: string;
+  oldPath?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/** Numstat-only summary (no hunks) for the sidebar counts — mirrors the backend `JobDiffSummary`. */
+export interface JobDiffSummary {
+  files: JobDiffSummaryFile[];
 }
 
 // ── Supervised services (`…/threads/:jobId/services`) ────────────────────────────────────────────

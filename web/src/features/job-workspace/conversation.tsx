@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HelpCircle, Upload } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { classifyMessage } from "./classify";
+import { isTouchCapableDevice, PREMEASURE_MIN_ROWS, useIdlePremeasure } from "./idle-premeasure";
 import { compensateAboveViewportResize } from "./scroll-compensation";
 import { JumpToLatestButton, useTailFollow } from "./tail-follow";
 import {
@@ -39,7 +40,7 @@ import { BlockedOverlay } from "./blocked-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
-import { mermaidReservePx } from "./markdown";
+import { extractMermaidSources, mermaidReservePx } from "./markdown";
 import type { JobMessage, JobRef } from "@/lib/api/job-api";
 import type { JobBlocker, LaneDefaultFooter } from "@/lib/api/types";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -168,6 +169,13 @@ export function TranscriptView({
   // the last line never slips under it as the box auto-grows. Read-only lanes just reserve a small pad.
   const [composerHeight, setComposerHeight] = useState(116);
   const bottomPad = composer ? composerHeight : 20;
+
+  // Touch capability is a stable device property, but Client Components still render once on the server.
+  // Compute it after hydration so the SSR guard does not permanently pin touch devices to `false`.
+  const [isTouch, setIsTouch] = useState(false);
+  useEffect(() => {
+    setIsTouch(isTouchCapableDevice());
+  }, []);
 
   // The attachment tray is owned HERE (not inside the composer) so a file dropped anywhere on the pane feeds
   // the same tray the ＋ button and paste do. Drop is live only on the interactive Main composer — read-only
@@ -353,11 +361,21 @@ export function TranscriptView({
     estimateSize: (index) => items[index].estimate,
     overscan: 8,
     getItemKey: (index) => items[index].key,
+    // Native bottom-anchoring (@tanstack/virtual-core ≥3.16): when the view is at/near the bottom, a row
+    // resizing (a fresh row measuring taller than its estimate, an async Mermaid SVG landing) keeps the
+    // bottom edge pinned via the total-size delta instead of the top-anchored predicate below — and on iOS
+    // the adjustment rides the built-in deferred-scrollTop path (held through touch/momentum, flushed once on
+    // settle) so it never lands as a mid-gesture jump. `scrollEndThreshold` matches useTailFollow's 80px
+    // "stuck to bottom" band so the two agree on what counts as "at the end".
+    anchorTo: "end",
+    scrollEndThreshold: 80,
   });
 
   // `shouldAdjustScrollPositionOnItemSizeChange` is a Virtualizer INSTANCE field, not a constructor
   // option — `useVirtualizer`'s options merge never copies it onto the instance, so it must be assigned
-  // directly here rather than inside the options object above.
+  // directly here rather than inside the options object above. It governs the SCROLLED-UP case only: when
+  // NOT at the end, `anchorTo:'end'` defers to this predicate, which compensates any above-viewport resize
+  // (the desktop Cause-B backstop) — again through the iOS deferred-scrollTop path when on iOS.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = compensateAboveViewportResize;
 
   pinRef.current = () => {
@@ -385,6 +403,31 @@ export function TranscriptView({
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // Idle, off-screen pre-measurement of the not-yet-seen backlog's exact row heights — so a fresh tall row
+  // (long markdown/code, a Mermaid diagram) already has its real height BEFORE it scrolls into view and
+  // therefore never triggers a first-measure resize/scroll-compensation on iOS. The pass measures silently
+  // (no scroll writes) and seeds all rows in one synchronous settle, so it's safe to run while pinned at the
+  // tail — which is exactly when we want it, so the very first upward scroll is already smooth. Touch-only +
+  // long transcripts (short ones have negligible residual). See idle-premeasure.tsx.
+  const premeasureEnabled = isTouch && items.length >= PREMEASURE_MIN_ROWS;
+  // Every ```mermaid fence in the lane-filtered durable transcript, deduped by the warm helper — handed to the
+  // idle pass so it can warm the render cache off-screen BEFORE a diagram row is pre-measured.
+  const warmSources = useMemo(
+    () =>
+      premeasureEnabled
+        ? log.flatMap((m) =>
+            extractMermaidSources(typeof m.text === "string" ? m.text : ""),
+          )
+        : [],
+    [log, premeasureEnabled],
+  );
+  const premeasureLayer = useIdlePremeasure({
+    items,
+    virtualizer,
+    enabled: premeasureEnabled,
+    warmSources,
+  });
+
   // Scroll to the next unanswered question (cycles oldest→newest on repeated clicks) and flash its card.
   const jumpToOpenQuestion = () => {
     if (openQuestions.length === 0) return;
@@ -407,7 +450,8 @@ export function TranscriptView({
         onPointerLeave={onPointerLeave}
         className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [overflow-anchor:none] px-7 pt-5"
       >
-        <div className="mx-auto flex max-w-[880px] flex-col gap-[9px]">
+        <div className="relative mx-auto flex max-w-[880px] flex-col gap-[9px]">
+          {premeasureLayer}
           {isLoading && messages.length === 0 ? (
             <p className="py-10 text-center text-[13px] text-faint">
               Loading conversation…
@@ -572,12 +616,12 @@ const ROW_ESTIMATE: Record<string, number> = {
   compaction: 48,
   // short bubbles
   user: 92,
-  thinking: 92,
+  thinking: 26,
   system_operator: 96,
   system_shared: 96,
   untrusted: 112,
   // assistant prose — usually the tallest ordinary row
-  claude: 168,
+  claude: 120,
   // interactive cards (button/input surfaces)
   approval: 240,
   question: 200,
@@ -599,10 +643,10 @@ function estimateForKind(kind: string): number {
   return ROW_ESTIMATE[kind] ?? ROW_ESTIMATE_FALLBACK;
 }
 
-/** Initial height guess for a folded tool-run group — grows with the number of calls (each collapsed tool
- *  row is short), capped so a huge run doesn't over-reserve. */
-function toolGroupEstimate(toolCount: number): number {
-  return Math.min(56 + toolCount * 40, 320);
+/** Initial height guess for a folded tool-run group — the collapsed `DisclosureRow` is a single line
+ *  regardless of how many calls it folds, so the estimate is flat. */
+function toolGroupEstimate(_toolCount: number): number {
+  return 40;
 }
 
 /** Message kinds whose height is dominated by free-form text (markdown / code / diagrams), so a flat
@@ -611,7 +655,6 @@ function toolGroupEstimate(toolCount: number): number {
 const TEXT_KINDS = new Set([
   "claude",
   "user",
-  "thinking",
   "untrusted",
   "system_shared",
   "compaction",
@@ -619,8 +662,16 @@ const TEXT_KINDS = new Set([
 ]);
 
 const MERMAID_FENCE = /```mermaid\n([\s\S]*?)```/g;
+/** Any fenced code block (language tag optional) — used to reserve non-mermaid code at code line-height
+ *  instead of letting it fall through to the prose wrapped-line math below. Run AFTER {@link MERMAID_FENCE}
+ *  has already been stripped from the text, so a mermaid fence never double-matches here. */
+const CODE_FENCE = /```(\w*)\n([\s\S]*?)```/g;
 /** Card chrome (header bar + vertical margins) around a rendered Mermaid diagram body. */
 const MERMAID_CHROME_PX = 64;
+/** Rendered height of one line inside a `CodeBlock` (`text-[11.5px] leading-[1.7]` ≈ 19.5px/line) plus the
+ *  header-bar + padding chrome around the block. */
+const CODE_LINE_PX = 19;
+const CODE_CHROME_PX = 28;
 /** Approx chars per line at the ~800px content column, and the rendered height of one wrapped line. */
 const CHARS_PER_LINE = 92;
 const LINE_PX = 22;
@@ -629,9 +680,10 @@ const LINE_PX = 22;
  * Content-aware initial height guess for a free-form text row. A flat per-kind estimate mis-sizes long
  * markdown and (badly) diagram-bearing bubbles, which is what makes the row after a tall diagram briefly
  * overlap it before `measureElement` corrects. So estimate from the text: reserve each embedded Mermaid
- * diagram at the SAME size the diagram itself reserves ({@link mermaidReservePx}), then add wrapped-line
- * height for the remaining prose. Still only an estimate — the ResizeObserver sets the exact height; this
- * just makes the first guess close.
+ * diagram at the SAME size the diagram itself reserves ({@link mermaidReservePx}), reserve each other fenced
+ * code block at code line-height (code doesn't wrap like prose, so counting it as wrapped text under-counts
+ * it), then add wrapped-line height for the remaining prose. Still only an estimate — the ResizeObserver sets
+ * the exact height; this just makes the first guess close.
  */
 function estimateForMessage(message: JobMessage, kind: string): number {
   const base = estimateForKind(kind);
@@ -644,12 +696,21 @@ function estimateForMessage(message: JobMessage, kind: string): number {
     diagrams += mermaidReservePx(m[1]) + MERMAID_CHROME_PX;
   }
 
-  const prose = text.replace(MERMAID_FENCE, "");
+  let prose = text.replace(MERMAID_FENCE, "");
+
+  let code = 0;
+  CODE_FENCE.lastIndex = 0;
+  for (let m = CODE_FENCE.exec(prose); m !== null; m = CODE_FENCE.exec(prose)) {
+    const lineCount = m[2].split("\n").length;
+    code += lineCount * CODE_LINE_PX + CODE_CHROME_PX;
+  }
+  prose = prose.replace(CODE_FENCE, "");
+
   let lines = 0;
   for (const line of prose.split("\n")) lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
   const prosePx = 40 + lines * LINE_PX;
 
-  return Math.max(base, Math.round(prosePx + diagrams));
+  return Math.max(base, Math.round(prosePx + diagrams + code));
 }
 
 /**
@@ -765,7 +826,7 @@ function buildLogItems(
       nodes.push({
         key: message.ts,
         node: <TurnMetaDivider key={message.ts} message={message} />,
-        estimate: 52,
+        estimate: 38,
       });
       continue;
     }

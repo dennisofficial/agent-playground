@@ -109,6 +109,20 @@ export class TenantCredentialStore {
     };
   }
 
+  /**
+   * Org ids (excluding `exceptOrgId`) whose credentials row currently holds this GitHub App
+   * `installationId`. Drives the common-ownership reuse gate in the App connect callback: an empty result
+   * means the installation is a first claim (no other holder); a non-empty result must be authorized
+   * against the initiating user's ownership before the installation may be linked to another org.
+   */
+  async orgsHoldingInstallation(installationId: string, exceptOrgId: string): Promise<string[]> {
+    const rows = await this.repo.find({
+      where: { github_app_installation_id: installationId },
+      select: { org_id: true },
+    });
+    return [...new Set(rows.map((r) => r.org_id))].filter((id) => id !== exceptOrgId);
+  }
+
   /** Owner-gated display value: the Codex account email decoded on-read from the pasted auth.json (no new column). */
   async codexAccountEmail(orgId: string, scope = '*'): Promise<string | undefined> {
     const row = await this.repo.findOne({ where: { org_id: orgId, scope } });

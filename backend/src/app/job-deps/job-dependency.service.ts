@@ -11,6 +11,13 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 // the next blocker to an already-blocked job just adds an edge and it stays blocked).
 const BLOCKABLE_STATUSES = new Set(['open', 'planning', 'plan_review', 'awaiting_approval', 'blocked']);
 const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertUuid(value: string): void {
+  if (!UUID_RE.test(value)) {
+    throw new BadRequestException('dependsOn job id must be a UUID');
+  }
+}
 
 /** How a resolved blocker actually resolved — fed into {@link JobDependencyService.onBlockerResolved}. */
 export type BlockerResolution = 'merged' | 'closed_unmerged' | 'cancelled' | 'deleted';
@@ -162,6 +169,7 @@ export class JobDependencyService {
     dependsOnJobIds: string[];
   }): Promise<void> {
     for (const dependsOnJobId of args.dependsOnJobIds) {
+      assertUuid(dependsOnJobId);
       const blocker = await this.jobs.findOne({
         where: { id: dependsOnJobId, org_id: args.orgId, repo_id: args.repoId },
       });
@@ -179,6 +187,7 @@ export class JobDependencyService {
     seed?: string | null;
   }): Promise<{ blocked: boolean }> {
     const { orgId, repoId, jobId, dependsOnJobId } = args;
+    assertUuid(dependsOnJobId);
     if (jobId === dependsOnJobId) {
       throw new BadRequestException('a job cannot depend on itself');
     }

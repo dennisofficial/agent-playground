@@ -155,7 +155,8 @@ export class AutoFixStage {
 
   /**
    * Per-thread auto-fix — run after a thread's steps complete, over that thread's change set.
-   * `ctx.diff`/`ctx.gitRange` should scope to the thread (e.g. the thread's start sha `..HEAD`).
+   * `ctx.gitRange` scopes it to the thread (e.g. the thread's start sha `..HEAD`) — the reviewer pulls
+   * the diff itself from that range.
    */
   async autofixThread(ctx: AutoFixContext, options: AutoFixOptions = {}): Promise<AutoFixSummary> {
     return this.run('thread', ctx, options);
@@ -320,7 +321,10 @@ export class AutoFixStage {
         ...(options.auth ? { auth: options.auth } : {}),
         ...this.reasoningEffortFor('review_agent', engine),
       });
-      await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+      await harness?.finish(
+        res.result,
+        res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
+      );
       if (ctx.jobId) {
         void this.usage?.record(
           {
@@ -328,6 +332,7 @@ export class AutoFixStage {
             lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
             kind: 'autofix',
             engine: engine ?? 'claude',
+            credentialId: res.credentialId ?? null,
             metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), lensId: lens.id },
           },
           res.usage,
@@ -449,7 +454,10 @@ export class AutoFixStage {
       await harness?.abort().catch(() => undefined);
       throw err;
     }
-    await harness?.finish(res.result, res.usage ? { usage: res.usage } : undefined);
+    await harness?.finish(
+      res.result,
+      res.usage ? { usage: res.usage, credentialId: res.credentialId ?? null } : undefined,
+    );
     if (ctx.jobId) {
       void this.usage?.record(
         {
@@ -457,6 +465,7 @@ export class AutoFixStage {
           lane: ctx.autofixId ? `autofix:${ctx.autofixId}` : 'autofix',
           kind: 'autofix',
           engine: engine ?? 'claude',
+          credentialId: res.credentialId ?? null,
           metaTag: { ...(ctx.autofixId ? { autofixId: ctx.autofixId } : {}), fixTurn: true },
         },
         res.usage,
@@ -490,31 +499,16 @@ export class AutoFixStage {
   }
 
   /**
-   * Ensure `ctx.diff` is populated. The driver normally supplies it (it already holds the thread's
-   * diff); when absent we derive one from the worktree git state via `ctx.gitRange` (else `HEAD`),
-   * and backfill `changedFiles` from `--name-only`. Best-effort — a failed derivation leaves the diff
-   * empty and the review prompt instructs the engine to inspect the tree itself.
+   * Ensure `ctx.changedFiles` is populated — the review framing (which lenses run, the empty-diff
+   * short-circuit, the file list in the prompt) needs it. The reviewer now pulls the actual diff itself
+   * via git (see `buildReviewPrompt`), so we NO LONGER derive the full diff string here (that read could
+   * be tens of MB and was only ever inlined). Backfilled from `--name-only` over `ctx.gitRange` (else
+   * `HEAD`). Best-effort — a failed derivation leaves `changedFiles` empty and the run short-circuits.
    */
   private async ensureDiff(ctx: AutoFixContext): Promise<AutoFixContext> {
-    if (ctx.diff && ctx.changedFiles?.length) return ctx;
-    const range = ctx.gitRange;
-    const diff = ctx.diff ?? (await this.gitDiff(ctx.worktreePath, range));
-    const changedFiles =
-      ctx.changedFiles?.length
-        ? ctx.changedFiles
-        : await this.gitNameOnly(ctx.worktreePath, range);
-    return { ...ctx, diff, changedFiles };
-  }
-
-  /** `git diff [range]` in the worktree — best-effort (returns '' on failure). */
-  private async gitDiff(worktreePath: string, range?: string): Promise<string> {
-    try {
-      const args = range ? ['diff', range] : ['diff', 'HEAD'];
-      return await this.rawGit(worktreePath, args);
-    } catch (err) {
-      this.logger.warn(`Could not derive diff (${range ?? 'HEAD'}): ${err}`);
-      return '';
-    }
+    if (ctx.changedFiles?.length) return ctx;
+    const changedFiles = await this.gitNameOnly(ctx.worktreePath, ctx.gitRange);
+    return { ...ctx, changedFiles };
   }
 
   /** `git diff --name-only [range]` in the worktree — best-effort (returns [] on failure). */

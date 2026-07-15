@@ -68,6 +68,11 @@ export interface RunTurnInput {
    */
   skills?: ResolvedSkill[];
   /**
+   * The repo's saved preview recipe, forwarded to the in-sandbox engine for the `validate` subagent
+   * prompt. Absent ⇒ nothing injected.
+   */
+  previewInstructions?: string | null;
+  /**
    * Authenticated-git for this turn (resolved repo url + org PAT) so the agent can fetch/push/merge from
    * inside the sandbox. Sourced from the RESOLVED repo, NOT `sandbox` (a row-sourced sandbox has empty
    * `gitUrl`/no token). Set by build/execute dispatch; the runner puts it on the docker `target`.
@@ -140,7 +145,7 @@ type TurnInputDerivedOrRequiredKey =
   | 'engine' | 'mode' | 'task' | 'systemPrompt'; // required, forwarded explicitly (omission already errors)
 type TurnInputForwardKey = Exclude<keyof RunTurnInput, TurnInputDerivedOrRequiredKey>;
 const TURN_INPUT_FORWARD_KEYS = [
-  'auth', 'userMcpServers', 'skills', 'model', 'modelReasoningEffort',
+  'auth', 'userMcpServers', 'skills', 'previewInstructions', 'model', 'modelReasoningEffort',
   'richStream', 'steerable', 'rotationNudge', 'toolBridge', 'turnMeta',
 ] as const satisfies readonly TurnInputForwardKey[];
 const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>] extends [never]
@@ -155,6 +160,8 @@ export interface RunTurnResult {
   /** A plan, when the turn was a plan turn that captured one. */
   planText?: string;
   usage?: EngineUsage;
+  /** The claude_credentials.id this turn authed on; absent for Codex / no-credential turns. */
+  credentialId?: string;
   /** Set when the turn ended on a Claude subscription session/usage limit (see {@link EngineRunResult.sessionLimit}).
    *  Pure pass-through from the engine result; the caller decides how to park/resume. */
   sessionLimit?: SessionLimitHit;
@@ -308,6 +315,7 @@ export class TurnRunnerService {
         lane: input.turnMeta?.lane ?? 'main',
         kind: input.turnMeta?.kind ?? 'step',
         engine,
+        credentialId: result.credentialId ?? null,
         ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
       },
       result.usage,
@@ -327,6 +335,7 @@ export class TurnRunnerService {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.credentialId ? { credentialId: result.credentialId } : {}),
       ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       session,
     };
@@ -411,7 +420,11 @@ export class TurnRunnerService {
     turnId: string;
     containerId: string;
     jobId: string;
+    orgId?: string;
     stepId?: string | null;
+    lane?: string;
+    kind?: string;
+    engine?: SessionEngine;
     onEvent?: (e: EngineEvent) => void;
     toolBridge?: ToolBridgeOptions;
     signal?: AbortSignal;
@@ -445,10 +458,26 @@ export class TurnRunnerService {
         message, resetAt, rateLimitType, result.sessionId, input.credentialId,
       );
     }
+    const credentialId = result.credentialId ?? input.credentialId ?? null;
+    if (result.claimed !== false) {
+      void this.usage?.record(
+        {
+          jobId: input.jobId,
+          orgId: input.orgId,
+          lane: input.lane ?? 'main',
+          kind: input.kind ?? 'step',
+          engine: input.engine ?? 'claude',
+          credentialId,
+          ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
+        },
+        result.usage,
+      );
+    }
     return {
       report: result.result,
       ...(result.planText ? { planText: result.planText } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
+      ...(credentialId ? { credentialId } : {}),
       ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
       // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
       session: {

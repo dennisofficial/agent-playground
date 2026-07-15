@@ -2,7 +2,7 @@ import type { EventStimulus } from '../../domain/stimulus';
 import type { JobProvenance } from '../../domain/job';
 import type { SessionAnchor, ThreadTerminalRecord } from '../../persistence/entities/thread.entity';
 import { threadDirName } from './thread-dir-name';
-import { agentMessage, type AgentMessage } from '../message';
+import { agentMessage, fromExternal, type AgentMessage } from '../message';
 import { renderChunk } from './tag-vocabulary';
 
 /**
@@ -488,6 +488,20 @@ export function doneRecordBody(term: ThreadTerminalRecord | null, anchor?: Sessi
  *  text via `seedSystemNotification`'s own `<system_notice>` envelope). */
 export function answeredQuestionBody(question: string, answer: string): AgentMessage {
   return agentMessage(`The operator answered your question ${JSON.stringify(question)}: ${answer}`);
+}
+
+/**
+ * Compose the body of a COMBINED `answer-batch` seed: one card notice per line, then the operator's
+ * freeform note (if any) as an attributed suffix. Each `notice` is already a hub-authored `AgentMessage`
+ * (an `answeredQuestionBody`/`fileUploaded`/`secretStored`/`mcpSecretStored` line); the note is
+ * operator-authored freeform, so it crosses the branded seam via `fromExternal` before it is spliced in.
+ * The whole body is re-minted so the controller never hand-concatenates a bare string across the seam.
+ */
+export function batchAnswerBody(notices: AgentMessage[], note?: string): AgentMessage {
+  const joined = notices.join('\n');
+  const trimmed = note?.trim();
+  if (!trimmed) return agentMessage(joined);
+  return agentMessage(`${joined}\n\nThe operator also added a note:\n${fromExternal(trimmed)}`);
 }
 
 /** Frame a delivered answer as a SYSTEM SEED (matches the live `/answer-question` path), not a chat line. */

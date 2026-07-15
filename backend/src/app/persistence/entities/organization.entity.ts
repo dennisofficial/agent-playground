@@ -1,5 +1,6 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
+import type { AutoApproveMode } from '@workspace/shared';
 
 /**
  * An organization — the top-level tenant in Atlas. Replaces the Slack-era `atlas_teams`/`team_id`
@@ -32,4 +33,12 @@ export class OrganizationEntity extends TimestampedEntity {
    */
   @Column({ type: 'uuid', nullable: true })
   selected_claude_credential_id!: string | null;
+
+  /** Org DEFAULT auto-approve mode a new job inherits at creation (see createJob). 'off' until an owner sets it. */
+  @Column({ type: 'text', default: 'off' })
+  default_auto_approve_mode!: AutoApproveMode;
+
+  /** Org DEFAULT auto-merge a new job inherits at creation. false until an owner sets it. */
+  @Column({ type: 'boolean', default: false })
+  default_auto_merge!: boolean;
 }

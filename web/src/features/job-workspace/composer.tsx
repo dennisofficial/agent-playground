@@ -1,17 +1,28 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import {
+  useJobMessages,
   useSay,
   useSayWithAttachments,
   useSendReviewComments,
   useStop,
+  useSubmitStagedAnswers,
 } from "@/lib/api/job-queries";
-import { ThreadApiError, type JobRef } from "@/lib/api/job-api";
+import {
+  ThreadApiError,
+  type AnswerBatchItem,
+  type JobRef,
+} from "@/lib/api/job-api";
 import type { PendingAttachment } from "@/lib/api/job-queries";
 import { useConnectivity } from "@/lib/api/connectivity";
-import { composerStore, useComposerDraft } from "@/lib/api/composer-store";
+import {
+  composerStore,
+  useComposerDraft,
+  useComposerStagedAnswers,
+  type StagedAnswer,
+} from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
 import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
@@ -20,8 +31,25 @@ import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
 import { CommentTray } from "./comment-tray";
 import { QueuedTray } from "./queued-tray";
+import { StagedAnswersTray } from "./staged-answers-tray";
 import { useReviewComments, type ReviewComment } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
+
+/** Map one staged answer to the wire shape `answer-batch` expects (drops the chip-only `label`). */
+function toAnswerBatchItem(a: StagedAnswer): AnswerBatchItem {
+  if (a.kind === "question") {
+    return { kind: "question", questionId: a.cardId, answer: a.answer };
+  }
+  if (a.kind === "file") {
+    return {
+      kind: "file",
+      requestId: a.cardId,
+      filename: a.filename,
+      content: a.content,
+    };
+  }
+  return { kind: "secret", requestId: a.cardId, value: a.value };
+}
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
 export interface ComposerFooter {
@@ -105,8 +133,17 @@ export function Composer({
   const sayWithAttachments = useSayWithAttachments(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
+  const submitStagedAnswers = useSubmitStagedAnswers(jobRef);
+  const stagedAnswers = useComposerStagedAnswers(jobRef);
   const { comments, clearComments } = useReviewComments();
   const connectivity = useConnectivity();
+  // Hygiene: drop any staged answer whose card has gone stale (withdrawn, or already answered/provided by
+  // another tab) since it was staged, so the tray can never submit a dead card.
+  const { data: messages } = useJobMessages(jobRef);
+  useEffect(() => {
+    if (!messages) return;
+    composerStore.pruneStagedAnswers(jobRef, messages);
+  }, [jobRef.jobId, messages]);
   // Per-Job draft text — held in the external store (not local state) so it survives Job-switch and reload
   // instead of bleeding between Jobs. Read-only/subagent lanes force value "" and never call setText.
   const text = useComposerDraft(jobRef).text;
@@ -150,7 +187,8 @@ export function Composer({
     turnActive &&
     !text.trim() &&
     comments.length === 0 &&
-    attachments.length === 0;
+    attachments.length === 0 &&
+    stagedAnswers.length === 0;
 
   // Auto-grow the textarea to fit its content (capped by the CSS max-height, which then scrolls).
   // Reset to `auto` first so the box can also shrink as lines are removed.
@@ -186,7 +224,17 @@ export function Composer({
     // composer so the operator can keep composing. The <OutboxFlusher> drains it FIFO on reconnect.
     const offline = connectivity !== "online";
     if (offline) {
-      if (comments.length === 0 && attachments.length === 0 && !trimmed) return;
+      if (
+        comments.length === 0 &&
+        attachments.length === 0 &&
+        stagedAnswers.length === 0 &&
+        !trimmed
+      )
+        return;
+      // Staged answers have no outbox support (the offline `QueuedMessage` has no `items` field, and
+      // enqueueing one would silently send an empty message) — leave the tray + typed note untouched so
+      // the operator can retry Send once back online.
+      if (stagedAnswers.length > 0) return;
       // The flusher drains each queued item with mutually-exclusive precedence (comments → attachments →
       // text): a single item carrying BOTH comments and attachments would only send its comments and
       // silently drop the attachments. So when comments are present, enqueue any attachments as their OWN
@@ -234,6 +282,15 @@ export function Composer({
       });
     };
 
+    if (stagedAnswers.length > 0) {
+      // No draft/tray clear here — `useSubmitStagedAnswers`'s `onSuccess` clears both, so a failed send
+      // leaves the tray and typed note intact for retry.
+      submitStagedAnswers.mutate({
+        items: stagedAnswers.map(toAnswerBatchItem),
+        message: trimmed || undefined,
+      });
+      return;
+    }
     if (comments.length > 0) {
       sendReviewComments.mutate(
         {
@@ -306,9 +363,15 @@ export function Composer({
         {inert || isSubagent ? null : (
           <>
             <QueuedTray jobRef={jobRef} />
+            <StagedAnswersTray jobRef={jobRef} />
             <CommentTray />
           </>
         )}
+        {!inert && !isSubagent && submitStagedAnswers.isError ? (
+          <div className="mb-2 text-[11px] text-red">
+            Could not send — remove the failed item and try again.
+          </div>
+        ) : null}
         <div
           className="rounded-2xl border border-border-2 bg-surface px-3 py-2.5"
           style={{
@@ -367,10 +430,12 @@ export function Composer({
                   inert ||
                   (!text.trim() &&
                     comments.length === 0 &&
-                    attachments.length === 0) ||
+                    attachments.length === 0 &&
+                    stagedAnswers.length === 0) ||
                   say.isPending ||
                   sayWithAttachments.isPending ||
-                  sendReviewComments.isPending
+                  sendReviewComments.isPending ||
+                  submitStagedAnswers.isPending
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                 aria-label="Send"

@@ -129,10 +129,12 @@ export class SandboxGroup {
   sandboxRuntime(): string {
     return [
       'SANDBOX RUNTIME: ANY long-running process (dev servers, `docker compose` — run it foreground, not `-d`,',
-      '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> [--port <n>] -- <cmd>`',
+      '— watchers) MUST be wrapped with the `atlas-svc` supervisor via Bash — `atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd>`',
       '(detached, captured logs), `atlas-svc logs [-f] <id>`, `atlas-svc ps`, `atlas-svc stop <id>` — never a bare',
-      '`&`/nohup/`-d`. Pass `--port <n>` for an HTTP dev server so it shows in the operator\'s PORTS panel (and, when',
-      'previews are enabled, gets a public URL — see PUBLIC PREVIEW URLS below); omit it for a non-HTTP worker.',
+      '`&`/nohup/`-d`. Pass `--port <n>` for an HTTP dev server so it shows in the operator\'s PORTS panel; a plain',
+      '`--port` stays INTERNAL (sandbox-only, reachable at `localhost:<n>` — the right choice for validation). To',
+      'publish a public preview URL, ALSO pass `--expose` — see PUBLIC PREVIEW URLS below — but do that only for a',
+      'deliberate preview/ship-gate demo, never for routine validation. Omit `--port` for a non-HTTP worker.',
       'This is how the OPERATOR sees your services: everything under atlas-svc shows up in their',
       'UI with live logs; anything started outside it is invisible to them. Your sandbox can be restarted between turns (idle reaps,',
       'crashes); never assume something you started earlier is still running — `atlas-svc ps` shows what died,',
@@ -147,9 +149,10 @@ export class SandboxGroup {
     ].join('\n');
   }
 
-  /** Auto-expose: how a ported service becomes a public preview URL, and the provision→write-env→start
-   *  ordering the operator must follow (only active when the ATLAS_PREVIEW_* env vars are injected). A
-   *  build-brain concern — a review job never boots its own branch, so it gates `isBuildBrain`. */
+  /** Public exposure (opt-in via `--expose`): how a ported service becomes a public preview URL, and the
+   *  provision→write-env→start ordering the operator must follow (only active when the ATLAS_PREVIEW_* env
+   *  vars are injected). A build-brain concern — a review job never boots its own branch, so it gates
+   *  `isBuildBrain`. */
   @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1262, condition: isBuildBrain })
   publicExposure(): string {
     return PUBLIC_EXPOSURE_NOTE;
@@ -177,7 +180,7 @@ export class SandboxGroup {
       '    api preview origin; the backend\'s CORS allow-origin → the web preview origin (credentials enabled);',
       '    bind `0.0.0.0` — and PERSIST each env value as you set it (secret files / setup script) so it',
       '    survives the next cold boot.',
-      '  - PROBE AS A BROWSER, NOT A PORT: after `atlas-svc run --port`, run `atlas-probe <publicUrl> --json`',
+      '  - PROBE AS A BROWSER, NOT A PORT: after `atlas-svc run --port <n> --expose`, run `atlas-probe <publicUrl> --json`',
       '    (add `--api-origin <apiPreviewUrl>` for a frontend) and read its verdict — a 200 or "it is listening"',
       '    is NOT accessibility. Re-probe after EVERY fix.',
       '  - PROVE THE AUTH HANDSHAKE WITH A REAL LOGIN: the probe does not log in for you. Use the repo\'s real',

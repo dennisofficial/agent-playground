@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import { type EngineEvent, type EngineUsage, resolveContextLimit } from '../engine';
 import { foldTaskEvent } from '../driver/task-fold';
+import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   MessageEntity,
@@ -66,6 +67,7 @@ export class MessageBlockSink implements BlockSink {
   constructor(
     @InjectRepository(MessageEntity, DB_CONNECTION)
     private readonly messages: Repository<MessageEntity>,
+    private readonly version: AppVersionService,
   ) {}
 
   async appendBlock(
@@ -90,6 +92,7 @@ export class MessageBlockSink implements BlockSink {
       kind: block.kind,
       meta: block.meta ?? null,
       subagent_id: block.subagentId ?? null,
+      engine_git_sha: this.version.sha,
       ...(block.createdAt ? { created_at: block.createdAt } : {}),
     };
     if (block.idemKey) {
@@ -437,6 +440,9 @@ export interface TurnEndMeta {
   contextTokens?: number | null;
   /** The model's context-window size, for the occupancy ring. */
   contextLimit?: number;
+  /** The claude_credentials.id that authed this turn (Claude only); folded into turn_meta.meta for
+   *  transcript visibility. */
+  credentialId?: string | null;
 }
 
 /** One live turn's harness — the object a producer feeds engine events into. */
@@ -847,6 +853,7 @@ export class TurnHarnessFactory {
             meta: {
               ...(metaTag ?? {}),
               ...(u ? { usage: u as unknown as Record<string, unknown> } : {}),
+              ...(turnMeta?.credentialId ? { credentialId: turnMeta.credentialId } : {}),
               ...(u ? { contextTokens: ctxTokens ?? null } : ctxTokens != null ? { contextTokens: ctxTokens } : {}),
               ...(ctxLimit != null ? { contextLimit: ctxLimit } : {}),
               ...(terminalReason !== undefined ? { terminalReason } : {}),

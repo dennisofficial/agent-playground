@@ -17,7 +17,7 @@ export type ServiceMarker = {
   startedAt: string | null;
   /** The dev-server port the process listens on, captured via `atlas-svc --port`; null when unmarked. */
   port: number | null;
-  /** Whether the service opts INTO preview exposure. Back-compat default: absent → exposed. */
+  /** Whether the service opts INTO preview exposure. Secure-by-default: absent → NOT exposed. */
   expose: boolean;
   /** Size of the paired `<id>.log`, 0 if none yet. */
   logBytes: number;
@@ -68,8 +68,9 @@ export function serviceStatus(
 /**
  * Read every `atlas-svc` marker in `dir` (the host supervisor dir). Skips non-`.json` files, ids that
  * fail {@link SERVICE_ID_RE}, and markers that are corrupt / mid-write (unparseable JSON). Parses the
- * back-compat optional fields: `port` = a number or null (missing → null), `expose` = true unless the
- * marker explicitly sets `expose:false`. Returns [] when `dir` can't be listed.
+ * optional fields: `port` = a number or null (missing → null), `expose` = false unless the marker
+ * explicitly sets `expose:true` (secure-by-default — public exposure is opt-in). Returns [] when `dir`
+ * can't be listed.
  */
 export function readServiceMarkers(dir: string): ReadServiceMarker[] {
   let entries: string[];
@@ -125,11 +126,9 @@ export function readServiceMarkers(dir: string): ReadServiceMarker[] {
       // Only a real TCP port routes; reject NaN/negative/out-of-range so a hand-crafted marker can't
       // produce a broken `<host>:NaN` upstream dial (matches atlas-svc's own 1–65535 guard).
       port,
-      // Exposed services become DNS host labels. Preserve old markers' default expose:true only when the
-      // name can actually form a valid public hostname; non-HTTP workers ignore this field.
-      expose:
-        parsed.expose !== false &&
-        (port == null || isValidExposedServiceName(name)),
+      // Secure-by-default: expose ONLY when the marker explicitly opts in AND the name can form a valid
+      // public hostname. Absent/false ⇒ internal (matches the atlas-svc --expose default).
+      expose: parsed.expose === true && isValidExposedServiceName(name),
       logBytes,
       logUpdatedAt,
     });

@@ -72,8 +72,9 @@ export const ROUTES = {
 
 export type SettingsSection =
   | "general"
+  | "automation"
   | "credentials"
-  | "workspace-secrets"
+  | "workspace-profile"
   | "mcp-servers"
   | "convention-profiles"
   | "skills"

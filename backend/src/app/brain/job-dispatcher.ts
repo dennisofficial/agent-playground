@@ -69,6 +69,13 @@ export interface JobDispatcher {
     jobId: string,
     threadId: string,
   ): Promise<{ ok: boolean; reason?: string }>;
+  /**
+   * "Ship without review" operator lever for a job held on a `codex_review_unavailable` (master_review
+   * Codex-outage) hold. Marks `master_review` skipped/done and re-enters the drive, which proceeds to the
+   * normal ship-review gate (the human diff review still runs; only the automated Codex whole-diff pass is
+   * skipped). Refuses when the job isn't in that hold. Returns promptly.
+   */
+  operatorShipWithoutReview(jobId: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
 /**
@@ -122,6 +129,13 @@ export class LoggingJobDispatcher implements JobDispatcher {
   ): Promise<{ ok: boolean; reason?: string }> {
     this.logger.log(
       `[no-op operatorAcceptStuckThread] THREAD ${jobId} thread=${threadId} — W4 ThreadDriver will finalize this`,
+    );
+    return { ok: true };
+  }
+
+  async operatorShipWithoutReview(jobId: string): Promise<{ ok: boolean; reason?: string }> {
+    this.logger.log(
+      `[no-op operatorShipWithoutReview] THREAD ${jobId} — W4 ThreadDriver will finalize this`,
     );
     return { ok: true };
   }

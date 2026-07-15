@@ -39,6 +39,7 @@ export interface IEnvConfig {
   APP_ENV: EAppEnv;
   NODE_ENV: ENodeEnv;
   ENABLE_COLOR?: string; // logger colour toggle; read via process.env, declared for documentation
+  GIT_SHA?: string; // backend build commit (CI sha-<short>); unset locally → resolved to "dev"
 
   // URLs
   BACKEND_HOST: string;
@@ -173,11 +174,13 @@ export interface IEnvConfig {
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
   // reconciliation sweep (documented parallel-tuning safety gate). HARNESS_CHUNK_ROWS: 'off' quiets the
   // injected system-notice transcript rows. MEMORY_AUTORECALL_DISABLED: 'on' disables memory auto-recall
-  // (kill-switch; off by default).
+  // (kill-switch; off by default). INSTALL_AWARENESS_FILTER_DISABLED: 'on' disables only the optional
+  // Haiku filter/enricher; deterministic install-awareness stays on.
   TEST_BRIDGE?: 'on' | 'off';
   DISABLE_RESUME?: string;
   HARNESS_CHUNK_ROWS?: 'on' | 'off';
   MEMORY_AUTORECALL_DISABLED?: 'on' | 'off';
+  INSTALL_AWARENESS_FILTER_DISABLED?: 'on' | 'off';
 }
 
 export const envConfigValidation = Joi.object<IEnvConfig, true>({
@@ -191,6 +194,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
     .optional()
     .default(ENodeEnv.DEV),
   ENABLE_COLOR: Joi.string().optional(),
+  GIT_SHA: Joi.string().optional(),
 
   // URLs
   BACKEND_HOST: Joi.string().uri().optional().default('http://localhost:4000'),
@@ -202,7 +206,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   POSTGRES_USER: Joi.string().required(),
   POSTGRES_PASSWORD: Joi.string().required(),
   POSTGRES_DB: Joi.string().required(),
-  POSTGRES_SSL_MODE: Joi.string().valid('disable', 'require', 'verify-full').optional(),
+  POSTGRES_SSL_MODE: Joi.string()
+    .valid('disable', 'require', 'verify-full')
+    .optional(),
 
   // Redis (host↔sandbox engine bus)
   REDIS_URL: Joi.string().uri().optional(),
@@ -286,4 +292,5 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DISABLE_RESUME: Joi.string().optional(),
   HARNESS_CHUNK_ROWS: Joi.string().valid('on', 'off').optional(),
   MEMORY_AUTORECALL_DISABLED: Joi.string().valid('on', 'off').optional(),
+  INSTALL_AWARENESS_FILTER_DISABLED: Joi.string().valid('on', 'off').optional(),
 });

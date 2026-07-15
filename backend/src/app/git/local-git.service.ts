@@ -35,6 +35,16 @@ function normalizeNumstatRenamePath(rawPath: string): string {
   return rawPath.trim();
 }
 
+type DiffNameStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
+function normalizeNameStatus(code: string): DiffNameStatus {
+  const kind = code[0];
+  if (kind === 'A') return 'added';
+  if (kind === 'D') return 'deleted';
+  if (kind === 'R') return 'renamed';
+  return 'modified';
+}
+
 /** A located project repo on disk + the auth context for its remote. */
 export interface ProjectRepo {
   /** Stable id used for the on-disk clone dir + the worktree sandbox key. */
@@ -435,6 +445,35 @@ export class LocalGitService {
           }
           return { path, additions: parseInt(additions, 10), deletions: parseInt(deletions, 10), binary: false };
         });
+    } catch {
+      return [];
+    }
+  }
+
+  /** Per-file lightweight status from the merge-base. Empty on error. */
+  async diffNameStatusFromMergeBase(
+    worktreePath: string,
+    baseRef: string,
+  ): Promise<Array<{ path: string; oldPath?: string; status: DiffNameStatus }>> {
+    try {
+      const out = await this.git(
+        ['diff', '--name-status', '--find-renames', '--merge-base', baseRef],
+        { cwd: worktreePath },
+      );
+      if (!out) return [];
+      return out
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [code, firstPath, secondPath] = line.split('\t');
+          const status = normalizeNameStatus(code ?? '');
+          if (status === 'renamed') {
+            return { path: (secondPath ?? firstPath ?? '').trim(), oldPath: (firstPath ?? '').trim(), status };
+          }
+          return { path: (firstPath ?? '').trim(), status };
+        })
+        .filter((entry) => entry.path.length > 0);
     } catch {
       return [];
     }

@@ -1,5 +1,5 @@
-export type QueryFormat = 'json' | 'jsonl' | 'csv' | 'tsv';
-export const QUERY_FORMATS: QueryFormat[] = ['json', 'jsonl', 'csv', 'tsv'];
+export type QueryFormat = 'jsonl' | 'csv' | 'tsv';
+export const QUERY_FORMATS: QueryFormat[] = ['jsonl', 'csv', 'tsv'];
 
 /** Column order = union of keys in first-seen order across the (already row-capped) rows. */
 export function columnsOf(rows: Record<string, unknown>[]): string[] {
@@ -58,7 +58,7 @@ function renderDelimited(
   return [header, ...lines].join('\n');
 }
 
-/** Render jsonl/csv/tsv only — json returns the rows array directly, not a string. */
+/** Render a row set into one of the line-delimited formats (one row per line). */
 export function renderRows(
   rows: Record<string, unknown>[],
   format: QueryFormat,
@@ -70,7 +70,5 @@ export function renderRows(
       return renderDelimited(rows, ',');
     case 'tsv':
       return renderDelimited(rows, '\t');
-    case 'json':
-      throw new Error('renderRows does not handle json');
   }
 }

@@ -228,6 +228,48 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
   };
 }
 
+/** Rendered SVGs by TRIMMED diagram source — mermaid render is pure in source + theme (theme is fixed at
+ *  module init), so a diagram already seen elsewhere in the transcript can reuse its parsed result instead
+ *  of replaying the async render and the placeholder→SVG size jump it causes. */
+const mermaidCache = new Map<string, { svg: string; w: number; h: number }>();
+
+/** Extract trimmed ```mermaid fence sources from raw markdown text. */
+export function extractMermaidSources(text: string): string[] {
+  const out: string[] = [];
+  const re = /```mermaid\n([\s\S]*?)```/g; // same shape as conversation.tsx MERMAID_FENCE
+  for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1].replace(/\n$/, "").trim());
+  return out;
+}
+
+let warmId = 0;
+/** Render each not-yet-cached diagram off-screen so mermaidCache holds its real {svg,w,h} BEFORE its row is
+ *  measured/enters the viewport. Pure in source (theme fixed at init), so it is the same result the live
+ *  component would produce. Broken diagrams are skipped (they render an error frame at a small fixed height,
+ *  not an aspect-ratio box, so they need no warm). Renders sequentially to bound main-thread cost. */
+export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
+  const todo = [...new Set(sources.map((s) => s.trim()))].filter(
+    (s) => s.length > 0 && !mermaidCache.has(s),
+  );
+  if (todo.length === 0) return;
+  let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
+  try {
+    mermaid = await loadMermaid();
+  } catch {
+    return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
+  }
+  for (const src of todo) {
+    if (mermaidCache.has(src)) continue;
+    try {
+      await mermaid.parse(src);
+      const { svg } = await mermaid.render(`mmd-warm-${warmId++}`, src);
+      mermaidCache.set(src, parseSvg(svg));
+    } catch {
+      /* leave uncached — the error frame reserves the same mermaidReservePx height as the loading
+         placeholder (see Mermaid's error branch below), so it needs no warming to avoid a shift */
+    }
+  }
+}
+
 /** A header-bar action button shared by the diagram frame (copy / expand / fix). */
 function FrameBtn({
   onClick,
@@ -277,20 +319,40 @@ function MermaidFrame({
   );
 }
 
+const MERMAID_RESERVE_MIN = 200;
+/** Tall diagrams (deep flowcharts) really do render past 1000px on a phone-width column — a low cap is
+ *  exactly what left big diagrams badly under-reserved, so the placeholder jumped when the SVG landed. */
+const MERMAID_RESERVE_MAX = 1600;
+
+function clampMermaidReserve(px: number): number {
+  return Math.min(Math.max(Math.round(px), MERMAID_RESERVE_MIN), MERMAID_RESERVE_MAX);
+}
+
 /**
- * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE — diagram height grows with
- * node/edge count, so a diagram's non-empty source-line count is a decent proxy. Used in TWO places that
- * must agree: the loading placeholder + rendered container reserve this height (so the async SVG render
- * barely changes the row), and the transcript virtualizer estimates a diagram-bearing row from the same
- * number (so the row after a diagram is positioned correctly and doesn't briefly overlap it). Clamped so a
- * tiny diagram doesn't leave a big blank and a huge one doesn't over-reserve.
+ * Approximate rendered body height (px) of a Mermaid diagram from its SOURCE, reserved by the loading
+ * placeholder AND used by the transcript virtualizer's row estimate — the two MUST agree so the async
+ * placeholder→SVG swap barely changes the row height. A flat "px per source line" is a poor proxy because
+ * height depends on the diagram KIND: a vertical flowchart grows with its rank depth (tall), while a
+ * sequence diagram grows with its message count and renders wide-and-short — sizing both by raw line count
+ * over-reserves sequences and (with a low cap) under-reserves flowcharts. So estimate per kind instead.
+ * Still only an approximation — the exact height isn't knowable until Mermaid lays the diagram out; the
+ * virtualizer's own resize compensation absorbs the residual.
  */
 export function mermaidReservePx(source: string): number {
-  const lines = source.split("\n").filter((line) => line.trim().length > 0).length;
-  // ~72px per source line ≈ one rank of a vertical (TD/TB) flowchart, the dominant diagram kind here.
-  // Erring slightly high is safer than low: an over-reserve leaves a brief gap that closes, whereas an
-  // under-reserve lets the row below overlap the diagram until measureElement corrects.
-  return Math.min(Math.max(lines * 72, 200), 760);
+  const lines = source
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const header = lines[0]?.toLowerCase() ?? "";
+  // Sequence diagrams: height ≈ header chrome + one row per message arrow; participants add width, not height.
+  if (header.startsWith("sequencediagram")) {
+    const messages = lines.filter((line) => /--?>>?/.test(line)).length;
+    return clampMermaidReserve(120 + messages * 44);
+  }
+  // Flowchart / graph / stateDiagram (the vertical, dominant kinds): height tracks the number of ranks,
+  // proxied by edge count (`-->`/`->`), which avoids double-counting standalone node-label lines.
+  const edges = lines.filter((line) => line.includes("->")).length;
+  return clampMermaidReserve(Math.max(edges, 1) * 84);
 }
 
 function Mermaid({ chart }: { chart: string }) {
@@ -300,7 +362,7 @@ function Mermaid({ chart }: { chart: string }) {
     svg: string;
     w: number;
     h: number;
-  } | null>(null);
+  } | null>(() => mermaidCache.get(chart.trim()) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [sent, setSent] = useState(false);
@@ -309,6 +371,15 @@ function Mermaid({ chart }: { chart: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // Mermaid render is pure in its source (theme is fixed at module init), so a previously-rendered
+    // diagram can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
+    // makes a diagram seen once elsewhere in the transcript mount at its FINAL size immediately.
+    const cached = mermaidCache.get(chart.trim());
+    if (cached) {
+      setResult(cached);
+      setError(null);
+      return;
+    }
     setResult(null);
     setError(null);
     loadMermaid()
@@ -320,7 +391,11 @@ function Mermaid({ chart }: { chart: string }) {
         return mermaid.render(renderId, chart);
       })
       .then(({ svg }) => {
-        if (!cancelled) setResult(parseSvg(svg));
+        if (!cancelled) {
+          const parsed = parseSvg(svg);
+          mermaidCache.set(chart.trim(), parsed);
+          setResult(parsed);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled)
@@ -371,12 +446,16 @@ function Mermaid({ chart }: { chart: string }) {
           </>
         }
       >
-        <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
-          failed to render — {error}
-        </p>
-        <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
-          {chart}
-        </pre>
+        {/* Reserve the same height the loading placeholder (and premeasure's cold-read) used, so an
+            unwarmed/broken diagram's row doesn't grow or shrink when it settles into this error frame. */}
+        <div style={{ minHeight: mermaidReservePx(chart) }}>
+          <p className="border-b border-border px-[14px] py-2 font-mono text-[10px] leading-[1.5] text-red">
+            failed to render — {error}
+          </p>
+          <pre className="m-0 overflow-x-auto px-[14px] py-3 font-mono text-[11.5px] leading-[1.7] text-dim">
+            {chart}
+          </pre>
+        </div>
       </MermaidFrame>
     );
   }
@@ -417,7 +496,14 @@ function Mermaid({ chart }: { chart: string }) {
         <div
           onClick={() => setZoomed(true)}
           className="mx-auto flex cursor-zoom-in flex-col p-4 [&>svg]:!h-auto [&>svg]:!w-full"
-          style={{ maxWidth: result.w || undefined }}
+          style={{
+            maxWidth: result.w || undefined,
+            // Lock the box's aspect ratio so its height is a synchronous function of column width the
+            // instant `result` is known — one deterministic swap instead of waiting for the SVG (forced to
+            // width:100%/height:auto above) to reflow internally.
+            aspectRatio:
+              result.w > 0 && result.h > 0 ? `${result.w} / ${result.h}` : undefined,
+          }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
         />

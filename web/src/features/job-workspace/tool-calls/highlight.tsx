@@ -353,6 +353,83 @@ export function useHighlightTokens(
 
 const NBSP = " ";
 
+/**
+ * Ensure the highlighter singleton + each distinct language grammar in `langs` is loaded. Returns a
+ * counter that bumps once a load completes, so a windowed renderer (which calls `tokenizeLineSync`
+ * directly in render rather than through `useHighlightTokens`) knows to re-render and colorize rows that
+ * were painted as plain text before their language finished loading. Distinct only — a diff with many
+ * files of the same language loads that grammar once.
+ */
+export function useEnsureHighlightLangs(langs: (string | null)[]): number {
+  const [ready, setReady] = useState(0);
+  const distinct = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          langs
+            .map((l) => (l ? canonicalLang(l) : null))
+            .filter((l): l is string => Boolean(l) && Boolean(LANG_LOADERS[l!])),
+        ),
+      ),
+    [langs],
+  );
+  // Only re-run when the distinct set's membership actually changes (a new file's language appears).
+  const key = distinct.join(",");
+
+  useEffect(() => {
+    if (distinct.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const hi = await getHighlighter();
+        const results = await Promise.all(
+          distinct.map((lang) => ensureLang(hi, lang)),
+        );
+        if (!cancelled && results.some(Boolean)) setReady((v) => v + 1);
+      } catch {
+        highlighterFailed = true;
+        if (!cancelled) setReady((v) => v + 1);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  return ready;
+}
+
+/**
+ * Tokenize ONE line synchronously if the highlighter + its language are already loaded, else `null` (the
+ * caller paints plain text and recolorizes on the next render once `useEnsureHighlightLangs` bumps).
+ * Mirrors the per-line path `useHighlightTokens` takes with `whole: false`, but for a single on-screen row
+ * instead of a whole-file pass — the primitive the virtualized diff renderer calls per mounted row.
+ */
+export function tokenizeLineSync(
+  code: string,
+  lang: string | null,
+): ThemedToken[] | null {
+  const canonical = lang ? canonicalLang(lang) : null;
+  if (
+    !canonical ||
+    !LANG_LOADERS[canonical] ||
+    !readyHighlighter ||
+    !readyHighlighter.getLoadedLanguages().includes(canonical)
+  )
+    return null;
+  try {
+    return (
+      readyHighlighter.codeToTokens(code.length ? code : " ", {
+        lang: canonical,
+        theme: "atlas-term",
+      }).tokens[0] ?? []
+    );
+  } catch {
+    return null;
+  }
+}
+
 const FONT_STYLE_ITALIC = 1;
 const FONT_STYLE_BOLD = 2;
 

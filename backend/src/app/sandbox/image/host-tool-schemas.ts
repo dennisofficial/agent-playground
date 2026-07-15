@@ -232,6 +232,10 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     requestId: z.string(),
     reason: z.string().optional(),
   },
+  withdraw_secret_request: {
+    requestId: z.string(),
+    reason: z.string().optional(),
+  },
   write_workspace_config: {
     mounts: z
       .array(
@@ -345,7 +349,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   atlas_query: {
     sql: z.string(),
     params: z.array(z.unknown()).optional(),
-    format: z.enum(['json', 'jsonl', 'csv', 'tsv']).optional(),
+    format: z.enum(['jsonl', 'csv', 'tsv']).optional(),
     limit: z.number().optional(),
   },
   atlas_schema: {},
@@ -454,6 +458,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
   request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
+  withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script: 'Write the per-sandbox setup script for this workspace.',
   read_setup_script:
@@ -492,7 +497,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 
   // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query:
-    'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the response shape: json (default, rows array), jsonl, csv, or tsv (rendered text). Large results are auto-written to a file in /playground (you get back a path + preview) — use jsonl/csv for grep/jq/python/duckdb.',
+    'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON\'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c "SELECT ... FROM \'<file>\'"`, or Read a line-range (offset/limit).',
   atlas_schema:
     'List every public table and its columns (name, data type, nullability) from information_schema — the map for writing atlas_query SQL.',
   atlas_job_overview:

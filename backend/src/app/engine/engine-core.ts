@@ -1,7 +1,8 @@
-import type { CanUseTool, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallback, Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Codex, FileChangeItem, ThreadOptions } from '@openai/codex-sdk';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, relative as relativePath, resolve as resolvePath } from 'node:path';
 import { structuredPatch as diffStructuredPatch } from 'diff';
 import { detectSessionLimitText, limitFromRateEvent, parseResetAt, type SessionLimitHit } from './session-limit';
@@ -16,16 +17,21 @@ const CONTAINER_MCP_BRIDGE_PATH = '/usr/local/lib/atlas/mcp-bridge-server.mjs';
 // in-container engine, and the barrel re-exports the NestJS PromptService/PromptKitModule.
 import { renderAgentPrompt } from '../prompt-kit/system/assemble';
 import { Agent } from '../prompt-kit/system/agent';
+import type { PromptCtx } from '../prompt-kit/system/prompt-ctx';
 import { fromExternal, type AgentMessage } from '../prompt-kit/message';
 import { LSP_NAV_TOOL_NAMES, LSP_TOOL_NAMES, qualifyLspToolNames } from './lsp-tools';
 import {
   bgTaskCapRule,
   BG_TASK_HOLD_CAP_MS,
   legRotationRule,
+  ROTATION_REMINDER_DELTA_TOKENS,
+  ROTATION_SOFT_TOKENS,
   svcNudgeRule,
   svcNudgeShouldFire,
   detectLongRunningCommand,
   SVC_NUDGE_TEXT,
+  detectInstallCommand,
+  installAwarenessRule,
 } from '../prompt-kit/jit';
 import {
   EngineAuthError,
@@ -41,7 +47,19 @@ import {
   type RunEngineArgs,
   type StructuredPatchHunk,
   resolveContextLimit,
+  INTERNAL_PROFILE_AWARENESS_TOOL,
 } from './engine.types';
+import type { AdapterRunArgs, EngineCapability, EngineLocalHooks } from '@workspace/agent-engine';
+import {
+  buildEngineLocalHooks,
+  CodexAppServerAdapter,
+  evaluateWriteGuard,
+  guardHooksAgainstCapabilities,
+} from '@workspace/agent-engine';
+import { ClaudeAdapter } from './claude-adapter';
+import { BackendCodexHomeProvisioner } from './codex-home-provisioner';
+
+const requireFromHere = createRequire(__filename);
 
 /**
  * Pull a well-formed `structuredPatch` (real file offsets) off an Edit/MultiEdit `tool_use_result`.
@@ -326,6 +344,13 @@ const LSP_WRITE_TOOLS = qualifyLspToolNames(LSP_TOOL_NAMES);
 // can Write/Edit (only the calling turn changes files). `test` is the one exception to "read-only": it
 // gets Bash so it can RUN the repo's verification, but it still cannot edit/commit. This keeps delegated
 // work token-cheap and side-effect-free, while letting a worker push noisy test output off its context.
+//
+// EFFORT: each subagent pins its own `effort`. A subagent that OMITS `effort` inherits the SESSION effort
+// (the spawning orchestrator's — brain/builder run at `high`, see thread-kind/registry.ts), so leaving it
+// unset spends `high` even on mechanical stages. We split by how effort-sensitive the stage is: the
+// mechanical FETCHERS run cheaper (`low`/`medium`) while the judgment WRITERS/reviewers stay `high`. The
+// value is the Claude SDK's own effort enum (`Options['agents'][k].effort`); `low|medium|high` pass
+// through verbatim (no `toClaudeEffort` mapping needed).
 const SUBAGENTS: NonNullable<Options['agents']> = {
   explore: {
     description:
@@ -337,6 +362,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'naming conventions). For EXTERNAL library/framework/API documentation, use `docs` instead.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Self-directs repo search; recall matters (not `low`), but the orchestrator can re-ask (not `high`).
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.EXPLORE),
   },
   docs: {
@@ -347,6 +374,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'work; use `docs` for third-party packages, frameworks, and external APIs.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Pure external doc lookup — mechanical fetch, cheapest tier.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.DOCS),
   },
   review: {
@@ -357,6 +386,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'is called done. It reports; it does NOT fix.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Review quality is the most effort-sensitive dimension — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.REVIEW_AGENT),
   },
   debug: {
@@ -366,6 +397,8 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       '— it does not run commands or change anything. Use `test` to actually run the verification.',
     tools: ['Read', 'Glob', 'Grep', ...WEB_TOOLS, ...LSP_NAV_TOOLS],
     model: 'claude-sonnet-5',
+    // Root-cause tracing is judgment-heavy — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.DEBUG),
   },
   test: {
@@ -376,6 +409,9 @@ const SUBAGENTS: NonNullable<Options['agents']> = {
       'but does NOT edit files or change git state.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs verification + returns a diagnosis — mostly mechanical. Watch diagnosis quality; bump to
+    // `medium` if it regresses.
+    effort: 'low',
     prompt: renderAgentPrompt(Agent.TEST),
   },
 };
@@ -402,6 +438,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'escalate to `implement-deep`.',
     tools: WRITER_TOOLS,
     model: 'claude-sonnet-5',
+    // Writing code is effort-sensitive — keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
   'implement-deep': {
@@ -412,6 +450,8 @@ const WRITER_SUBAGENTS: NonNullable<Options['agents']> = {
       'rules: it edits only the files you name and returns a tight summary; run one writer at a time.',
     tools: WRITER_TOOLS,
     model: 'opus',
+    // The Opus escalation writer — the hardest slices. Keep it sharp.
+    effort: 'high',
     prompt: renderAgentPrompt(Agent.FAN_OUT),
   },
 };
@@ -435,6 +475,8 @@ const VALIDATE_SUBAGENT: NonNullable<Options['agents']> = {
       'recapturing. Use `test` instead for a fast typecheck/build/unit diagnosis with no artifacts.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Runs e2e but must judge pass/fail — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.VALIDATE),
   },
 };
@@ -454,6 +496,8 @@ const PROTOTYPE_SUBAGENT: NonNullable<Options['agents']> = {
       'artifact path + the design sources it grounded in). Prefer it over a generic writer for UI previews.',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'Write', ...WEB_TOOLS],
     model: 'claude-sonnet-5',
+    // Authors a design-fidelity mockup — mid tier.
+    effort: 'medium',
     prompt: renderAgentPrompt(Agent.PROTOTYPE),
   },
 };
@@ -469,21 +513,43 @@ const CONVENTION_FACING_SUBAGENTS: Record<string, Agent> = {
   review: Agent.REVIEW_AGENT,
 };
 
+// The build-facing subagent whose persona must carry the repo's saved PREVIEW RECIPE, read-only — `validate`
+// is the only in-sandbox subagent that ever needs to stand a live preview up. Distinct map (not merged into
+// `CONVENTION_FACING_SUBAGENTS`) since it gates on a different per-run signal (`previewInstructions`, not
+// `repoConventions`).
+const PREVIEW_FACING_SUBAGENTS: Record<string, Agent> = {
+  validate: Agent.VALIDATE,
+};
+
 /**
- * Fold the repo's house-style envelope into the build-facing subagent prompts. When the turn carries no
- * attached profile (`repoConventions` absent/null) this returns the map UNCHANGED — byte-identical to today.
- * Otherwise it re-renders each convention-facing subagent's `prompt` WITH the conventions ctx (a subagent
- * not present in this turn's map — e.g. the writers on a non-execute turn — is simply skipped).
+ * Fold per-run host context (the repo's house-style envelope, its saved preview recipe) into the build-facing
+ * subagent prompts. When the turn carries neither (`repoConventions` absent/null AND `previewInstructions`
+ * absent/blank) this returns the map UNCHANGED — byte-identical to today. Otherwise it re-renders the UNION of
+ * convention-facing + preview-facing subagents present in this turn's map, each with only the ctx it actually
+ * gates on (a subagent not present in this turn's map — e.g. the writers on a non-execute turn — is simply
+ * skipped).
  */
-export function applyConventionsToAgents(
+export function applyPerRunCtxToAgents(
   agents: NonNullable<Options['agents']>,
-  repoConventions: RunEngineArgs['repoConventions'],
+  args: { repoConventions: RunEngineArgs['repoConventions']; previewInstructions?: string | null },
 ): NonNullable<Options['agents']> {
-  if (!repoConventions) return agents;
-  const ctx = { settings: { repoConventions } };
+  const preview = args.previewInstructions?.trim() ? args.previewInstructions : null;
+  if (!args.repoConventions && !preview) return agents;
   const out = { ...agents };
-  for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) {
-    if (out[name]) out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
+  const targets = new Map<string, Agent>();
+  if (args.repoConventions) {
+    for (const [name, agent] of Object.entries(CONVENTION_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  if (preview) {
+    for (const [name, agent] of Object.entries(PREVIEW_FACING_SUBAGENTS)) targets.set(name, agent);
+  }
+  for (const [name, agent] of targets) {
+    if (!out[name]) continue;
+    const ctx: PromptCtx = {
+      ...(args.repoConventions ? { settings: { repoConventions: args.repoConventions } } : {}),
+      ...(preview ? { previewInstructions: preview } : {}),
+    };
+    out[name] = { ...out[name], prompt: renderAgentPrompt(agent, ctx) };
   }
   return out;
 }
@@ -577,24 +643,135 @@ export class EngineCore {
   }
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
+    const appserver = args.engine === 'codex' && this.codexAppServerEnabled();
     return this.stampUsageProvenance(
-      await (args.engine === 'codex' ? this.runCodex(args) : this.runClaude(args)),
+      await (args.engine === 'codex'
+        ? appserver
+          ? this.runCodexAppServer(args)
+          : this.runCodex(args)
+        : new ClaudeAdapter(this.runClaude.bind(this), args).run(this.toAdapterArgs(args))),
       args,
+      appserver,
     );
   }
 
   /**
+   * Map the host-only {@link RunEngineArgs} down to the slim, vendor-agnostic {@link AdapterRunArgs} the
+   * {@link EngineAdapter} port consumes. Only the cross-engine fields cross this seam — the Claude-specific
+   * extras (`steerInput`/`rotationNudge`/`skills`/`grantedSkills`/`repoConventions`/…) are retained by
+   * `ClaudeAdapter` from the full args, so nothing `runClaude` needs is lost.
+   *
+   * `authOverride`, when passed, wins over `args.auth` — used by {@link runCodexAppServer}, which (unlike
+   * the Claude branch) MUST hand the port a resolved secret: `CodexAppServerAdapter.run` throws on a
+   * missing `auth`, whereas `args.auth` alone may be undefined (resolved lazily inside legacy `runCodex`).
+   */
+  private toAdapterArgs(args: RunEngineArgs, authOverride?: EngineAuth, hooks?: EngineLocalHooks): AdapterRunArgs {
+    return {
+      engine: args.engine,
+      task: args.task,
+      cwd: args.cwd,
+      systemPrompt: args.systemPrompt,
+      mode: args.mode,
+      sandboxKey: args.sandboxKey,
+      ...(args.sessionId ? { sessionId: args.sessionId } : {}),
+      ...(authOverride ? { auth: authOverride } : args.auth ? { auth: args.auth } : {}),
+      ...(args.model ? { model: args.model } : {}),
+      ...(args.modelReasoningEffort ? { modelReasoningEffort: args.modelReasoningEffort } : {}),
+      ...(args.writableRoots ? { writableRoots: args.writableRoots } : {}),
+      ...(args.richStream !== undefined ? { richStream: args.richStream } : {}),
+      ...(args.persistAuthRefresh !== undefined ? { persistAuthRefresh: args.persistAuthRefresh } : {}),
+      ...(args.signal ? { signal: args.signal } : {}),
+      ...(args.onEvent ? { onEvent: args.onEvent } : {}),
+      ...(hooks ? { hooks } : {}),
+    };
+  }
+
+  /**
+   * Assemble a Codex-app-server turn's {@link EngineLocalHooks} from the SAME JIT rule catalog Claude's
+   * `ClaudeAdapter.buildHooks` reads (svc-nudge, leg-rotation) plus the structural write-guard (always built,
+   * unconditional on any rule's `enabled` flag — it's the read-only/root-confinement security boundary, not a
+   * nudge). {@link guardHooksAgainstCapabilities} then drops any field the adapter's declared capability set
+   * can't honor, so a future capability change here degrades honestly instead of silently no-op-ing mid-turn.
+   */
+  private buildCodexHooks(args: RunEngineArgs, capabilities: ReadonlySet<EngineCapability>): EngineLocalHooks {
+    const readOnly = args.mode !== 'execute';
+    const hooks = buildEngineLocalHooks({
+      svcNudge: svcNudgeRule.enabled
+        ? {
+            tool: 'Bash',
+            match: detectLongRunningCommand,
+            deltaTokens: svcNudgeRule.throttle!.deltaTokens,
+            render: (command) => svcNudgeRule.render({ command }),
+          }
+        : undefined,
+      writeGuard: { readOnly, roots: [args.cwd, ...(args.writableRoots ?? [])] },
+      rotation: legRotationRule.enabled
+        ? {
+            softTokens: ROTATION_SOFT_TOKENS,
+            reminderDeltaTokens: ROTATION_REMINDER_DELTA_TOKENS,
+            softText: legRotationRule.render({ phase: 'soft' }),
+            reminderText: legRotationRule.render({ phase: 'reminder' }),
+          }
+        : undefined,
+    });
+    return guardHooksAgainstCapabilities(hooks, capabilities);
+  }
+
+  /**
+   * Whether a Codex turn should route through the `codex app-server` JSON-RPC {@link CodexAppServerAdapter}
+   * (thread 1's `@workspace/codex-sdk`) instead of the legacy `@openai/codex-sdk` exec-JSONL `runCodex`.
+   * Read straight off `process.env` (like other run-time knobs in this file, e.g.
+   * `ENGINE_STREAM_CLOSED_THRESHOLD` in `runClaude`) rather than {@link EngineCoreConfig} — this is a
+   * default-OFF cutover flag, not host-resolved per-env config. Default OFF: `runCodex` stays the default
+   * Codex path until the two review roles cut over (see the locked decision record).
+   */
+  private codexAppServerEnabled(): boolean {
+    return process.env.CODEX_APPSERVER_ENABLED === 'true' || process.env.CODEX_APPSERVER_ENABLED === '1';
+  }
+
+  /**
+   * The custom SDK defaults to spawning `codex` from PATH because it is standalone. Backend deployments
+   * already carry `@openai/codex` for the CLI binary. Resolve that direct dependency here,
+   * at the Atlas-owned adapter boundary, instead of adding monorepo coupling to `@workspace/codex-sdk`.
+   */
+  private codexAppServerSpawnOptions(): { codexPathOverride?: string; args?: string[] } {
+    try {
+      const codexBin = requireFromHere.resolve('@openai/codex/bin/codex.js');
+      return { codexPathOverride: process.execPath, args: [codexBin, 'app-server'] };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Route a Codex turn through the port: resolve auth up front (the adapter throws on a missing secret,
+   * so resolve here rather than let it throw a less specific error), then hand off to
+   * {@link CodexAppServerAdapter}. A fresh {@link BackendCodexHomeProvisioner} per call mirrors how
+   * `ClaudeAdapter` is constructed fresh per turn — no cross-turn state.
+   */
+  private async runCodexAppServer(args: RunEngineArgs): Promise<EngineRunResult> {
+    const auth = this.resolveAuth('codex', args.auth);
+    const adapter = new CodexAppServerAdapter(
+      new BackendCodexHomeProvisioner(this.homeRoot()),
+      this.codexAppServerSpawnOptions(),
+    );
+    return adapter.run(this.toAdapterArgs(args, auth, this.buildCodexHooks(args, adapter.capabilities)));
+  }
+
+  /**
    * Stamp display-only provenance the engine paths don't carry themselves onto the returned usage: the
-   * `engine` that ran (so a Codex turn with no `model` still labels as "Codex") and the `reasoningEffort`
-   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result). Applied
-   * at BOTH dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
+   * `engine` that ran (so a Codex turn with no `model` still labels as "Codex"), the `reasoningEffort`
+   * the run was given (engine-agnostic — Codex AND Claude, never surfaced by either SDK's result), and
+   * — Codex only — whether this turn ran through the app-server port (`appserver`). Applied at BOTH
+   * dispatch wrappers (`run` / `runWithExtras`) so every engine turn — build, Codex review, autofix —
    * is covered without touching `runClaude`/`runCodex` internals or any transcript `metaTag` call site.
    * `??=` so a path that ever populates these itself wins. No-op when the run produced no usage.
    */
-  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs): EngineRunResult {
+  private stampUsageProvenance(res: EngineRunResult, args: RunEngineArgs, appserver?: boolean): EngineRunResult {
     if (res.usage) {
       res.usage.engine ??= args.engine;
       if (args.modelReasoningEffort) res.usage.reasoningEffort ??= args.modelReasoningEffort;
+      if (args.engine === 'codex') res.usage.appserver ??= !!appserver;
     }
     return res;
   }
@@ -609,6 +786,11 @@ export class EngineCore {
    * `bridgeToolNames` are the qualified `mcp__<server>__<tool>` names to auto-approve (Claude only).
    * `codexBridgeTools` are the BARE host tool names for a Codex execute turn — routed into `runCodex`,
    * which renders them as an `[mcp_servers.atlasbridge]` config.toml block (the Codex tool bridge).
+   *
+   * `CodexAppServerAdapter` carries no bridge/tool-bridge wiring in thread 2 (`writeGuard`/`richStream`
+   * capabilities only), so a call with non-empty `codexBridgeTools`/`codexExtraMcpServers` ALWAYS falls
+   * back to legacy `runCodex` regardless of `CODEX_APPSERVER_ENABLED` — a caller that explicitly needs
+   * the bridge gets the path that actually supports it, rather than silently dropping its tools.
    */
   async runWithExtras(
     args: RunEngineArgs,
@@ -617,11 +799,19 @@ export class EngineCore {
     codexBridgeTools?: string[],
     codexExtraMcpServers?: CodexExtraMcpServers,
   ): Promise<EngineRunResult> {
+    const hasCodexBridgeExtras =
+      (codexBridgeTools?.length ?? 0) > 0 || Object.keys(codexExtraMcpServers ?? {}).length > 0;
+    const appserver = args.engine === 'codex' && this.codexAppServerEnabled() && !hasCodexBridgeExtras;
     return this.stampUsageProvenance(
       await (args.engine === 'codex'
-        ? this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
-        : this.runClaude(args, extraClaudeOptions, bridgeToolNames)),
+        ? appserver
+          ? this.runCodexAppServer(args)
+          : this.runCodex(args, codexBridgeTools, codexExtraMcpServers)
+        : new ClaudeAdapter(this.runClaude.bind(this), args, extraClaudeOptions, bridgeToolNames).run(
+            this.toAdapterArgs(args),
+          )),
       args,
+      appserver,
     );
   }
 
@@ -631,8 +821,9 @@ export class EngineCore {
     args: RunEngineArgs,
     extraClaudeOptions?: Record<string, unknown>,
     bridgeToolNames?: string[],
+    hooks?: EngineLocalHooks,
   ): Promise<EngineRunResult> {
-    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge } =
+    const { task, cwd, systemPrompt, sandboxKey, sessionId, mode, onEvent, signal, richStream, steerInput, rotationNudge, bridgeCall } =
       args;
 
     const abortController = new AbortController();
@@ -695,7 +886,7 @@ export class EngineCore {
       capping = true;                           // the model's NEXT natural result ends the turn (no forced kill)
       onEvent?.({ kind: 'bg_task', status: 'capped', detail: `background Bash task exceeded ${HOLD_CAP_MS}ms (advisory; stream NOT closed)` });
       cancelEnd();
-      if (bgTaskCapRule.enabled) input.push(steerUserMessage(bgTaskCapRule.render({}), 'now'));
+      if (bgTaskCapRule.enabled) hooks?.steer?.push(bgTaskCapRule.render({}));
       // NO capKillTimer / NO input.end() — the cap is purely advisory; stdin is never severed.
     };
     const armHoldTimer = (): void => {
@@ -721,11 +912,6 @@ export class EngineCore {
     // the post-result close. `firedNudgeLevel` is the highest delta-band injected (-1 before soft; 0 = soft).
     let firedNudgeLevel = -1;
     let injectRotationNudge = (_text: AgentMessage): void => {}; // real impl set below when streaming
-    // ENGINE-LOCAL atlas-svc nudge throttle (see the PostToolUse hook below): the context-token occupancy at
-    // which we last nudged Atlas to wrap a long-running command in `atlas-svc`. null = never nudged (first
-    // matching command always fires); then at most once per `svcNudgeDeltaTokens` of context growth. Per-turn
-    // scope like `firedNudgeLevel` — a relapse in a fresh turn re-arms the first-hit fire.
-    let lastSvcNudgeTokens: number | null = null;
     if (input) {
       input.push(steerUserMessage(task));
       // Drain operator steers into the live turn until the turn ends. Each steer carries its stimulus `id`;
@@ -751,12 +937,16 @@ export class EngineCore {
           injectSteer(s.id, fromExternal(s.text));
         }
       };
-      // The rotation nudge rides the SAME injection as an operator steer (priority:'now', cancels any pending
-      // close) — but carries no stimulus id, so it emits no `input_ack` (nothing durable to converge on).
-      injectRotationNudge = (text: AgentMessage): void => {
+      // One shared live-injection closure: push a message into the open stream as a priority:'now' steer,
+      // cancelling any pending close — the SAME mechanism an operator steer uses, but with no stimulus id (so
+      // it emits no `input_ack`; nothing durable to converge on). Both the engine-local rotation nudge and the
+      // capability-gated `hooks.steer` channel (bg-task-cap notice, thread-3 JIT steers) route through it.
+      const liveSteerPush = (text: string): void => {
         cancelEnd();
-        input.push(steerUserMessage(text, 'now'));
+        input.push(steerUserMessage(fromExternal(text), 'now'));
       };
+      injectRotationNudge = (text: AgentMessage): void => liveSteerPush(text);
+      if (hooks?.steer) hooks.steer.push = liveSteerPush;
       void (async () => {
         try {
           while (!turnEnded && steerIter) {
@@ -839,11 +1029,55 @@ export class EngineCore {
       this.managedGitSkillsRoot(),
     );
 
-    // atlas-svc nudge (PostToolUse hook, added to `options` below): enabled + throttle window sourced from the
-    // `svc-nudge` JIT rule. Reads the live `contextTokens` (declared after `options`; the hook only fires
-    // during the query loop, after it is initialized) and the per-turn `lastSvcNudgeTokens`.
-    const svcNudgeEnabled = svcNudgeRule.enabled;
-    const svcNudgeDeltaTokens = svcNudgeRule.throttle!.deltaTokens;
+    // Install-awareness (PostToolUse hook, added to `options` below): a Bash install is detected in-container
+    // (cheap regex gate) and round-tripped to the reserved `__profile_awareness` host tool via `bridgeCall`.
+    // Only wired when this turn carries a tool bridge — otherwise the round-trip has no transport (fail-silent).
+    const installAwarenessEnabled = installAwarenessRule.enabled && !!bridgeCall;
+
+    // Bound the host round-trip so a slow host / Haiku call never delays the model's next step.
+    const INSTALL_AWARENESS_TIMEOUT_MS = 5_000;
+
+    // PostToolUse Bash hooks, one callback per enabled feature (built before `options` so the literal just
+    // spreads the assembled array). The atlas-svc nudge is delivered through the engine-local
+    // `postToolUseContext` hook (shared with the Codex adapter — see `buildEngineLocalHooks` above);
+    // install-awareness rides the SAME `Bash` matcher. Callbacks capture `contextTokens` (declared via `let`
+    // below) by reference and only run later, mid-query.
+    const bashPostToolUseHooks: HookCallback[] = [];
+    if (hooks?.postToolUseContext) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: unknown };
+        const additionalContext = hooks.postToolUseContext!(
+          inp.tool_name ?? '',
+          inp.tool_input,
+          contextTokens ?? 0,
+        );
+        if (additionalContext == null) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse' as const,
+            additionalContext,
+          },
+        };
+      });
+    }
+    if (installAwarenessEnabled) {
+      bashPostToolUseHooks.push(async (input) => {
+        const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
+        if (inp.tool_name !== 'Bash') return {};
+        const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
+        if (!detectInstallCommand(cmd)) return {};
+        try {
+          const text = await Promise.race([
+            bridgeCall!(INTERNAL_PROFILE_AWARENESS_TOOL, { command: cmd, sessionType: sandboxKey.type }),
+            new Promise<null>((r) => setTimeout(() => r(null), INSTALL_AWARENESS_TIMEOUT_MS)),
+          ]);
+          if (typeof text !== 'string' || !text) return {};
+          return { hookSpecificOutput: { hookEventName: 'PostToolUse' as const, additionalContext: text } };
+        } catch {
+          return {};
+        }
+      });
+    }
 
     const claudeEffort = toClaudeEffort(args.modelReasoningEffort);
 
@@ -868,11 +1102,11 @@ export class EngineCore {
       // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
       // file-mutating or evidence-writing subagent. See
       // SUBAGENTS / WRITER_SUBAGENTS / VALIDATE_SUBAGENT / PROTOTYPE_SUBAGENT.
-      agents: applyConventionsToAgents(
+      agents: applyPerRunCtxToAgents(
         mode === 'execute'
           ? { ...SUBAGENTS, ...WRITER_SUBAGENTS, ...VALIDATE_SUBAGENT, ...PROTOTYPE_SUBAGENT }
           : SUBAGENTS,
-        args.repoConventions,
+        { repoConventions: args.repoConventions, previewInstructions: args.previewInstructions },
       ),
       // Host-side tools reach the in-sandbox session as an MCP server (the tool bridge). Surface
       // their qualified names (`mcp__<server>__<tool>`) in allowedTools so they're auto-approved —
@@ -890,6 +1124,7 @@ export class EngineCore {
           skills: args.skills,
           granted: new Set(args.grantedSkills ?? []),
         },
+        hooks?.writeGuard,
       ),
       permissionMode: planMode ? 'plan' : 'default',
       // Suppress the SDK's default "Co-Authored-By: Claude" attribution.
@@ -907,40 +1142,14 @@ export class EngineCore {
       // Leg rotation's HARD threshold (200k) depends on there being headroom ABOVE it to author the handoff
       // (see the context-rot plan). The SDK forwards `anthropic-beta: context-1m-2025-08-07`.
       betas: ['context-1m-2025-08-07'],
-      // atlas-svc nudge: when Atlas runs a Bash command that smells long-running (dev server / `docker
-      // compose up` / watcher / bare-backgrounded), append a reminder to that command's result pointing it at
-      // the `atlas-svc` supervisor. Uses PostToolUse `additionalContext` (a free-form string yielded to the
-      // model after the tool result — verified against the shipped CLI; `updatedToolOutput` is shape-validated
-      // against Bash's output and would error). Throttled by context-token growth so back-to-back commands
-      // don't spam. Fires post-execution and only ATTACHES context — never alters the command or its output.
-      ...(svcNudgeEnabled
-        ? {
-            hooks: {
-              PostToolUse: [
-                {
-                  matcher: 'Bash',
-                  hooks: [
-                    async (input) => {
-                      const inp = input as { tool_name?: string; tool_input?: { command?: unknown } };
-                      if (inp.tool_name !== 'Bash') return {};
-                      const cmd = typeof inp.tool_input?.command === 'string' ? inp.tool_input.command : '';
-                      if (svcNudgeRule.trigger.kind !== 'tool-match' || !svcNudgeRule.trigger.match(cmd)) return {};
-                      const now = contextTokens ?? 0;
-                      // First matching command always fires; then at most once per delta of context growth.
-                      if (!svcNudgeShouldFire(lastSvcNudgeTokens, now, svcNudgeDeltaTokens)) return {};
-                      lastSvcNudgeTokens = now;
-                      return {
-                        hookSpecificOutput: {
-                          hookEventName: 'PostToolUse' as const,
-                          additionalContext: svcNudgeRule.render({ command: cmd }),
-                        },
-                      };
-                    },
-                  ],
-                },
-              ],
-            },
-          }
+      // PostToolUse Bash hooks: the atlas-svc nudge (via the engine-local `postToolUseContext` hook, shared
+      // with the Codex adapter) plus install-awareness — both assembled into `bashPostToolUseHooks` above and
+      // spread here under a single `Bash` matcher. Each callback only ATTACHES `additionalContext` to a Bash
+      // tool result (a free-form string yielded to the model after the tool result — verified against the
+      // shipped CLI; `updatedToolOutput` is shape-validated against Bash's output and would error), never
+      // altering the command or its output.
+      ...(bashPostToolUseHooks.length > 0
+        ? { hooks: { PostToolUse: [{ matcher: 'Bash', hooks: bashPostToolUseHooks }] } }
         : {}),
       // Rich streaming (the thread brain): partial-message stream → token-level deltas, and extended
       // thinking → thinking blocks. Adaptive lets Claude decide thinking depth per turn.
@@ -1218,6 +1427,17 @@ export class EngineCore {
           }
         } else if (message.type === 'result') {
           resolvedSession = message.session_id;
+          // The CLI sometimes reports a subscription wall as an `is_error` result whose subtype is still
+          // `success` — its `result` string is the printed limit line — then exits non-zero (the SDK then
+          // throws "Claude Code returned an error result: …"). That is NOT a genuine answer: latch the hit
+          // and break to the clean-park return, so the caller parks + auto-resumes instead of surfacing the
+          // limit line as the turn result (or letting the thrown exit-error fail the build). The structured
+          // `rate_limit_event` path keeps its existing success handling below (its result carries no limit text).
+          const errResult = message as { is_error?: boolean; result?: string };
+          if (errResult.is_error === true && errResult.result && detectSessionLimitText(errResult.result)) {
+            sessionLimit ??= { resetAt: parseResetAt(errResult.result) };
+            break;
+          }
           if (message.subtype === 'success') {
             result = message.result;
             onEvent?.({ kind: 'turn_debug', terminalReason: (message as { terminal_reason?: string }).terminal_reason, stopReason: (message as { stop_reason?: string | null }).stop_reason });
@@ -1295,11 +1515,19 @@ export class EngineCore {
       const msg = err instanceof Error ? err.message : String(err);
       if (isAuthErrorMessage(msg)) throw new EngineAuthError(msg, resolvedSession, 'claude');
       if (streamClosedTripped) throw err;   // circuit-breaker: never treat as a cooperative abort
-      // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
-      // graceful end — fall through to the normal post-loop return with the partial result + live session,
-      // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
-      // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
-      if (!(streaming && abortController.signal.aborted)) throw err;
+      // Backstop: a subscription wall that surfaced ONLY as a thrown SDK error (e.g. "Claude Code returned
+      // an error result: You've hit your session limit …") — no frame latched it first. That is a clean
+      // park, not a crash: record the hit and fall through to the normal post-loop return so the caller
+      // parks the lane + auto-resumes at resetAt, instead of failing the build with the generic engine error.
+      if (detectSessionLimitText(msg)) {
+        sessionLimit ??= { resetAt: parseResetAt(msg) };
+      } else if (!(streaming && abortController.signal.aborted)) {
+        // Cooperative STOP of a STEERABLE turn (operator Stop): the SDK iterator was cancelled. Treat as a
+        // graceful end — fall through to the normal post-loop return with the partial result + live session,
+        // so the turn finalizes cleanly (partial transcript persisted, session resumable) rather than
+        // erroring. Non-streaming worker turns keep throwing on abort (the driver's timeout race depends on it).
+        throw err;
+      }
     } finally {
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       turnEnded = true;
@@ -1617,6 +1845,7 @@ export function makeCanUseTool(
   roots: string | string[],
   onPlan: (plan: string) => void,
   skillGuard?: SkillGuardCtx,
+  writeGuard?: (toolName: string, input: unknown) => { allow: boolean; reason?: string },
 ): CanUseTool {
   const allowedRoots = (Array.isArray(roots) ? roots : [roots]).filter(Boolean);
   return async (toolName, input): Promise<PermissionResult> => {
@@ -1624,8 +1853,15 @@ export function makeCanUseTool(
       if (typeof input.plan === 'string') onPlan(input.plan);
       return { behavior: 'deny', message: 'Plan recorded — ending the planning turn.' };
     }
-    if (readOnly && (toolName === 'Write' || toolName === 'Edit')) {
-      return { behavior: 'deny', message: 'This is a read-only turn — no file writes.' };
+    const readOnlyVerdict = evaluateWriteGuard(toolName, input, {
+      readOnly,
+      roots: [],
+    });
+    if (!readOnlyVerdict.allow) {
+      return {
+        behavior: 'deny',
+        message: readOnlyVerdict.reason ?? 'This is a read-only turn — no file writes.',
+      };
     }
     if (skillGuard && SKILL_MUTATING_TOOLS.has(toolName)) {
       const path = typeof input.file_path === 'string' ? input.file_path : '';
@@ -1640,14 +1876,19 @@ export function makeCanUseTool(
         };
       }
     }
-    if (toolName === 'Write' || toolName === 'Edit') {
-      const path = typeof input.file_path === 'string' ? input.file_path : '';
-      if (path && !allowedRoots.some((root) => isInsideRoot(path, root))) {
-        return {
-          behavior: 'deny',
-          message: `Write outside the allowed roots (${allowedRoots.join(', ')}) is not allowed: ${path}`,
-        };
-      }
+    const rootVerdict = evaluateWriteGuard(toolName, input, {
+      readOnly: false,
+      roots: allowedRoots,
+    });
+    if (!rootVerdict.allow) {
+      return {
+        behavior: 'deny',
+        message: rootVerdict.reason ?? 'Write outside the allowed roots is not allowed.',
+      };
+    }
+    if (writeGuard) {
+      const verdict = writeGuard(toolName, input);
+      if (!verdict.allow) return { behavior: 'deny', message: verdict.reason ?? 'Denied by write guard.' };
     }
     return { behavior: 'allow', updatedInput: input };
   };

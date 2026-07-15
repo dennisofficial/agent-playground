@@ -409,6 +409,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         undefined, // exposure
         undefined, // conventions
         undefined, // claudeCreds
+        undefined, // configStore
         undefined, // stimulusStore
         undefined, // jit
         {

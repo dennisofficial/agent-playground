@@ -91,6 +91,10 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   // `SELECT *` snapshots and the WAL new-row image both carry this small (never-TOASTed) column, so it is
   // always present here; opening/answering a question updates the thread row → fires a realtime delta.
   const openQuestion = Number(raw.open_question_count ?? 0) > 0;
+  // Durable/mcp secret requests are per-card (like questions), counted by `open_secret_count`; ephemeral
+  // requests still use the single-slot `awaiting_secret_id` pointer. Either awaiting the operator counts.
+  const awaitingSecret =
+    raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
   const halted = raw.halted === true;
   const createdAt = raw.created_at;
   return {
@@ -105,7 +109,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
       status,
       activity,
       openQuestion,
-      awaitingSecret: raw.awaiting_secret_id != null,
+      awaitingSecret,
       halted: halted || raw.halt != null,
     }),
     createdAt:

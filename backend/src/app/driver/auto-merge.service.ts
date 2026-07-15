@@ -89,6 +89,7 @@ export class AutoMergeService {
       !job.halted &&
       job.halt == null &&
       job.open_question_count === 0 &&
+      job.open_secret_count === 0 &&
       job.awaiting_secret_id == null;
     if (!idle) return false;
     if ((await this.turns.runningBrainTurn(job.id)) != null) return false;

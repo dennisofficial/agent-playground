@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AutoMergeMethod } from "@workspace/shared";
+import type { AutoApproveMode, AutoMergeMethod } from "@workspace/shared";
 import { env } from "@/lib/env";
 import type { OrgSummary } from "./me";
 import { fetchWithRefresh } from "./refresh";
@@ -423,61 +423,137 @@ export function useSaveCredentials(orgId: string) {
   });
 }
 
-// ── Workspace secret files (per-repo encrypted files rendered into a thread's sandbox) ──────────────
-// GET returns file refs (repo + path + label) only, never values. Writes (PUT/DELETE /files) are
-// owner-only server-side. One row IS the value + the authority + the render instruction: a file renders
-// only when an owner-created (repo, path) row exists (workspace config — mounts — is a separate DB record
-// and never carries secrets; see docs/adr/0003-worktree-config-db-not-git.md).
+// ── Workspace profile (Atlas-managed per-repo provisioning: mounts, setup script, preview recipe,
+// secret-file refs, acknowledged manifests) ──────────────────────────────────────────────────────────
+// One repo-scoped surface over the same `WorkspaceConfigStore`/`WorkspaceSecretFileStore` rows the
+// onboarding brain's `write_workspace_config` tool writes through — a console edit and a brain call
+// converge on the same DB rows. GET is member-readable; every write is owner-only server-side. Secret
+// file VALUES are never re-exposed — only refs (path + label); the underlying files endpoint is shared
+// with the (retired) workspace-secrets tab, so writes still go through `/orgs/:orgId/workspace-secrets/files`
+// with `repoId` in the body.
 
-export interface WorkspaceSecretFile {
-  repoId: string;
+export interface WorkspaceProfileMount {
+  path: string;
+  mode: "per-thread" | "shared-ro" | "shared-rw";
+}
+export interface WorkspaceProfileSecretFileRef {
   path: string;
   label?: string | null;
 }
-export interface WorkspaceSecretsView {
-  files: WorkspaceSecretFile[];
+export interface WorkspaceProfileView {
+  mounts: WorkspaceProfileMount[];
+  setupScript: string | null;
+  previewRecipe: string | null;
+  secretFiles: WorkspaceProfileSecretFileRef[];
+  seenManifests: string[] | null;
 }
 
-export function useWorkspaceSecrets(orgId: string) {
+/** One repo's Atlas-managed provisioning (GET /web/orgs/:orgId/repos/:repoId/workspace-profile). Member-readable. */
+export function useWorkspaceProfile(orgId: string, repoId: string) {
   return useQuery({
-    queryKey: qk.orgWorkspaceSecrets(orgId),
+    queryKey: qk.orgWorkspaceProfile(orgId, repoId),
     queryFn: () =>
-      webJson<WorkspaceSecretsView>(`/orgs/${orgId}/workspace-secrets`),
-    enabled: Boolean(orgId),
+      webJson<WorkspaceProfileView>(
+        `/orgs/${orgId}/repos/${repoId}/workspace-profile`,
+      ),
+    enabled: Boolean(orgId && repoId),
     staleTime: 15_000,
   });
 }
 
-/** Owner-only: create/replace a repo's secret file at a destination path. */
-export function useSaveWorkspaceSecretFile(orgId: string) {
+/** Owner-only: idempotent upsert-by-path of a mount. Server returns `restartsSandbox: true` — the mount SET changed, so in-flight sandboxes recreate on next attach. */
+export function useSaveMount(orgId: string, repoId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: {
-      repoId: string;
-      path: string;
-      value: string;
-      label?: string;
-    }) =>
+    mutationFn: (body: { path: string; mode: string }) =>
+      webJson<{ ok: true; restartsSandbox: true }>(
+        `/orgs/${orgId}/repos/${repoId}/workspace-profile/mounts`,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
+  });
+}
+
+/** Owner-only: remove a mount by path. Also restarts sandboxes on next attach. */
+export function useDeleteMount(orgId: string, repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { path: string }) =>
+      webJson<{ ok: true; restartsSandbox: true }>(
+        `/orgs/${orgId}/repos/${repoId}/workspace-profile/mounts`,
+        { method: "DELETE", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
+  });
+}
+
+/** Owner-only: set (or, with `script: null`, clear) the repo's setup script. Runs on every cold sandbox bring-up. */
+export function useSaveSetupScript(orgId: string, repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { script: string | null }) =>
+      webJson<{ ok: true }>(
+        `/orgs/${orgId}/repos/${repoId}/workspace-profile/setup-script`,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
+  });
+}
+
+/** Owner-only: set (or, with `instructions: null`, clear) the repo's preview recipe. */
+export function useSavePreviewRecipe(orgId: string, repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { instructions: string | null }) =>
+      webJson<{ ok: true }>(
+        `/orgs/${orgId}/repos/${repoId}/workspace-profile/preview-recipe`,
+        { method: "PUT", body: JSON.stringify(body) },
+      ),
+    onSuccess: () =>
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
+  });
+}
+
+/** Owner-only: create/replace a repo's secret file at a destination path. Reuses the existing (unretired) secret-files endpoint — repoId goes in the body, not the path. */
+export function useSaveRepoSecretFile(orgId: string, repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { path: string; value: string; label?: string }) =>
       webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
         method: "PUT",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, repoId }),
       }),
     onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorkspaceSecrets(orgId) }),
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
   });
 }
 
 /** Owner-only: delete a repo's secret file. */
-export function useDeleteWorkspaceSecretFile(orgId: string) {
+export function useDeleteRepoSecretFile(orgId: string, repoId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repoId: string; path: string }) =>
+    mutationFn: (body: { path: string }) =>
       webJson<{ ok: boolean }>(`/orgs/${orgId}/workspace-secrets/files`, {
         method: "DELETE",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, repoId }),
       }),
     onSuccess: () =>
-      void qc.invalidateQueries({ queryKey: qk.orgWorkspaceSecrets(orgId) }),
+      void qc.invalidateQueries({
+        queryKey: qk.orgWorkspaceProfile(orgId, repoId),
+      }),
   });
 }
 
@@ -736,10 +812,12 @@ export function useCreateOrg() {
   });
 }
 
-/** Body for `PATCH /web/orgs/:orgId` — rename and/or re-slug (owner only). */
+/** Body for `PATCH /web/orgs/:orgId` — rename, re-slug, and/or set automation defaults (owner only). */
 export interface UpdateOrgBody {
   name?: string;
   slug?: string;
+  defaultAutoApproveMode?: AutoApproveMode;
+  defaultAutoMerge?: boolean;
 }
 
 /** Owner-only rename / re-slug. */

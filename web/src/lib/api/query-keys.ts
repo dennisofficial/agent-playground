@@ -11,9 +11,9 @@ export const qk = {
   /** One org's GitHub App connect status (`GET /web/orgs/:orgId/github-app/status`). */
   orgGithubAppStatus: (orgId: string) =>
     ["org-github-app-status", orgId] as const,
-  /** One org's workspace secret names + grants (`GET /web/orgs/:orgId/workspace-secrets`). */
-  orgWorkspaceSecrets: (orgId: string) =>
-    ["org-workspace-secrets", orgId] as const,
+  /** One repo's workspace profile (GET /web/orgs/:orgId/repos/:repoId/workspace-profile). */
+  orgWorkspaceProfile: (orgId: string, repoId: string) =>
+    ["org-workspace-profile", orgId, repoId] as const,
   /** One org's user-defined MCP servers + the read-only system tier (`GET /web/orgs/:orgId/mcp-servers`). */
   orgMcpServers: (orgId: string) => ["org-mcp-servers", orgId] as const,
   /** One org's connected repos (`GET /web/orgs/:orgId/repos`) — the create-job picker. */
@@ -38,6 +38,9 @@ export const qk = {
   /** One job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane. */
   jobDiff: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["job-diff", ref.orgId, ref.repoId, ref.jobId] as const,
+  /** One job's cheap numstat-only diff summary (`GET …/jobs/:jobId/diff/summary`) — the sidebar's +/- totals. */
+  jobDiffSummary: (ref: { orgId: string; repoId: string; jobId: string }) =>
+    ["job-diff-summary", ref.orgId, ref.repoId, ref.jobId] as const,
   /** The job worktree's tracked-file manifest (repo/tree). */
   repoTree: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["repo-tree", ref.orgId, ref.repoId, ref.jobId] as const,

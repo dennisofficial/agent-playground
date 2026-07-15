@@ -36,6 +36,9 @@ const SAMPLE_REPO_CONVENTIONS_BODY = [
 
 const SAMPLE_REPO_CONVENTIONS = { name: 'acme-house-style', body: SAMPLE_REPO_CONVENTIONS_BODY };
 
+/** Representative saved preview recipe (the `-preview-recipe` variants). */
+const SAMPLE_RECIPE = '## Sample\n- docker compose up -d postgres\n- atlas-svc run --name web --port 3000 …';
+
 /** Representative rendered workspace-profile snapshot (the `brain-workspace-profile` variant). */
 const SAMPLE_WORKSPACE_PROFILE = [
   'Mounts: shared-rw `~/.cache/acme-build` (build cache).',
@@ -73,6 +76,12 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'worker-orchestrate', agent: Agent.WORKER, note: 'build thread orchestrator', ctx: { jobKind: 'feature' } },
   { id: 'worker-bugfix', agent: Agent.WORKER, note: 'build thread orchestrator — bugfix job kind', ctx: { jobKind: 'bugfix' } },
   { id: 'worker-event', agent: Agent.WORKER, note: 'build thread orchestrator — event job kind', ctx: { jobKind: 'event' } },
+  {
+    id: 'worker-preview-recipe',
+    agent: Agent.WORKER,
+    note: 'WORKER with a repo preview recipe',
+    ctx: { previewInstructions: SAMPLE_RECIPE, turnPhase: 'batch' },
+  },
   { id: 'ship-master-review', agent: Agent.MASTER_REVIEW, note: 'ship Codex master review', ctx: {} },
   { id: 'autofix-review', agent: Agent.AUTOFIX_REVIEW, note: 'auto-fix review pass', ctx: {} },
   {
@@ -100,6 +109,12 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   { id: 'subagent-debug', agent: Agent.DEBUG, note: 'engine debug subagent', ctx: {} },
   { id: 'subagent-test', agent: Agent.TEST, note: 'engine test subagent', ctx: {} },
   { id: 'subagent-validate', agent: Agent.VALIDATE, note: 'engine live-validation + evidence subagent', ctx: {} },
+  {
+    id: 'subagent-validate-preview-recipe',
+    agent: Agent.VALIDATE,
+    note: 'validate with a repo preview recipe',
+    ctx: { previewInstructions: SAMPLE_RECIPE },
+  },
   { id: 'subagent-prototype', agent: Agent.PROTOTYPE, note: 'engine design-fidelity prototype subagent', ctx: {} },
   { id: 'subagent-writer', agent: Agent.FAN_OUT, note: 'engine implement/implement-deep writer', ctx: {} },
   {

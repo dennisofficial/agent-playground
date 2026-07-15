@@ -61,6 +61,12 @@ export interface LegRotationSignal {
 export interface OccupancyEvent {
   contextTokens?: number | null;
   contextLimit?: number | null;
+  /**
+   * The spawning Task id when this frame is a SUBAGENT's own occupancy; UNSET for the main agent. A
+   * subagent runs in its own, separate context window that cannot be rotated, so its occupancy must never
+   * drive Leg rotation — {@link LegRotationWatch.observe} rejects any frame that carries this.
+   */
+  parentToolUseId?: string;
 }
 
 /**
@@ -118,6 +124,7 @@ export class LegRotationWatch {
    * level (a sample that jumps several deltas fires the highest level only).
    */
   observe(evt: OccupancyEvent): void {
+    if (evt.parentToolUseId != null) return; // subagent's own window — a separate context that can't be rotated
     const tokens = evt.contextTokens;
     if (tokens == null) return; // positive-signal only — never nudge a Codex/unknown-occupancy turn
     if (tokens < this.thresholds.softTokens) return; // below soft — nothing to do yet

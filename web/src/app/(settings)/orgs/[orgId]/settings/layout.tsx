@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Check,
   ChevronDown,
-  FileKey,
+  FolderCog,
   GitBranch,
   KeyRound,
   Layers,
@@ -15,6 +15,7 @@ import {
   Settings as SettingsIcon,
   Sparkles,
   Users,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ROUTES, type SettingsSection } from "@/lib/routes";
@@ -28,8 +29,9 @@ import { Drawer } from "@/components/ui/drawer";
 const NAV: { id: SettingsSection; label: string; icon: typeof SettingsIcon }[] =
   [
     { id: "general", label: "General", icon: SettingsIcon },
+    { id: "automation", label: "Automation", icon: Zap },
     { id: "credentials", label: "Credentials", icon: KeyRound },
-    { id: "workspace-secrets", label: "Workspace secrets", icon: FileKey },
+    { id: "workspace-profile", label: "Workspace profile", icon: FolderCog },
     { id: "mcp-servers", label: "MCP servers", icon: Plug },
     { id: "convention-profiles", label: "Convention profiles", icon: Layers },
     { id: "skills", label: "Skills", icon: Sparkles },

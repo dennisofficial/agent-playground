@@ -57,7 +57,7 @@ function requireNonEmptyString(value: unknown, name: string): string {
 }
 
 function parseQueryFormat(value: unknown): QueryFormat {
-  if (value === undefined) return 'json';
+  if (value === undefined) return 'jsonl';
   if (
     typeof value === 'string' &&
     QUERY_FORMATS.includes(value as QueryFormat)
@@ -129,7 +129,6 @@ async function atlasQuery(
     limit,
   );
   ctx.audit.rowCount = rowCount;
-  if (format === 'json') return { format, rowCount, truncated, rows };
   // Redact the row OBJECTS before flattening to text. redact.ts's key-name masking (SECRET_KEY_PATTERN)
   // blanks opaque values in secret-named columns (e.g. `access_token`, `password`), but that key context
   // is lost once rows are rendered to csv/tsv — the header and value land on separate lines, so the
@@ -411,7 +410,7 @@ export const TOOL_DEFS: Tool[] = [
   {
     name: 'atlas_query',
     description:
-      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the response shape: json (default, rows array), jsonl, csv, or tsv (rendered text). Large results are auto-written to a file in /playground (you get back a path + preview) — use jsonl/csv for grep/jq/python/duckdb.',
+      'Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON\'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c "SELECT ... FROM \'<file>\'"`, or Read a line-range (offset/limit).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -425,8 +424,8 @@ export const TOOL_DEFS: Tool[] = [
         },
         format: {
           type: 'string',
-          enum: ['json', 'jsonl', 'csv', 'tsv'],
-          description: 'output format; default json',
+          enum: ['jsonl', 'csv', 'tsv'],
+          description: 'output format (line-delimited); default jsonl',
         },
         limit: {
           type: 'number',

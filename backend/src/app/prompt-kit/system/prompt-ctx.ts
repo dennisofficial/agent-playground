@@ -13,6 +13,10 @@ export interface PromptCtx {
   jobKind?: JobKind | null;
   /** A build thread's scope label (backend | frontend | …), when assembling a per-thread prompt. */
   threadType?: string | null;
+  /** The repo's saved preview recipe (repos.preview_instructions), threaded to build-lane prompts as
+   *  READ-ONLY standing context. Present only on WORKER/validate execute turns when a recipe exists;
+   *  absent everywhere else ⇒ the preview fragment is omitted and the prompt is byte-identical. */
+  previewInstructions?: string | null;
   /** Which WORKER turn this prompt is for. Selects whether batch-only host-tool instructions render.
    *  Absent ⇒ treated as 'batch' (backward-compatible with bare renderAgentPrompt calls). */
   turnPhase?: 'batch' | 'commit';
@@ -25,8 +29,6 @@ export interface PromptCtx {
   job?: {
     /** "owner/repo", parsed from the git url (via the resolved repo). */
     repoName?: string;
-    /** The sandbox worktree path — the working directory this turn runs in (normally `/workspace`). */
-    cwd?: string;
     /** The feature branch this job stacks on (or the observed live HEAD); omitted until a branch is cut. */
     branch?: string;
     /** The base branch the build cuts from (`job.baseBranch` ?? the repo default). */

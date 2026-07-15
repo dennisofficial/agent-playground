@@ -73,6 +73,9 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 
 # ─── runtime (slim) ─────────────────────────────────────────────────────────────────
 FROM base AS runtime
+# Backend build commit (short CI tag, e.g. sha-abc1234). Empty locally → app defaults to "dev".
+ARG GIT_SHA=""
+ENV GIT_SHA=$GIT_SHA
 # tini: PID-1 init that forwards SIGTERM to node (so NestJS shutdown hooks fire).
 # curl: HEALTHCHECK + Caddy health probes.
 RUN apt-get update && apt-get install -y --no-install-recommends \

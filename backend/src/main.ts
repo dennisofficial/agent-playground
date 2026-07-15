@@ -49,6 +49,13 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
 
+  // Raise the JSON body limit above Express's ~100 KB default: `provide-file` and the batch `answer-batch`
+  // endpoint carry inline file/secret content (`MAX_BATCH_BYTES` = 4 MB; the endpoint enforces the
+  // authoritative cap), which the default parser would silently reject before the controller ran. Sized to
+  // the batch cap plus overhead; re-registers the rawBody-aware JSON parser, so GitHub HMAC verification is
+  // unaffected.
+  app.useBodyParser('json', { limit: '8mb' });
+
   const env = app.get(EnvService);
 
   // Populates `req.cookies` — the auth guard + `/auth/*` read the access/refresh cookies from it.

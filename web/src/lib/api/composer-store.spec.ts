@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { composerStore } from "./composer-store";
-import type { JobRef } from "./job-api";
+import { composerStore, type StagedAnswer } from "./composer-store";
+import type { JobMessage, JobRef } from "./job-api";
 
 // The store is a module-global singleton, so each test uses a unique jobId to stay isolated.
 const KEY_PREFIX = "atlas.composer.draft.";
@@ -252,6 +252,158 @@ describe("composerStore", () => {
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw as string).outbox).toEqual([
         { id: "q1", createdAt: 1, text: "queued msg", comments: [] },
+      ]);
+    });
+  });
+
+  describe("stagedAnswers", () => {
+    const questionAnswer: StagedAnswer = {
+      kind: "question",
+      cardId: "q1",
+      label: "Pick a color",
+      answer: "blue",
+    };
+    const fileAnswer: StagedAnswer = {
+      kind: "file",
+      cardId: "f1",
+      label: "config/key.json",
+      filename: "key.json",
+      content: '{"k":"v"}',
+    };
+    const secretAnswer: StagedAnswer = {
+      kind: "secret",
+      cardId: "s1",
+      label: "API_KEY",
+      value: "sekret",
+    };
+
+    function messageFor(card: JobMessage["card"]): JobMessage {
+      return {
+        ts: "ts1",
+        threadId: "t1",
+        subagentId: null,
+        author: "atlas",
+        authorId: "atlas",
+        authorName: "Atlas",
+        text: "",
+        kind: "card",
+        source: "atlas",
+        card,
+        postedAt: new Date().toISOString(),
+      };
+    }
+
+    it("stageAnswer upserts by cardId (re-staging replaces, not duplicates)", () => {
+      const ref = refFor("job-stage-upsert");
+      composerStore.stageAnswer(ref, questionAnswer);
+      composerStore.stageAnswer(ref, { ...questionAnswer, answer: "red" });
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+        { ...questionAnswer, answer: "red" },
+      ]);
+    });
+
+    it("stageAnswer never persists to sessionStorage", () => {
+      const ref = refFor("job-stage-no-persist");
+      composerStore.stageAnswer(ref, fileAnswer);
+      vi.advanceTimersByTime(300);
+      expect(storage.getItem(KEY_PREFIX + ref.jobId)).toBeNull();
+    });
+
+    it("removeStagedAnswer drops just the matching cardId", () => {
+      const ref = refFor("job-stage-remove");
+      composerStore.stageAnswer(ref, questionAnswer);
+      composerStore.stageAnswer(ref, fileAnswer);
+      composerStore.removeStagedAnswer(ref, questionAnswer.cardId);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+        fileAnswer,
+      ]);
+    });
+
+    it("setStagedAnswers(() => []) clears the tray (Clear all)", () => {
+      const ref = refFor("job-stage-clear-all");
+      composerStore.stageAnswer(ref, questionAnswer);
+      composerStore.stageAnswer(ref, secretAnswer);
+      composerStore.setStagedAnswers(ref, () => []);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
+    });
+
+    it("pruneStagedAnswers drops a question staged answer once its card is withdrawn", () => {
+      const ref = refFor("job-prune-question-withdrawn");
+      composerStore.stageAnswer(ref, questionAnswer);
+      const messages = [
+        messageFor({
+          type: "question_card",
+          jobId: ref.jobId,
+          questionId: "q1",
+          question: "Pick a color",
+          options: [],
+          allowOther: false,
+          withdrawnAt: new Date().toISOString(),
+        }),
+      ];
+      composerStore.pruneStagedAnswers(ref, messages);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
+    });
+
+    it("pruneStagedAnswers drops a file staged answer once its card is provided", () => {
+      const ref = refFor("job-prune-file-provided");
+      composerStore.stageAnswer(ref, fileAnswer);
+      const messages = [
+        messageFor({
+          type: "file_request_card",
+          jobId: ref.jobId,
+          requestId: "f1",
+          path: "config/key.json",
+          description: "",
+          provided_at: new Date().toISOString(),
+        }),
+      ];
+      composerStore.pruneStagedAnswers(ref, messages);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
+    });
+
+    it("pruneStagedAnswers drops a secret staged answer once its card is provided", () => {
+      const ref = refFor("job-prune-secret-provided");
+      composerStore.stageAnswer(ref, secretAnswer);
+      const messages = [
+        messageFor({
+          type: "secret_input_card",
+          jobId: ref.jobId,
+          requestId: "s1",
+          name: "API_KEY",
+          description: "",
+          provided_at: new Date().toISOString(),
+        }),
+      ];
+      composerStore.pruneStagedAnswers(ref, messages);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([]);
+    });
+
+    it("pruneStagedAnswers keeps a staged answer whose card has no match in messages", () => {
+      const ref = refFor("job-prune-no-match");
+      composerStore.stageAnswer(ref, questionAnswer);
+      composerStore.pruneStagedAnswers(ref, []);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+        questionAnswer,
+      ]);
+    });
+
+    it("pruneStagedAnswers keeps a staged answer whose card is still open", () => {
+      const ref = refFor("job-prune-still-open");
+      composerStore.stageAnswer(ref, questionAnswer);
+      const messages = [
+        messageFor({
+          type: "question_card",
+          jobId: ref.jobId,
+          questionId: "q1",
+          question: "Pick a color",
+          options: [],
+          allowOther: false,
+        }),
+      ];
+      composerStore.pruneStagedAnswers(ref, messages);
+      expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+        questionAnswer,
       ]);
     });
   });

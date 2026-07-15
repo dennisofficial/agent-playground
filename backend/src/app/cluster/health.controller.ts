@@ -1,6 +1,7 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { Public } from '@workspace/auth/server';
+import { AppVersionService } from './app-version.service';
 import { LeaderElectionService } from './leader-election.service';
 import { SkipLogger } from '@workspace/nestjs-core';
 
@@ -16,12 +17,15 @@ import { SkipLogger } from '@workspace/nestjs-core';
  */
 @Controller('health')
 export class HealthController {
-  constructor(private readonly election: LeaderElectionService) {}
+  constructor(
+    private readonly election: LeaderElectionService,
+    private readonly version: AppVersionService,
+  ) {}
 
   @Public()
   @Get('live')
-  live(): { status: 'ok' } {
-    return { status: 'ok' };
+  live(): { status: 'ok'; sha: string } {
+    return { status: 'ok', sha: this.version.sha };
   }
 
   @Public()

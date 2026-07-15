@@ -107,6 +107,17 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedSecretId?: string;
   /**
+   * BATCH DELIVERY SEED: the arrays of card ids a SINGLE combined `answer-batch` seed delivers — question
+   * answers, uploaded files, and provided durable/mcp secrets applied together in one operator batch. Its
+   * lone delivery turn's success tail loops each array to stamp EVERY card `deliveredAt`/`delivered_at`
+   * (at-least-once, same per-card bookkeeping as the singular `seed*Id`). Piggybacked into `reply_route`
+   * jsonb so a re-attached or by-id-resolved turn still stamps them. In-memory only. Undefined for a
+   * single-card seed.
+   */
+  seedQuestionIds?: string[];
+  seedFileIds?: string[];
+  seedSecretIds?: string[];
+  /**
    * RESET-VERIFY SEED: a synthetic continuation kicked by `maybeHonorSandboxReset` after a `reset_sandbox`
    * teardown, whose sole job is to guarantee a turn happens so Atlas verifies on the fresh container. The
    * actual verify instruction rides the reset-notice (consumed by whichever turn cold-attaches first), so

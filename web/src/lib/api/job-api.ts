@@ -9,6 +9,7 @@ import type {
   InboxPr,
   JobBlocker,
   JobDiff,
+  JobDiffSummary,
   JobProvenance,
   PipelineJob,
   PipelineState,
@@ -389,6 +390,28 @@ export function provideFile(
   });
 }
 
+// ── Batched staged answers (the Composer staging tray) ─────────────────────────────────────────────
+/** One staged answer in an `answer-batch` — a question answer, a file upload, or a durable/MCP secret
+ *  value (ephemeral secrets are never batched — they keep the immediate `provide-secret` path). */
+export type AnswerBatchItem =
+  | { kind: "question"; questionId: string; answer: string }
+  | { kind: "file"; requestId: string; filename: string; content: string }
+  | { kind: "secret"; requestId: string; value: string };
+
+/**
+ * Submit every staged card answer + an optional operator note as ONE combined request — a single brain
+ * wake instead of one per card. See `staged-answers-tray.tsx` for the authoring side.
+ */
+export function submitAnswerBatch(
+  ref: JobRef,
+  body: { items: AnswerBatchItem[]; message?: string },
+): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+  return webJson(threadPath(ref, "/answer-batch"), {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** Re-drive a halted (failed/paused) build — the navigator "Retry" button. No-op if not retryable. */
 export function retryJob(
   ref: JobRef,
@@ -414,6 +437,17 @@ export function acceptThread(
   threadId: string,
 ): Promise<{ ok: boolean; reason?: string }> {
   return webJson(threadPath(ref, `/threads/${threadId}/accept`), {
+    method: "POST",
+  });
+}
+
+/** "Ship without review" escape hatch on a `codex_review_unavailable` job hold — marks the ship-time
+ *  master_review thread skipped/done and lands the job at the normal ship-review gate (the human PR gate
+ *  still applies). Refused server-side unless the job is actually held on a Codex outage. */
+export function shipWithoutReview(
+  ref: JobRef,
+): Promise<{ ok: boolean; reason?: string }> {
+  return webJson(threadPath(ref, "/ship-without-review"), {
     method: "POST",
   });
 }
@@ -477,6 +511,13 @@ export function fetchContextFile(
 /** The job's accumulated multi-file diff (`GET …/jobs/:jobId/diff`) — the Changes pane's data. */
 export function fetchJobDiff(ref: JobRef): Promise<JobDiff> {
   return webJson<JobDiff>(threadPath(ref, "/diff"));
+}
+
+/** The job's cheap numstat-only diff summary (`GET …/jobs/:jobId/diff/summary`) — no hunks, just per-file
+ *  path/additions/deletions/status/binary. Used by the always-mounted sidebar for its +/- totals so it
+ *  never has to hold the heavy full-diff query open. */
+export function fetchJobDiffSummary(ref: JobRef): Promise<JobDiffSummary> {
+  return webJson<JobDiffSummary>(threadPath(ref, "/diff/summary"));
 }
 
 // ── Repo files (live job worktree — for spec/plan file-path links) ────────────────────────────────
@@ -666,6 +707,9 @@ export interface CreateThreadBody {
   autoApproveMode?: AutoApproveMode;
   /** Arm auto-merge at creation; omit/false leaves the job's PR gated for a human. */
   autoMerge?: boolean;
+  /** Job ids this new job should block on (born-blocked). All must be siblings in the same repo.
+   *  When any is still live, the job starts blocked and its first turn/branch are deferred until they resolve. */
+  dependsOn?: string | string[];
 }
 
 export function createJob(
@@ -677,6 +721,11 @@ export function createJob(
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+function dependsOnList(dependsOn: CreateThreadBody["dependsOn"]): string[] {
+  if (dependsOn == null) return [];
+  return Array.isArray(dependsOn) ? dependsOn : [dependsOn];
 }
 
 /** Create a job WITH attachments — multipart (`firstMessage`/`title`/`baseBranch` fields + `files` parts). */
@@ -692,9 +741,9 @@ export function createJobWithFiles(
   if (body.baseBranch) form.append("baseBranch", body.baseBranch);
   if (body.kind) form.append("kind", body.kind);
   if (body.prNumber) form.append("prNumber", body.prNumber);
-  if (body.autoApproveMode)
-    form.append("autoApproveMode", body.autoApproveMode);
-  if (body.autoMerge) form.append("autoMerge", "true");
+  form.append("autoApproveMode", body.autoApproveMode ?? "off");
+  form.append("autoMerge", String(body.autoMerge ?? false));
+  for (const id of dependsOnList(body.dependsOn)) form.append("dependsOn", id);
   for (const f of files) form.append("files", f, f.name);
   return webJson(`/orgs/${orgId}/repos/${repoId}/jobs`, {
     method: "POST",

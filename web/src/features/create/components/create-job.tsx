@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, Paperclip, Plug, Upload } from "lucide-react";
+import { Check, Paperclip, Plug, Upload, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
@@ -11,6 +11,8 @@ import { BranchPicker, Dropdown } from "@/components/branch-picker";
 import { useOrgs } from "@/lib/api/me";
 import { useOrgRepos, useCreateThread } from "@/lib/api/job-queries";
 import type { OperatorJobKind } from "@/lib/api/job-api";
+import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
+import { groupThreadsBySection, SECTION_LABEL } from "@/lib/api/job-section";
 import {
   type AutoApproveMode,
   modeApprovesPlan,
@@ -59,6 +61,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     useState<AutoApproveMode>("off");
   // Per-job auto-merge armed at creation — a separate boolean, orthogonal to autoApproveMode.
   const [autoMerge, setAutoMerge] = useState(false);
+  // Sibling jobs (same org+repo) this new job should start blocked on.
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const {
     attachments,
@@ -76,6 +81,15 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
     if (orgId || orgs.length === 0) return;
     setOrgId(orgs[0].id);
   }, [orgs, orgId]);
+
+  // Seed the Automation toggles from the selected org's defaults whenever the org changes (not on every
+  // render, so the operator's in-progress edits within one org survive re-renders).
+  const selectedOrg = orgs.find((o) => o.id === orgId);
+  useEffect(() => {
+    if (!selectedOrg) return;
+    setAutoApproveMode(selectedOrg.defaultAutoApproveMode ?? "off");
+    setAutoMerge(selectedOrg.defaultAutoMerge ?? false);
+  }, [selectedOrg?.id]);
 
   const { data: repos = [], isLoading: reposLoading } = useOrgRepos(orgId);
   const create = useCreateThread(orgId, repoId);
@@ -98,6 +112,24 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
   const selectedRepo = useMemo(
     () => repos.find((r) => r.id === repoId),
     [repos, repoId],
+  );
+
+  // Sibling jobs on the same org+repo this new job can start blocked on (mirrors job-menu.tsx's
+  // "Block on another job…" picker — no current job to exclude since this one doesn't exist yet).
+  const { data: allJobs = [] } = useAllJobs();
+  const dependableSections = useMemo(() => {
+    if (!orgId || !repoId) return [];
+    const pickable = allJobs.filter(
+      (t) => t.org.id === orgId && t.repo.id === repoId,
+    );
+    return groupThreadsBySection(pickable).filter((g) => g.section !== "merged");
+  }, [allJobs, orgId, repoId]);
+  const selectedJobs = useMemo(
+    () =>
+      dependsOn
+        .map((id) => allJobs.find((t) => t.id === id))
+        .filter((t): t is InboxThread => t != null),
+    [dependsOn, allJobs],
   );
 
   if (orgsLoading) {
@@ -140,8 +172,9 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
         baseBranch: branch.trim() || undefined,
         ...(kind ? { kind } : {}),
         ...(isReview ? { prNumber: pr } : {}),
-        ...(autoApproveMode !== "off" ? { autoApproveMode } : {}),
-        ...(autoMerge ? { autoMerge: true } : {}),
+        autoApproveMode,
+        autoMerge,
+        ...(dependsOn.length ? { dependsOn } : {}),
         ...(attachments.length
           ? { files: attachments.map((a) => a.file) }
           : {}),
@@ -182,6 +215,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
               setOrgId(id);
               setRepoId("");
               setBranch("");
+              setDependsOn([]);
             }}
           />
         </div>
@@ -202,6 +236,7 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 onChange={(id) => {
                   setRepoId(id);
                   setBranch(""); // re-default to the new repo's base branch (effect picks it up)
+                  setDependsOn([]);
                 }}
               />
             </div>
@@ -272,6 +307,92 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
                 its own.
               </p>
             </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {repos.length > 0 ? (
+        <div>
+          <p className="text-[12px] font-medium text-dim">
+            Depends on
+            <span className="ml-1 font-normal text-faint">(optional)</span>
+          </p>
+          <div className="mt-1.5">
+            {selectedJobs.length > 0 ? (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {selectedJobs.map((t) => (
+                  <span
+                    key={t.id}
+                    className="flex items-center gap-1 rounded-md border border-border-2 py-1 pl-2.5 pr-1.5 text-[12px] text-dim"
+                  >
+                    <span className="max-w-[180px] truncate">{t.title}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDependsOn((ids) => ids.filter((x) => x !== t.id))
+                      }
+                      className="rounded p-0.5 text-faint transition hover:bg-surface-2 hover:text-text"
+                      aria-label={`Remove ${t.title}`}
+                    >
+                      <X size={11} strokeWidth={2.2} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setPickerOpen((o) => !o)}
+              className="flex items-center gap-1.5 rounded-md border border-border-2 px-2.5 py-1.5 text-[12px] text-dim transition hover:bg-surface-2 hover:text-text"
+            >
+              {pickerOpen ? "Hide jobs" : "Add a job…"}
+            </button>
+            {pickerOpen ? (
+              <div className="mt-1.5 max-h-60 overflow-y-auto rounded-md border border-border-2 py-1">
+                {dependableSections.length === 0 ? (
+                  <div className="px-3 py-1.5 text-[11px] text-faint">
+                    No other jobs on this repo
+                  </div>
+                ) : (
+                  dependableSections.map(({ section, threads }) => (
+                    <div key={section}>
+                      <div className="px-3 pb-0.5 pt-1.5 text-[9.5px] font-semibold uppercase tracking-wide text-faint">
+                        {SECTION_LABEL[section]}
+                      </div>
+                      {threads.map((t) => {
+                        const selected = dependsOn.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() =>
+                              setDependsOn((ids) =>
+                                selected
+                                  ? ids.filter((x) => x !== t.id)
+                                  : [...ids, t.id],
+                              )
+                            }
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11.5px] text-dim transition hover:bg-surface-2 hover:text-text"
+                          >
+                            <Check
+                              size={12}
+                              className={selected ? "text-accent" : "opacity-0"}
+                            />
+                            <span className="truncate">{t.title}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+          {dependsOn.length > 0 ? (
+            <p className="mt-1.5 text-[11px] text-faint">
+              This job will start blocked and begin once the selected job(s)
+              merge.
+            </p>
           ) : null}
         </div>
       ) : null}

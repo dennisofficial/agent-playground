@@ -363,9 +363,16 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       judge,
       staticJudge,
       taskSink,
-      undefined,
-      undefined,
-      undefined,
+      undefined, // exposure
+      undefined, // conventions
+      undefined, // claudeCreds
+      undefined, // configStore
+      undefined, // stimulusStore
+      undefined, // jit
+      {
+        planningThreadId: async (jid: string) =>
+          (await threads.findOneOrFail({ where: { job_id: jid, role: 'planning' } })).id,
+      } as unknown as import('./job-bootstrap').JobBootstrapService,
     );
   }
 

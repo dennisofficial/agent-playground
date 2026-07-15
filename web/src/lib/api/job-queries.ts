@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { qk } from "./query-keys";
 import { useOrgs } from "./me";
+import { composerStore } from "./composer-store";
 import {
   addJobDependency,
   answerQuestion,
@@ -23,6 +24,7 @@ import {
   fetchContextFile,
   fetchCreatedJobs,
   fetchJobDiff,
+  fetchJobDiffSummary,
   fetchMessages,
   fetchOrgRepos,
   fetchRepoBranches,
@@ -42,8 +44,11 @@ import {
   retryVerification,
   sayMessage,
   sayMessageWithFiles,
+  shipWithoutReview,
   spinUpPreview,
   stopJob,
+  submitAnswerBatch,
+  type AnswerBatchItem,
   type AnswerQuestionBody,
   type ProvideSecretBody,
   type ProvideFileBody,
@@ -147,6 +152,16 @@ export function useJobDiff(ref: JobRef, enabled: boolean) {
   return useQuery({
     queryKey: qk.jobDiff(ref),
     queryFn: () => fetchJobDiff(ref),
+    enabled: enabled && hasRef(ref),
+  });
+}
+
+/** The job's cheap numstat-only diff summary (no hunks) — for the always-mounted sidebar's +/- totals.
+ *  SSE invalidates it alongside the full diff, so the counts stay live without holding the heavy query open. */
+export function useJobDiffSummary(ref: JobRef, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.jobDiffSummary(ref),
+    queryFn: () => fetchJobDiffSummary(ref),
     enabled: enabled && hasRef(ref),
   });
 }
@@ -415,6 +430,38 @@ export function useSendReviewComments(ref: JobRef) {
 }
 
 /**
+ * Submit every staged card answer (question/file/durable-secret) + an optional operator note as ONE
+ * combined request — the Composer's staging-tray Send. Unlike `useSendReviewComments`, there's no
+ * optimistic transcript row (a batch answer doesn't render as its own bubble the way a comments card
+ * does) — the tray just clears and the thread refetches on success.
+ */
+export function useSubmitStagedAnswers(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { items: AnswerBatchItem[]; message?: string }) =>
+      submitAnswerBatch(ref, body),
+    onSuccess: (data) => {
+      // Only drop the items the backend actually applied — a per-item `stale`/`withdrawn`/`noop`/`notfound`
+      // result means that answer never landed, so keep it staged rather than silently discarding it. The
+      // `threadMessages` invalidate below re-fetches, which drives `pruneStagedAnswers` to drop it once its
+      // card is confirmed resolved (or leaves it for the operator to see/retry if it's genuinely still open).
+      const appliedIds = new Set(
+        data.results.filter((r) => r.status === "applied").map((r) => r.id),
+      );
+      composerStore.setStagedAnswers(ref, (prev) =>
+        prev.filter((a) => !appliedIds.has(a.cardId)),
+      );
+      // Clear only the note text this request actually sent — NOT `clearDraft`, which also wipes queued
+      // review comments / attachments that never went out (the staged-answers Send branch returns early
+      // without sending them; see `Composer.send()`).
+      composerStore.setText(ref, "");
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+    },
+  });
+}
+
+/**
  * Submit a plan/ship/merge verdict (approve / request changes / deny). For plan and ship, every verdict
  * flips the job status (→ running / planning / cancelled), which the WAL realtime stream
  * (`useAllJobsRealtime`) delivers race-free on the DB commit and uses to invalidate this thread's
@@ -475,6 +522,21 @@ export function useAcceptThread(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (threadId: string) => acceptThread(ref, threadId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.allJobs() });
+    },
+  });
+}
+
+/** "Ship without review" on a `codex_review_unavailable`-held job — skip the unreachable Codex
+ *  master_review and land at the normal ship-review gate. Refreshes the pipeline (the banner clears in
+ *  favor of the ship-review card) + messages + the job list. */
+export function useShipWithoutReview(ref: JobRef) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => shipWithoutReview(ref),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });

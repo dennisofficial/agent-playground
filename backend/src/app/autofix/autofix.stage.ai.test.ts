@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -56,16 +57,6 @@ export function UserList({ users }: { users: User[] }) {
 }
 `;
 
-const VIOLATING_DIFF = `diff --git a/${VIOLATING_FILE_PATH} b/${VIOLATING_FILE_PATH}
-new file mode 100644
-index 0000000..1111111
---- /dev/null
-+++ b/${VIOLATING_FILE_PATH}
-@@ -0,0 +1,13 @@
-${VIOLATING_FILE.split('\n')
-  .map((l) => `+${l}`)
-  .join('\n')}`;
-
 /** Constructor stubs — the review path never touches git, and no harness is created (ctx carries no
  *  streaming identity), so these are inert placeholders that satisfy the DI signature. */
 const gitStub = {
@@ -82,6 +73,10 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
   const artifactDir = '/context/artifacts/framework-lens/live-run';
   let stage: AutoFixStage;
   let worktree: string;
+  // The reviewer now pulls the diff itself via `git diff <range>` (it is no longer inlined), so the
+  // worktree is a real git repo and the violating file lands as its OWN commit against a base — the
+  // range the lens diffs. Reproduces the production per-thread `sectionStartSha..HEAD` scoping.
+  let gitRange: string;
   const rawReports: string[] = [];
 
   beforeAll(async () => {
@@ -102,10 +97,25 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
 
     stage = new AutoFixStage(engine, gitStub, harnessStub);
 
-    // A real on-disk cwd holding the violating file so the reviewer may Read it for context.
+    // A real on-disk GIT repo so the reviewer can pull the change set with `git diff <range>` (and Read
+    // the file for context). Base commit = a repo without UserList; the violating file is a second commit,
+    // and `gitRange` (base..HEAD) is exactly what the lens diffs — the production per-thread scoping.
     worktree = mkdtempSync(join(tmpdir(), 'atlas-fw-wt-'));
+    const git = (...args: string[]): void => {
+      execFileSync('git', args, { cwd: worktree });
+    };
+    git('init', '-q');
+    git('config', 'user.email', 'test@atlas.local');
+    git('config', 'user.name', 'Atlas Test');
+    writeFileSync(join(worktree, 'README.md'), '# fixture repo\n', 'utf8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'base');
+    const baseSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: worktree }).toString().trim();
     mkdirSync(join(worktree, 'src'), { recursive: true });
     writeFileSync(join(worktree, VIOLATING_FILE_PATH), VIOLATING_FILE, 'utf8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'add UserList');
+    gitRange = `${baseSha}..HEAD`;
     mkdirSync(artifactDir, { recursive: true });
   });
 
@@ -118,7 +128,7 @@ describeLive('AutoFixStage framework lens — LIVE model-backed review turn', ()
       const ctx: AutoFixContext = {
         worktreePath: worktree,
         sandboxKey: { orgId: 'live-test', repoId: 'atlas', jobId: 'framework-lens', type: 'autofix' },
-        diff: VIOLATING_DIFF,
+        gitRange,
         changedFiles: [VIOLATING_FILE_PATH],
         intent: 'Add a UserList component that renders the given users as a list.',
         label: 'frontend',

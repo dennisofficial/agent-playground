@@ -15,7 +15,7 @@ SVC_DIR="${ATLAS_SUPERVISOR_DIR:-/.atlas/supervisor}"
 mkdir -p "$SVC_DIR" 2>/dev/null || true
 
 usage() {
-  echo "usage: atlas-svc run --name <id> [--port <n>] [--no-expose] -- <cmd...>" >&2
+  echo "usage: atlas-svc run --name <id> [--port <n>] [--expose] -- <cmd...>" >&2
   echo "       atlas-svc logs <id> [-n N] [-f]" >&2
   echo "       atlas-svc ps" >&2
   echo "       atlas-svc stop <id>" >&2
@@ -33,19 +33,39 @@ json_str() {
 }
 
 pgid_of() { sed -n 's/.*"pgid":[[:space:]]*\([0-9]*\).*/\1/p' "$1" 2>/dev/null; }
+port_of() { sed -n 's/.*"port":[[:space:]]*\([^,}]*\).*/\1/p' "$1" 2>/dev/null; }
+expose_of() { sed -n 's/.*"expose":[[:space:]]*\(true\|false\).*/\1/p' "$1" 2>/dev/null; }
 
 is_alive() { # <pgid> — a process group is alive if kill -0 on the negative pgid succeeds.
   local pgid="$1"
   [ -n "$pgid" ] && kill -0 "-$pgid" 2>/dev/null
 }
 
+update_marker_metadata() { # <marker> <port-json> <expose-json>
+  local marker="$1" port_json="$2" expose_json="$3" tmp line
+  line="$(<"$marker")" || return 1
+  if [[ "$line" != *"}" ]]; then return 1; fi
+  if [[ "$line" == *'"port":'* ]]; then
+    line="$(printf '%s\n' "$line" | sed -E 's/"port":[[:space:]]*[^,}]*/"port":'"$port_json"'/')"
+  else
+    line="${line%\}},\"port\":$port_json}"
+  fi
+  if [[ "$line" == *'"expose":'* ]]; then
+    line="$(printf '%s\n' "$line" | sed -E 's/"expose":[[:space:]]*(true|false)/"expose":'"$expose_json"'/')"
+  else
+    line="${line%\}},\"expose\":$expose_json}"
+  fi
+  tmp="$marker.tmp.$$"
+  printf '%s\n' "$line" > "$tmp" && mv "$tmp" "$marker"
+}
+
 cmd_run() {
-  local name="" port="" no_expose=0
+  local name="" port="" expose=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="${2:-}"; shift 2 || { usage; return 2; } ;;
       --port) port="${2:-}"; shift 2 || { usage; return 2; } ;;
-      --no-expose) no_expose=1; shift ;;
+      --expose) expose=1; shift ;;
       --) shift; break ;;
       *) echo "atlas-svc run: unexpected arg '$1' (did you forget '--' before the command?)" >&2; return 2 ;;
     esac
@@ -58,19 +78,40 @@ cmd_run() {
     if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
       echo "atlas-svc: --port must be an integer 1-65535" >&2; return 2
     fi
-    if [ "$no_expose" = 0 ] && ! [[ "$name" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,50}[a-z0-9])$ ]]; then
-      echo "atlas-svc: exposed --port service names must be DNS-safe: [a-z0-9-], 1-52 chars, start/end alphanumeric (or pass --no-expose)" >&2
+  fi
+  if [ "$expose" = 1 ]; then
+    if [ -z "$port" ]; then
+      echo "atlas-svc: --expose requires --port <n>" >&2; return 2
+    fi
+    if ! [[ "$name" =~ ^([a-z0-9]|[a-z0-9][a-z0-9-]{0,50}[a-z0-9])$ ]]; then
+      echo "atlas-svc: exposed service names must be DNS-safe: [a-z0-9-], 1-52 chars, start/end alphanumeric" >&2
       return 2
     fi
   fi
   local marker="$SVC_DIR/$name.json" log="$SVC_DIR/$name.log"
   local cmd="$*"
+  local requested_port="${port:-null}" requested_expose
+  requested_expose="$([ "$expose" = 1 ] && echo true || echo false)"
 
-  # Idempotent: if a process is already alive under this name, do nothing (probe-first — never double-start).
+  # Idempotent: if a process is already alive under this name, never double-start; reconcile marker metadata
+  # so a validation-started internal service can later be promoted with --expose without a restart.
   if [ -f "$marker" ]; then
     local existing; existing="$(pgid_of "$marker")"
     if is_alive "$existing"; then
-      echo "atlas-svc: '$name' is already running (pgid $existing) — logs: atlas-svc logs $name"
+      local existing_port existing_expose
+      existing_port="$(port_of "$marker")"
+      existing_expose="$(expose_of "$marker")"
+      existing_port="${existing_port:-null}"
+      existing_expose="${existing_expose:-false}"
+      if [ "$existing_port" != "$requested_port" ] || [ "$existing_expose" != "$requested_expose" ]; then
+        update_marker_metadata "$marker" "$requested_port" "$requested_expose" || {
+          echo "atlas-svc: '$name' is already running (pgid $existing), but marker metadata could not be updated" >&2
+          return 1
+        }
+        echo "atlas-svc: '$name' is already running (pgid $existing) — updated port/exposure metadata; logs: atlas-svc logs $name"
+      else
+        echo "atlas-svc: '$name' is already running (pgid $existing) — logs: atlas-svc logs $name"
+      fi
       return 0
     fi
   fi
@@ -81,12 +122,12 @@ cmd_run() {
   setsid bash -lc "$cmd" >>"$log" 2>&1 &
   local pid=$!   # for a setsid leader, the process-group id equals this pid.
 
-  # `port` defaults to null (not an HTTP service); `expose` defaults to true unless --no-expose. Old
-  # markers without these fields still parse — the backend treats a missing port as null / missing expose
-  # as true.
+  # `port` defaults to null; `expose` defaults to FALSE unless --expose is passed — secure-by-default,
+  # public exposure is opt-in. Old markers without these fields still parse — the backend treats a
+  # missing/absent expose as NOT exposed.
   printf '{"name":%s,"cmd":%s,"pid":%d,"pgid":%d,"startedAt":"%s","port":%s,"expose":%s}\n' \
     "$(json_str "$name")" "$(json_str "$cmd")" "$pid" "$pid" "$(date -u +%FT%TZ)" \
-    "${port:-null}" "$([ "$no_expose" = 1 ] && echo false || echo true)" > "$marker"
+    "$requested_port" "$requested_expose" > "$marker"
   echo "atlas-svc: started '$name' (pid $pid) — tail with: atlas-svc logs -f $name"
 }
 
