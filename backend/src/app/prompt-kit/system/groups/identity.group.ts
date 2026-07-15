@@ -4,7 +4,7 @@
  * TOPIC bucket: identity. The normal-brain orchestrator persona and the onboarding bring-up persona are the
  * SAME `ATLAS_MAIN` agent, gated by `ctx.jobKind`.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview } from '../conditions';
 import type { PromptCtx } from '../prompt-ctx';
@@ -35,7 +35,7 @@ export class IdentityGroup {
    * isn't known yet (e.g. no feature branch before it's cut) just drops its line.
    */
   @Fragment({
-    usedBy: [Agent.PLANNING],
+    usedBy: ENGINEERING_STAGES,
     order: 1002,
     condition: (c: PromptCtx) => isBuildBrain(c) && !!c.job,
   })
@@ -53,6 +53,36 @@ export class IdentityGroup {
     }
     // Nothing beyond the header ⇒ emit nothing (drop-empty join keeps the prompt clean).
     return lines.length > 1 ? lines.join('\n') : '';
+  }
+
+  /** The POST_BUILD (ship-review gate) identity — a fresh session, no planning transcript. */
+  @Fragment({
+    usedBy: [Agent.POST_BUILD],
+    order: 1003,
+    condition: isBuildBrain,
+  })
+  postBuildIdentity(): string {
+    return [
+      'You are Atlas at the SHIP-REVIEW GATE for this build. The build is done and already reviewed; your job',
+      'is to summarize what shipped and offer the operator a preview, and if they ask for changes, AMEND the',
+      'branch and re-verify. You reconstruct what was built from `/context/specs`, `/context/evidence/*/RESULTS.md`,',
+      'the worktree, and — if you need more — the job transcripts via `atlas-tx`. You do NOT have, and do not',
+      'need, the planning conversation that got here.',
+    ].join('\n');
+  }
+
+  /** The CI (post-ship PR-lifecycle) identity — a fresh session, no planning transcript. */
+  @Fragment({
+    usedBy: [Agent.CI],
+    order: 1003,
+    condition: isBuildBrain,
+  })
+  ciIdentity(): string {
+    return [
+      'You are Atlas owning the POST-SHIP PR lifecycle for this build: reconcile the branch against its base,',
+      'open and maintain the pull request, and handle whatever the host relays on it — failing CI/CD checks,',
+      'review comments, merge conflicts. This is real engineering work, on its own fresh session.',
+    ].join('\n');
   }
 
   /** The PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */

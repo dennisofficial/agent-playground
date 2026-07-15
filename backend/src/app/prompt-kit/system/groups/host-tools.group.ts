@@ -5,7 +5,7 @@
  * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
  * `TOOL_QUALIFICATION_NOTE` catalog block.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   isAtlasRepo,
@@ -70,7 +70,7 @@ export class HostToolsGroup {
 
   /** The atlas-prod host tools — ONLY present on the Atlas repo itself. The 7 read tools mirror the
    *  prod-diagnostics reader; propose_prod_write is a STRUCTURALLY-GATED write (propose-only). */
-  @Fragment({ usedBy: [Agent.PLANNING], order: 1044, condition: isAtlasRepo })
+  @Fragment({ usedBy: ENGINEERING_STAGES, order: 1044, condition: isAtlasRepo })
   atlasProdTools(): string {
     return [
       `You are on the Atlas repo itself, so you ALSO have the atlas-prod tools — read-only production diagnostics plus a STRUCTURALLY-GATED prod DB write. Call the mcp__${ATLAS_PROD_BRIDGE_NAME}__ form:`,
@@ -92,7 +92,7 @@ export class HostToolsGroup {
    * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
    */
   @Fragment({
-    usedBy: [Agent.PLANNING],
+    usedBy: ENGINEERING_STAGES,
     order: 1045,
     condition: notOnboarding,
   })
@@ -102,7 +102,7 @@ export class HostToolsGroup {
 
   /** The flat top-level calling convention. */
   @Fragment({
-    usedBy: [Agent.PLANNING],
+    usedBy: ENGINEERING_STAGES,
     order: 1050,
     condition: notOnboarding,
   })
@@ -118,7 +118,7 @@ export class HostToolsGroup {
 
   /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
   @Fragment({
-    usedBy: [Agent.PLANNING],
+    usedBy: ENGINEERING_STAGES,
     order: 1060,
     condition: isBuildBrain,
   })

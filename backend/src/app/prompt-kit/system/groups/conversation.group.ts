@@ -5,7 +5,7 @@
  *
  * TOPIC bucket: the planning conversation. Interpolates `DECISION_CLASS_IDS` exactly as the source did.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import { DECISION_CLASS_IDS } from '../../../domain';
@@ -15,7 +15,7 @@ export class ConversationGroup {
   /** How to read harness-injected XML tags — emitted right AFTER the identity in BOTH modes (normal
    *  identity is order 1000, onboarding identity 2000), so the prompt still opens with "You are Atlas". */
   @Fragment({
-    usedBy: [Agent.PLANNING],
+    usedBy: ENGINEERING_STAGES,
     order: 1005,
     condition: notOnboarding,
   })
