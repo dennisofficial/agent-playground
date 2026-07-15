@@ -1167,6 +1167,30 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     return { jobId: job.id };
   }
 
+  it('runningJobs skips future retry parks so boot resume does not beat the cooldown clock', async () => {
+    const ready = await seedBareJob();
+    const due = await seedBareJob();
+    const cooling = await seedBareJob();
+    await store.setSessionResume(due.jobId, new Date(Date.now() - 1_000).toISOString(), {
+      lane: 'build',
+      reason: 'retry due',
+      resetSource: 'usage_api',
+      kind: 'retry',
+    });
+    await store.setSessionResume(cooling.jobId, new Date(Date.now() + 60_000).toISOString(), {
+      lane: 'build',
+      reason: 'retry cooling',
+      resetSource: 'usage_api',
+      kind: 'retry',
+    });
+
+    const ids = new Set((await store.runningJobs()).map((j) => j.id));
+
+    expect(ids.has(ready.jobId)).toBe(true);
+    expect(ids.has(due.jobId)).toBe(true);
+    expect(ids.has(cooling.jobId)).toBe(false);
+  });
+
   it('claimAuthRetryAttempt is a CAS bounded by the cap (increments up to cap, then refuses)', async () => {
     const { jobId } = await seedBareJob();
     expect(await store.claimAuthRetryAttempt(jobId, 2)).toEqual({ ok: true, used: 1 });

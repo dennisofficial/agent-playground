@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -231,9 +231,17 @@ export class DriverStoreService {
   }
 
   /** Every thread `running` AND not halted — the boot-reconciliation worklist. The `halt IS NULL` filter is
-   *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can). */
+   *  the primary boot guard: a halted-but-`running` job must not be auto-re-driven (only retry/resume can).
+   *  Also leave future `session_resume_at` retry parks alone: the session-resume sweep owns those clocks, and
+   *  boot `resume()` must not clear/re-drive a still-cooling host retry early. */
   async runningJobs(): Promise<Job[]> {
-    const rows = await this.jobs.find({ where: { status: 'running', halt: IsNull() } });
+    const rows = await this.jobs.find({
+      where: {
+        status: 'running',
+        halt: IsNull(),
+        session_resume_at: Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`),
+      },
+    });
     return rows.map(toJob);
   }
 
