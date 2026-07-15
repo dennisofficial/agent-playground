@@ -2361,14 +2361,21 @@ export class AgentSessionManager
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
   }
 
-  /** Which stage persona this turn runs as: a re-homed turn (post_build/ci) uses its thread's role; a plain
-   *  planning turn (no resumeThreadId) is PLANNING. onboarding/review remain PLANNING via jobKind conditions.
-   *  A missing/unreadable thread row falls back to PLANNING rather than failing the turn. */
-  private async resolvePromptAgent(stimulus: ChatStimulus): Promise<Agent> {
+  /** Which thread-kind registry key this turn runs as: a re-homed turn (post_build/ci) uses its thread's
+   *  role; a plain planning turn (no resumeThreadId) is 'planning'. onboarding/review remain 'planning' via
+   *  jobKind conditions. A missing/unreadable thread row falls back to 'planning' rather than failing the
+   *  turn. Single source for both the prompt persona (`resolvePromptAgent`) and any other per-stage lookup
+   *  (e.g. `threadKindSpec(...).reasoningEffort`) so they never drift apart. */
+  private async resolveStageKind(stimulus: ChatStimulus): Promise<string> {
     const stageRole = stimulus.resumeThreadId
       ? await this.driverStore.threadRole(stimulus.resumeThreadId).catch(() => null)
       : null;
-    return stageRole ? threadKindSpec(stageRole).agent : Agent.PLANNING;
+    return stageRole ?? 'planning';
+  }
+
+  /** Which stage persona this turn runs as (see `resolveStageKind`). */
+  private async resolvePromptAgent(stimulus: ChatStimulus): Promise<Agent> {
+    return threadKindSpec(await this.resolveStageKind(stimulus)).agent;
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -2853,7 +2860,8 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
-    const promptAgent = await this.resolvePromptAgent(stimulus);
+    const stageKind = await this.resolveStageKind(stimulus);
+    const promptAgent = threadKindSpec(stageKind).agent;
 
     const runArgs: RunEngineArgs = {
       engine: 'claude',
@@ -2883,8 +2891,8 @@ export class AgentSessionManager
         : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
-      ...(threadKindSpec('planning').reasoningEffort
-        ? { modelReasoningEffort: threadKindSpec('planning').reasoningEffort }
+      ...(threadKindSpec(stageKind).reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec(stageKind).reasoningEffort }
         : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
