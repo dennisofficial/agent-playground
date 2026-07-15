@@ -1898,8 +1898,9 @@ export class DriverStoreService {
   }
 
   /**
-   * Find (or lazily create) the job's `ci` thread group — the post-ship seam (d14). Created once the PR is
-   * recorded (`setPrReady`); starts with `session_id = null` (a fresh session, isolated from planning) and
+   * Find (or lazily create) the job's `ci` thread group — the post-ship seam (d14). Created just before the
+   * PR-ready state is published (`setPrReady`); starts with `session_id = null`
+   * (a fresh session, isolated from planning) and
    * sits idle (`ci` is a render-only, session-backed role — see `thread-kind/registry.ts`) until inbound
    * GitHub/CI events are routed to it. Once this thread exists, `StimulusStoreService.attachEventToJob`
    * (via `JobBootstrapService.ciThreadId`, a read-only lookup) stamps `lane=thread:<ciThreadId>` on the

@@ -1,9 +1,9 @@
 # Atlas v2 — detail & build history (NOT the canonical model)
 
 > **⚠️ The canonical model lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md) + [`../../../CLAUDE.md`](../../../CLAUDE.md) — read those first.**
-> The `jobs → threads → steps` shape described below was replaced by `jobs → thread_groups → threads → messages`
+> The `jobs → threads → steps` shape described below was replaced by `jobs → stages → threads → messages`
 > (`steps`/`build_legs`/`codex_reviews` retired) — see
-> [`../../../docs/adr/0008-first-class-thread-groups.md`](../../../docs/adr/0008-first-class-thread-groups.md) for the
+> [`../../../docs/adr/0008-first-class-stages.md`](../../../docs/adr/0008-first-class-stages.md) for the
 > current model and why it changed.
 > This file is a **dated build-history record**, kept for detail the canonical docs don't carry: the Docker
 > sandbox internals (§8), durability & session recovery (§9), and the R0–R6 web/SDK-as-brain redesign (§10).

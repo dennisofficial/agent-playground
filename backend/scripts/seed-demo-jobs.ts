@@ -201,7 +201,12 @@ type DemoThreadGroup = {
  *  master_review thread group — mirrors the job -> thread groups -> threads shape the migration collapsed onto. */
 const RICH_THREAD_GROUPS: DemoThreadGroup[] = [
   { id: threadGroupId(1), ordinal: 100, kind: 'planning', title: null },
-  { id: threadGroupId(2), ordinal: 200, kind: 'build', title: 'Presence + remote cursors' },
+  {
+    id: threadGroupId(2),
+    ordinal: 200,
+    kind: 'build',
+    title: 'Presence + remote cursors',
+  },
   { id: threadGroupId(3), ordinal: 300, kind: 'master_review', title: null },
 ];
 
@@ -224,21 +229,21 @@ const RICH_THREADS: DemoThread[] = [
   {
     id: threadId(2),
     thread_group_id: threadGroupId(2),
-    ordinal: 100,
+    ordinal: 200,
     role: 'builder',
     brief: 'Wire up presence websocket channel',
   },
   {
     id: threadId(3),
     thread_group_id: threadGroupId(2),
-    ordinal: 200,
+    ordinal: 300,
     role: 'builder',
     brief: 'Render remote cursors in the editor',
   },
   {
     id: threadId(4),
     thread_group_id: threadGroupId(3),
-    ordinal: 100,
+    ordinal: 400,
     role: 'master_review',
     brief: 'Master review of the full diff',
   },
@@ -382,12 +387,12 @@ const RICH_MESSAGES: DemoMessage[] = [
         'An AUTONOMOUS wake — no human sent this; the build driver woke you.',
         'You may investigate (read transcripts/code), post a diagnosis, request a missing secret, and' +
           ' retry_thread within budget — but you may NOT edit/push code or ship without the operator.',
-        'Use `atlas-tx` to inspect any lane\'s raw transcript.',
+        "Use `atlas-tx` to inspect any lane's raw transcript.",
         '',
         'The whole build finished and is parked at the ship gate — nothing is pushed yet. Review the',
-        'integrated result (the diff; any lane\'s transcript via `atlas-tx`), then post the operator a crisp',
+        "integrated result (the diff; any lane's transcript via `atlas-tx`), then post the operator a crisp",
         'summary of what shipped and any risks. You may investigate/report/request-secret/retry a lane; you',
-        'may NOT ship — the **Ship it** gate is the operator\'s.',
+        "may NOT ship — the **Ship it** gate is the operator's.",
         'master review outcome: all three threads merged clean; typecheck + vitest green.',
       ].join('\n'),
     },
@@ -448,15 +453,16 @@ async function upsertRichThreadGroups(ds: DataSource): Promise<void> {
     row.title = s.title;
     await threadGroups.save(row);
   }
-  console.log(`  seeded ${RICH_THREAD_GROUPS.length} thread groups on rich job`);
+  console.log(
+    `  seeded ${RICH_THREAD_GROUPS.length} thread groups on rich job`,
+  );
 }
 
 async function upsertRichThreads(ds: DataSource): Promise<void> {
   const threads = ds.getRepository(ThreadEntity);
+  await threads.delete({ job_id: RICH_JOB_ID });
   for (const t of RICH_THREADS) {
-    const row =
-      (await threads.findOne({ where: { id: t.id } })) ??
-      threads.create({ id: t.id });
+    const row = threads.create({ id: t.id });
     row.job_id = RICH_JOB_ID;
     row.org_id = ORG_ID;
     row.thread_group_id = t.thread_group_id;
@@ -481,7 +487,9 @@ async function upsertRichTasks(ds: DataSource): Promise<void> {
     row.title = t.title;
     await tasks.save(row);
   }
-  console.log(`  seeded ${RICH_TASKS.length} tasks on rich job's build thread group`);
+  console.log(
+    `  seeded ${RICH_TASKS.length} tasks on rich job's build thread group`,
+  );
 }
 
 async function upsertRichMessages(ds: DataSource): Promise<void> {

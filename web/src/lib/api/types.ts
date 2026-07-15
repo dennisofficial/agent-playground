@@ -614,7 +614,7 @@ export interface PipelineJob {
   /** The plan-review (Codex) thread — a first-class navigator row that opens the `codex-review:<jobId>`
    *  lane (the review dialogue Main communicates with). Null when no review has run. */
   planReview: { status: string; defaultFooter?: LaneDefaultFooter } | null;
-  /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
+  /** The opened PR (ARTIFACTS), or null until the PR-tail thread group opens one. */
   prUrl: string | null;
   prNumber: number | null;
   /** Observed PR lifecycle (`jobs.pr_state`) — same source as the sidebar glyph; null until a PR exists. */

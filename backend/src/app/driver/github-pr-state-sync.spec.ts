@@ -41,6 +41,8 @@ describe('GithubPrStateSync.onPrOpened', () => {
       stimStore.findOwningJobByBranch as ReturnType<typeof vi.fn>
     ).mockResolvedValue({
       id: 'job-1',
+      org_id: 'T1',
+      decision_record_id: null,
       pr_number: null,
     });
 
@@ -61,6 +63,18 @@ describe('GithubPrStateSync.onPrOpened', () => {
       'job-1',
       'https://github.com/o/r/pull/9',
       9,
+    );
+    expect(driverStore.ensureCiThread).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      orgId: 'T1',
+      decisionRecordId: null,
+    });
+    expect(
+      (driverStore.ensureCiThread as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      (driverStore.setPrReady as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
     );
   });
 
@@ -178,6 +192,8 @@ describe('GithubPrStateSync.dispatch', () => {
       stimStore.findOwningJobByBranch as ReturnType<typeof vi.fn>
     ).mockResolvedValue({
       id: 'job-1',
+      org_id: 'T1',
+      decision_record_id: null,
       pr_number: null,
     });
     const delta: PrStateDelta = {
@@ -196,6 +212,13 @@ describe('GithubPrStateSync.dispatch', () => {
       'job-1',
       'https://github.com/o/r/pull/9',
       9,
+    );
+    expect(
+      (driverStore.ensureCiThread as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      (driverStore.setPrReady as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
     );
   });
 

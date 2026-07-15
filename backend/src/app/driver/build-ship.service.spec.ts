@@ -152,6 +152,18 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       'https://github.com/acme/widget/pull/7',
       7,
     );
+    expect(store.ensureCiThread).toHaveBeenCalledWith({
+      jobId: 'j1',
+      orgId: 'o1',
+      decisionRecordId: null,
+    });
+    expect(
+      (store.ensureCiThread as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      (store.setPrReady as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
+    );
     expect(store.setJobStatus).not.toHaveBeenCalled();
     expect(result).toEqual({
       opened: true,
