@@ -466,6 +466,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
     backendBuilderId: string;
     frontendBuilderId: string;
     taskId: string;
+    taskOrdinalId: string;
   }> {
     const job = await jobs.save(
       jobs.create({
@@ -568,6 +569,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       backendBuilderId: backendBuilder.id,
       frontendBuilderId: frontendBuilder.id,
       taskId: task.id,
+      taskOrdinalId: String(task.ordinal),
     };
   }
 
@@ -644,12 +646,14 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       expect(leg1.thread_group_id).toBe(seed.backendThreadGroupId);
       expect(leg2.thread_group_id).toBe(seed.backendThreadGroupId); // same thread group — the rotation appended, not re-grouped
       expect(leg2.handoff_in).toContain('finish the return type'); // the leg-1 handoff carried forward
-      // The thread group's task checklist is thread-group-owned, so BOTH legs read the SAME list across the rotation.
+      // The thread group's task checklist is thread-group-owned, so BOTH legs read the SAME list across the
+      // rotation. `tasksForThreadGroup` returns raw rows (uuid PK); `getThreadTasks` maps to `TaskItem`
+      // whose surfaced id is the short per-stage #N (the row's dense `ordinal`), not the uuid.
       const threadGroupTasks = await store.tasksForThreadGroup(seed.backendThreadGroupId);
       expect(threadGroupTasks.map((t) => t.id)).toEqual([seed.taskId]);
       const leg1Tasks = await store.getThreadTasks(leg1.id);
       const leg2Tasks = await store.getThreadTasks(leg2.id);
-      expect(leg2Tasks.map((t) => t.id)).toEqual([seed.taskId]);
+      expect(leg2Tasks.map((t) => t.id)).toEqual([seed.taskOrdinalId]);
       expect(leg2Tasks).toEqual(leg1Tasks); // identical checklist — the same thread_group_id, not per-leg
 
       // ── 2b: review_agent + review_fix are thread group children of the LAST builder, run ONCE over the diff ──

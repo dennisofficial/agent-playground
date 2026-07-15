@@ -388,13 +388,23 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         tasks: Array<{ id: string; subject: string; status: string }>;
       }>;
     };
-    // Mapped through `toTaskItem` — no `description`/`activeForm`/`blockedBy` keys since none were supplied.
+    // Mapped through `toTaskItem` — the surfaced id is the short per-stage #N (the row's dense `ordinal`),
+    // not the uuid PK; no `description`/`activeForm`/`blockedBy` keys since none were supplied.
     expect(state.threadGroups[0].tasks).toEqual([
-      { id: task.id, subject: 'Write the migration', status: 'pending' },
+      {
+        id: String(task.ordinal),
+        subject: 'Write the migration',
+        status: 'pending',
+      },
     ]);
+    expect(task.ordinal).toBe(1); // first task in the thread group → dense #1
     // The thread → thread group → tasks join returns the SAME list (the fresh Leg reads it via its thread group).
     expect(await store.getThreadTasks(thread.id)).toEqual([
-      { id: task.id, subject: 'Write the migration', status: 'pending' },
+      {
+        id: String(task.ordinal),
+        subject: 'Write the migration',
+        status: 'pending',
+      },
     ]);
   });
 
@@ -445,9 +455,9 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     const dropped = await store.dropOpenThreadTasks(thread.id);
     expect(dropped).toBe(2);
     expect(await store.getThreadTasks(thread.id)).toEqual([
-      { id: t1.id, subject: 'Done work', status: 'completed' },
-      { id: t2.id, subject: 'Forgotten tick', status: 'dropped' },
-      { id: t3.id, subject: 'Never started', status: 'dropped' },
+      { id: String(t1.ordinal), subject: 'Done work', status: 'completed' },
+      { id: String(t2.ordinal), subject: 'Forgotten tick', status: 'dropped' },
+      { id: String(t3.ordinal), subject: 'Never started', status: 'dropped' },
     ]);
 
     // Idempotent: a second pass finds nothing open, returns 0, and writes nothing new.

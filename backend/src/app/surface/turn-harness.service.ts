@@ -177,12 +177,14 @@ export class MessageBlockSink implements BlockSink {
  * narrow port (mirrors {@link BlockSink}) so the bridge handler factory ({@link makeTaskTools}) can do
  * direct CRUD on the thread-group-owned `tasks` table WITHOUT depending on the driver module (and the cycle that
  * would create, since the driver already depends on {@link TurnHarnessFactory}). ONE durable id space: the
- * uuid `createTask` returns is the SAME id `readTasks` reports, so any of them is a valid `updateTask` key
- * (no per-session `#N` reconcile). Implemented by {@link EntityTaskEventSink}.
+ * short per-stage `#N` (the row's `ordinal`) `createTask` returns is the SAME id `readTasks` reports, so any
+ * of them is a valid `updateTask` key (no per-session reconcile). The uuid PK stays the internal row
+ * identity / FK target. Implemented by {@link EntityTaskEventSink}.
  */
 export interface TaskEventSink {
-  /** INSERT one task row into the scope's thread group; returns its durable uuid. Throws if the scope's thread group
-   *  can't be resolved (the caller has already validated the input). */
+  /** INSERT one task row into the scope's thread group; returns its short per-stage `#N` id (the row's dense
+   *  `ordinal`). Throws if the scope's thread group can't be resolved (the caller has already validated the
+   *  input). */
   createTask(
     scope: TaskScope,
     input: Record<string, unknown>,
@@ -200,8 +202,9 @@ export interface TaskEventSink {
 export const TASK_EVENT_SINK = Symbol('TASK_EVENT_SINK');
 
 /**
- * The default {@link TaskEventSink} — direct uuid-keyed CRUD on the thread-group-owned `tasks` rows (d6). The
- * task-tool id space IS the `TaskEntity` uuid, so no session-scoped fold/reconcile is needed: a
+ * The default {@link TaskEventSink} — direct CRUD on the thread-group-owned `tasks` rows (d6). The task-tool
+ * id space is the row's short per-stage `#N` (`ordinal`), resolved to a row by (thread_group_id, ordinal);
+ * the uuid PK is kept only for the actual delete/update WHERE. No session-scoped fold/reconcile is needed: a
  * `task_update` by an id sourced from `task_list` resolves the same row it names. Reads hit the DB fresh
  * every call, so a builder-leg rotation (a fresh session with an empty in-memory store) never loses the
  * carried checklist — the bug this replaced.
@@ -249,7 +252,7 @@ export class EntityTaskEventSink implements TaskEventSink {
       if (!resolved)
         throw new Error(`task scope not found: ${scope.kind}:${scope.id}`);
       const { threadGroupId, orgId } = resolved;
-      const ordinal = (await this.maxTaskOrdinal(threadGroupId)) + 10;
+      const ordinal = (await this.maxTaskOrdinal(threadGroupId)) + 1;
       const blockedBy = await this.validBlockedBy(
         threadGroupId,
         mergeBlockedBy([], input),
@@ -266,8 +269,8 @@ export class EntityTaskEventSink implements TaskEventSink {
           blocked_by: blockedBy,
         }),
       );
-      await this.applyInverseEdges(threadGroupId, created.id, input);
-      return { id: created.id };
+      await this.applyInverseEdges(threadGroupId, String(created.ordinal), input);
+      return { id: String(created.ordinal) };
     });
   }
 
@@ -279,18 +282,22 @@ export class EntityTaskEventSink implements TaskEventSink {
       const resolved = await this.resolveThreadGroupId(scope);
       if (!resolved) return { ok: false, error: 'scope not found' };
       const { threadGroupId } = resolved;
-      const taskId = String(input.taskId ?? '').trim();
+      // `taskId` is now the short per-stage #N (the row's `ordinal`), not the uuid PK — resolve the target
+      // by (thread_group_id, ordinal), then keep every real delete/update WHERE on the uuid PK.
+      const ordinal = Number(String(input.taskId ?? '').trim());
+      if (!Number.isInteger(ordinal))
+        return { ok: false, error: `invalid taskId ${String(input.taskId)}` };
       const row = await this.tasks.findOne({
-        where: { id: taskId, thread_group_id: threadGroupId },
+        where: { ordinal, thread_group_id: threadGroupId },
       });
-      if (!row) return { ok: false, error: `task ${taskId} not found` };
+      if (!row) return { ok: false, error: `task ${ordinal} not found` };
 
-      // A deletion REMOVES the row. Keep sibling edges in the same durable id space too: old fold/reconcile
+      // A deletion REMOVES the row. Keep sibling edges in the same #N id space too: old fold/reconcile
       // dropped references to rows that no longer existed, and `task_list` should not report a deleted id as
       // a blocker.
       if (input.status === 'deleted') {
         await this.tasks.delete({ id: row.id });
-        await this.removeBlockedByReference(threadGroupId, row.id);
+        await this.removeBlockedByReference(threadGroupId, String(row.ordinal));
         return { ok: true };
       }
 
@@ -304,12 +311,12 @@ export class EntityTaskEventSink implements TaskEventSink {
         patch.blocked_by = await this.validBlockedBy(
           threadGroupId,
           mergeBlockedBy(row.blocked_by ?? [], input),
-          row.id,
+          String(row.ordinal),
         );
       if (Object.keys(patch).length)
         await this.tasks.update({ id: row.id }, patch);
 
-      await this.applyInverseEdges(threadGroupId, row.id, input);
+      await this.applyInverseEdges(threadGroupId, String(row.ordinal), input);
       return { ok: true };
     });
   }
@@ -346,16 +353,18 @@ export class EntityTaskEventSink implements TaskEventSink {
   }
 
   /** Apply the INVERSE dependency edges (`addBlocks`/`removeBlocks`: "this task blocks X") onto each named
-   *  target row's `blocked_by`. A target that isn't a row in THIS thread group is silently skipped (mirrors the
-   *  old fold's behavior — no dangling edges). */
+   *  target row's `blocked_by`. `targetId`/`sourceId` are short #N (ordinal) ids; a target that isn't a row
+   *  in THIS thread group is silently skipped (mirrors the old fold's behavior — no dangling edges). */
   private async applyInverseEdges(
     threadGroupId: string,
     sourceId: string,
     input: Record<string, unknown>,
   ): Promise<void> {
     for (const { targetId, op } of inverseEdgeOps(input)) {
+      const targetOrdinal = Number(targetId);
+      if (!Number.isInteger(targetOrdinal)) continue;
       const target = await this.tasks.findOne({
-        where: { id: targetId, thread_group_id: threadGroupId },
+        where: { ordinal: targetOrdinal, thread_group_id: threadGroupId },
       });
       if (!target) continue;
       await this.tasks.update(
@@ -365,8 +374,8 @@ export class EntityTaskEventSink implements TaskEventSink {
     }
   }
 
-  /** Keep `blocked_by` in the same thread-group-owned uuid id space as the rows themselves. Unknown ids are
-   *  dropped instead of being persisted as dangling blockers. */
+  /** Keep `blocked_by` in the same thread-group-owned #N (ordinal) id space as the rows themselves. Unknown
+   *  ids are dropped instead of being persisted as dangling blockers. */
   private async validBlockedBy(
     threadGroupId: string,
     ids: string[],
@@ -376,9 +385,9 @@ export class EntityTaskEventSink implements TaskEventSink {
     if (unique.length === 0) return [];
     const rows = await this.tasks.find({
       where: { thread_group_id: threadGroupId },
-      select: { id: true },
+      select: { ordinal: true },
     });
-    const valid = new Set(rows.map((row) => row.id));
+    const valid = new Set(rows.map((row) => String(row.ordinal)));
     return unique.filter((id) => valid.has(id));
   }
 
@@ -421,7 +430,7 @@ function mapTaskStatus(
  *  `DriverStoreService`'s own copy — kept local to avoid a cross-module dependency on the driver). */
 function toTaskItem(row: TaskEntity): TaskItem {
   return {
-    id: row.id,
+    id: String(row.ordinal),
     subject: row.title,
     status: row.status as TaskItem['status'],
     ...(row.brief != null ? { description: row.brief } : {}),

@@ -492,7 +492,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   });
 });
 
-describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tasks rows', () => {
+describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned tasks rows', () => {
   /** A minimal in-memory `tasks` table stand-in, keyed by row id. Honors the `thread_group_id` filter on
    *  find/findOne and ordinal ordering on find, so the sink's queries behave as they would against PG. */
   function fakeTasksRepo(
@@ -530,10 +530,11 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
       ]),
     );
     let nextId = 100;
-    let maxOrdinal = seed.reduce((m, r) => Math.max(m, r.ordinal ?? 10), 0);
     const matches = (row: Row, where: Partial<Row> = {}) =>
       (where.id === undefined || row.id === where.id) &&
-      (where.thread_group_id === undefined || row.thread_group_id === where.thread_group_id);
+      (where.thread_group_id === undefined ||
+        row.thread_group_id === where.thread_group_id) &&
+      (where.ordinal === undefined || row.ordinal === where.ordinal);
     return {
       rows,
       find: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) =>
@@ -549,7 +550,6 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
       save: vi.fn(async (partial: Record<string, unknown>) => {
         const id = String(nextId++);
         const row = { id, ...partial } as Row;
-        maxOrdinal = Math.max(maxOrdinal, row.ordinal);
         rows.set(id, row);
         return row;
       }),
@@ -564,7 +564,16 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
       }),
       createQueryBuilder: () => ({
         select: () => ({
-          where: () => ({ getRawOne: async () => ({ max: maxOrdinal }) }),
+          where: () => ({
+            // Mirror the real `MAX(ordinal)` over CURRENT rows — recomputed each call so a delete of the
+            // highest #N lowers the max (and the next create reuses that number).
+            getRawOne: async () => ({
+              max: [...rows.values()].reduce(
+                (m, r) => Math.max(m, r.ordinal),
+                0,
+              ),
+            }),
+          }),
         }),
       }),
     };
@@ -583,44 +592,56 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
   };
   const scope = { kind: 'thread' as const, id: 'th1' };
 
-  it('createTask inserts a gap-numbered row and returns its durable uuid; updateTask by that id hits the SAME row', async () => {
+  /** Find a stored row by its per-stage ordinal (the #N the tool surface now uses as the id). */
+  const byOrdinal = (
+    tasks: ReturnType<typeof fakeTasksRepo>,
+    ordinal: number,
+  ) => [...tasks.rows.values()].find((r) => r.ordinal === ordinal);
+
+  it('createTask returns the short per-stage #N (dense) and updateTask by that #N hits the SAME row', async () => {
     const tasks = fakeTasksRepo([]);
     const sink = threadSink(tasks);
 
-    const { id } = await sink.createTask(scope, { subject: 'Write tests' });
-    expect([...tasks.rows.values()]).toHaveLength(1);
-    expect(tasks.rows.get(id)?.title).toBe('Write tests');
-    expect(tasks.rows.get(id)?.status).toBe('pending');
+    const a = await sink.createTask(scope, { subject: 'A' });
+    const b = await sink.createTask(scope, { subject: 'B' });
+    expect(a.id).toBe('1');
+    expect(b.id).toBe('2');
+    expect([...tasks.rows.values()].map((r) => r.ordinal).sort()).toEqual([
+      1, 2,
+    ]);
 
-    // The id returned by createTask IS a valid updateTask key — no session #N reconcile.
+    // The #N returned by createTask IS a valid updateTask key — resolved by (thread_group_id, ordinal).
     const res = await sink.updateTask(scope, {
-      taskId: id,
+      taskId: '2',
       status: 'in_progress',
     });
     expect(res).toEqual({ ok: true });
-    expect(tasks.rows.get(id)?.status).toBe('in_progress');
+    expect(byOrdinal(tasks, 2)?.status).toBe('in_progress');
   });
 
-  it('updateTask with status:deleted removes the row; an unknown id returns an error', async () => {
-    const tasks = fakeTasksRepo([{ id: '1', title: 'a', status: 'pending' }]);
+  it('updateTask status:deleted removes the row; an unknown #N and a non-numeric taskId both error', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+    ]);
     const sink = threadSink(tasks);
 
     expect(
       await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
-    ).toEqual({
-      ok: true,
-    });
+    ).toEqual({ ok: true });
     expect([...tasks.rows.keys()]).toEqual([]);
 
     expect(
+      await sink.updateTask(scope, { taskId: '9', status: 'completed' }),
+    ).toEqual({ ok: false, error: 'task 9 not found' });
+    expect(
       await sink.updateTask(scope, { taskId: 'nope', status: 'completed' }),
-    ).toEqual({ ok: false, error: 'task nope not found' });
+    ).toEqual({ ok: false, error: 'invalid taskId nope' });
   });
 
-  it('readTasks reads the durable rows fresh, ordinal-ordered, mapped to TaskItem', async () => {
+  it('readTasks surfaces the ordinal as #N, ordinal-ordered, mapped to TaskItem', async () => {
     const tasks = fakeTasksRepo([
-      { id: '2', title: 'second', status: 'pending', ordinal: 20 },
-      { id: '1', title: 'first', status: 'completed', ordinal: 10 },
+      { id: 'u2', title: 'second', status: 'pending', ordinal: 2 },
+      { id: 'u1', title: 'first', status: 'completed', ordinal: 1 },
     ]);
     const sink = threadSink(tasks);
 
@@ -630,7 +651,23 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
     ]);
   });
 
-  it('serializes concurrent creates on one scope so they get distinct gap-numbered ordinals', async () => {
+  it('deleting the highest #N lets the next create reuse that number; lower ids are unaffected', async () => {
+    const tasks = fakeTasksRepo([]);
+    const sink = threadSink(tasks);
+    await sink.createTask(scope, { subject: 'A' }); // #1
+    await sink.createTask(scope, { subject: 'B' }); // #2
+
+    await sink.updateTask(scope, { taskId: '2', status: 'deleted' });
+    const c = await sink.createTask(scope, { subject: 'C' });
+    expect(c.id).toBe('2'); // reused — max(ordinal) is 1 again after the delete
+
+    expect(await sink.readTasks(scope)).toEqual([
+      { id: '1', subject: 'A', status: 'pending' },
+      { id: '2', subject: 'C', status: 'pending' },
+    ]);
+  });
+
+  it('serializes concurrent creates on one scope so they get distinct dense ordinals', async () => {
     const tasks = fakeTasksRepo([]);
     const sink = threadSink(tasks);
 
@@ -640,46 +677,53 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
     ]);
 
     const ordinals = [...tasks.rows.values()].map((r) => r.ordinal).sort();
-    expect(ordinals).toEqual([10, 20]); // no collision — the second create saw the first's write
+    expect(ordinals).toEqual([1, 2]); // no collision — the second create saw the first's write
   });
 
-  it('createTask applies addBlocks inverse edges onto the named target row', async () => {
-    const tasks = fakeTasksRepo([{ id: '1', title: 'a', status: 'pending' }]);
+  it('createTask stores blockedBy as #N (dropping unknown #N); addBlocks writes the source #N onto the target', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+    ]);
     const sink = threadSink(tasks);
 
-    const { id } = await sink.createTask(scope, {
+    const blocked = await sink.createTask(scope, {
+      subject: 'blocked',
+      blockedBy: ['1', '9'],
+    });
+    expect(blocked.id).toBe('2');
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual(['1']); // '9' dropped — no such row
+
+    // "this new task blocks #1" → #1 now waits on the new task's #N (not a uuid).
+    const blocker = await sink.createTask(scope, {
       subject: 'blocker',
       addBlocks: ['1'],
     });
-    // "this task blocks #1" → #1 now waits on the new row.
-    expect(tasks.rows.get('1')?.blocked_by).toEqual([id]);
+    expect(blocker.id).toBe('3');
+    expect(byOrdinal(tasks, 1)?.blocked_by).toEqual(['3']);
   });
 
-  it('createTask/updateTask drop blockedBy ids that are not rows in this thread group', async () => {
-    const tasks = fakeTasksRepo([{ id: '1', title: 'a', status: 'pending' }]);
+  it('updateTask recomputes blockedBy in #N space (add then remove)', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+      { id: 'u2', title: 'b', status: 'pending', ordinal: 2 },
+    ]);
     const sink = threadSink(tasks);
 
-    const { id } = await sink.createTask(scope, {
-      subject: 'blocked',
-      blockedBy: ['1', 'missing'],
-    });
-    expect(tasks.rows.get(id)?.blocked_by).toEqual(['1']);
+    await sink.updateTask(scope, { taskId: '2', addBlockedBy: ['1', '9'] });
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual(['1']); // '9' dropped
 
-    await sink.updateTask(scope, {
-      taskId: id,
-      addBlockedBy: ['missing-2'],
-      removeBlockedBy: ['1'],
-    });
-    expect(tasks.rows.get(id)?.blocked_by).toEqual([]);
+    await sink.updateTask(scope, { taskId: '2', removeBlockedBy: ['1'] });
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual([]);
   });
 
-  it('delete removes the deleted task id from sibling blockedBy edges', async () => {
+  it('delete removes the deleted #N from sibling blockedBy edges', async () => {
     const tasks = fakeTasksRepo([
-      { id: '1', title: 'blocker', status: 'pending' },
+      { id: 'u1', title: 'blocker', status: 'pending', ordinal: 1 },
       {
-        id: '2',
+        id: 'u2',
         title: 'blocked',
         status: 'pending',
+        ordinal: 2,
         blocked_by: ['1'],
       },
     ]);
@@ -688,6 +732,6 @@ describe('EntityTaskEventSink — direct uuid CRUD on the thread-group-owned tas
     expect(
       await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
     ).toEqual({ ok: true });
-    expect(tasks.rows.get('2')?.blocked_by).toEqual([]);
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual([]);
   });
 });

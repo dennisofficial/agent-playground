@@ -2003,7 +2003,8 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { session_id: sessionId });
   }
 
-  /** Insert a TASK into a thread group's checklist. Gap-numbers the ordinal within the thread group when omitted. */
+  /** Insert a TASK into a thread group's checklist. Dense-numbers the ordinal (which doubles as the short
+   *  `#N` task id) within the thread group when omitted. */
   async createTask(input: {
     threadGroupId: string;
     orgId: string;
@@ -2014,7 +2015,7 @@ export class DriverStoreService {
     blockedBy?: string[];
   }): Promise<TaskEntity> {
     const ordinal =
-      input.ordinal ?? (await this.maxTaskOrdinal(input.threadGroupId)) + ORDINAL_GAP;
+      input.ordinal ?? (await this.maxTaskOrdinal(input.threadGroupId)) + 1;
     return this.tasks.save(
       this.tasks.create({
         thread_group_id: input.threadGroupId,
@@ -2123,10 +2124,12 @@ function groupBy<T, K>(list: readonly T[], key: (item: T) => K): Map<K, T[]> {
   return out;
 }
 
-/** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape. */
+/** Map a thread-group-owned {@link TaskEntity} row back to the `TaskItem` wire/domain shape. The surfaced id
+ *  is the short per-stage `#N` (the row's dense `ordinal`), not the uuid PK — this is the read path that
+ *  feeds `getPipelineState`/`getThreadTasks` and, through them, the web sidebar. */
 function toTaskItem(row: TaskEntity): TaskItem {
   return {
-    id: row.id,
+    id: String(row.ordinal),
     subject: row.title,
     status: row.status as TaskItem['status'],
     ...(row.brief != null ? { description: row.brief } : {}),

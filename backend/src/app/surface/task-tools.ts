@@ -8,10 +8,10 @@ import type { TaskItem } from '../persistence/entities';
  * IDENTICALLY by Claude and Codex sessions (registered into the bridge `tools` map, which auto-exposes
  * them to both engines). They do direct CRUD on the stage-owned `tasks` rows via {@link TaskEventSink}.
  *
- * SINGLE DURABLE ID SPACE: the id `task_create` returns IS the `TaskEntity` row uuid, and the ids
- * `task_list`/`task_get` report are those SAME uuids — so an id from any of them is always a valid
- * `task_update` key. There is no per-session `#N` id space and no reconcile; reads hit the durable rows
- * fresh, so a builder-leg rotation (a new session) never loses the carried checklist.
+ * SINGLE DURABLE ID SPACE: the id `task_create` returns is the row's short per-stage `#N` (its dense
+ * `ordinal`, 1/2/3…), and the ids `task_list`/`task_get` report are those SAME `#N` — so an id from any of
+ * them is always a valid `task_update` key. The `TaskEntity` uuid PK stays the internal row identity; reads
+ * hit the durable rows fresh, so a builder-leg rotation (a new session) never loses the carried checklist.
  */
 export function makeTaskTools(
   sink: TaskEventSink,
@@ -26,7 +26,7 @@ export function makeTaskTools(
           error: 'subject is required (a one-line task title)',
         };
       const { id } = await sink.createTask(scope, args);
-      // Keep this exact wording — the web live overlay's `createdTaskId` regex parses the uuid out of it.
+      // Keep this exact wording — the web live overlay's `createdTaskId` regex parses the `#N` out of it.
       return `Task #${id} created: ${subject}`;
     },
     task_update: async (args) => {
