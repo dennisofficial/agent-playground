@@ -56,7 +56,7 @@ import type {
   TaskEventSink,
 } from '../surface';
 import { TurnHarnessFactory } from '../surface';
-import type { ToolBridgeOptions } from '../engine';
+import type { ToolBridgeOptions } from '@shared/engine';
 import type { CredentialResolver } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';

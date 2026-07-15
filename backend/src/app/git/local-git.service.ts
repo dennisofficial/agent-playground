@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { repoStateDir } from '../state-root';
+import { repoStateDir } from '@shared/state-root';
 import { gitAuthEnv } from './git-auth';
 import { readForbiddenPaths } from './hydration-sidecar';
 

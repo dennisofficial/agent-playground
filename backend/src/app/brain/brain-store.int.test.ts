@@ -4,7 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -18,7 +18,7 @@ import {
 import { JobTitler } from '../titling';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { BrainStoreService } from './brain-store.service';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 
 /**
  * Int test for the request-changes / RE-PROPOSE path (issue #0). A rejected plan flips the job back to

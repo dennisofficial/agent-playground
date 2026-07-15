@@ -5,7 +5,7 @@ import type { JobEntity } from '../persistence/entities';
 import type { ChatSurface, InboundChatMessage } from '../surface';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
-import type { ChatStimulus } from '../domain';
+import type { ChatStimulus } from '@shared/domain';
 
 function fakeThreads(initial: JobEntity[]): {
   repo: Repository<JobEntity>;

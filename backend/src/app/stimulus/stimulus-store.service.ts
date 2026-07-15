@@ -1,7 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
-import type { ChatStimulus, EventStimulus, SeedRow } from '../domain';
+import type { ChatStimulus, EventStimulus, SeedRow } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -10,7 +10,7 @@ import {
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
-import { fromExternal } from '../prompt-kit/message';
+import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 
 /**

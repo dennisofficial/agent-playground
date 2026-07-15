@@ -65,14 +65,18 @@ export const SEALED_DELIVERY_PRIMITIVES = [
 /**
  * Where a {@link SEALED_DELIVERY_PRIMITIVES} call is allowed to live — the single readable inventory of the
  * sanctioned seam. Paths are relative to the backend package root (`backend/`). Thread 5's lint scans the
- * source tree and fails CI on a sealed call outside these globs. `jit-host-executor.ts` lands in Thread 4;
- * listing it now keeps the inventory the source of truth the later threads target.
+ * source tree (`src/app/**` + `src/shared/**`) and fails CI on a sealed call outside these globs.
+ * `jit-host-executor.ts` lands in Thread 4; listing it now keeps the inventory the source of truth the later
+ * threads target. `prompt-kit` and `engine-core` moved under `src/shared/` in the `@shared` extraction — the
+ * globs point there now, not `src/app/`.
  */
 export const SANCTIONED_SEAM_GLOBS = [
-  'src/app/prompt-kit/**',
-  'src/app/engine/engine-core.ts',
+  'src/shared/prompt-kit/**',
+  'src/shared/engine/engine-core.ts',
   'src/app/brain/jit-host-executor.ts',
 ] as const;
+
+const SANCTIONED_SEAM_ROOTS = ['src/app/', 'src/shared/'] as const;
 
 /**
  * Boot-loud parity for the enforcement config itself (mirrors `validateFragments`): a misconfigured seam —
@@ -93,9 +97,9 @@ export function assertEnforcementSeamConfigured(): void {
     );
   }
   for (const glob of SANCTIONED_SEAM_GLOBS) {
-    if (!glob.startsWith('src/app/')) {
+    if (!SANCTIONED_SEAM_ROOTS.some((root) => glob.startsWith(root))) {
       throw new Error(
-        `enforcement seam misconfigured: sanctioned glob ${JSON.stringify(glob)} is not under src/app/ (the lint scans src/app/**)`,
+        `enforcement seam misconfigured: sanctioned glob ${JSON.stringify(glob)} is not under src/app/ or src/shared/ (the lint scans src/app/** + src/shared/**)`,
       );
     }
   }

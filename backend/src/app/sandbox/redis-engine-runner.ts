@@ -10,15 +10,15 @@ import {
   type EngineRunResult,
   type EngineRunnerPort,
   type RunEngineArgs,
-} from '../engine';
-import { dispatchToolRequest } from '../engine/tool-bridge-host';
-import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
+} from '@shared/engine';
+import { dispatchToolRequest } from '@shared/engine/tool-bridge-host';
+import { SPEC_VERBATIM_KEYS, pickKeys } from '@shared/engine/engine.types';
 import type {
   HostFrame,
   ToolBridgeOptions,
   ToolRequestFrame,
   TurnSpec,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import {
   REDIS_STREAM_PORT,
@@ -29,7 +29,7 @@ import {
   CredentialNeedsReauthError,
   CredentialRefreshService,
 } from '../onboarding/credential-refresh.service';
-import type { SessionEngine } from '../domain';
+import type { SessionEngine } from '@shared/domain';
 import {
   CONTAINER_ENGINE,
   type ContainerEngine,

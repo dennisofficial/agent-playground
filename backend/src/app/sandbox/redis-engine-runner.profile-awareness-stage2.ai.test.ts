@@ -37,8 +37,8 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine } from './container-engine.port';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
-import { agentMessage } from '../prompt-kit/message';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const describeLive = API_KEY ? describe : describe.skip;

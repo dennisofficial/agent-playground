@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ChatStimulus } from '../domain';
+import type { ChatStimulus } from '@shared/domain';
 import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
 import type { DecisionApprovalService } from './decision-approval.service';
@@ -7,7 +7,7 @@ import type { DriverStoreService } from '../driver/driver-store.service';
 import type { AutoMergeService } from '../driver/auto-merge.service';
 import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
-import type { EngineRunnerPort } from '../engine/engine.types';
+import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
@@ -40,9 +40,9 @@ import {
   HOST_RETRY_BACKOFF_MS,
   MAX_HOST_RETRIES,
   UNRESUMABLE_SESSION_MARKER,
-} from '../engine/engine.types';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
-import type { EventStimulus } from '../domain';
+} from '@shared/engine/engine.types';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
+import type { EventStimulus } from '@shared/domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type {
@@ -51,7 +51,7 @@ import type {
   WorkspaceSecretFileStore,
 } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
-import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { WORKSPACE_PROFILE_TOOL_NAMES } from '@shared/bridge-names/workspace-profile-bridge-options';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';

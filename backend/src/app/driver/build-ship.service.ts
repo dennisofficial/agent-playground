@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { DecisionRecord, Job } from '../domain';
+import type { DecisionRecord, Job } from '@shared/domain';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import { BrainGateway } from '../brain-gateway';
 import { DriverStoreService } from './driver-store.service';

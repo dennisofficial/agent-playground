@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
-import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '../engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
+import type { EngineEvent, ExecutionTarget, RunEngineArgs } from '@shared/engine';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { LocalGitService } from '../git';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';

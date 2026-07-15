@@ -4,5 +4,5 @@
   "compilerOptions": {
     "baseUrl": "."
   },
-  "include": ["src/app/**/*", "src/_core/**/*", "src/_lib/**/*"]
+  "include": ["src/app/**/*", "src/_core/**/*", "src/_lib/**/*", "src/shared/**/*"]
 }

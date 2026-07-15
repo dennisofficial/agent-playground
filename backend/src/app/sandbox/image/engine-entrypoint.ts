@@ -14,27 +14,27 @@
  * are passed as exec env, never baked into the image.
  */
 import { randomUUID } from 'node:crypto';
-import { EngineCore } from '../../engine/engine-core';
+import { EngineCore } from '@shared/engine/engine-core';
 import type {
   EngineEvent,
   RunEngineArgs,
   TurnSpec,
-} from '../../engine/engine.types';
+} from '@shared/engine/engine.types';
 import {
   BRIDGE_SERVER_NAME,
   buildBridgeClaudeOptions,
   type BridgeClaudeOptions,
-} from './bridge-options';
+} from '@shared/bridge-names/bridge-options';
 import {
   WORKSPACE_PROFILE_BRIDGE_NAME,
   partitionWorkspaceProfileTools,
   qualifyWorkspaceProfileToolNames,
-} from './workspace-profile-bridge-options';
+} from '@shared/bridge-names/workspace-profile-bridge-options';
 import {
   ATLAS_PROD_BRIDGE_NAME,
   partitionAtlasProdTools,
   qualifyAtlasProdToolNames,
-} from './atlas-prod-bridge-options';
+} from '@shared/bridge-names/atlas-prod-bridge-options';
 import { buildLspBridgeOptions } from './lsp-bridge-options';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 import { ToolBridgeReader } from './tool-bridge-reader';

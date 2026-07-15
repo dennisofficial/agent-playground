@@ -13,7 +13,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import type { JobKind } from '../domain';
+import type { JobKind } from '@shared/domain';
 import { hasAgentPrompt, listAgentPrompts, renderPreview } from '../prompt-kit';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Public } from '@workspace/auth/server';

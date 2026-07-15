@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { ChatStimulus, ParsedEvent, SeedRow } from '../domain';
+import type { ChatStimulus, ParsedEvent, SeedRow } from '@shared/domain';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
 import {

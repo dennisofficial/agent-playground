@@ -1,12 +1,12 @@
-import type { EventStimulus } from '../../domain/stimulus';
-import type { JobProvenance } from '../../domain/job';
+import type { EventStimulus } from '@shared/domain/stimulus';
+import type { JobProvenance } from '@shared/domain/job';
 import type {
   SessionAnchor,
   ThreadTerminalRecord,
 } from '../../persistence/entities/thread.entity';
 import { threadDirName } from './thread-dir-name';
-import { agentMessage, fromExternal, type AgentMessage } from '../message';
-import { renderChunk } from './tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 /**
  * prompt-kit / harness — the seeded system-event CONTENT catalog.

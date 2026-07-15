@@ -9,7 +9,7 @@ import { DeliveryPump, StimulusStoreService } from '../stimulus';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
 import { TurnRunnerService } from '../runner';
 import { laneFor, ThreadInputService } from '../surface';
-import { fromExternal } from '../prompt-kit/message';
+import { fromExternal } from '@shared/prompt-kit/message';
 import { DriverStoreService } from './driver-store.service';
 import type { ThreadDriver } from './thread-driver.service';
 

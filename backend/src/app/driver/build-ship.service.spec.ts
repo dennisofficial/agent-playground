@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Job } from '../domain';
+import type { Job } from '@shared/domain';
 import type { FeatureSandbox, GithubPrService, LocalGitService } from '../git';
 import type { BrainGateway } from '../brain-gateway';
 import { BuildShipService } from './build-ship.service';

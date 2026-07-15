@@ -1,6 +1,6 @@
 import type { Repository } from 'typeorm';
 import type { MessageEntity } from './entities/message.entity';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 
 /**
  * Shared shape of a harness-injected chunk (`system_notice` / `system_reminder` / `untrusted`) to persist

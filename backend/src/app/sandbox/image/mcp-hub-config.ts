@@ -7,7 +7,7 @@
  * `SandboxManager`, the hub via the esbuild bundle.
  */
 import { MCP_HUB_PORT } from '../container-paths';
-import type { ResolvedMcpServer } from '../../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 
 /**
  * The identity a STDIO upstream must be spawned under so it matches the per-turn `docker exec` context —

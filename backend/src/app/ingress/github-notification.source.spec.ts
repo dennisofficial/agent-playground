@@ -6,7 +6,7 @@ import {
   GithubNotificationSource,
   verifyGithubSignature,
 } from './github-notification.source';
-import type { CiSyncDelta, RawNotification } from '../domain';
+import type { CiSyncDelta, RawNotification } from '@shared/domain';
 
 const SECRET = 'gh-webhook-secret';
 

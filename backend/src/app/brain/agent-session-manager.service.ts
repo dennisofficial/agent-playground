@@ -23,7 +23,7 @@ import type {
   JobKind,
   JobStatus,
   SeedRow,
-} from '../domain';
+} from '@shared/domain';
 import { MemoryStore } from '../memory';
 import {
   StimulusStoreService,
@@ -90,9 +90,9 @@ import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
 import { shipOpenPrBody } from '../prompt-kit';
-import type { AgentMessage } from '../prompt-kit/message';
-import { agentMessage, fromExternal } from '../prompt-kit/message';
-import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
+import type { AgentMessage } from '@shared/prompt-kit/message';
+import { agentMessage, fromExternal } from '@shared/prompt-kit/message';
+import { isSubstantiveQuery, renderMemoryRecall } from '@shared/prompt-kit/jit';
 import {
   chunkKey,
   RESET_VERIFY_TEXT,
@@ -133,7 +133,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
+import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -157,7 +157,7 @@ import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
-} from '../engine/session-limit';
+} from '@shared/engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import {
@@ -175,11 +175,11 @@ import { CONTAINER_CONTEXT, normalizeMounts } from '../sandbox/container-paths';
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { JobDependencyService } from '../job-deps';
-import type { Decision } from '../domain';
-import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
-import type { DecisionClass } from '../domain/decision-record';
+import type { Decision } from '@shared/domain';
+import { nextDecisionId, DECISION_CLASS_IDS } from '@shared/domain';
+import type { DecisionClass } from '@shared/domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
-import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
+import { BRIDGE_SERVER_NAME } from '@shared/bridge-names/bridge-options';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import {
   BrainTurnAlreadyRunningError,
@@ -199,7 +199,7 @@ import {
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
   INTERNAL_PROFILE_AWARENESS_TOOL,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import type {
   EngineEvent,
   EngineRunnerPort,
@@ -207,10 +207,10 @@ import type {
   ToolImpl,
   RunEngineArgs,
   EngineRunResult,
-} from '../engine/engine.types';
-import { summarizeTurnFailure } from '../engine/turn-failure-summary';
-import type { TurnFailureCategory } from '../engine/turn-failure-summary';
-import type { EngineHomeKey } from '../engine/engine-home';
+} from '@shared/engine/engine.types';
+import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
+import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
+import type { EngineHomeKey } from '@shared/engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';

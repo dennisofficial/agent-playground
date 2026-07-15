@@ -14,9 +14,9 @@ import {
   isReview,
   notOnboarding,
 } from '../conditions';
-import { BRIDGE_SERVER_NAME } from '../../../sandbox/image/bridge-options';
-import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../sandbox/image/workspace-profile-bridge-options';
-import { ATLAS_PROD_BRIDGE_NAME } from '../../../sandbox/image/atlas-prod-bridge-options';
+import { BRIDGE_SERVER_NAME } from '../../../bridge-names/bridge-options';
+import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../bridge-names/workspace-profile-bridge-options';
+import { ATLAS_PROD_BRIDGE_NAME } from '../../../bridge-names/atlas-prod-bridge-options';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()

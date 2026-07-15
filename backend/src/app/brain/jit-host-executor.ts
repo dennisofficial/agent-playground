@@ -3,7 +3,7 @@ import {
   findLifecycleRule,
   operatorMessageRules,
   type JitFireCtx,
-} from '../prompt-kit/jit';
+} from '@shared/prompt-kit/jit';
 import type { TurnChunk } from '../prompt-kit/harness';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';

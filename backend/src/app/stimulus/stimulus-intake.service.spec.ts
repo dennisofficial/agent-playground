@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatStimulus, EventStimulus } from '../domain';
+import type { ChatStimulus, EventStimulus } from '@shared/domain';
 import type { EventFilterService, FilterVerdict } from './event-filter.service';
 import type { BrainSink } from './stimulus-consumer';
 import {

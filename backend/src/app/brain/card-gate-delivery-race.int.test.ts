@@ -47,7 +47,7 @@ import type {
   EngineRunnerPort,
   EngineRunResult,
   RunEngineArgs,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 

@@ -5,8 +5,8 @@ import type {
   InboundChatMessage,
   PostOptions,
 } from './chat-surface.port';
-import type { SeedRow } from '../domain/stimulus';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { SeedRow } from '@shared/domain/stimulus';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import {
   SYSTEM_SEED_AUTHOR,
   wrapSystemNotification,

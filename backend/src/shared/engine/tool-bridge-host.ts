@@ -8,7 +8,7 @@
 
 import { inspect } from 'node:util';
 
-import { ATLAS_PROD_TOOL_NAMES } from '../sandbox/image/atlas-prod-bridge-options';
+import { ATLAS_PROD_TOOL_NAMES } from '../bridge-names/atlas-prod-bridge-options';
 import type {
   HostFrame,
   ToolBridgeOptions,

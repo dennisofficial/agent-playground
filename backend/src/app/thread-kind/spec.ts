@@ -10,8 +10,8 @@
  * `validateFragments`.
  */
 import type { Agent } from '../prompt-kit';
-import type { SessionEngine } from '../domain';
-import type { ReasoningEffort } from '../engine';
+import type { SessionEngine } from '@shared/domain';
+import type { ReasoningEffort } from '@shared/engine';
 import type {
   ThreadInput,
   ThreadKind as LaneKind,

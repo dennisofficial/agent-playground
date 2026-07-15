@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Decision } from '../domain';
+import type { Decision } from '@shared/domain';
 import type { ClassifierLlm, ClassifierLlmVerdict } from './classifier-llm';
 import { DecisionClassifier } from './decision-classifier.service';
 import type { ClassifierRecord } from './decision-gate.types';

@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
-import type { ChatStimulus } from '../domain';
+import type { ChatStimulus } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';

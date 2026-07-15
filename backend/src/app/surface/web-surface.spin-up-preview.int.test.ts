@@ -24,7 +24,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -42,7 +42,7 @@ import { WebSurface } from './web-surface';
 import { webShipReviewCard } from './web-approval-card';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import type { InboundChatMessage } from './chat-surface.port';
-import type { SeedRow } from '../domain/stimulus';
+import type { SeedRow } from '@shared/domain/stimulus';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
 
 /** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */

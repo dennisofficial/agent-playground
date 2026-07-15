@@ -1,17 +1,17 @@
 import { Test } from '@nestjs/testing';
 import { describe, expect, it } from 'vitest';
 import { PromptService } from './prompt.service';
-import { Agent } from './system/agent';
+import { Agent } from '@shared/prompt-kit/system/agent';
 import {
   Fragment,
   FragmentGroup,
   getFragmentMetaMap,
-} from './system/fragment.decorator';
+} from '@shared/prompt-kit/system/fragment.decorator';
 import {
   loadFragmentsFromInstances,
   renderAgentPrompt,
   validateFragments,
-} from './system/assemble';
+} from '@shared/prompt-kit/system/assemble';
 
 /**
  * The fragment-library assembler, exercised on the brain (`ATLAS_MAIN`). The brain is now assembled ONLY from

@@ -36,7 +36,7 @@ import {
   StimulusEntity,
 } from '../persistence/entities';
 import { JobBootstrapService } from '../job-bootstrap';
-import type { EventStimulus } from '../domain';
+import type { EventStimulus } from '@shared/domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';

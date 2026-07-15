@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EngineAuthError, EngineDetachedError } from '../engine';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
+import { EngineAuthError, EngineDetachedError } from '@shared/engine';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
 import {
   RedisEngineRunner,
@@ -12,7 +12,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine, ContainerInfo } from './container-engine.port';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import type { SandboxProvider } from './sandbox-provider.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;

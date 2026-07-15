@@ -1,4 +1,4 @@
-import { LSP_SERVER_NAME, LSP_TOOL_NAMES } from '../engine/lsp-tools';
+import { LSP_SERVER_NAME, LSP_TOOL_NAMES } from '@shared/engine/lsp-tools';
 
 /** A built-in MCP server, shown READ-ONLY in the console so operators know what the agent already has. */
 export interface SystemMcpServer {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ResolvedMcpServer } from '../../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import { mcpHubUrl } from './mcp-hub-config';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 

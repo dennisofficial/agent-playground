@@ -43,7 +43,7 @@ import {
   vi,
 } from 'vitest';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -61,7 +61,7 @@ import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { WebSurface } from './web-surface';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import type { InboundChatMessage } from './chat-surface.port';
-import type { SeedRow } from '../domain/stimulus';
+import type { SeedRow } from '@shared/domain/stimulus';
 
 /** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
 type SeedRowObject = Exclude<SeedRow, 'skip'>;

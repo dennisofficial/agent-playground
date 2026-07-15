@@ -20,14 +20,14 @@ import {
   SUBAGENT_NUDGE_NOTE,
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
-} from './system/fragments';
+} from '@shared/prompt-kit/system/fragments';
 import { Agent, jobKindFragment, renderAgentPrompt } from './index';
 import {
   AGENT_PROMPTS,
   hasAgentPrompt,
   listAgentPrompts,
   renderPreview,
-} from './system/preview';
+} from '@shared/prompt-kit/system/preview';
 
 describe('jobKindFragment', () => {
   it('is empty for null/undefined + onboarding; distinct per build kind', () => {

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   SANDBOX_RESET_NOTICE,
   BG_TASK_CAP_NOTICE,
-} from '../engine/engine.types';
-import { SVC_NUDGE_TEXT } from '../engine/engine-core';
+} from '@shared/engine/engine.types';
+import { SVC_NUDGE_TEXT } from '@shared/engine/engine-core';
 
 /**
  * Golden-snapshot baseline for the driver/engine PROSE strings NOT relocated to `prompt-kit`. Every

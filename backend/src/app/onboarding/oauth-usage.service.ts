@@ -8,7 +8,7 @@ import type {
   StoredUsageWindow,
   UsageWindow,
 } from '@workspace/shared';
-import { resetEpochToIso } from '../engine/session-limit';
+import { resetEpochToIso } from '@shared/engine/session-limit';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import { CredentialRefreshService } from './credential-refresh.service';
 import { CredentialResolver } from './credential-resolver.service';

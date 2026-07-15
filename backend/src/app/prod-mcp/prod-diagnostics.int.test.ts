@@ -47,7 +47,7 @@ import {
   ThreadEntity,
 } from '../persistence/entities';
 import { CHAT_SURFACE } from '../surface/chat-surface.port';
-import type { ChatStimulus } from '../domain/stimulus';
+import type { ChatStimulus } from '@shared/domain/stimulus';
 import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 

@@ -56,7 +56,7 @@ import {
   CONTAINER_MCP_HUB_DIR,
   MCP_HUB_PORT,
 } from '../container-paths';
-import type { ResolvedMcpServer } from '../../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import {
   type McpHubConfig,
   type McpHubSpawnIdentity,

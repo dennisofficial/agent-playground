@@ -9,8 +9,8 @@
  */
 import { Agent, renderAgentPrompt } from '../prompt-kit';
 import { THREAD_REGISTRY } from '../surface/thread-registry';
-import type { SessionEngine } from '../domain';
-import type { ReasoningEffort } from '../engine';
+import type { SessionEngine } from '@shared/domain';
+import type { ReasoningEffort } from '@shared/engine';
 import type { ThreadKindSpec, ThreadRole } from './spec';
 
 /**

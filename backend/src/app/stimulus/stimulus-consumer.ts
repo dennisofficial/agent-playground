@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { ChatStimulus, EventStimulus } from '../domain';
+import type { ChatStimulus, EventStimulus } from '@shared/domain';
 
 /**
  * DI token the brain binds to — the single downstream of the intake seam (mirror of `CHAT_SURFACE` on

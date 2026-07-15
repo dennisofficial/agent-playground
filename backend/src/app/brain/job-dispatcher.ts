@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { Job } from '../domain';
+import type { Job } from '@shared/domain';
 
 /**
  * The DISPATCH SEAM — the brain's "hands" edge, the exact mirror of the `BRAIN_SINK` port on the

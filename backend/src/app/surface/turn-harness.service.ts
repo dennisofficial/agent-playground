@@ -6,7 +6,7 @@ import {
   type EngineEvent,
   type EngineUsage,
   resolveContextLimit,
-} from '../engine';
+} from '@shared/engine';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {

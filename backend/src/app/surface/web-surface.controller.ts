@@ -132,8 +132,8 @@ import {
   JobEntity,
   UserEntity,
 } from '../persistence/entities';
-import { deriveNeedsYou } from '../domain/job';
-import type { JobKind } from '../domain/job';
+import { deriveNeedsYou } from '@shared/domain/job';
+import type { JobKind } from '@shared/domain/job';
 import type { McpSurface } from '../persistence/entities';
 import {
   RealtimeService,
@@ -145,7 +145,7 @@ import {
   renderUploadedFilesXml,
   type AttachmentCardItem,
 } from '../prompt-kit';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import {
   answeredQuestionBody,
   batchAnswerBody,

@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { SessionEngine, SessionMode, SessionRef } from '../domain';
+import type { SessionEngine, SessionMode, SessionRef } from '@shared/domain';
 import {
   ENGINE_RUNNER,
   EngineAuthError,
@@ -9,7 +9,7 @@ import {
   SANDBOX_RESET_NOTICE,
   pickKeys,
   type EngineRunnerPort,
-} from '../engine';
+} from '@shared/engine';
 import type {
   EngineAuth,
   EngineEvent,
@@ -23,9 +23,9 @@ import type {
   SessionLimitHit,
   ToolBridgeOptions,
   TurnMeta,
-} from '../engine';
+} from '@shared/engine';
 import type { FeatureSandbox } from '../git';
-import { type AgentMessage } from '../prompt-kit/message';
+import { type AgentMessage } from '@shared/prompt-kit/message';
 import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';

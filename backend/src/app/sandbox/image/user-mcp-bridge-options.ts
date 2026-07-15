@@ -19,8 +19,8 @@
  * Servers whose name collides with a RESERVED system server (host bridge, LSP) are skipped
  * defensively so a user definition can never shadow the orchestration plumbing.
  */
-import type { CodexExtraMcpServers } from '../../engine/codex-auth-home';
-import type { ResolvedMcpServer } from '../../engine/engine.types';
+import type { CodexExtraMcpServers } from '@shared/engine/codex-auth-home';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import { mcpHubUrl } from './mcp-hub-config';
 
 import { isReservedMcpName } from './reserved-mcp-names';

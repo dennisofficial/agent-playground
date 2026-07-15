@@ -4,11 +4,11 @@ import {
   EngineAuthError,
   type EngineRunnerPort,
   type RunEngineArgs,
-} from '../engine';
+} from '@shared/engine';
 import type { ThreadEntity } from '../persistence/entities';
 import type { FeatureSandbox } from '../git';
 import { TurnRunnerService } from './turn-runner.service';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import type { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 
 /**

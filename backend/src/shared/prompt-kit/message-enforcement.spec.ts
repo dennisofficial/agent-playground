@@ -19,13 +19,15 @@ import {
   assertEnforcementSeamConfigured,
 } from './message';
 
-// `__dirname` is backend/src/app/prompt-kit; the app root is one up, and the seam globs are written relative to
-// the backend package root (`src/app/...`), so we rebase each scanned file onto that same coordinate.
-const APP_ROOT = join(__dirname, '..');
+// `__dirname` is backend/src/shared/prompt-kit; the backend package root is three up. The seam globs are
+// written relative to that root (`src/app/...` / `src/shared/...`), so we rebase each scanned file onto the
+// same coordinate. The scan itself covers BOTH `src/app` and `src/shared` — prompt-kit and engine-core moved
+// under `src/shared/` in the `@shared` extraction, so a single-root scan would silently stop covering them.
 const BACKEND_ROOT = join(__dirname, '..', '..', '..');
+const SCAN_ROOTS = [join(BACKEND_ROOT, 'src/app'), join(BACKEND_ROOT, 'src/shared')];
 
-/** Every `.ts` file under `src/app` that is real source (specs/int-tests are excluded — a lint is not a
- *  delivery path, and specs legitimately reference the sealed tokens as fixtures/inventory). */
+/** Every `.ts` file under `src/app` + `src/shared` that is real source (specs/int-tests are excluded — a lint
+ *  is not a delivery path, and specs legitimately reference the sealed tokens as fixtures/inventory). */
 function collectSourceFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string): void => {
@@ -48,7 +50,7 @@ function collectSourceFiles(): string[] {
       }
     }
   };
-  walk(APP_ROOT);
+  for (const root of SCAN_ROOTS) walk(root);
   return out;
 }
 

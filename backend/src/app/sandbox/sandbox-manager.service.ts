@@ -23,7 +23,7 @@ import {
   resolve,
 } from 'node:path';
 import { promisify } from 'node:util';
-import { atlasAgentHomeBase } from '../engine/engine-home';
+import { atlasAgentHomeBase } from '@shared/engine/engine-home';
 import type { FeatureSandbox } from '../git';
 import {
   managedGitSkillsRootHost,
@@ -53,7 +53,7 @@ import {
   isExternalMountPath,
   isReservedContainerPath,
 } from './container-paths';
-import type { ResolvedMcpServer } from '../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import type { McpHubConfig } from './image/mcp-hub-config';
 import {
   CONTAINER_ENGINE,

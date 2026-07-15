@@ -11,7 +11,7 @@ import type { DriverStoreService } from './driver-store.service';
 import type { JobLifecycleService } from './job-lifecycle.service';
 import type { StimulusStoreService } from '../stimulus';
 import { GithubPrStateSync } from './github-pr-state-sync.service';
-import type { PrStateDelta } from '../domain';
+import type { PrStateDelta } from '@shared/domain';
 
 function makeSync() {
   const lifecycle = {

@@ -22,7 +22,8 @@
     "strictBindCallApply": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@core/*": ["./src/_core/*"]
+      "@core/*": ["./src/_core/*"],
+      "@shared/*": ["./src/shared/*"]
     },
     "types": ["node", "vitest/globals"]
   },

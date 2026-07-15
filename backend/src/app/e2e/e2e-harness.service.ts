@@ -9,7 +9,7 @@ import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AppModule } from '../app.module';
 import { AgentSessionManager, DecisionApprovalService } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -19,7 +19,7 @@ import {
   JobEntity,
   OrganizationEntity,
 } from '../persistence/entities';
-import type { ChatStimulus } from '../domain';
+import type { ChatStimulus } from '@shared/domain';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,

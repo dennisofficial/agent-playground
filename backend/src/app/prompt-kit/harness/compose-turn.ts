@@ -11,8 +11,8 @@
  * `renderTurn` already orders notices → reminders → untrusted → `<user>` (last) and keeps same-kind chunks in
  * input order, so coalesced `<user>` chunks stay chronological and a prefix always renders before the bubble.
  */
-import { agentMessage, fromExternal, type AgentMessage } from '../message';
-import { renderTurn, type TurnChunk } from './tag-vocabulary';
+import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import { renderTurn, type TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 export type ComposeTurnInput = {
   /** system_notice / system_reminder chunks that frame the turn (rendered before the `<user>` bubble). */

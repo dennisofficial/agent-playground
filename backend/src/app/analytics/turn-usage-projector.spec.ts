@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { EngineUsage } from '../engine';
+import type { EngineUsage } from '@shared/engine';
 import type { AppVersionService } from '../cluster/app-version.service';
 import { TurnUsageProjector } from './turn-usage-projector.service';
 

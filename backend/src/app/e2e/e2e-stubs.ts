@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ClassifierLlm } from '../decision-gate/classifier-llm';
-import type { EngineRunResult, RunEngineArgs } from '../engine';
+import type { EngineRunResult, RunEngineArgs } from '@shared/engine';
 import type {
   FeatureSandbox,
   OpenPullRequestArgs,

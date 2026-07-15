@@ -9,8 +9,8 @@ import {
   HOST_RETRY_BACKOFF_MS,
   MAX_HOST_RETRIES,
   NO_ENGINE_CREDENTIAL_MARKER,
-} from '../engine';
-import type { EngineRunnerPort, ToolBridgeOptions } from '../engine';
+} from '@shared/engine';
+import type { EngineRunnerPort, ToolBridgeOptions } from '@shared/engine';
 import {
   ThreadDriver,
   shortReason,
@@ -53,8 +53,8 @@ import type {
   ThreadStatus,
   ThreadCondition,
   Job,
-} from '../domain';
-import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '../domain';
+} from '@shared/domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '@shared/domain';
 import type { TaskItem, ThreadTerminalRecord } from '../persistence/entities';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 

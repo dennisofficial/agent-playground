@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { extractOrientation } from './thread-driver.service';
 import { renderBatchTask } from '../prompt-kit';
 import type { DriverThread } from './driver-store.service';
-import type { DecisionRecord, Step } from '../domain';
+import type { DecisionRecord, Step } from '@shared/domain';
 
 describe('extractOrientation', () => {
   it('pulls the trimmed body out of a <repo-orientation> block', () => {

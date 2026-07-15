@@ -8,7 +8,7 @@ import {
   ROTATION_REMINDER_NUDGE,
   ROTATION_RESUME_TAIL,
   ROTATION_SOFT_NUDGE,
-} from './build-handoff';
+} from '@shared/prompt-kit/messages/build-handoff';
 
 /**
  * Golden-snapshot baseline for the pure `turns/` builders + consts — every snapshot captures CURRENT
