@@ -161,11 +161,11 @@ describe('AuthService', () => {
     });
 
     it('self-heals a poison cookie: a failed verify clears BOTH host-only and parent-domain scopes', async () => {
-      // A sibling preview app under the shared parent set a `.atlas.dltechnologies.co` cookie signed
+      // A sibling preview app under the shared parent set a `.byatlas.io` cookie signed
       // with a different secret; prod can't verify it and must evict it across scopes so login sticks.
       const req = {
         cookies: { refresh_token: 'poison' },
-        hostname: 'api.atlas.dltechnologies.co',
+        hostname: 'api.byatlas.io',
       } as unknown as Request;
       jwt.verifyRefreshToken.mockRejectedValue(
         new Error('signature verification failed'),
@@ -183,8 +183,8 @@ describe('AuthService', () => {
         expect.arrayContaining([
           { name: 'access_token', domain: undefined },
           { name: 'refresh_token', domain: undefined },
-          { name: 'access_token', domain: 'atlas.dltechnologies.co' },
-          { name: 'refresh_token', domain: 'atlas.dltechnologies.co' },
+          { name: 'access_token', domain: 'byatlas.io' },
+          { name: 'refresh_token', domain: 'byatlas.io' },
         ]),
       );
     });

@@ -26,6 +26,9 @@ dist
 # GitHub App private key — operator-supplied secret, encrypted into backend/.env.production.enc; raw PEM never committed
 backend/gh-app-private-key.pem
 
+# Cloudflare Registrar API token — operator-supplied secret rendered to a raw path; never committed
+infra/.cloudflare-registrar-token
+
 # Cloud / build local dirs (gcloud ADC, docker context)
 /.gcloud/
 /.docker/

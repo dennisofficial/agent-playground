@@ -34,22 +34,19 @@ export function renderOpenLegTasks(tasks: TaskItem[]): AgentMessage {
   );
 }
 
-/** The warning-retry payload for the done-gate task double-check. Lists the still-OPEN tasks and directs the
- *  model to reconcile each before re-asserting `done`. The caller only builds this when `open` is non-empty,
- *  so it never renders an empty block. This is the model's ONE reminder — anything still open after the next
- *  `complete_thread` is host-dropped from the checklist at the done transition. */
-export function renderOpenTasksWarning(open: TaskItem[]): AgentMessage {
+/** The ADVISORY payload for the done-gate task double-check. The checklist is advisory at completion — it
+ *  NEVER blocks `complete_thread`; the done assertion latches and the host force-closes any leftover open
+ *  items to `dropped` (`dropOpenThreadTasks`). This note just informs the model which items it left open so
+ *  it can reconcile them next time. The caller only builds it when `open` is non-empty. */
+export function renderOpenTasksAdvisory(open: TaskItem[]): AgentMessage {
   const lines = open.map(
     (t) => `- [${t.status === 'in_progress' ? '~' : ' '}] ${t.subject}`,
   );
   return agentMessage(
     [
-      `NOT marked done yet — your task list still has ${open.length} open item(s). Reconcile it before you`,
-      'assert done. For EACH task below: if the work is genuinely finished, mark it completed' +
-        ' (`task_update` status: completed); if it still needs doing, DO it now (commit + push any changes),' +
-        ' then mark it completed; if it is no longer needed, delete it (`task_update` status: deleted). Then',
-      'call `complete_thread` again. This is your ONE reminder — anything still open after your next',
-      '`complete_thread` will be dropped from the checklist.',
+      `Done recorded. Note: your task list still had ${open.length} open item(s) at completion — they've been`,
+      "auto-closed (dropped from the checklist), since the thread is done. This is advisory only; you don't",
+      'need to act on it. If any item below still needed real work, that is a genuine gap to flag next time.',
       '<open_tasks>',
       ...lines,
       '</open_tasks>',

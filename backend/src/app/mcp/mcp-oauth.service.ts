@@ -366,7 +366,7 @@ export class McpOAuthService {
 
   // ── redirect_uri + state signing ──────────────────────────────────────────────────────────────
 
-  /** The DCR/exchange redirect_uri, e.g. `https://api.atlas.dltechnologies.co/web/mcp/oauth/callback`. */
+  /** The DCR/exchange redirect_uri, e.g. `https://api.byatlas.io/web/mcp/oauth/callback`. */
   callbackUrl(): string {
     return new URL(OAUTH_CALLBACK_PATH, this.backendBase()).toString();
   }
@@ -382,7 +382,7 @@ export class McpOAuthService {
       u = new URL(this.backendBase());
     } catch {
       throw new BadRequestException(
-        'BACKEND_HOST is not an absolute URL — set it to this backend’s public origin (e.g. http://localhost:4002 in dev, https://api.atlas.dltechnologies.co in prod) before connecting an OAuth MCP server.',
+        'BACKEND_HOST is not an absolute URL — set it to this backend’s public origin (e.g. http://localhost:4002 in dev, https://api.byatlas.io in prod) before connecting an OAuth MCP server.',
       );
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {

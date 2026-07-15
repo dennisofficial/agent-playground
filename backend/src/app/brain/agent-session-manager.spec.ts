@@ -695,6 +695,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     ]);
     expect(persistArgs.status).toBe('awaiting_approval');
     expect(persistArgs.kind).toBe('feature'); // default kind when none passed
+    expect(persistArgs.rename).toBe(false); // rename omitted ⇒ keep the current title
     // 3. The approval card is posted async, and the review disposition lands as a system event.
     expect(result).toMatchObject({
       ok: true,
@@ -704,6 +705,27 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     await new Promise((r) => setTimeout(r, 0));
     expect(mockApprovals.request).toHaveBeenCalledOnce();
     expect(mockStore.appendSystemEvent).toHaveBeenCalled();
+  });
+
+  it('propose_plan: rename:true is threaded into persistPlan (opt-in re-title)', async () => {
+    const tools = manager.buildTools(fakeStimulus);
+    (
+      mockStore.loadDecisionRecord as ReturnType<typeof vi.fn>
+    ).mockResolvedValue({
+      overview: 'o',
+      decisions: [],
+      threadTitles: ['S'],
+    });
+    const result = await tools['propose_plan']({
+      goal: 'g',
+      overview: 'some overview',
+      rename: true,
+      threads: [{ title: 'S', type: 'backend' }],
+    });
+    expect(result).toMatchObject({ ok: true });
+    const persistArgs = (mockStore.persistPlan as ReturnType<typeof vi.fn>).mock
+      .calls[0][0];
+    expect(persistArgs.rename).toBe(true);
   });
 
   it('propose_plan: kind:"bugfix" is persisted (lights up the reproduce-first job-kind block)', async () => {

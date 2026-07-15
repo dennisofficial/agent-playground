@@ -27,7 +27,7 @@ SRV="/srv/atlas"
 STATE_DIR="$SRV/state"
 SECRETS_ENV="$SRV/secrets/atlas.env"
 GHCR_OWNER="dennisofficial"
-HEALTH_URL="https://api.atlas.dltechnologies.co/health/ready"
+HEALTH_URL="https://api.byatlas.io/health/ready"
 HEALTH_TIMEOUT=120   # seconds to wait for standby to become leader
 POLL_INTERVAL=5      # seconds between health polls
 

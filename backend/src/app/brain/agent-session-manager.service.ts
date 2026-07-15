@@ -2854,6 +2854,8 @@ export class AgentSessionManager
       ...(gitTarget
         ? { repoName: `${gitTarget.owner}/${gitTarget.repo}` }
         : {}),
+      // The current sidebar label — so the brain can judge whether a propose_plan should re-title the job.
+      ...(brainJob?.title ? { title: brainJob.title } : {}),
       ...(branch ? { branch } : {}),
       ...(baseBranch ? { baseBranch } : {}),
       ...(this.env && isAtlasRepo(repoSlug ?? '', this.env)
@@ -4112,6 +4114,9 @@ export class AgentSessionManager
         const kind: JobKind =
           (await this.store.jobKind(stimulus.jobId)) ??
           (args['kind'] === 'bugfix' ? 'bugfix' : 'feature');
+        // Whether to re-title the job from `goal`. Default FALSE (keep the current title) — the brain opts
+        // IN only when the plan's subject drifted from, or is meaningfully crisper than, the current name.
+        const rename = args['rename'] === true;
         // Decisions are LOCKED incrementally during grilling (create_decision → pending_decisions). Source
         // them from the working set; an explicit `decisions` arg, if given, is an authoritative override.
         const decisions =
@@ -4177,6 +4182,7 @@ export class AgentSessionManager
           threadTitles,
           threadTypes,
           stepsByThread,
+          rename,
           status: 'awaiting_approval',
         });
 

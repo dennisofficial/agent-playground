@@ -4410,7 +4410,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     expect(state.job.status).toBe('done');
   });
 
-  it('bounces the FIRST complete_thread when the checklist has an open task; the retry latches done once the model closes it', async () => {
+  it('does NOT block complete_thread on an open checklist — the FIRST assertion latches done and the host drops the leftovers (advisory-only, decision d1)', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -4421,6 +4421,7 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     };
     (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
       { id: 'x1', subject: 'Add tests', status: 'in_progress' },
+      { id: 'x2', subject: 'Update docs', status: 'pending' },
     ];
     const returns: Array<Record<string, unknown>> = [];
     const turn = {
@@ -4433,17 +4434,9 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
         }) => {
           const ct = input.toolBridge?.tools?.['complete_thread'];
           if (ct) {
-            returns.push(
-              (await ct({ summary: 'built the backend' })) as Record<
-                string,
-                unknown
-              >,
-            );
-            // The model heeds the one reminder and closes its task (its TaskUpdate folds onto threads.tasks)…
-            (state.threads[0] as { tasks?: TaskItem[] }).tasks = [
-              { id: 'x1', subject: 'Add tests', status: 'completed' },
-            ];
-            // …then re-asserts done — must reach the gate this time, not be nudged again.
+            // A SINGLE assertion with the checklist STILL open — the regression: this used to bounce (and,
+            // because the one-shot was per-turn, re-bounce on every re-delivery → permanent `incomplete`).
+            // It must now latch on the first call and never wedge.
             returns.push(
               (await ct({ summary: 'built the backend' })) as Record<
                 string,
@@ -4473,16 +4466,17 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 
-    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item'); // 1st: reminder, not latched
-    expect(returns[1]?.['warning']).toBeUndefined(); // 2nd: no second nudge — proceeded to the gate
+    // Latched on the FIRST call (not bounced); the open items came back only as an advisory NOTE.
+    expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
     const term = (
       state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
     ).terminal_record;
     expect(term?.status).toBe('done');
     expect(state.job.status).toBe('done');
-    // The model closed its own task, so the host had nothing to drop — it stays `completed`, not `dropped`.
+    // The host force-closes the unreconciled leftovers to `dropped` on the done transition.
+    expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
     const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
-    expect(tasks.map((t) => t.status)).toEqual(['completed']);
+    expect(tasks.map((t) => t.status)).toEqual(['dropped', 'dropped']);
   });
 
   it('accepts a re-asserted done with tasks STILL open, and the host flips the leftovers to `dropped` (not completed)', async () => {
@@ -4509,7 +4503,8 @@ describe('ThreadDriver — ADR 0004 Phase 3 (block_thread + brain auto-wake + bo
         }) => {
           const ct = input.toolBridge?.tools?.['complete_thread'];
           if (ct) {
-            // First → nudged; second → still open, but accepted (never wedge a validated thread).
+            // Both calls assert done with the checklist STILL open: the first latches (advisory note, never
+            // a block); the second is idempotent (`afterTerminal`). Neither is bounced.
             returns.push(
               (await ct({ summary: 'built the backend' })) as Record<
                 string,

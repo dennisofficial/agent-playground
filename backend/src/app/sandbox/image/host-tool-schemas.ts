@@ -183,6 +183,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     overview: z.string(),
     goal: z.string(),
     kind: z.string().optional(),
+    // When true, re-title the job from `goal` via the titler; when omitted/false, keep the current title.
+    rename: z.boolean().optional(),
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
   },

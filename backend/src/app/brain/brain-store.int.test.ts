@@ -1313,7 +1313,88 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
     expect(row?.meta?.fullBody).toBeUndefined(); // the trusted framing rides in meta.framing, not the amber pill
     expect(row?.text).toBe('summary: build parked at ship gate'); // amber fence = clean lane self-report only
   }, 30_000);
+
+  it('RENAME GATE: rename:false keeps the current title; true/omitted re-titles; a null-title job is always titled', async () => {
+    const { jobId, repoId } = await seedJob(dataSource, TEAM_ID, 'rename-gate');
+    // seedJob titles the job from the slug.
+    expect(await jobTitleOf(dataSource, jobId)).toBe('rename-gate');
+
+    // rename:false → the existing title is preserved even though `title` (the goal) differs.
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'a brand new different goal',
+      kind: 'feature',
+      overview: 'ov',
+      decisions: [],
+      threadTitles: ['backend'],
+      rename: false,
+    });
+    expect(await jobTitleOf(dataSource, jobId)).toBe('rename-gate');
+
+    // rename OMITTED → default is to re-title (every legacy caller keeps renaming). FakeThreadTitler is a
+    // passthrough, so the title becomes the goal verbatim.
+    await store.reopenPlanning(jobId);
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'omitted-rename goal',
+      kind: 'feature',
+      overview: 'ov',
+      decisions: [],
+      threadTitles: ['backend'],
+    });
+    expect(await jobTitleOf(dataSource, jobId)).toBe('omitted-rename goal');
+
+    // rename:true → re-titles.
+    await store.reopenPlanning(jobId);
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'explicit-rename goal',
+      kind: 'feature',
+      overview: 'ov',
+      decisions: [],
+      threadTitles: ['backend'],
+      rename: true,
+    });
+    expect(await jobTitleOf(dataSource, jobId)).toBe('explicit-rename goal');
+
+    // A job with NO title yet is ALWAYS titled, even with rename:false (a fresh job needs a label).
+    await store.reopenPlanning(jobId);
+    await dataSource.query(`UPDATE jobs SET title = NULL WHERE id = $1`, [
+      jobId,
+    ]);
+    await store.persistPlan({
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      title: 'fallback title for a nameless job',
+      kind: 'feature',
+      overview: 'ov',
+      decisions: [],
+      threadTitles: ['backend'],
+      rename: false,
+    });
+    expect(await jobTitleOf(dataSource, jobId)).toBe(
+      'fallback title for a nameless job',
+    );
+  }, 30_000);
 });
+
+async function jobTitleOf(
+  ds: DataSource,
+  jobId: string,
+): Promise<string | null> {
+  const rows: Array<{ title: string | null }> = await ds.query(
+    `SELECT title FROM jobs WHERE id = $1`,
+    [jobId],
+  );
+  return rows[0]?.title ?? null;
+}
 
 async function openCount(ds: DataSource, jobId: string): Promise<number> {
   const rows: Array<{ open_question_count: number }> = await ds.query(

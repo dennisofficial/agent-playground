@@ -146,7 +146,11 @@ jobs:
       - name: Compute image tag
         id: meta
         run: |
-          SHA_TAG="sha-$(git rev-parse --short HEAD)"
+          # Deterministic 7-char truncation of the full SHA — MUST match deploy.yml's
+          # `cut -c1-7`. `git rev-parse --short` emits the shortest *unambiguous*
+          # abbreviation (8+ chars when the 7-char prefix collides), which would tag the
+          # image differently from the tag deploy.yml pulls → "image not found" deploys.
+          SHA_TAG="sha-$(git rev-parse HEAD | cut -c1-7)"
           echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
           echo "backend_image=ghcr.io/dennisofficial/atlas-backend" >> "$GITHUB_OUTPUT"
           echo "migrator_image=ghcr.io/dennisofficial/atlas-backend-migrator" >> "$GITHUB_OUTPUT"
@@ -209,7 +213,7 @@ jobs:
           file: infra/web.Dockerfile
           push: true
           build-args: |
-            NEXT_PUBLIC_HTTP_URL=https://api.atlas.dltechnologies.co
+            NEXT_PUBLIC_HTTP_URL=https://api.byatlas.io
             NEXT_PUBLIC_GIT_SHA=${{ steps.meta.outputs.sha_tag }}
           tags: |
             ${{ steps.meta.outputs.web_image }}:${{ steps.meta.outputs.sha_tag }}

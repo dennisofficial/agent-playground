@@ -98,7 +98,7 @@ import {
   renderBatchTask,
   renderMasterReviewTask,
   renderOpenLegTasks,
-  renderOpenTasksWarning,
+  renderOpenTasksAdvisory,
   renderRunningServicesNote,
   composeLegSeed,
   foldLegTurn,
@@ -2987,10 +2987,6 @@ export class ThreadDriver implements JobDispatcher {
     // explicit STOP directive: re-asserting the SAME state succeeds (nothing to retry); a CONFLICTING assertion
     // is refused but still told to stop, never to retry.
     let terminated: null | 'done' | 'blocked' = null;
-    // ONE-SHOT task double-check: the first `done` assertion with an unreconciled checklist is bounced back
-    // (below) so the model can finish/close its own tasks in-turn; a subsequent assertion is let through
-    // regardless (the done transition then drops any stragglers). Guards against wedging a validated thread.
-    let taskNudgedOnce = false;
     const afterTerminal = (attempted: 'done' | 'blocked') => {
       const stop =
         `This thread already asserted \`${terminated}\` this turn — it is recorded and final. ` +
@@ -3021,22 +3017,19 @@ export class ThreadDriver implements JobDispatcher {
             error: 'summary is required (one line: what this thread built)',
           };
         }
-        // Task double-check — BEFORE the live-verification gate: on the FIRST `done` claim, if the durable
-        // checklist still has open items, bounce once (not latched) so the model reconciles its own tasks
-        // in-turn (finishing genuinely-unfinished work, which then flows through the gate + commit). One
-        // reminder only; the retry skips this and proceeds, and the done transition flips any leftovers to
-        // `dropped`.
-        if (!taskNudgedOnce) {
-          const open = (
-            await this.store
-              .getThreadTasks(thread.id)
-              .catch(() => [] as TaskItem[])
-          ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
-          if (open.length) {
-            taskNudgedOnce = true;
-            return { ok: true, warning: renderOpenTasksWarning(open) };
-          }
-        }
+        // Task list is ADVISORY at completion (decision d1) — it NEVER blocks `complete_thread`. A prior
+        // version bounced the FIRST `done` claim while the durable checklist held open items; because the
+        // one-shot lived on this per-turn closure, every re-delivery re-bounced and wedged the thread into a
+        // permanent `incomplete` loop. Now we only READ the still-open items to surface a non-blocking note;
+        // the assertion proceeds to the verification gates and latches, and the done transition force-closes
+        // any leftovers via `dropOpenThreadTasks` (see runThread). The native task-fold id reconciliation is
+        // unreliable and being retired for durable task_* tools, so completion must not hinge on it.
+        const openTasks = (
+          await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])
+        ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
+        const taskAdvisory = openTasks.length
+          ? renderOpenTasksAdvisory(openTasks)
+          : undefined;
         const asStrings = (v: unknown): string[] | undefined =>
           Array.isArray(v) && v.length
             ? v.map((x) => String(x).trim()).filter(Boolean)
@@ -3129,15 +3122,20 @@ export class ThreadDriver implements JobDispatcher {
             ? { liveVerification: liveGate.record.liveVerification }
             : {}),
         };
-        const warning = [staticGate.warning, liveGate.warning]
-          .filter(Boolean)
-          .join(' ');
+        const warnings = [staticGate.warning, liveGate.warning].filter(Boolean);
         // Latch ONLY an ACCEPTED terminal assertion. A judge DOWNGRADE (status still 'blocked', returned
         // with a `warning`) is a REJECTED claim — the orchestrator must be able to capture the missing
         // evidence and call `complete_thread` again in the SAME turn (ADR 0005's warning-retry). A
         // premature latch here silently traps a genuinely-done thread as `blocked` (caught in live
         // validation: the model curl'd a real 200, then its second complete_thread was wrongly rejected).
-        if (gatedRecord.status === 'done') terminated = 'done';
+        if (gatedRecord.status === 'done') {
+          terminated = 'done';
+          // Only surface the open-tasks advisory on an ACCEPTED `done`: the done transition is what
+          // force-closes them (`dropOpenThreadTasks`), so telling the model they were auto-closed would be
+          // untrue on a `blocked` downgrade (where they legitimately stay open for the retry).
+          if (taskAdvisory) warnings.push(taskAdvisory);
+        }
+        const warning = warnings.join(' ');
         await this.store.recordThreadTermination(thread.id, gatedRecord);
         return warning ? { ok: true, warning } : { ok: true };
       },
