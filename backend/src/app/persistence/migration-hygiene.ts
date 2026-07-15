@@ -109,6 +109,18 @@ export function checkMigrations(args: {
     ? Math.max(...baseline.map((m) => m.nameTs))
     : -Infinity;
 
+  // Migrations within `added` must also be monotonic relative to each other, not just
+  // relative to the baseline — a PR can add several migrations at once (e.g. a dependent
+  // follow-up) where a later-ordered file ends up with an earlier nameTs. Walk `added` in
+  // filename (fileTs) order, the order TypeORM's own file listing implies, tracking a running
+  // max so each migration is compared against everything before it, not just the baseline.
+  const requiredMaxByFile = new Map<string, number>();
+  let runningMax = baseMax;
+  for (const migration of [...added].sort((a, b) => a.fileTs - b.fileTs)) {
+    requiredMaxByFile.set(migration.file, runningMax);
+    if (migration.nameTs > runningMax) runningMax = migration.nameTs;
+  }
+
   const violations: Violation[] = [];
 
   for (const migration of added) {
@@ -149,13 +161,14 @@ export function checkMigrations(args: {
       });
     }
 
-    if (Number.isFinite(baseMax) && !(migration.nameTs > baseMax)) {
+    const requiredMax = requiredMaxByFile.get(migration.file) ?? baseMax;
+    if (Number.isFinite(requiredMax) && !(migration.nameTs > requiredMax)) {
       violations.push({
         file: migration.file,
         rule: 'not-monotonic',
         message:
           `${migration.file}: class name timestamp ${migration.nameTs} does not sort after the ` +
-          `latest migration already on the base branch (${baseMax}) — ${GENERATE_HINT}.`,
+          `latest migration already on the base branch or earlier in this PR (${requiredMax}) — ${GENERATE_HINT}.`,
       });
     }
 

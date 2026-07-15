@@ -27,7 +27,7 @@
     "db:migrate:deploy": "cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:run -d cli/data-source.ts",
     "db:migrate:revert": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs migration:revert -d cli/data-source.ts",
     "db:migration:generate": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/migration-generate.ts",
-    "db:migration:check": "vitest run migrations-hygiene",
+    "db:migration:check": "vitest run --mode unit migrations-hygiene",
     "db:schema:drop": "pnpm env:inject -- cross-env TS_NODE_PROJECT=tsconfig.cli.json typeorm-ts-node-commonjs schema:drop -d cli/data-source.ts",
     "db:seed": "dotenvx run -f .env.local.enc -f .env.seed.enc -f .env.personal --ignore=MISSING_ENV_FILE -o --strict -- cross-env NODE_ENV=development ts-node --project tsconfig.cli.json cli/seed-runner.ts",
     "db:recover-turn": "pnpm env:inject -- ts-node --project tsconfig.cli.json cli/recover-turn.ts",
