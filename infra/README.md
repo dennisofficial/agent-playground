@@ -202,7 +202,7 @@ docker run --rm \
     ghcr.io/dennisofficial/atlas-backend-migrator:<tag>
 ```
 
-Replace `<tag>` with the `sha-<gitsha>` tag `ci.yml` published for the commit you're deploying (see the GitHub Actions run summary, or `git rev-parse --short HEAD` for the current `main` tip once CI has built it).
+Replace `<tag>` with the `sha-<gitsha>` tag `ci.yml` published for the commit you're deploying (see the GitHub Actions run summary, or `git rev-parse HEAD | cut -c1-7` for the current `main` tip once CI has built it).
 
 > **Migrations must be backward-compatible (expand-contract).** `deploy.sh` runs the migrator BEFORE
 > the blue/green swap, so during every deploy's drain window the **old** backend keeps serving in-flight
