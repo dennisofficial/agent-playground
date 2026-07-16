@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ResolvedMcpServer } from '@shared/engine/engine.types';
-import { mcpHubUrl } from './mcp-hub-config';
+import { mcpHubUrl } from '../../../app/sandbox/image/mcp-hub-config';
 import { buildUserMcpBridgeOptions } from './user-mcp-bridge-options';
 
 describe('buildUserMcpBridgeOptions', () => {

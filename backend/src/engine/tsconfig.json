@@ -5,7 +5,17 @@
     "outDir": "../../dist",
     "sourceMap": true
   },
-  "include": ["**/*", "../shared/**/*", "../_core/**/*", "../_lib/**/*"],
+  "include": [
+    "**/*",
+    "../shared/**/*",
+    "../_core/**/*",
+    "../_lib/**/*",
+    "../app/sandbox/redis-turn-keys.ts",
+    "../app/sandbox/container-paths.ts",
+    "../app/sandbox/image/host-tool-schemas.ts",
+    "../app/sandbox/image/reserved-mcp-names.ts",
+    "../app/sandbox/image/mcp-hub-config.ts"
+  ],
   "exclude": [
     "../../node_modules",
     "dist",

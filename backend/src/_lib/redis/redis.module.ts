@@ -30,7 +30,8 @@ import { REDIS_CLIENT, buildRedisClient } from './redis.tokens';
   providers: [
     {
       provide: REDIS_CLIENT,
-      useFactory: (env: EnvService): Redis => buildRedisClient(env),
+      useFactory: (env: EnvService): Redis =>
+        buildRedisClient({ url: env.get('REDIS_URL') }),
       inject: [EnvService],
     },
     {
