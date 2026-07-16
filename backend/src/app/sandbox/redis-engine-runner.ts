@@ -800,11 +800,29 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // Ack the whole processed batch back to the runner group — the batch is processed synchronously
         // above before we move on, so a single batch-ack is enough (its granularity matches consumeTools's
         // per-entry ack). Registry liveness (heartbeat + resume cursor) is stamped by the watchdog group.
-        await this.redis.ack(
-          keys.events,
-          EVENTS_RUNNER_GROUP,
-          entries.map((e) => e.id),
-        );
+        try {
+          await this.redis.ack(
+            keys.events,
+            EVENTS_RUNNER_GROUP,
+            entries.map((e) => e.id),
+          );
+        } catch (err) {
+          // Same transport-failure classification as the read retry above: OUR client dropped, not the
+          // engine, so treat it as a detach rather than misclassifying it as a finished turn. One quick
+          // retry rides out a transient blip.
+          try {
+            await new Promise((r) => setTimeout(r, 250));
+            await this.redis.ack(
+              keys.events,
+              EVENTS_RUNNER_GROUP,
+              entries.map((e) => e.id),
+            );
+          } catch {
+            throw new EngineDetachedError(
+              `events tail lost its Redis transport acking a batch mid-turn (turn ${turnId}): ${err}`,
+            );
+          }
+        }
       }
     } finally {
       args.signal?.removeEventListener('abort', onAbort);
