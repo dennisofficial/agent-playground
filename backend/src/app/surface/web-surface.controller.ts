@@ -25,7 +25,6 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { ModuleRef } from '@nestjs/core';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
   createReadStream,
@@ -91,7 +90,7 @@ import { LiveTurnStore } from './live-turn-store';
 import { ThreadInputService } from './thread-input.service';
 import { JobTitleService } from './job-title.service';
 import { parseWebApprovalMeta } from './web-approval-card';
-import { resolveMergeApproval } from './resolve-merge-approval';
+import { DriverApprovalGateway } from '../driver-approval-gateway';
 import type { WebQuestionCard } from './web-question-card';
 import type { WebSecretInputCard } from './web-secret-input-card';
 import type { WebFileRequestCard } from './web-file-request-card';
@@ -784,10 +783,11 @@ export class WebSurfaceController {
     private readonly git: LocalGitService,
     // Job-to-job "blocked by" edges — the manual block/unblock endpoints call addDependency/removeDependency.
     private readonly jobDeps: JobDependencyService,
-    // Resolves `ThreadDriver` lazily for the SYNCHRONOUS manual-merge path (the "Merge PR" approve click
-    // awaits `resolveMergeApproval` → `mergeNow`). Placed after the last required dep so the controller's
-    // positional-arg unit tests keep their alignment.
-    private readonly moduleRef: ModuleRef,
+    // The typed surface→driver approval seam (from @Global DriverApprovalGatewayModule). The SYNCHRONOUS
+    // manual-merge path (the "Merge PR" approve click) awaits `driverApproval.resolveMerge` → the driver's
+    // `resolveMergeApprovalDurably` → `mergeNow`, with no ModuleRef service-locator or surface→driver cycle.
+    // Occupies the former `moduleRef` slot so the controller's positional-arg unit tests keep their alignment.
+    private readonly driverApproval: DriverApprovalGateway,
     // The `Message`-typed intake seam — the composed-turn path of `/message` (answered cards + an operator
     // message in one submit) delivers through `intakeChat`. Provided by the (non-@Global) StimulusModule,
     // imported into WebSurfaceModule for this injection to resolve.
@@ -1746,11 +1746,7 @@ export class WebSurfaceController {
     // The MERGE click resolves SYNCHRONOUSLY: await the merge so the response only returns 2xx once the PR
     // actually merged, and a failed/no-op merge surfaces as a 409 instead of a false success.
     if (actionId === MERGE_ACTION_ID) {
-      const merged = await resolveMergeApproval(
-        this.moduleRef,
-        meta.jobId,
-        user.id,
-      );
+      const merged = await this.driverApproval.resolveMerge(meta.jobId, user.id);
       if (!merged)
         throw new HttpException('Merge did not complete', HttpStatus.CONFLICT);
       return { ok: true, jobId: meta.jobId };
