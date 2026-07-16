@@ -14,6 +14,7 @@ import type { SeedRow } from '../../domain/seed-row';
 import { agentMessage, type AgentMessage } from '../message';
 import { shipOpenPrBody } from '../messages/ship-open-pr';
 import { chunkKey } from './chunk-keys';
+import { renderChunk } from './tag-vocabulary';
 import {
   COMPACTION_INSTRUCTION,
   answeredQuestionBody,
@@ -73,8 +74,16 @@ export function composeMessageBody(
       return composeSecretProvided(m);
     case 'reset_verify':
       // Plain wake body — this seed writes no curated pill; the verify instruction rides RESET_VERIFY_TEXT,
-      // consumed by whichever turn cold-attaches first.
-      return { body: resetContinuationNotice() };
+      // consumed by whichever turn cold-attaches first. Framed as a `<system_notice>` (matches `frameAnswer`)
+      // so the engine reads it as trusted harness context, not a bare/untagged turn.
+      return {
+        body: agentMessage(
+          renderChunk({
+            kind: 'system_notice',
+            body: resetContinuationNotice(),
+          }),
+        ),
+      };
     case 'compaction':
       // Compaction is not a single rendered notice: it triggers a summarization turn the brain drives with
       // COMPACTION_SYSTEM/foldCompactionSeed. That brain-side special-casing is wired in a later slice; this
@@ -94,7 +103,9 @@ export function composeMessageBody(
       };
     case 'work_owed_nudge':
       return {
-        body: renderWorkOwedNudge(),
+        body: agentMessage(
+          renderChunk({ kind: 'system_notice', body: renderWorkOwedNudge() }),
+        ),
         seedRow: {
           label: agentMessage('Resuming an interrupted plan review.'),
           chunkKey: chunkKey.workOwed(m.reviewId),
@@ -110,7 +121,12 @@ export function composeMessageBody(
       };
     case 'request_changes':
       return {
-        body: renderRequestChangesDelivery(m.note),
+        body: agentMessage(
+          renderChunk({
+            kind: 'system_notice',
+            body: renderRequestChangesDelivery(m.note),
+          }),
+        ),
         seedRow: {
           label: agentMessage('The operator requested changes.'),
           chunkKey: chunkKey.requestChanges(m.decisionRecordId),
@@ -118,7 +134,12 @@ export function composeMessageBody(
       };
     case 'unblocked_job_wake':
       return {
-        body: wakeUnblockedJobBody(m.note),
+        body: agentMessage(
+          renderChunk({
+            kind: 'system_notice',
+            body: wakeUnblockedJobBody(m.note),
+          }),
+        ),
         seedRow: {
           label: agentMessage('All blocking jobs resolved — unblocked.'),
           chunkKey: chunkKey.unblock(m.jobId),

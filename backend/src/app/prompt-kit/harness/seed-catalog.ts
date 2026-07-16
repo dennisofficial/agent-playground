@@ -127,8 +127,8 @@ export function foldCompactionSeed(
 /**
  * The nudge body for a WORK-OWED review (see `reconcileWorkOwedReviews`). A `review_plan` you started was
  * interrupted before it returned (a host hiccup), so the plan quietly stalled. Push the brain to resume:
- * re-run `review_plan` (it resumes the same Codex conversation) and then act. Wrapped as a system
- * notification by `harnessDeliveryStimulus`, so it reads as a trusted harness instruction.
+ * re-run `review_plan` (it resumes the same Codex conversation) and then act. Wrapped as a `<system_notice>`
+ * by `composeMessageBody`'s `work_owed_nudge` arm, so it reads as a trusted harness instruction.
  */
 export function renderWorkOwedNudge(): AgentMessage {
   return agentMessage(
@@ -212,7 +212,8 @@ export function wakeForAmendApprovedBody(): AgentMessage {
  * into the resumed brain session (via `handleChatTurn`) so the engine actually SEES the feedback — the
  * `messages` table is only an operator-facing mirror, so without this the note would reach the brain only
  * if the operator re-typed it. The note is the operator's own (trusted) words; it is quoted verbatim so the
- * brain reads it as their instruction. Wrapped as a `<system_notification>` by `harnessDeliveryStimulus`.
+ * brain reads it as their instruction. Wrapped as a `<system_notice>` by `composeMessageBody`'s
+ * `request_changes` arm.
  */
 export function renderRequestChangesDelivery(note: string): AgentMessage {
   return agentMessage(
