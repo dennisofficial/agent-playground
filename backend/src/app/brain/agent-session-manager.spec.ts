@@ -14,6 +14,7 @@ import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
+import type { ThreadRole } from '../thread-kind';
 import type {
   BlockSink,
   ChatSurface,
@@ -3379,6 +3380,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     steer?: ReturnType<typeof vi.fn>;
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
     stimulusRow?: ChatStimulus | null;
+    /** `driverStore.threadRole` result — the stage a `resumeThreadId`d turn resolves to (d8 prefix gating). */
+    threadRole?: ThreadRole | null;
   }) {
     // Durable retry-counter fakes (mirrors the real CAS columns on `jobs`), keyed by jobId — a fresh Map
     // per `makeManager()` call so each test starts from a clean budget.
@@ -3509,6 +3512,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     );
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
+      threadRole: vi.fn().mockResolvedValue(opts.threadRole ?? null),
+      threadSessionId: vi.fn().mockResolvedValue(undefined),
+      setThreadSessionId: vi.fn().mockResolvedValue(undefined),
     } as unknown as DriverStoreService;
     const awareness = {
       appendMarker: vi.fn().mockResolvedValue(undefined),
@@ -3742,6 +3748,101 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(meta.contextTokens).toBe(23_100);
     expect(meta.contextTokens).not.toBe(187_795);
     expect(meta.contextLimit).toBe(1_000_000); // opus → 1M window
+  });
+
+  describe('per-stage host-side turn-prefix gating (d8)', () => {
+    // Distinctive substrings from the three gated prefixes — see `buildAwarenessPrefix` /
+    // `buildOpenQuestionsPrefix` / `buildAmendingPrefix` in agent-session-manager.service.ts.
+    const AWARENESS_MARK = 'Pipeline updates since your last message';
+    const OPEN_QUESTIONS_MARK = 'still awaiting an';
+    const AMENDING_MARK = 'This build is AMENDING';
+
+    /** Wires every gated prefix's trigger condition ON (markers pending, an open question, job amending) so
+     *  each test only has to assert which subset of the three actually reached the engine's task. */
+    function makeManagerWithAllPrefixesTriggered(opts: {
+      resumeThreadId?: string;
+      threadRole?: ThreadRole | null;
+    }) {
+      const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's1' });
+      const drainAndAdvance = vi.fn().mockResolvedValue({
+        markers: [
+          {
+            id: 'm1',
+            text: 'a builder finished a leg',
+            at: '2026-07-16T00:00:00Z',
+          },
+        ],
+        stateChanged: false,
+      });
+      const built = makeManager({
+        run,
+        drainAndAdvance,
+        threadRole: opts.threadRole,
+      });
+      (
+        built.store.openQuestionCards as ReturnType<typeof vi.fn>
+      ).mockResolvedValue([
+        { questionId: 'q1', header: 'Which DB?', question: 'Which DB?' },
+      ]);
+      (built.store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        kind: null,
+        status: 'amending',
+      });
+      const turnStimulus: ChatStimulus = {
+        ...stimulus,
+        ...(opts.resumeThreadId
+          ? { resumeThreadId: opts.resumeThreadId }
+          : {}),
+      };
+      return { ...built, run, turnStimulus };
+    }
+
+    function composedTask(dockerRunner: EngineRunnerPort): string {
+      return (dockerRunner.run as ReturnType<typeof vi.fn>).mock
+        .calls[0][0].task as string;
+    }
+
+    it('PLANNING (no resumeThreadId) renders the awareness + open-questions prefixes, never amending', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({});
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).toContain(AWARENESS_MARK);
+      expect(task).toContain(OPEN_QUESTIONS_MARK);
+      expect(task).not.toContain(AMENDING_MARK);
+    });
+
+    it('POST_BUILD (resumeThreadId → post_build) renders the amending prefix, never awareness/open-questions', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({
+          resumeThreadId: 'thr-pb-1',
+          threadRole: 'post_build',
+        });
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).toContain(AMENDING_MARK);
+      expect(task).not.toContain(AWARENESS_MARK);
+      expect(task).not.toContain(OPEN_QUESTIONS_MARK);
+    });
+
+    it('CI (resumeThreadId → ci) renders none of the three gated prefixes', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({
+          resumeThreadId: 'thr-ci-1',
+          threadRole: 'ci',
+        });
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).not.toContain(AWARENESS_MARK);
+      expect(task).not.toContain(OPEN_QUESTIONS_MARK);
+      expect(task).not.toContain(AMENDING_MARK);
+    });
   });
 
   it('turn_meta context occupancy is null when the engine surfaces no per-call usage (no wrong ring)', async () => {
