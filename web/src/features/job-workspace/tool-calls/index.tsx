@@ -4,7 +4,15 @@ import { useState, type ReactNode } from "react";
 import type { ToolItem } from "./types";
 import { resolveHandler } from "./registry";
 import type { ToolBadge } from "./types";
-import { Badge, Chevron, NewPill, StructuredPanel, ToolIcon } from "./ui";
+import {
+  Badge,
+  Chevron,
+  JitContextPanel,
+  JitPill,
+  NewPill,
+  StructuredPanel,
+  ToolIcon,
+} from "./ui";
 import { formatPayload } from "./util";
 import { isFileEditTool } from "./handlers/native-file";
 
@@ -151,19 +159,27 @@ function ToolRow({ tool }: { tool: ToolItem }) {
           </>
         )}
         {d.pill ? <NewPill text={d.pill} /> : null}
+        {tool.jitContext?.length ? (
+          <JitPill count={tool.jitContext.length} />
+        ) : null}
         <Badge badge={badge} />
       </DisclosureRow>
       {open ? (
-        Body ? (
-          <Body tool={tool} />
-        ) : (
-          <StructuredPanel
-            input={formatPayload(tool.input)}
-            result={formatPayload(tool.result)}
-            isError={tool.isError}
-            superseded={tool.superseded}
-          />
-        )
+        <>
+          {Body ? (
+            <Body tool={tool} />
+          ) : (
+            <StructuredPanel
+              input={formatPayload(tool.input)}
+              result={formatPayload(tool.result)}
+              isError={tool.isError}
+              superseded={tool.superseded}
+            />
+          )}
+          {tool.jitContext?.length ? (
+            <JitContextPanel items={tool.jitContext} />
+          ) : null}
+        </>
       ) : null}
     </div>
   );

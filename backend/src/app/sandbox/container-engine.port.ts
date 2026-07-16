@@ -56,6 +56,22 @@ export interface CreateContainerSpec {
    * (no de-prioritization).
    */
   cpuShares?: number;
+  /**
+   * Run with an init process (Docker `HostConfig.Init` ⇒ docker-init/tini as PID 1). PID 1 in a sandbox
+   * is otherwise `exec sleep infinity` (sandbox-init.sh), which does NOT reap children — so esbuild/vitest
+   * subprocesses reparented to it become permanent zombies. tini reaps them (and forwards signals).
+   */
+  init?: boolean;
+  /**
+   * Hard CPU cap in nanocpus (Docker `HostConfig.NanoCpus`); 1 core = 1_000_000_000. Unlike `cpuShares`
+   * (relative weight, bites only under contention) this is a throughput CEILING even on an idle box.
+   * Omitted ⇒ uncapped.
+   */
+  nanoCpus?: number;
+  /** Hard memory cap in bytes (Docker `HostConfig.Memory`). Omitted ⇒ uncapped. */
+  memoryBytes?: number;
+  /** Max process/thread count (Docker `HostConfig.PidsLimit`) — a fork-bomb / zombie-storm backstop. Omitted ⇒ unlimited. */
+  pidsLimit?: number;
   /** Override the image entrypoint/cmd (PID 1). */
   cmd?: string[];
   /** Default working directory inside the container. */

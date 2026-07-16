@@ -55,6 +55,16 @@ export interface StructuredPatchHunk {
   lines: string[];
 }
 
+/** One JIT additionalContext injection's meta shape, joined to its tool call by id — reused by host +
+ *  web fixtures. */
+export interface JitInjection {
+  rule: JitInjectionRule;
+  text: string;
+}
+
+/** The set of JIT PostToolUse additionalContext rules that can tag a tool call (decision d2). */
+export type JitInjectionRule = 'svc-nudge' | 'github-fetch-guard' | 'install-awareness';
+
 /** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =
   | { kind: 'text'; text: string; parentToolUseId?: string }
@@ -105,6 +115,15 @@ export type EngineEvent =
       parentToolUseId?: string;
       /** Edit/MultiEdit only: the SDK's structured patch (real file offsets) for an accurate diff gutter. */
       structuredPatch?: StructuredPatchHunk[];
+    }
+  /** One JIT additionalContext injection, joined to its tool call by `id` (== tool_use_id). Emitted at
+   *  hook-fire time, independent of tool_result ordering (decision d6). */
+  | {
+      kind: 'jit_injection';
+      id: string;
+      rule: JitInjectionRule;
+      text: string;
+      parentToolUseId?: string;
     }
   /**
    * LIVE context-window occupancy — emitted mid-turn each time an agent produces an assistant message (i.e.

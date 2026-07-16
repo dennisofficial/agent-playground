@@ -330,6 +330,7 @@ export function buildLiveTurnItems(
         isError: b.isError,
         superseded: b.superseded,
         structuredPatch: b.structuredPatch as ToolItem["structuredPatch"],
+        jitContext: b.jitContext,
         running: !b.done,
       });
       pendingEmittedAt.push(b.emittedAt);

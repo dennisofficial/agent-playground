@@ -52,6 +52,8 @@ export type LiveBlock =
       superseded?: boolean;
       /** Edit/MultiEdit only: structured patch (real file offsets) for the diff body. */
       structuredPatch?: unknown;
+      /** JIT PostToolUse additionalContext injections that fired on this tool call (rule + verbatim text). */
+      jitContext?: Array<{ rule: string; text: string }>;
       done: boolean;
       /**
        * Set on the ANCHOR tool block of a BACKGROUNDED Task subagent once its run settles (a `bg_task`
@@ -126,6 +128,8 @@ type StreamPayload = {
   superseded?: boolean;
   /** present on a `tool_result` for an Edit/MultiEdit — real file offsets for the diff gutter. */
   structuredPatch?: unknown;
+  /** present on `kind:'jit_injection'` — the rule that fired (`text` above carries the injected text). */
+  rule?: string;
   /** set only for subagent blocks (the spawning Task id) — peeled into a sub-page by consumers. */
   parentToolUseId?: string;
   /** present on `kind:'bg_task'` — the backgrounded task's settlement/lifecycle status. */
@@ -362,6 +366,24 @@ class ThreadStreamStore {
                 ? { structuredPatch: ev.structuredPatch }
                 : {}),
               done: true,
+            };
+            break;
+          }
+        }
+        break;
+      }
+      case "jit_injection": {
+        const id = typeof ev.id === "string" ? ev.id : "";
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const b = blocks[i];
+          if (b.kind === "tool" && b.toolId === id) {
+            const prior = b.jitContext ?? [];
+            blocks[i] = {
+              ...b,
+              jitContext: [
+                ...prior,
+                { rule: String(ev.rule ?? ""), text: typeof ev.text === "string" ? ev.text : "" },
+              ],
             };
             break;
           }

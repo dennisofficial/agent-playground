@@ -5353,6 +5353,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       baseBranch: 'main', // inherits the parent thread's base
       createdByJobId: THREAD,
       createdByTitle: 'Parent job',
+      autoMode: {},
     });
     expect(startSpy).toHaveBeenCalledWith(
       'th-followup',

@@ -103,6 +103,12 @@ export interface IEnvConfig {
   // contention. Low value ⇒ sandboxes lose CPU only when the backend/DB/web compete; idle box ⇒ agents
   // still use 100% (no cap). UNSET ⇒ Docker default (no de-prioritization). See infra/README.md.
   SANDBOX_CPU_SHARES?: number;
+  // Hard per-sandbox resource ceilings (Docker HostConfig NanoCpus / Memory / PidsLimit) so one job can't
+  // monopolize the shared host. SANDBOX_MAX_CPUS: cores (float ok; ×1e9 → NanoCpus). SANDBOX_MAX_MEMORY_GB:
+  // GiB. SANDBOX_MAX_PIDS: process/thread cap. UNSET ⇒ built-in defaults 6 / 24 / 8192 (see SandboxManager).
+  SANDBOX_MAX_CPUS?: number;
+  SANDBOX_MAX_MEMORY_GB?: number;
+  SANDBOX_MAX_PIDS?: number;
   // SANDBOX_REDIS_URL: the Redis URL the IN-CONTAINER engine uses (falls back to REDIS_URL).
   // SANDBOX_BUS_NETWORK: the internal Docker network each sandbox joins (`atlas-bus` in prod; unset in dev).
   // ATLAS_REPO_SLUG: repos.slug of the Atlas repo itself; gates the MCP-network attach (fail-closed).
@@ -245,6 +251,9 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   WORKSPACE_IMAGE: Joi.string().optional(),
   WORKSPACE_DOCKER_STORAGE_DRIVER: Joi.string().allow('').optional(),
   SANDBOX_CPU_SHARES: Joi.number().integer().min(2).max(262144).optional(),
+  SANDBOX_MAX_CPUS: Joi.number().positive().optional(),
+  SANDBOX_MAX_MEMORY_GB: Joi.number().positive().optional(),
+  SANDBOX_MAX_PIDS: Joi.number().integer().positive().optional(),
   SANDBOX_REDIS_URL: Joi.string().uri().optional(),
   SANDBOX_BUS_NETWORK: Joi.string().optional(),
   ATLAS_REPO_SLUG: Joi.string().optional(),
