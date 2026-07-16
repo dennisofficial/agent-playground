@@ -691,7 +691,12 @@ export class EngineCore {
       },
       getContextTokens: () => contextTokens,
       onJitInjection: (inj) =>
-        onEvent?.({ kind: 'jit_injection', id: inj.toolUseId, rule: inj.rule, text: inj.text }),
+        onEvent?.({
+          kind: 'jit_injection',
+          id: inj.toolUseId,
+          rule: inj.rule,
+          text: inj.text,
+        }),
     });
 
     let result = '';
@@ -973,6 +978,7 @@ export class EngineCore {
               tool_use_id?: string;
               content?: unknown;
               is_error?: boolean;
+              text?: string;
             }>) {
               if (block.type === 'tool_result') {
                 const isStreamClosed =
@@ -995,6 +1001,10 @@ export class EngineCore {
                     'engine stream closed: control channel severed mid-turn (circuit-breaker)',
                   );
                 }
+              } else if (block.type === 'text' && parent) {
+                const text = block.text;
+                if (text && text.trim())
+                  onEvent?.({ kind: 'user_text', text, ...sub });
               }
             }
           }

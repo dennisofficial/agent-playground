@@ -68,6 +68,12 @@ export type JitInjectionRule = 'svc-nudge' | 'github-fetch-guard' | 'install-awa
 /** A normalized progress event, emitted by both engines regardless of native event shape. */
 export type EngineEvent =
   | { kind: 'text'; text: string; parentToolUseId?: string }
+  /**
+   * A parent→sub-agent injected input (e.g. via the SendMessage tool) — distinct from `text`, which is
+   * the agent's own narration. Only ever emitted when `parentToolUseId` is SET (sub-agent only); the
+   * main-thread operator-steer path persists at call time and never relies on this.
+   */
+  | { kind: 'user_text'; text: string; parentToolUseId?: string }
   | { kind: 'tool'; name: string; detail?: string }
   | { kind: 'result'; text: string }
   /**
