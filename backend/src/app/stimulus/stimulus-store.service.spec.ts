@@ -213,6 +213,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'system_event',
         eventSource: 'github',
         severity: 'critical',
+        eventKind: 'ci_failure',
       },
     });
     expect(stimuli.rows[0]).toMatchObject({
