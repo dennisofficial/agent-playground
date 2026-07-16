@@ -31,6 +31,8 @@ export interface ToolItem {
   running?: boolean;
   /** Edit/MultiEdit only: structured patch carrying real file line offsets for the diff body. */
   structuredPatch?: DiffHunk[];
+  /** JIT PostToolUse additionalContext injections that fired on this tool call (rule + verbatim text). */
+  jitContext?: Array<{ rule: string; text: string }>;
 }
 
 export type IconKind =
