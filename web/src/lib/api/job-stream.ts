@@ -49,6 +49,7 @@ export type LiveBlock =
       input?: unknown;
       result?: unknown;
       isError?: boolean;
+      superseded?: boolean;
       /** Edit/MultiEdit only: structured patch (real file offsets) for the diff body. */
       structuredPatch?: unknown;
       done: boolean;
@@ -122,6 +123,7 @@ type StreamPayload = {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  superseded?: boolean;
   /** present on a `tool_result` for an Edit/MultiEdit — real file offsets for the diff gutter. */
   structuredPatch?: unknown;
   /** set only for subagent blocks (the spawning Task id) — peeled into a sub-page by consumers. */
@@ -355,6 +357,7 @@ class ThreadStreamStore {
               ...b,
               result: ev.result,
               isError: Boolean(ev.isError),
+              superseded: Boolean(ev.superseded),
               ...(ev.structuredPatch !== undefined
                 ? { structuredPatch: ev.structuredPatch }
                 : {}),

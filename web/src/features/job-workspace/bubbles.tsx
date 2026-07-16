@@ -328,6 +328,7 @@ export function buildLiveTurnItems(
         input: b.input,
         result: b.result,
         isError: b.isError,
+        superseded: b.superseded,
         structuredPatch: b.structuredPatch as ToolItem["structuredPatch"],
         running: !b.done,
       });
