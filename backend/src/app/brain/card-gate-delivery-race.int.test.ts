@@ -213,7 +213,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   function makeManager(opts: { live?: boolean; leader?: boolean } = {}) {
     let liveTurn: string | null = opts.live ? 'turn-live-1' : null;
     const runningBrainTurn = vi.fn(async () =>
-      liveTurn ? { turn_id: liveTurn } : null,
+      liveTurn ? { turn_id: liveTurn, lane: 'main' } : null,
     );
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
@@ -276,6 +276,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemNotice: vi.fn().mockResolvedValue(undefined),
+      // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
     };
 
     const lifecycle = {

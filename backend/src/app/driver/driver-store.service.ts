@@ -364,8 +364,10 @@ export class DriverStoreService {
     jobId: string,
     card: Record<string, unknown>,
     summary: string,
+    orgId: string,
+    decisionRecordId: string | null,
   ): Promise<boolean> {
-    return this.dataSource.transaction(async (m) => {
+    const parked = await this.dataSource.transaction(async (m) => {
       const res = await m
         .getRepository(JobEntity)
         .createQueryBuilder()
@@ -391,6 +393,12 @@ export class DriverStoreService {
       );
       return true;
     });
+    // Spawn the post_build session at the GATE (idempotent) so preview/amend taps have a session to land
+    // on before the operator can act — only when THIS call actually transitioned the job.
+    if (parked) {
+      await this.ensurePostBuildThread({ jobId, orgId, decisionRecordId });
+    }
+    return parked;
   }
 
   /**
@@ -1961,6 +1969,17 @@ export class DriverStoreService {
   /** Persist a thread's live engine session id (d5). */
   async setThreadSessionId(threadId: string, sessionId: string): Promise<void> {
     await this.threads.update({ id: threadId }, { session_id: sessionId });
+  }
+
+  /** Read-only lookup of the job's `post_build` stage-thread id (the re-homed session for preview/amend
+   *  seeds), or null when the gate hasn't spawned it yet. Latest by ordinal, mirroring `ciThreadId`. */
+  async postBuildThreadId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { job_id: jobId, role: 'post_build' },
+      order: { ordinal: 'DESC' },
+      select: { id: true },
+    });
+    return row?.id ?? null;
   }
 
   /** The thread's role (registry-backed `ThreadRole`), or null if the thread is gone. The turn seam uses

@@ -88,7 +88,7 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
-import { shipOpenPrBody } from '../prompt-kit';
+import { shipOpenPrBody, composePreviewPrepSeed } from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
 import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
@@ -879,15 +879,13 @@ export class AgentSessionManager
   }
 
   /**
-   * SERVER-INITIATED open-PR turn (the ship step). Seeds the job-brain session with the ship turn-prompt
-   * (reconcile the branch against its base → push → author the PR body → `gh pr create`) as a harness turn.
-   * The brain runs it in ITS OWN sandbox on the feature branch with
-   * its already-resolved engine auth + git auth — no separate `engine.run` session — and the HOST records
-   * the opened PR afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so
-   * this turn needs no `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s.
-   * MUST only be called when the brain is IDLE (the driver/boot ship paths); a caller already inside a brain
-   * turn (the direct-build `finalize_build` tool) instead returns {@link shipOpenPrBody} as guidance so the
-   * brain opens the PR inline in its current turn — it cannot nest a second brain turn.
+   * SERVER-INITIATED open-PR seed (the ship step). ENQUEUES the ship turn-prompt (reconcile the branch
+   * against its base → push → author the PR body → `gh pr create`) onto the job's `ci` stage-thread lane
+   * via the durable pump — it does NOT run the turn inline, so it returns as soon as the seed is persisted
+   * and serializes behind any live post_build turn on the per-job queue. The brain runs it in ITS OWN sandbox
+   * on the feature branch with its already-resolved engine auth + git auth, and the HOST records the opened PR
+   * afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so this needs no
+   * `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s (dedup by chunkKey).
    */
   async openPrAtShip(input: {
     jobId: string;
@@ -898,22 +896,27 @@ export class AgentSessionManager
     title: string;
     threadId: string;
   }): Promise<void> {
-    const stimulus = harnessDeliveryStimulus({
-      jobId: input.jobId,
+    const recorded = await this.stimulusStore.recordChatStimulus({
       orgId: input.orgId,
       repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
       body: shipOpenPrBody({
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
       }),
-      seedRow: {
+      lane: `thread:${input.threadId}`,
+      systemChunk: {
         label: 'Opening the pull request.',
         chunkKey: `seed:ship:${input.jobId}`,
       },
-      resumeThreadId: input.threadId,
     });
-    await this.handleChatTurn(stimulus);
+    await this.enqueueChat(recorded);
   }
 
   /**
@@ -982,25 +985,82 @@ export class AgentSessionManager
   /**
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
-   * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
-   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
-   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
-   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
+   * amending`), so the brain just needs to do the follow-up work it proposed. Delivered durably onto the
+   * job's `post_build` stage-thread session (resolved, or spawned as a fallback) via the pump — non-blocking
+   * so the amend-approve HTTP path returns immediately. The brain re-arms the gate by calling
+   * `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild).
    */
   async wakeForAmendApproved(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job) return;
-    const stimulus = harnessDeliveryStimulus({
-      jobId,
+    const threadId =
+      (await this.driverStore.postBuildThreadId(jobId)) ??
+      (
+        await this.driverStore.ensurePostBuildThread({
+          jobId,
+          orgId: job.orgId,
+          decisionRecordId: job.decisionRecordId ?? null,
+        })
+      ).threadId;
+    const recorded = await this.stimulusStore.recordChatStimulus({
       orgId: job.orgId,
       repoId: job.repoId,
+      jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
       body: wakeForAmendApprovedBody(),
-      seedRow: {
+      lane: `thread:${threadId}`,
+      systemChunk: {
         label: 'Amend approved — resuming to make the changes.',
         chunkKey: `seed:amend-approved:${jobId}`,
       },
     });
-    await this.handleChatTurn(stimulus);
+    await this.enqueueChat(recorded);
+  }
+
+  /**
+   * SEED the operator "Spin up preview" request onto the job's `post_build` stage-thread session (d14). Runs
+   * the preview-prep prompt (author a preview recipe / spin the preview up) on the fresh post_build session,
+   * NOT planning. Durable + non-blocking: the request is persisted then enqueued via the pump, so the HTTP
+   * handler returns immediately and a crash re-drives the seed. Falls back to spawning the post_build thread
+   * if the gate somehow skipped it. Idempotent per job via the `preview` chunkKey.
+   */
+  async seedPreviewOnPostBuild(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    previewInstructions: string | null;
+  }): Promise<void> {
+    const threadId =
+      (await this.driverStore.postBuildThreadId(input.jobId)) ??
+      (
+        await this.driverStore.ensurePostBuildThread({
+          jobId: input.jobId,
+          orgId: input.orgId,
+          decisionRecordId: null,
+        })
+      ).threadId;
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: composePreviewPrepSeed(input.previewInstructions),
+      lane: `thread:${threadId}`,
+      systemChunk: {
+        label: 'Spin up preview requested',
+        chunkKey: chunkKey.preview(input.jobId),
+      },
+    });
+    await this.enqueueChat(recorded);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -3716,6 +3776,8 @@ export class AgentSessionManager
               job.id,
               card as unknown as Record<string, unknown>,
               summary,
+              job.orgId,
+              job.decisionRecordId ?? null,
             );
             return {
               ok: true,

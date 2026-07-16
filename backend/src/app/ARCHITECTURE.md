@@ -165,16 +165,22 @@ no-review fast path: a single builder thread, no `review_agent`, no `review_fix`
 it still flows through `post_build` + `ci` like every other pipeline; it is one more `STAGE_KIND_SPECS` entry,
 not a special code path.
 
-**Two more live stages take over what Main used to do at the tail end.** `post_build` (spawned once all
-build/direct*build stages + `master_review` complete — `DriverStoreService.ensurePostBuildThread`, called
-from `BuildShipService`) now owns the ship/amend flow, including `openPrAtShip` — moved OFF the planning
-brain onto this thread's own fresh session (`threads.session_id`, isolated from `job_sandboxes.session_id`);
-`ci` (spawned once the PR is recorded — `DriverStoreService.ensureCiThread`, called from
-`build-ship.service.ts` post-`setPrReady`) now owns post-ship CI/GitHub event handling, addressed via
-`stimuli.lane = thread:<ciThreadId>`. **This split is orchestration-only**: `post_build`/`ci` reuse the EXACT
-SAME brain system prompting as today (`Agent.ATLAS_MAIN`, `thread-kind/registry.ts`), seeded with a minimal
-message (`post_build` gets the same "ship now" user message Main used to receive). Dedicated per-stage
-system/JIT prompting is deferred to a follow-up job — these are new spawn \_seams*, not new prompt tuning.
+**Two more live stages take over what Main used to do at the tail end.** `post_build` is the ship-review
+GATE stage — spawned right at the gate (`ThreadDriver.parkForShipReview` → `DriverStoreService`'s
+`parkForShipReview`, which calls `ensurePostBuildThread` once the transitioning write commits, i.e. as soon
+as build/direct_build stages + `master_review` complete and the job parks `awaiting_ship_review`), on its
+own fresh session (`threads.session_id`, isolated from `job_sandboxes.session_id`). It summarizes the build,
+proposes a preview, and owns the amend loop (`withdraw_ship` → `amending` → follow-up work →
+`report_verification` re-park) — it does **not** open the PR. `ci` is the post-ship PR-lifecycle stage —
+spawned at Ship (`BuildShipService.ship()` → `ensureCiThread`, before `openPrAtShip`) and again idempotently
+once the PR is recorded (`latchPr` → `ensureCiThread` post-`setPrReady`); it owns PR creation (`openPrAtShip`
+now fires with the **`ci`** thread's id, not `post_build`'s), the authoritative base-branch reconcile at PR
+creation, and post-ship CI/GitHub event handling, addressed via `stimuli.lane = thread:<ciThreadId>`. Each
+stage gets its OWN lean agent/system prompt (`Agent.PLANNING` / `Agent.POST_BUILD` / `Agent.CI`,
+`prompt-kit/system/agent.ts`) and its own tool allowlist (`thread-kind/registry.ts`) — all three keep full
+engineering capability (edit, verify-by-running, git, `gh`, subagents); only `PLANNING`'s grilling/plan/
+ship-gate apparatus is stripped from the other two, which are seeded with an initial message instead of a
+live planning transcript.
 
 ## 5. The pipeline / driver — the hands ✅
 

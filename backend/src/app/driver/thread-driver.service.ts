@@ -1895,6 +1895,8 @@ export class ThreadDriver implements JobDispatcher {
       job.id,
       card as unknown as Record<string, unknown>,
       summary,
+      job.orgId,
+      job.decisionRecordId ?? null,
     );
     if (!parked) return false;
     this.logger.log(

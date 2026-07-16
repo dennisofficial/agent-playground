@@ -185,6 +185,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     setHalted: vi.fn().mockResolvedValue(undefined),
     resetAllActivity: vi.fn().mockResolvedValue(0),
     clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+    // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
+    clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -3372,7 +3374,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     resetContainer?: ReturnType<typeof vi.fn>;
     hardResetSandbox?: ReturnType<typeof vi.fn>;
     /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
-    runningBrainTurn?: { turn_id: string } | null;
+    runningBrainTurn?: { turn_id: string; lane?: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
@@ -4168,7 +4170,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       findSandbox: { worktreePath: '/wt' },
       run,
       steer,
-      runningBrainTurn: { turn_id: 'T-live' },
+      runningBrainTurn: { turn_id: 'T-live', lane: 'main' },
       stimulusRow: answerSeed,
       // the answered, not-yet-delivered card the seed carries
       pendingCard: {
@@ -4920,6 +4922,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(
@@ -5114,8 +5117,10 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
       setActivity: vi.fn().mockResolvedValue(undefined),
+      setHalted: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:
@@ -5573,7 +5578,12 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   function makeManager(
     opts: {
       pending?: ChatStimulus[];
-      threads?: Array<{ jobId: string; orgId: string; repoId: string }>;
+      threads?: Array<{
+        jobId: string;
+        orgId: string;
+        repoId: string;
+        lane: string;
+      }>;
       jobStatus?: string;
     } = {},
   ) {
@@ -5587,7 +5597,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
-      undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
+      undeliveredChatLanes: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
       findChatStimulusById: vi.fn().mockResolvedValue(null),
     };
@@ -5663,7 +5673,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({
       pending,
     });
-    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live', lane: 'main' });
     const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
@@ -5787,7 +5797,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const { manager, runningBrainTurn, steer } = makeManager({ pending });
     runningBrainTurn
       .mockResolvedValueOnce(null) // pumpThread's own check
-      .mockResolvedValueOnce({ turn_id: 'turn-appeared' }); // deliverPendingViaFreshTurn's re-check
+      .mockResolvedValueOnce({ turn_id: 'turn-appeared', lane: 'main' }); // deliverPendingViaFreshTurn's re-check
     const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
@@ -5803,7 +5813,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   it('a steer failure does not throw — the message stays undelivered for the sweep to re-drive', async () => {
     const pending = [pendingRow('s1', 'msg', new Date('2026-07-02T12:00:00Z'))];
     const { manager, steer, runningBrainTurn } = makeManager({ pending });
-    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live', lane: 'main' });
     steer.mockRejectedValue(new Error('redis xadd failed'));
 
     await expect(
@@ -5829,8 +5839,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   describe('sweepUndeliveredChat (the leader periodic + boot re-drive)', () => {
     it('LEADER: pumps every distinct thread with an undelivered chat stimulus', async () => {
       const threads = [
-        { jobId: 'th-a', orgId: 'T1', repoId: 'r1' },
-        { jobId: 'th-b', orgId: 'T1', repoId: 'r1' },
+        { jobId: 'th-a', orgId: 'T1', repoId: 'r1', lane: 'main' },
+        { jobId: 'th-b', orgId: 'T1', repoId: 'r1', lane: 'main' },
       ];
       const { manager, getState } = makeManager({ threads });
       getState.mockReturnValue('leader');
@@ -5842,14 +5852,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         manager as never as { sweepUndeliveredChat: () => Promise<void> }
       ).sweepUndeliveredChat();
 
-      expect(pumpSpy).toHaveBeenCalledWith('th-a', 'T1', 'r1');
-      expect(pumpSpy).toHaveBeenCalledWith('th-b', 'T1', 'r1');
+      expect(pumpSpy).toHaveBeenCalledWith('th-a', 'T1', 'r1', 'main');
+      expect(pumpSpy).toHaveBeenCalledWith('th-b', 'T1', 'r1', 'main');
       expect(pumpSpy).toHaveBeenCalledTimes(2);
     });
 
     it('NON-LEADER: does nothing (no query, no pump)', async () => {
       const { manager, getState, stimulusStore } = makeManager({
-        threads: [{ jobId: 'th-a', orgId: 'T1', repoId: 'r1' }],
+        threads: [{ jobId: 'th-a', orgId: 'T1', repoId: 'r1', lane: 'main' }],
       });
       getState.mockReturnValue('follower');
       const pumpSpy = vi
@@ -5860,7 +5870,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         manager as never as { sweepUndeliveredChat: () => Promise<void> }
       ).sweepUndeliveredChat();
 
-      expect(stimulusStore.undeliveredChatThreads).not.toHaveBeenCalled();
+      expect(stimulusStore.undeliveredChatLanes).not.toHaveBeenCalled();
       expect(pumpSpy).not.toHaveBeenCalled();
     });
   });

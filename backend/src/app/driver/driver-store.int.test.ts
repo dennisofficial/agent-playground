@@ -1098,6 +1098,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       job.id,
       card as unknown as Record<string, unknown>,
       'Amend verified.',
+      ORG_ID,
+      null,
     );
     expect(parked).toBe(true);
 
@@ -1109,6 +1111,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       where: { job_id: job.id, ts: `ship-review:${job.id}`, kind: 'card' },
     });
     expect(cardRow).toBeTruthy();
+
+    // The gate now spawns the post_build session as part of the park, so preview/amend taps have a
+    // session to land on before the operator can act.
+    expect(await store.postBuildThreadId(job.id)).toBeTruthy();
   });
 
   it('retractShip does not act on a job in a DIFFERENT status', async () => {

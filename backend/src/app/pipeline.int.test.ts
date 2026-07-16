@@ -15,8 +15,9 @@
  *    (planning / plan_review / build×2 / master_review), that a builder `record_leg_handoff` inserts a
  *    SECOND builder into the SAME stage sharing the stage's `tasks` checklist (2a), that review_agent +
  *    review_fix threads are stage-scoped children of the LAST builder run ONCE over the stage diff (2b),
- *    that ship approval spawns a `post_build` stage-thread and `BrainGateway.openPrAtShip` fires with THAT
- *    thread's id (2d), and that recording the PR spawns a `ci` stage-thread (2e).
+ *    that the ship-review GATE (posted right after master review) spawns a `post_build` stage-thread (2d),
+ *    and that `ship()` spawns a `ci` stage-thread and `BrainGateway.openPrAtShip` fires with THAT (ci)
+ *    thread's id — PR creation lives on `ci`, not `post_build` (2e).
  *  - HALT PATH (separate drive): a `block_thread` halt leaves the thread `blocked`/paused, stops the job
  *    driving (no ship, no PR), and NEVER calls `BrainGateway` — proving the headless driver property (2c).
  */
@@ -582,16 +583,28 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
   ): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     let shipApproved = false;
+    let awaitingSince: number | null = null;
     let status = '';
     while (Date.now() < deadline) {
       const row = await jobs.findOneOrFail({ where: { id: jobId } });
       status = row.status;
       if (until(status)) break;
       // Belt-and-braces: the fixture opts into auto-approve so the gate resolves inline, but if a race ever
-      // parks it, click "Ship it" so the drive continues.
-      if (status === 'awaiting_ship_review' && !shipApproved) {
-        shipApproved = true;
-        await driver.resolveShipApprovalDurably(jobId, 'auto-test');
+      // genuinely parks it, click "Ship it" so the drive continues. DEBOUNCED: the gate's own inline
+      // auto-approve does a few DB round-trips right after the status flips (incl. spawning the post_build
+      // thread at the gate) before it stamps the approval marker, so a status observed on the very first poll
+      // may just be a mid-flight snapshot of that still-in-progress auto-approve. Clicking immediately would
+      // race the in-flight CAS — and since a concurrent `drive()` is single-flight-guarded (see
+      // ThreadDriver's `active` set), the loser's redrive is dropped, stranding the job. Require the status
+      // to be sustained for a short grace window before treating it as genuinely parked.
+      if (status === 'awaiting_ship_review') {
+        awaitingSince ??= Date.now();
+        if (!shipApproved && Date.now() - awaitingSince > 250) {
+          shipApproved = true;
+          await driver.resolveShipApprovalDurably(jobId, 'auto-test');
+        }
+      } else {
+        awaitingSince = null;
       }
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -600,8 +613,8 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
 
   it(
     'drives planning→build×2→master_review→post_build→ci: a builder handoff rotates a 2nd builder into the ' +
-      'SAME stage sharing tasks (2a); review children are stage-scoped + run once (2b); ship spawns post_build ' +
-      'and openPrAtShip fires with its thread id (2d); the recorded PR spawns a ci stage-thread (2e)',
+      'SAME stage sharing tasks (2a); review children are stage-scoped + run once (2b); the ship-review gate ' +
+      'spawns post_build (2d); ship() spawns ci and openPrAtShip fires with the ci thread id (2e)',
     async () => {
       const seed = await seedPlan();
 
@@ -687,25 +700,28 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       expect(executeStepIds).toContain(leg2.id); // the fresh rotated leg drove its own turn
       expect(executeStepIds).toContain(seed.frontendBuilderId);
 
-      // ── 2d: ship approval spawned a post_build stage-thread; openPrAtShip fired with ITS thread id ────
+      // ── 2d: the ship-review GATE (right after master review, before/independent of ship approval)
+      // spawned a post_build stage-thread — it does NOT open the PR ──────────────────────────────────
       const stagesAfter = await store.stagesForJob(seed.jobId);
       const postBuildStage = stagesAfter.find((s) => s.kind === 'post_build');
       expect(postBuildStage).toBeTruthy();
       const [postBuildThread] = await store.threadsForStage(postBuildStage!.id);
       expect(postBuildThread.role).toBe('post_build');
-      expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
-      expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
-        expect.objectContaining({
-          jobId: seed.jobId,
-          threadId: postBuildThread.id,
-        }),
-      );
 
-      // ── 2e: the recorded PR (setPrReady) spawned a ci stage-thread ───────────────────────────────────
+      // ── 2e: ship() spawned a ci stage-thread and openPrAtShip fired with ITS (ci) thread id — PR
+      // creation moved to ci, so it must NOT be the post_build thread's id ────────────────────────────
       const ciStage = stagesAfter.find((s) => s.kind === 'ci');
       expect(ciStage).toBeTruthy();
       const [ciThread] = await store.threadsForStage(ciStage!.id);
       expect(ciThread.role).toBe('ci');
+      expect(ciThread.id).not.toBe(postBuildThread.id);
+      expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
+      expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: seed.jobId,
+          threadId: ciThread.id,
+        }),
+      );
 
       const finalJob = await jobs.findOneOrFail({ where: { id: seed.jobId } });
       expect(finalJob.status).toBe('done');

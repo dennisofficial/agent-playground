@@ -156,7 +156,9 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
   ) {
     const runningBrainTurn = vi
       .fn()
-      .mockResolvedValue(opts.live ? { turn_id: 'turn-live-1' } : null);
+      .mockResolvedValue(
+        opts.live ? { turn_id: 'turn-live-1', lane: 'main' } : null,
+      );
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;
@@ -200,6 +202,8 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
       markSecretDelivered: vi.fn().mockResolvedValue(undefined),
       clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
       markFileDelivered: vi.fn().mockResolvedValue(undefined),
+      // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
     };
 
     const lifecycle = {

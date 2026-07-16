@@ -67,12 +67,13 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setPrReady: vi.fn(async () => undefined),
       setJobStatus: vi.fn(async () => undefined),
       setCurrentBranch: vi.fn(async () => undefined),
-      // The ship path ensures a fresh `post_build` stage-thread and runs the open-PR turn on its session.
+      // The gate spawns `post_build` (not `ship()`); kept mocked for any incidental callers.
       ensurePostBuildThread: vi.fn(async () => ({
         stageId: 'stage1',
         threadId: 'pb1',
       })),
-      // latchPr ensures the `ci` stage-thread exists once the PR is recorded (post-ship seam, d14).
+      // The ship path now ensures the `ci` stage-thread BEFORE the open-PR seed and enqueues the turn onto
+      // its session; latchPr re-ensures it once the PR is recorded (post-ship seam, d14).
       ensureCiThread: vi.fn(async () => ({
         stageId: 'stage2',
         threadId: 'ci1',
@@ -109,13 +110,14 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       sandbox,
     });
 
-    // The brain was seeded with the open-PR turn (branch/base/title), and the host opened nothing.
+    // The brain was seeded with the open-PR turn (branch/base/title) on the CI thread, host opened nothing.
     expect(openPrAtShip).toHaveBeenCalledWith(
       expect.objectContaining({
         jobId: 'j1',
         branch: 'feature/abcd',
         defaultBranch: 'main',
         title: 'Feature',
+        threadId: 'ci1',
       }),
     );
     expect(openPullRequest).not.toHaveBeenCalled();
@@ -182,6 +184,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       expect.objectContaining({
         branch: 'feature/abcd',
         title: 'feature/abcd',
+        threadId: 'ci1',
       }),
     );
   });
@@ -208,7 +211,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     await svc.ship({ job: liveJob, record: null, repo, sandbox });
 
     expect(openPrAtShip).toHaveBeenCalledWith(
-      expect.objectContaining({ branch: 'atlas/renamed' }),
+      expect.objectContaining({ branch: 'atlas/renamed', threadId: 'ci1' }),
     );
     expect(findOpenPullByHead).toHaveBeenCalledWith('ptok-xyz', {
       owner: 'acme',
