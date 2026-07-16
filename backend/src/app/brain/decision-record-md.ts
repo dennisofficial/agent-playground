@@ -1,8 +1,8 @@
 import {
   DECISION_CLASS_IDS,
   DECISION_CLASS_META,
-} from '../domain/decision-record';
-import type { Decision } from '../domain/decision-record';
+} from '@shared/domain/decision-record';
+import type { Decision } from '@shared/domain/decision-record';
 
 /**
  * Renders the GENERATED `decision-record.md` from the thread's working-set decisions. This file lives in

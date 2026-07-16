@@ -10,8 +10,8 @@ import {
   SYSTEM_SEED_AUTHOR,
   wrapSystemNotification,
 } from '../surface/chat-surface.port';
-import type { SeedRow } from '../domain';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { SeedRow } from '@shared/domain';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import {
   APPROVE_ACTION_ID,
   type ApprovalActionMeta,

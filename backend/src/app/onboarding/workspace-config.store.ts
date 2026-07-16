@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { OrgWorkspaceMountEntity, RepoEntity } from '../persistence/entities';
 import type { MountMode, MountSpec } from '../sandbox/container-paths';
-import type { InstallMatch } from '../prompt-kit/jit/install-awareness';
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 import type { SeenTooling } from '../workspace-profile/seen-tooling';
 import { loadLegacyManifestFile } from './legacy-worktree-manifest';
 

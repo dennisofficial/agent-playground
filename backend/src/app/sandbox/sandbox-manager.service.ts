@@ -23,7 +23,7 @@ import {
   resolve,
 } from 'node:path';
 import { promisify } from 'node:util';
-import { atlasAgentHomeBase } from '../engine/engine-home';
+import { atlasAgentHomeBase } from '@shared/engine/engine-home';
 import type { FeatureSandbox } from '../git';
 import {
   managedGitSkillsRootHost,
@@ -31,7 +31,8 @@ import {
 } from '../skills/skill-store-paths';
 import { managedSkillsRootHost } from '../skills/system-skill-store-paths';
 import {
-  engineBundlePath,
+  engineAppBundlePath,
+  engineAppMapPath,
   mcpBridgeBundlePath,
   mcpHubBundlePath,
 } from './bundle-engine';
@@ -53,7 +54,7 @@ import {
   isExternalMountPath,
   isReservedContainerPath,
 } from './container-paths';
-import type { ResolvedMcpServer } from '../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import type { McpHubConfig } from './image/mcp-hub-config';
 import {
   CONTAINER_ENGINE,
@@ -74,8 +75,10 @@ import { previewId, routePrefix } from '../exposure/exposure-naming';
 
 const execFileAsync = promisify(execFile);
 
-/** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
-const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
+/** The in-container path of the webpacked engine app (+ its external sourcemap) baked by the Dockerfile —
+ *  bind-mounted live over it, same hot-reload contract as the MCP bundles below. */
+const CONTAINER_ENGINE_APP = '/usr/local/lib/atlas/engine-app.js';
+const CONTAINER_ENGINE_APP_MAP = '/usr/local/lib/atlas/engine-app.js.map';
 /** The in-container path of the Codex MCP tool-bridge server (spawned by codex via config.toml). Baked by
  *  the Dockerfile, bind-mounted live over it — same hot-reload contract as the engine bundle. */
 const CONTAINER_MCP_BRIDGE_BUNDLE =
@@ -215,11 +218,13 @@ export function submoduleGitlinks(worktreePath: string): string[] {
  * rev 15 = per-repo cold-boot setup script (`repos.setup_script`): run on every COLD attach and its hash
  *   folded into the `atlas.cfg` fingerprint (so editing the script recreates a warm container to re-run it).
  *   Bumped once so existing warm containers recreate and pick up the run-on-cold codepath.
+ * rev 16 = replaced the old engine-entrypoint.mjs bind with the webpacked engine-app.js(+.map) bind —
+ *   recreates existing warm containers so they pick it up.
  *
  * NOTE: the per-repo mount SET + the setup-script hash are ALSO folded into the `atlas.cfg` fingerprint
  * below, so a changed manifest mount list / setup script recreates the container even without bumping this rev.
  */
-const CONFIG_REV = 15;
+const CONFIG_REV = 16;
 
 /** Labels — the source of truth for boot adoption + reaping. */
 const L_MANAGED = 'atlas.managed';
@@ -413,12 +418,16 @@ export class SandboxManager implements SandboxProvider {
         if (rebased) binds.push(`${rebased}:${CONTAINER_WORKTREE}/${sub}/.git`);
       }
     }
-    // HOT-RELOAD: bind-mount the host engine bundle (read-only) over the baked-in one, so an engine
-    // update (the API rebundles on boot) is picked up by the next `docker exec` in this container —
-    // no recreate, no image rebuild. Falls back to the baked engine if the host bundle is absent.
-    const bundle = engineBundlePath();
-    if (existsSync(bundle)) {
-      binds.push(`${bundle}:${CONTAINER_ENGINE_BUNDLE}:ro`);
+    // HOT-RELOAD: bind-mount the host engine app bundle (read-only) over the baked-in one, so an engine
+    // update (the API refreshes it on boot) is picked up by the next `docker exec` in this container —
+    // no recreate, no image rebuild. Falls back to the baked engine app if the host bundle is absent.
+    const engineApp = engineAppBundlePath();
+    if (existsSync(engineApp)) {
+      binds.push(`${engineApp}:${CONTAINER_ENGINE_APP}:ro`);
+    }
+    const engineAppMap = engineAppMapPath();
+    if (existsSync(engineAppMap)) {
+      binds.push(`${engineAppMap}:${CONTAINER_ENGINE_APP_MAP}:ro`);
     }
     const mcpBridge = mcpBridgeBundlePath();
     if (existsSync(mcpBridge)) {

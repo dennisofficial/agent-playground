@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
 import { lensById } from './autofix-lenses';
-import type { EngineHomeKey, EngineRunnerPort } from '../engine';
+import type { EngineHomeKey, EngineRunnerPort } from '@shared/engine';
 import type { LocalGitService } from '../git';
 import type { TurnHarnessFactory } from '../surface/turn-harness.service';
 import type { AutoFixContext, ReviewLens } from './autofix.types';

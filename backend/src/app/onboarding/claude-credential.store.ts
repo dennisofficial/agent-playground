@@ -13,7 +13,7 @@ import {
   OrganizationEntity,
   OrgClaudeCredentialEntity,
 } from '../persistence/entities';
-import { isNewerClaudeCredential } from './claude-credential-freshness';
+import { isNewerClaudeCredential } from '@shared/onboarding/claude-credential-freshness';
 import { decryptSecret, encryptSecret, loadSecretsKey } from './secret-cipher';
 
 /** Cheap, NON-secret listing row for the settings UI — no decryption, no secret values. */

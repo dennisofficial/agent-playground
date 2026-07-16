@@ -28,7 +28,7 @@
 import {
   ROTATION_REMINDER_DELTA_TOKENS,
   ROTATION_SOFT_TOKENS,
-} from '../prompt-kit/jit';
+} from '@shared/prompt-kit/jit';
 
 /** Which kind of context-pressure signal just fired. */
 export type LegRotationSignalPhase = 'soft' | 'reminder';

@@ -5,7 +5,7 @@
  * (grilling/plan-authoring apparatus stripped), so this body carries no `system` string — it only tells the
  * fresh session how to reconstruct what shipped and what to say about it.
  */
-import { agentMessage, type AgentMessage } from '../message';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 
 /**
  * Build the post_build gate seed: reconstruct what shipped from durable artifacts (no live planning

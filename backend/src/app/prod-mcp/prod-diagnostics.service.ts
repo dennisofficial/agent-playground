@@ -2,8 +2,8 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { EnvService } from '@core/config/env/env.service';
-import { atlasAgentHomeBase } from '../engine/engine-home';
-import type { TurnEnvelope } from '../domain';
+import { atlasAgentHomeBase } from '@shared/engine/engine-home';
+import type { TurnEnvelope } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import {
   DB_CONNECTION,
@@ -16,7 +16,7 @@ import {
   type ProdMaintenanceWriteDryRun,
   type ProdMaintenanceWriteResult,
 } from '../persistence/entities';
-import { agentMessage, type AgentMessage } from '../prompt-kit/message';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import {
   webDbWriteApprovalCard,

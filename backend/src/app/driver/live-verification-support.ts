@@ -1,4 +1,4 @@
-import type { Decision } from '../domain';
+import type { Decision } from '@shared/domain';
 
 /**
  * Shared inputs/renderers for the ADR-0005 live-verification judge — extracted here so BOTH callers apply

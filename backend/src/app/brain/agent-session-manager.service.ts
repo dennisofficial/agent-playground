@@ -25,7 +25,7 @@ import type {
   MessageType,
   SeedRow,
   TurnEnvelope,
-} from '../domain';
+} from '@shared/domain';
 import { MemoryStore } from '../memory';
 import {
   StimulusStoreService,
@@ -96,9 +96,9 @@ import {
   composePreviewPrepSeed,
   postBuildGateSeed,
 } from '../prompt-kit';
-import type { AgentMessage } from '../prompt-kit/message';
-import { fromExternal } from '../prompt-kit/message';
-import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
+import type { AgentMessage } from '@shared/prompt-kit/message';
+import { fromExternal } from '@shared/prompt-kit/message';
+import { isSubstantiveQuery, renderMemoryRecall } from '@shared/prompt-kit/jit';
 import {
   chunkKey,
   composeMessageBody,
@@ -129,7 +129,7 @@ import {
 } from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import { coerceThreadType, type ThreadType } from '../thread-kind/thread-types';
+import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
 import {
   LIVE_VERIFICATION_JUDGE,
   type LiveVerificationJudge,
@@ -153,7 +153,7 @@ import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
-} from '../engine/session-limit';
+} from '@shared/engine/session-limit';
 import { McpResolver, McpServerStore } from '../mcp';
 import { ConventionProfileResolver } from '../conventions';
 import {
@@ -171,11 +171,11 @@ import { CONTAINER_CONTEXT, normalizeMounts } from '../sandbox/container-paths';
 import { LocalGitService } from '../git';
 import type { SandboxMilestoneStage } from '../sandbox/sandbox-provider.port';
 import { JobDependencyService } from '../job-deps';
-import type { Decision } from '../domain';
-import { nextDecisionId, DECISION_CLASS_IDS } from '../domain';
-import type { DecisionClass } from '../domain/decision-record';
+import type { Decision } from '@shared/domain';
+import { nextDecisionId, DECISION_CLASS_IDS } from '@shared/domain';
+import type { DecisionClass } from '@shared/domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
-import { BRIDGE_SERVER_NAME } from '../sandbox/image/bridge-options';
+import { BRIDGE_SERVER_NAME } from '@shared/bridge-names/bridge-options';
 import { isReservedMcpName } from '../sandbox/image/reserved-mcp-names';
 import {
   BrainTurnAlreadyRunningError,
@@ -195,7 +195,7 @@ import {
   resolveContextLimit,
   SANDBOX_RESET_NOTICE,
   INTERNAL_PROFILE_AWARENESS_TOOL,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import type {
   EngineEvent,
   EngineRunnerPort,
@@ -203,10 +203,10 @@ import type {
   ToolImpl,
   RunEngineArgs,
   EngineRunResult,
-} from '../engine/engine.types';
-import { summarizeTurnFailure } from '../engine/turn-failure-summary';
-import type { TurnFailureCategory } from '../engine/turn-failure-summary';
-import type { EngineHomeKey } from '../engine/engine-home';
+} from '@shared/engine/engine.types';
+import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
+import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
+import type { EngineHomeKey } from '@shared/engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
 import type { ThreadRole } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
@@ -2164,6 +2164,7 @@ export class AgentSessionManager
         threadId,
         channel: row.channel,
         turnId: row.turn_id,
+        livePush: !this.engineRunner.pushesLiveRouteEvents,
       });
       const sandboxRow = await this.sandboxRows.findOne({
         where: { job_id: row.job_id, org_id: row.org_id },
@@ -2182,6 +2183,9 @@ export class AgentSessionManager
             },
             toolBridge: { jobId: row.job_id, tools },
             ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
+            // Realtime live push via the runner's independent `realtime` consumer group — same 'main' lane
+            // the reattach replay streams the brain conversation on (mirrors this `onEvent`→streamer wiring).
+            liveRoute: { channel: row.channel, jobId: row.job_id, lane: 'main' },
           },
         );
         if (result.sessionId && stimulus.resumeThreadId) {
@@ -2742,6 +2746,7 @@ export class AgentSessionManager
       orgId: stimulus.orgId,
       threadId,
       channel,
+      livePush: !this.engineRunner.pushesLiveRouteEvents,
     });
     // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
     // prefixes: compaction seed / reset notice / awareness / open-questions) is surfaced exactly once, on
@@ -2931,6 +2936,9 @@ export class AgentSessionManager
         },
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
+      // Realtime live push to the operator UI via RedisEngineRunner's independent `realtime` consumer group
+      // (mirrors this `onEvent`→streamer wiring). Same lane the brain conversation streams on.
+      liveRoute: { channel, jobId: stimulus.jobId, lane: 'main' },
       onEvent: (e) => {
         if (e.kind === 'session' && e.sessionId) {
           this.bindInjectedMemorySession(stimulus.jobId, e.sessionId);

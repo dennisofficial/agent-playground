@@ -27,8 +27,8 @@ import type {
   EngineEvent,
   RunEngineArgs,
   ToolBridgeOptions,
-} from '../engine/engine.types';
-import { agentMessage } from '../prompt-kit/message';
+} from '@shared/engine/engine.types';
+import { agentMessage } from '@shared/prompt-kit/message';
 
 const ORG_ID = '3bbbbbbb-2222-4222-8222-222222222222';
 

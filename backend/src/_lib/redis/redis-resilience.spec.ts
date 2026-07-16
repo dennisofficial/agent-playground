@@ -9,19 +9,12 @@
  *     re-delivering events.
  */
 import { describe, expect, it } from 'vitest';
-import type { EnvService } from '@core/config/env/env.service';
 import { buildRedisClient } from './redis.tokens';
 import { InMemoryRedisStream } from './in-memory-redis-stream';
 
-function fakeEnv(redisUrl?: string): EnvService {
-  return {
-    get: (key: string) => (key === 'REDIS_URL' ? redisUrl : undefined),
-  } as unknown as EnvService;
-}
-
 describe('RedisModule resilience (lazy/no-crash connect)', () => {
   it('builds a lazy client without opening a socket (no throw, status not connected)', async () => {
-    const client = buildRedisClient(fakeEnv('redis://127.0.0.1:6399')); // a port nothing listens on
+    const client = buildRedisClient({ url: 'redis://127.0.0.1:6399' }); // a port nothing listens on
     // lazyConnect → the client is constructed but idle; no connection attempt has been made yet.
     expect(client.status).not.toBe('ready');
     expect(client.status).not.toBe('connecting');
@@ -30,7 +23,7 @@ describe('RedisModule resilience (lazy/no-crash connect)', () => {
   });
 
   it('defaults REDIS_URL to localhost when unset (still lazy, still no throw)', () => {
-    const client = buildRedisClient(fakeEnv(undefined));
+    const client = buildRedisClient({});
     expect(client.options.lazyConnect).toBe(true);
     client.disconnect();
   });

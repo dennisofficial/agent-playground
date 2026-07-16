@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { EngineModule } from '../engine';
+import { EngineModule } from '../engine/engine.module';
 import { GitModule } from '../git';
 import { AutoFixStage } from './autofix.stage';
 

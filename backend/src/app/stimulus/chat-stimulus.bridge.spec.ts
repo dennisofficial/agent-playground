@@ -8,7 +8,7 @@ import type {
 } from '../surface/chat-surface.port';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
-import type { EventMessage, Message, SeedRow } from '../domain';
+import type { EventMessage, Message, SeedRow } from '@shared/domain';
 
 type IntakeCall = {
   message: Exclude<Message, EventMessage>;

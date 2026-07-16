@@ -8,4 +8,4 @@ export * from './project-routing.service';
 export * from './surface-orchestration.service';
 export * from './chat-stimulus.bridge';
 export * from './untrusted-content';
-export * from './chunk-vocabulary';
+export * from '@shared/stimulus/chunk-vocabulary';

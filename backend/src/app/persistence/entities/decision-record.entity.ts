@@ -7,7 +7,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import type { Decision } from '../../domain/decision-record';
+import type { Decision } from '@shared/domain/decision-record';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
 import { JobEntity } from './job.entity';

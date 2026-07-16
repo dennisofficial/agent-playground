@@ -1,5 +1,5 @@
-import { agentMessage, type AgentMessage } from '../message';
-import type { Decision } from '../../domain';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import type { Decision } from '@shared/domain';
 import type { PlannedStep } from './render-plan';
 
 /**

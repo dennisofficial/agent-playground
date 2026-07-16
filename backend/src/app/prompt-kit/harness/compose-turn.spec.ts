@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { composeTurn } from './compose-turn';
-import { type TurnChunk } from './tag-vocabulary';
+import { type TurnChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 const userChunk = (name: string, body: string, at: string): TurnChunk => ({
   kind: 'user',

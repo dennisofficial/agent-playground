@@ -9,7 +9,7 @@ import type {
   MessageType,
   SeedRow,
   TurnEnvelope,
-} from '../domain';
+} from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -18,7 +18,7 @@ import {
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
-import { fromExternal } from '../prompt-kit/message';
+import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 
 /**

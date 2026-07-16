@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { EventMessage, Message, TurnEnvelope } from '../domain';
+import type { EventMessage, Message, TurnEnvelope } from '@shared/domain';
 
 /**
  * Test helper — build a {@link TurnEnvelope} from the flat, legacy-shaped fixture these specs write. Derives
@@ -81,7 +81,7 @@ import type { DriverStoreService } from '../driver/driver-store.service';
 import type { AutoMergeService } from '../driver/auto-merge.service';
 import type { MemoryStore } from '../memory';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
-import type { EngineRunnerPort } from '../engine/engine.types';
+import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
 import type { LiveVerificationJudge } from '../driver/live-verification-judge';
@@ -116,8 +116,8 @@ import {
   HOST_RETRY_BACKOFF_MS,
   MAX_HOST_RETRIES,
   UNRESUMABLE_SESSION_MARKER,
-} from '../engine/engine.types';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
+} from '@shared/engine/engine.types';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type {
@@ -126,7 +126,7 @@ import type {
   WorkspaceSecretFileStore,
 } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
-import { WORKSPACE_PROFILE_TOOL_NAMES } from '../sandbox/image/workspace-profile-bridge-options';
+import { WORKSPACE_PROFILE_TOOL_NAMES } from '@shared/bridge-names/workspace-profile-bridge-options';
 import { TOOL_SHAPES } from '../sandbox/image/host-tool-schemas';
 import { ATLAS_HOST_BRIDGE_TOOLS } from '@workspace/shared';
 import type { LocalGitService } from '../git';
@@ -3571,6 +3571,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     } as unknown as Repository<JobSandboxEntity>;
     const steer = opts.steer ?? vi.fn().mockResolvedValue(undefined);
     const dockerRunner = {
+      pushesLiveRouteEvents: true,
       run:
         opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,
@@ -3802,28 +3803,35 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
+    const events: EngineEvent[] = [
+      { kind: 'session', sessionId: 'sess-1' },
+      { kind: 'thinking', text: 'reasoning…' },
+      { kind: 'text', text: 'Hello' },
+      { kind: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } },
+      { kind: 'tool_result', id: 'tu1', result: 'file contents', isError: false },
+      { kind: 'text', text: 'Done.' },
+      { kind: 'result', text: 'Done.' },
+    ];
+    let liveRef: LiveTurnStore | undefined;
     const run = vi.fn(async (args: RunEngineArgs) => {
-      args.onEvent?.({ kind: 'session', sessionId: 'sess-1' });
-      args.onEvent?.({ kind: 'thinking', text: 'reasoning…' });
-      args.onEvent?.({ kind: 'text', text: 'Hello' });
-      args.onEvent?.({
-        kind: 'tool_use',
-        id: 'tu1',
-        name: 'Read',
-        input: { path: 'README.md' },
-      });
-      args.onEvent?.({
-        kind: 'tool_result',
-        id: 'tu1',
-        result: 'file contents',
-        isError: false,
-      });
-      args.onEvent?.({ kind: 'text', text: 'Done.' });
-      args.onEvent?.({ kind: 'result', text: 'Done.' });
+      for (const e of events) {
+        args.onEvent?.(e);
+        // Stand in for RedisEngineRunner.consumeRealtime: the realtime consumer group mirrors each engine
+        // event into the LiveTurnStore off `liveRoute` in production — the harness's onEvent no longer does.
+        if (args.liveRoute) {
+          liveRef?.push(
+            args.liveRoute.channel,
+            args.liveRoute.jobId,
+            e,
+            args.liveRoute.lane,
+          );
+        }
+      }
       return { result: 'Done.', sessionId: 'sess-1' };
     });
     const { manager, store, surface, liveTurns, blockSink, dockerRunner } =
       makeManager({ run });
+    liveRef = liveTurns;
 
     await manager.handleChatTurn(stimulus);
 

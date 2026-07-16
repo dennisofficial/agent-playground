@@ -6,7 +6,7 @@ import {
 } from './batch-task';
 import type { DriverThread } from '../../driver/driver-store.service';
 import type { ResolvedRepo } from '../../driver/repo-resolver';
-import type { DecisionRecord, Step } from '../../domain';
+import type { DecisionRecord, Step } from '@shared/domain';
 
 /**
  * Golden-snapshot baseline for the driver-run turn PROSE strings sent into build/review/gate turns. Every

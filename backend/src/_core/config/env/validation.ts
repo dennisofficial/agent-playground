@@ -25,8 +25,9 @@ export enum ENodeEnv {
  *
  * Read directly from `process.env` (NOT via EnvService, so intentionally absent from this schema):
  *   - PORT / HTTP_PORT bootstrap in main.ts; ENABLE_COLOR/ENABLE_TIMESTAMP/APP_ENV in setup-logger.ts.
- *   - Prod-only path config with code defaults: ATLAS_GOLDEN_ROOT, MCP_HUB_BUNDLE_PATH,
- *     MCP_BRIDGE_BUNDLE_PATH (set by infra/docker-compose.prod.yml; each has a code default).
+ *   - Prod-only path config with code defaults: ATLAS_GOLDEN_ROOT, ENGINE_APP_BUNDLE_PATH,
+ *     ENGINE_APP_MAP_PATH, MCP_HUB_BUNDLE_PATH, MCP_BRIDGE_BUNDLE_PATH (set by
+ *     infra/docker-compose.prod.yml; each has a code default).
  *   - The dotenvx decrypt key DOTENV_PRIVATE_KEY_PRODUCTION_ENC (infra secret, not app config).
  *   - LLM/engine credentials (Anthropic + OpenAI keys, Claude + Codex subscription OAuth tokens, GitHub
  *     PAT): per-org encrypted `org_credentials` rows resolved via `CredentialResolver` — seeded in dev
@@ -77,13 +78,16 @@ export interface IEnvConfig {
   // Path roots (differ dev↔prod; each has a code default). REPOS_ROOT: per-repo clones. AGENT_HOME_ROOT:
   // the engines' isolated CLAUDE_CONFIG_DIR/CODEX_HOME. REFS_ROOT: read-only /refs reference library.
   // SKILLS_ROOT: the central skills store bind-mounted read-write per-org at /skills.
-  // ATLAS_HYDRATION_STATE: the worktree-hydration sidecar's host dir. ENGINE_BUNDLE_PATH: the live-mounted
-  // engine bundle path (read via process.env by bundle-engine.ts; declared for completeness).
+  // ATLAS_HYDRATION_STATE: the worktree-hydration sidecar's host dir. ENGINE_APP_*: the live-mounted
+  // engine app bundle + sourcemap paths (read via process.env by bundle-engine.ts; declared for completeness).
   REPOS_ROOT?: string;
   AGENT_HOME_ROOT?: string;
   REFS_ROOT?: string;
   SKILLS_ROOT?: string;
   ATLAS_HYDRATION_STATE?: string;
+  ENGINE_APP_BUNDLE_PATH?: string;
+  ENGINE_APP_MAP_PATH?: string;
+  /** Deprecated/ignored after the engine-app cutover; accepted so older secret files do not break boot. */
   ENGINE_BUNDLE_PATH?: string;
 
   // Docker sandbox layer. DOCKER_SOCKET_PATH: host socket (default /var/run/docker.sock). SANDBOX_IMAGE:
@@ -231,6 +235,8 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   REFS_ROOT: Joi.string().optional(),
   SKILLS_ROOT: Joi.string().optional(),
   ATLAS_HYDRATION_STATE: Joi.string().optional(),
+  ENGINE_APP_BUNDLE_PATH: Joi.string().optional(),
+  ENGINE_APP_MAP_PATH: Joi.string().optional(),
   ENGINE_BUNDLE_PATH: Joi.string().optional(),
 
   // Docker sandbox layer

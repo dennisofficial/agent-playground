@@ -47,7 +47,7 @@ import {
   ThreadEntity,
 } from '../persistence/entities';
 import { CHAT_SURFACE } from '../surface/chat-surface.port';
-import type { Message, TurnEnvelope } from '../domain';
+import type { Message, TurnEnvelope } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 

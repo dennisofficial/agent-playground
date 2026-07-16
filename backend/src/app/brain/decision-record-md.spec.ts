@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Decision } from '../domain/decision-record';
+import type { Decision } from '@shared/domain/decision-record';
 import { renderDecisionRecordMd } from './decision-record-md';
 
 describe('renderDecisionRecordMd', () => {

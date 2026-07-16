@@ -14,7 +14,7 @@ import type {
   JobActivity,
   JobStatus,
   JobHalt,
-} from '../domain';
+} from '@shared/domain';
 import { JobDependencyService } from '../job-deps';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
@@ -49,7 +49,7 @@ import {
 } from '../surface/web-approval-card';
 import { prMergeReady } from './auto-merge.service';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 
 /** Phases are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;

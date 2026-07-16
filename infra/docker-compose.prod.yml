@@ -58,16 +58,17 @@ x-backend-common: &backend-common
     REFS_ROOT: /srv/atlas/data/refs
     SKILLS_ROOT: /srv/atlas/data/skills
     ATLAS_GOLDEN_ROOT: /srv/atlas/data/golden
-    # Engine bundle hot-reload path (under the same-path mount → host-resolvable).
-    # bundleEngine() writes here so running sandboxes pick up a fresh bundle without
-    # rebuilding the sandbox image.
-    ENGINE_BUNDLE_PATH: /srv/atlas/data/engine/engine-entrypoint.mjs
-    # Codex MCP tool-bridge bundle — SAME rationale as ENGINE_BUNDLE_PATH: the sandbox manager bind-mounts
+    # Engine app hot-reload paths (under the same-path mount → host-resolvable).
+    # ensureEngineApp() mirrors the webpacked engine app + sourcemap here so running sandboxes pick up the
+    # fresh build without rebuilding the sandbox image.
+    ENGINE_APP_BUNDLE_PATH: /srv/atlas/data/engine/engine-app.js
+    ENGINE_APP_MAP_PATH: /srv/atlas/data/engine/engine-app.js.map
+    # Codex MCP tool-bridge bundle — SAME rationale as ENGINE_APP_BUNDLE_PATH: the sandbox manager bind-mounts
     # this file (host daemon resolves the source), so a containerized backend MUST point it at a
     # host-resolvable same-path location. Without it, mcpBridgeBundlePath() falls back to the in-container
     # build-context path (/srv/atlas/app/backend/sandbox/mcp-bridge-server.mjs), which doesn't exist on the
     # host → sandbox create fails with "OCI runtime create failed ... not a directory". bundleMcpBridge()
-    # mirrors the bundle here on boot, same as the engine bundle.
+    # mirrors the bundle here on boot, same as the engine app bundle.
     MCP_BRIDGE_BUNDLE_PATH: /srv/atlas/data/engine/mcp-bridge-server.mjs
     # Persistent per-sandbox MCP hub bundle — SAME rationale as MCP_BRIDGE_BUNDLE_PATH above: the sandbox
     # manager bind-mounts this file (host daemon resolves the source), so a containerized backend MUST point

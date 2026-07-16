@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { SessionEngine, SessionMode, SessionRef } from '../domain';
+import type { SessionEngine, SessionMode, SessionRef } from '@shared/domain';
 import {
   ENGINE_RUNNER,
   EngineAuthError,
@@ -9,7 +9,7 @@ import {
   SANDBOX_RESET_NOTICE,
   pickKeys,
   type EngineRunnerPort,
-} from '../engine';
+} from '@shared/engine';
 import type {
   EngineAuth,
   EngineEvent,
@@ -23,9 +23,9 @@ import type {
   SessionLimitHit,
   ToolBridgeOptions,
   TurnMeta,
-} from '../engine';
+} from '@shared/engine';
 import type { FeatureSandbox } from '../git';
-import { type AgentMessage } from '../prompt-kit/message';
+import { type AgentMessage } from '@shared/prompt-kit/message';
 import { prependNotice } from '../prompt-kit/harness';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -124,6 +124,11 @@ export interface RunTurnInput {
    */
   turnMeta?: TurnMeta;
   /**
+   * Host-only routing for the REALTIME consumer-group push (LiveTurnStore) — independent of `turnMeta`.
+   * Forwarded verbatim into {@link RunEngineArgs.liveRoute}. See that field's doc for when to set it.
+   */
+  liveRoute?: { channel: string; jobId: string; lane?: string };
+  /**
    * Fired ONCE, host-side, the instant this turn is DURABLY registered (mirrors
    * `RunEngineArgs.onTurnRegistered`, `engine.types.ts:655`). The build-lane drain uses this to stamp each
    * folded seed's `delivered_at` at the restart-survivable hand-off, exactly like the brain does. In-process
@@ -169,6 +174,7 @@ const TURN_INPUT_FORWARD_KEYS = [
   'rotationNudge',
   'toolBridge',
   'turnMeta',
+  'liveRoute',
 ] as const satisfies readonly TurnInputForwardKey[];
 const _TURN_INPUT_FORWARD_KEYS_EXHAUSTIVE: [
   Exclude<TurnInputForwardKey, (typeof TURN_INPUT_FORWARD_KEYS)[number]>,
@@ -495,6 +501,8 @@ export class TurnRunnerService {
     signal?: AbortSignal;
     /** Dispatch-time credential the turn ran on — re-stamped onto rate_limit events (parity with runTurn). */
     credentialId?: string;
+    /** Host-only realtime-push routing (LiveTurnStore) — see {@link RunTurnInput.liveRoute}. */
+    liveRoute?: { channel: string; jobId: string; lane?: string };
   }): Promise<RunTurnResult> {
     if (!this.engine.reattach) {
       throw new Error(
@@ -518,6 +526,7 @@ export class TurnRunnerService {
       ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.credentialId ? { credentialId: input.credentialId } : {}),
+      ...(input.liveRoute ? { liveRoute: input.liveRoute } : {}),
     });
     if (stepId && result.sessionId) {
       await this.threads

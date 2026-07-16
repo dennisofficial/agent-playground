@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { EventSeverity } from '../domain';
+import type { EventSeverity } from '@shared/domain';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
 import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';

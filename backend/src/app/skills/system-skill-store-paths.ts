@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { monorepoRoot } from '../state-root';
+import { monorepoRoot } from '@shared/state-root';
 
 /**
  * Path helpers for Atlas's own MANAGED (system-tier) skills — see `system-skill-registry.ts`. Unlike

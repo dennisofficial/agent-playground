@@ -1,5 +1,4 @@
 import { Logger } from '@nestjs/common';
-import { EnvService } from '@core/config/env/env.service';
 import Redis from 'ioredis';
 
 /** DI token for the shared, resilient `ioredis` client (built from REDIS_URL). */
@@ -17,12 +16,14 @@ export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
  *    (which merely logs — an unhandled `error` event on an ioredis client would otherwise throw), the
  *    harness and daemon stay alive across a Redis bounce.
  *
- * REDIS_URL is optional in the env contract; absent → a localhost default so dev/tests construct a
+ * Takes a plain `{ url }` (not `EnvService`) so BOTH callers share it: the host `RedisModule` passes
+ * `env.get('REDIS_URL')`, while the in-sandbox engine — which has no `EnvService`/Postgres/JWT config —
+ * passes `process.env.REDIS_URL`. Absent url → a localhost default so dev/tests construct a
  * (lazily-unconnected) client without configuration.
  */
-export function buildRedisClient(env: EnvService): Redis {
+export function buildRedisClient(opts: { url?: string }): Redis {
   const logger = new Logger('RedisClient');
-  const url = env.get('REDIS_URL') ?? 'redis://127.0.0.1:6379';
+  const url = opts.url ?? 'redis://127.0.0.1:6379';
 
   const client = new Redis(url, {
     lazyConnect: true,

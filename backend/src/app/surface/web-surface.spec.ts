@@ -19,7 +19,7 @@ import { firstValueFrom } from 'rxjs';
 import { take, toArray, filter } from 'rxjs/operators';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WebSurface } from './web-surface';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import {
   decisionApprovalBlocks,
   APPROVE_ACTION_ID,

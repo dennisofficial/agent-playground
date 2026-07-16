@@ -12,7 +12,7 @@ import {
 } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { fence, fenceOrNone } from '../prompt-fence';
-import type { InstallMatch } from '../prompt-kit/jit/install-awareness';
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 
 /**
  * Stage 2 (decision d2) — the READ-ONLY install-awareness filter/enricher. Given a Stage-1-detected

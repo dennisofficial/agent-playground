@@ -7,7 +7,7 @@ import {
   ThreadEntity,
   TranscriptMessageEntity,
 } from '../src/app/persistence/entities';
-import { atlasAgentHomeBase } from '../src/app/engine/engine-home';
+import { atlasAgentHomeBase } from '../src/shared/engine/engine-home';
 import { parseSessionTranscriptTurns } from '../src/app/brain/session-transcript';
 import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
 

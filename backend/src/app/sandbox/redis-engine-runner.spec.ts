@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { EngineAuthError, EngineDetachedError } from '../engine';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
+import { EngineAuthError, EngineDetachedError } from '@shared/engine';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
 import {
   RedisEngineRunner,
@@ -12,7 +12,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
 import type { ContainerEngine, ContainerInfo } from './container-engine.port';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import type { SandboxProvider } from './sandbox-provider.port';
 
 const fakeEnv = { get: () => undefined } as unknown as EnvService;
@@ -514,8 +514,9 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
 
   it('a lost Redis transport mid-tail DETACHES: throws EngineDetachedError, leaves the registry row + streams', async () => {
     const redis = new InMemoryRedisStream();
-    // The "engine" writes one event, then the host's transport dies (xread starts throwing) while the
-    // engine itself is still alive — the watch-respawn shutdown shape.
+    // The "engine" writes one event, then the host's transport dies (xreadGroup starts throwing) while
+    // the engine itself is still alive — the watch-respawn shutdown shape. The events tail now reads via
+    // a consumer group, so the transient failure is injected on `xreadGroup` (not the retired `xread`).
     const frames = [{ t: 'event', e: { kind: 'text', text: 'hello' } }];
     const reg = fakeRegistry();
     const runner = new RedisEngineRunner(
@@ -526,13 +527,13 @@ describe('RedisEngineRunner (one-shot events transport)', () => {
       reg,
     );
 
-    const realXread = redis.xread.bind(redis);
+    const realXreadGroup = redis.xreadGroup.bind(redis);
     let reads = 0;
     const delSpy = vi.spyOn(redis, 'del');
-    vi.spyOn(redis, 'xread').mockImplementation(async (args) => {
+    vi.spyOn(redis, 'xreadGroup').mockImplementation(async (args) => {
       reads += 1;
       if (reads > 2) throw new Error('Connection is closed.'); // both the read and its one retry fail
-      return realXread(args);
+      return realXreadGroup(args);
     });
 
     await expect(

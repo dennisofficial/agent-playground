@@ -10,15 +10,15 @@ import {
   type EngineRunResult,
   type EngineRunnerPort,
   type RunEngineArgs,
-} from '../engine';
-import { dispatchToolRequest } from '../engine/tool-bridge-host';
-import { SPEC_VERBATIM_KEYS, pickKeys } from '../engine/engine.types';
+} from '@shared/engine';
+import { dispatchToolRequest } from '@shared/engine/tool-bridge-host';
+import { SPEC_VERBATIM_KEYS, pickKeys } from '@shared/engine/engine.types';
 import type {
   HostFrame,
   ToolBridgeOptions,
   ToolRequestFrame,
   TurnSpec,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import { gitAuthEnv, gitCredHelperEnv } from '../git';
 import {
   REDIS_STREAM_PORT,
@@ -29,7 +29,7 @@ import {
   CredentialNeedsReauthError,
   CredentialRefreshService,
 } from '../onboarding/credential-refresh.service';
-import type { SessionEngine } from '../domain';
+import type { SessionEngine } from '@shared/domain';
 import {
   CONTAINER_ENGINE,
   type ContainerEngine,
@@ -53,7 +53,15 @@ import {
   BrainTurnAlreadyRunningError,
   TurnRegistry,
 } from './turn-registry.service';
-import { turnKeys, TOOLS_GROUP } from './redis-turn-keys';
+import {
+  turnKeys,
+  TOOLS_GROUP,
+  EVENTS_RUNNER_GROUP,
+  EVENTS_REALTIME_GROUP,
+  EVENTS_WATCHDOG_GROUP,
+} from './redis-turn-keys';
+import { drainTurnEventConsumer } from './turn-event-consumer';
+import { LiveTurnStore } from '../surface/live-turn-store';
 
 /** A frame the in-container engine appends to `turn:{T}:events` (mirrors the pipe runner's NDJSON frames). */
 type EventFrame =
@@ -92,6 +100,8 @@ export interface AttachArgs {
   signal?: AbortSignal;
   /** Dispatch-time credential the turn runs on (host-only; stamped onto rate_limit events). */
   credentialId?: string;
+  /** Host-only routing for the realtime consumer-group live push (LiveTurnStore); see RunEngineArgs.liveRoute. */
+  liveRoute?: { channel: string; jobId: string; lane?: string };
 }
 
 /**
@@ -107,6 +117,8 @@ export interface AttachArgs {
 @Injectable()
 export class RedisEngineRunner implements EngineRunnerPort {
   private readonly logger = new Logger(RedisEngineRunner.name);
+
+  readonly pushesLiveRouteEvents = true;
 
   /** Turn ids THIS process is currently attach-looping (see {@link isAttached}). */
   private readonly attached = new Set<string>();
@@ -137,6 +149,10 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // Optional for the same reason. Absent → no host-side pre-turn refresh; a turn relies on the in-container
     // SDK self-refresh exactly as before. Present in the real app (exported by the @Global onboarding module).
     @Optional() private readonly credRefresh?: CredentialRefreshService,
+    // Optional for the same reason (direct-instantiation unit tests). Absent → the realtime consumer group is
+    // never started (no live push); present in the real app (LiveTurnModule is @Global) so a `liveRoute` turn
+    // streams live frames to the operator UI via its OWN independent consumer group.
+    @Optional() private readonly liveTurns?: LiveTurnStore,
   ) {}
 
   async run(args: RunEngineArgs): Promise<EngineRunResult> {
@@ -281,6 +297,7 @@ export class RedisEngineRunner implements EngineRunnerPort {
           toolBridge: args.toolBridge,
           signal: args.signal,
           credentialId: auth?.refreshBack?.credentialId,
+          liveRoute: args.liveRoute,
         },
         target.containerId,
         target,
@@ -422,6 +439,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
         // Tool-bridge turns: create the host consumer group up front so no tool_request is missed.
         if (args.toolBridge)
           await this.redis.ensureGroup(keys.tools, TOOLS_GROUP);
+        // The always-on events groups: the runner's own tail + the watchdog liveness stamp each drain
+        // `turn:{T}:events` on an independent cursor. Ensure them up front (before the kick) so no early
+        // frame is missed. The realtime group is ensured lazily inside its own loop (opt-in per turn).
+        await this.redis.ensureGroup(keys.events, EVENTS_RUNNER_GROUP);
+        await this.redis.ensureGroup(keys.events, EVENTS_WATCHDOG_GROUP);
         if (kickTarget) {
           await this.containers.execDetached(
             kickTarget.containerId,
@@ -446,10 +468,18 @@ export class RedisEngineRunner implements EngineRunnerPort {
         const toolsLoop = args.toolBridge
           ? this.consumeTools(turnId, keys, args.toolBridge, done)
           : Promise.resolve();
+        // The realtime live-push loop runs only when the caller opted in (`liveRoute`) AND a LiveTurnStore
+        // is wired — an independent consumer group so a slow persistence path never delays the operator view.
+        const realtimeLoop =
+          args.liveRoute && this.liveTurns
+            ? this.consumeRealtime(turnId, keys, args.liveRoute, done)
+            : Promise.resolve();
         result = (
           await Promise.all([
             this.tailEvents(turnId, keys, containerId, args, done),
             toolsLoop,
+            realtimeLoop,
+            this.consumeWatchdog(turnId, keys, done),
           ])
         )[0];
         result.turnId = turnId;
@@ -484,6 +514,8 @@ export class RedisEngineRunner implements EngineRunnerPort {
           else this.lastClaim.set(turnId, won);
           // Reclaim the turn's Redis streams — the turn is done + its transcript persisted, and the
           // registry row is gone, so a re-attach will never need them again (retention; no MAXLEN needed).
+          // Safe to reclaim: every registered consumer group (runner/tools/realtime/watchdog) is in the SAME
+          // Promise.all above and only resolves after its own terminal frame — none can still be mid-read here.
           await this.redis
             .del(keys.spec, keys.events, keys.tools, keys.replies)
             .catch((err) =>
@@ -513,81 +545,114 @@ export class RedisEngineRunner implements EngineRunnerPort {
     // handler error is invisible except as a bare `Error:` in the operator UI.
     bridge.onToolError ??= (line: string) =>
       this.logger.error(`turn ${turnId}: ${line}`);
-    let claimedPending = false;
-    while (!done.value) {
-      try {
-        // On (re)attach, first reclaim any delivered-but-unacked request a dead host left behind.
-        const pending = claimedPending
-          ? []
-          : await this.redis.claimStale({
-              group: TOOLS_GROUP,
-              consumer,
-              stream: keys.tools,
-              minIdleMs: 0,
-              count: 16,
-            });
-        claimedPending = true;
-        const fresh = await this.redis.xreadGroup({
-          group: TOOLS_GROUP,
-          consumer,
-          stream: keys.tools,
-          count: 16,
-          blockMs: 500,
-        });
-        for (const entry of [...pending, ...fresh]) {
-          const req = entry.data as ToolRequestFrame;
-          // Idempotency: a redelivered request (crash after execute, before ack) re-posts the cached
-          // reply instead of re-running the (often side-effecting) tool.
-          // `getToolReply` returns the reply as a plain decoded-JSON record (its storage shape), not the
-          // narrower `HostFrame` union — cast here as the dispatch path below already does for the write.
-          const cached = await this.registry
-            .getToolReply(turnId, req.id)
-            .catch(() => null);
-          let reply: HostFrame | null = cached as HostFrame | null;
-          if (!reply) {
-            // Emit an IMMEDIATE heartbeat on pickup (before starting the interval) so the in-container
-            // reader's idle timer is refreshed the moment the host begins the call, then keep beating on
-            // an interval while the (possibly long-running) handler is awaited.
-            const beat = () =>
-              void this.redis
-                .xadd(keys.replies, {
-                  t: 'tool_progress',
-                  id: req.id,
-                  ts: Date.now(),
-                })
-                .catch(() => undefined);
-            beat();
-            const hb = setInterval(beat, TOOL_HEARTBEAT_INTERVAL_MS);
-            if (typeof hb.unref === 'function') hb.unref();
-            try {
-              reply = await dispatchToolRequest(bridge, req);
-            } finally {
-              clearInterval(hb);
-            }
-          }
-          if (!cached) {
-            // Record the reply BEFORE acking so the dedup row exists if we die before the ack lands.
-            await this.registry
-              .recordToolReply(
-                turnId,
-                req.id,
-                req.name,
-                reply as unknown as Record<string, unknown>,
-              )
+    await drainTurnEventConsumer({
+      redis: this.redis,
+      stream: keys.tools,
+      group: TOOLS_GROUP,
+      consumer,
+      count: 16,
+      blockMs: 500,
+      isDone: () => done.value,
+      onEntry: async (entry) => {
+        const req = entry.data as ToolRequestFrame;
+        // Idempotency: a redelivered request (crash after execute, before ack) re-posts the cached
+        // reply instead of re-running the (often side-effecting) tool.
+        // `getToolReply` returns the reply as a plain decoded-JSON record (its storage shape), not the
+        // narrower `HostFrame` union — cast here as the dispatch path below already does for the write.
+        const cached = await this.registry
+          .getToolReply(turnId, req.id)
+          .catch(() => null);
+        let reply: HostFrame | null = cached as HostFrame | null;
+        if (!reply) {
+          // Emit an IMMEDIATE heartbeat on pickup (before starting the interval) so the in-container
+          // reader's idle timer is refreshed the moment the host begins the call, then keep beating on
+          // an interval while the (possibly long-running) handler is awaited.
+          const beat = () =>
+            void this.redis
+              .xadd(keys.replies, {
+                t: 'tool_progress',
+                id: req.id,
+                ts: Date.now(),
+              })
               .catch(() => undefined);
+          beat();
+          const hb = setInterval(beat, TOOL_HEARTBEAT_INTERVAL_MS);
+          if (typeof hb.unref === 'function') hb.unref();
+          try {
+            reply = await dispatchToolRequest(bridge, req);
+          } finally {
+            clearInterval(hb);
           }
-          await this.redis.xadd(keys.replies, reply);
-          await this.redis.ack(keys.tools, TOOLS_GROUP, [entry.id]);
         }
-      } catch (err) {
-        // A transient redis error (e.g. the connection closing on shutdown) would otherwise tight-spin —
-        // back off briefly so we don't busy-loop + spam logs while the process drains.
-        this.logger.debug(
-          `turn ${turnId}: tools loop iteration failed (retrying): ${err}`,
-        );
-        await new Promise((r) => setTimeout(r, 250));
-      }
-    }
+        if (!cached) {
+          // Record the reply BEFORE acking so the dedup row exists if we die before the ack lands.
+          await this.registry
+            .recordToolReply(
+              turnId,
+              req.id,
+              req.name,
+              reply as unknown as Record<string, unknown>,
+            )
+            .catch(() => undefined);
+        }
+        await this.redis.xadd(keys.replies, reply);
+        // The tools loop never terminates on a frame — it runs until the events tail flips `done`.
+        return false;
+      },
+    });
+  }
+
+  /**
+   * The REALTIME consumer group: drains `turn:{T}:events` on its OWN cursor purely to push live frames
+   * into {@link LiveTurnStore} for the operator UI — independent of the runner group, so a slow/blocked
+   * persistence path can never delay the operator's live transcript. Opt-in per turn via `liveRoute`.
+   */
+  private async consumeRealtime(
+    turnId: string,
+    keys: ReturnType<typeof turnKeys>,
+    route: { channel: string; jobId: string; lane?: string },
+    done: { value: boolean },
+  ): Promise<void> {
+    const consumer = `realtime-${turnId.slice(0, 8)}`;
+    await drainTurnEventConsumer({
+      redis: this.redis,
+      stream: keys.events,
+      group: EVENTS_REALTIME_GROUP,
+      consumer,
+      isDone: () => done.value,
+      onEntry: (entry) => {
+        const frame = entry.data as EventFrame;
+        if (frame.t === 'event') {
+          this.liveTurns!.push(route.channel, route.jobId, frame.e, route.lane);
+        }
+        return frame.t === 'final' || frame.t === 'error';
+      },
+    });
+  }
+
+  /**
+   * The WATCHDOG consumer group: drains `turn:{T}:events` on its OWN cursor purely to stamp registry
+   * liveness (heartbeat + resume cursor) per entry — independent of the runner group, so the watchdog's
+   * dead-turn detection never depends on the business onEvent path ever getting stuck. Always runs.
+   */
+  private async consumeWatchdog(
+    turnId: string,
+    keys: ReturnType<typeof turnKeys>,
+    done: { value: boolean },
+  ): Promise<void> {
+    const consumer = `watchdog-${turnId.slice(0, 8)}`;
+    await drainTurnEventConsumer({
+      redis: this.redis,
+      stream: keys.events,
+      group: EVENTS_WATCHDOG_GROUP,
+      consumer,
+      isDone: () => done.value,
+      onEntry: async (entry) => {
+        await this.registry.heartbeat(turnId, entry.id).catch(() => undefined);
+        const frame = entry.data as EventFrame;
+        return frame.t === 'final' || frame.t === 'error';
+      },
+    });
   }
 
   /** Tail `turn:{T}:events` until `final`/`error`, feeding `onEvent` + advancing the resume cursor. */
@@ -598,6 +663,11 @@ export class RedisEngineRunner implements EngineRunnerPort {
     args: AttachArgs,
     done: { value: boolean },
   ): Promise<EngineRunResult> {
+    // Stable per-turn consumer id in the runner group (mirrors consumeTools's `host-<T>`). The group
+    // tracks its cursor SERVER-SIDE, so the read never passes a client-side `lastId` — `lastId` below is
+    // now only "the last id processed", used to stamp the DB resume cursor (via the watchdog group).
+    const consumer = `runner-${turnId.slice(0, 8)}`;
+    let claimedPending = false;
     let lastId = '0-0';
     let lastActivity = Date.now();
     // First moment we saw a live container past the idle deadline — null while genuinely active. Tracks
@@ -625,23 +695,39 @@ export class RedisEngineRunner implements EngineRunnerPort {
       while (result === undefined && errorMsg === undefined) {
         let entries;
         try {
-          entries = await this.redis.xread({
+          // On the FIRST iteration, reclaim any delivered-but-unacked entry stranded by a dead prior
+          // attach (a boot re-attach), then merge it ahead of the fresh read. A consumer group tracks
+          // its cursor server-side, so `'>'` reads only NEW entries — no client `lastId` is passed.
+          const pending = claimedPending
+            ? []
+            : await this.redis.claimStale({
+                group: EVENTS_RUNNER_GROUP,
+                consumer,
+                stream: keys.events,
+                minIdleMs: 0,
+                count: 128,
+              });
+          const fresh = await this.redis.xreadGroup({
+            group: EVENTS_RUNNER_GROUP,
+            consumer,
             stream: keys.events,
-            lastId,
             count: 128,
             blockMs: 1000,
           });
+          claimedPending = true;
+          entries = [...pending, ...fresh];
         } catch (err) {
           // OUR transport failed, not the engine — most often this process's own shutdown closing the
-          // Redis client mid-`XREAD` (a watch respawn). The detached engine is still running and still
-          // writing; throw the marker error so `runAttached` leaves the registry row + streams intact
-          // for the next boot's re-attach instead of finalizing a live turn as done. One quick retry
-          // rides out a transient blip without misclassifying it as a detach.
+          // Redis client mid-`XREADGROUP` (a watch respawn). The detached engine is still running and
+          // still writing; throw the marker error so `runAttached` leaves the registry row + streams
+          // intact for the next boot's re-attach instead of finalizing a live turn as done. One quick
+          // retry rides out a transient blip without misclassifying it as a detach.
           try {
             await new Promise((r) => setTimeout(r, 250));
-            entries = await this.redis.xread({
+            entries = await this.redis.xreadGroup({
+              group: EVENTS_RUNNER_GROUP,
+              consumer,
               stream: keys.events,
-              lastId,
               count: 128,
               blockMs: 1000,
             });
@@ -713,8 +799,32 @@ export class RedisEngineRunner implements EngineRunnerPort {
           }
           // 'heartbeat' just refreshes liveness (lastActivity above).
         }
-        // Persist the resume cursor + liveness so a fresh backend re-attaches from here.
-        await this.registry.heartbeat(turnId, lastId).catch(() => undefined);
+        // Ack the whole processed batch back to the runner group — the batch is processed synchronously
+        // above before we move on, so a single batch-ack is enough (its granularity matches consumeTools's
+        // per-entry ack). Registry liveness (heartbeat + resume cursor) is stamped by the watchdog group.
+        try {
+          await this.redis.ack(
+            keys.events,
+            EVENTS_RUNNER_GROUP,
+            entries.map((e) => e.id),
+          );
+        } catch (err) {
+          // Same transport-failure classification as the read retry above: OUR client dropped, not the
+          // engine, so treat it as a detach rather than misclassifying it as a finished turn. One quick
+          // retry rides out a transient blip.
+          try {
+            await new Promise((r) => setTimeout(r, 250));
+            await this.redis.ack(
+              keys.events,
+              EVENTS_RUNNER_GROUP,
+              entries.map((e) => e.id),
+            );
+          } catch {
+            throw new EngineDetachedError(
+              `events tail lost its Redis transport acking a batch mid-turn (turn ${turnId}): ${err}`,
+            );
+          }
+        }
       }
     } finally {
       args.signal?.removeEventListener('abort', onAbort);

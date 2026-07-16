@@ -9,8 +9,8 @@ import {
   type ObjectLiteral,
   Repository,
 } from 'typeorm';
-import type { Decision, Job, JobActivity, JobKind, JobStatus } from '../domain';
-import { nextDecisionId } from '../domain';
+import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
+import { nextDecisionId } from '@shared/domain';
 import type {
   WebConventionEditProposalCard,
   WebConventionProposalCard,
@@ -28,7 +28,7 @@ import { nextQuestionId } from '../surface/web-question-card';
 import { nextFileRequestId } from '../surface/web-file-request-card';
 import { renderPlan } from '../prompt-kit/messages/render-plan';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import { coerceThreadType, isDriverExecutableKind } from '../thread-kind';

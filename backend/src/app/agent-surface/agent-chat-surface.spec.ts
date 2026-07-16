@@ -2,7 +2,7 @@ import { firstValueFrom } from 'rxjs';
 import { take, toArray } from 'rxjs/operators';
 import { describe, expect, it } from 'vitest';
 import { decisionApprovalBlocks } from '../surface';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import { AgentChatSurface, parseApprovalMeta } from './agent-chat-surface';
 
 describe('AgentChatSurface — the in-process programmatic ChatSurface (W6)', () => {
