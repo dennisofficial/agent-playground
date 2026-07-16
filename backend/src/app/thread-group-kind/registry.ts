@@ -13,20 +13,13 @@ import type { ThreadGroupKindSpec, ThreadGroupKind } from './spec';
 export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
   {
     kind: 'planning',
-    roles: [{ role: 'planning', min: 1, max: 1 }],
+    roles: [{ role: 'planner', min: 1, max: 1 }],
     hasReview: false,
     titleRequired: true,
     spawnAt: 'job_start',
   },
   {
-    kind: 'plan_review',
-    roles: [{ role: 'plan_review', min: 1, max: 1 }],
-    hasReview: false,
-    titleRequired: false,
-    spawnAt: 'plan',
-  },
-  {
-    kind: 'build',
+    kind: 'section',
     roles: [
       { role: 'builder', min: 1, max: null }, // sequential legs (d1) — rotation appends the next row.
       { role: 'review_agent', min: 0, max: null }, // 0..N selected lenses (reviewAgentsForThread).
@@ -34,14 +27,6 @@ export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
     ],
     hasReview: true,
     titleRequired: true,
-    spawnAt: 'dispatch',
-  },
-  {
-    kind: 'direct_build',
-    // The no-review fast path (d9): a single builder, no review_agent/review_fix, no master_review group.
-    roles: [{ role: 'builder', min: 1, max: 1 }],
-    hasReview: false,
-    titleRequired: false,
     spawnAt: 'dispatch',
   },
   {
@@ -59,8 +44,8 @@ export const THREAD_GROUP_KIND_SPECS: readonly ThreadGroupKindSpec[] = [
     spawnAt: 'after_master_review',
   },
   {
-    kind: 'ci',
-    roles: [{ role: 'ci', min: 1, max: 1 }],
+    kind: 'ship',
+    roles: [{ role: 'ship', min: 1, max: 1 }],
     hasReview: false,
     titleRequired: false,
     spawnAt: 'after_ship',

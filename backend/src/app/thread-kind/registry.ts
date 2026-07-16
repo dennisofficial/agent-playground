@@ -32,9 +32,9 @@ const POST_REVIEW_MIN_SEVERITY = 'medium';
  */
 export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
   {
-    // The job brain / operator conversation. A first-class row for the tree, but its runtime is the
+    // The planner thread (operator conversation). A first-class row for the tree, but its runtime is the
     // AgentSessionManager session (`job_sandboxes.session_id`) — the driver NEVER executes it.
-    kind: 'planning',
+    kind: 'planner',
     agent: Agent.PLANNING,
     engine: 'claude',
     mode: 'conversational',
@@ -47,9 +47,9 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'session-backed',
   },
   {
-    // The synchronous Codex plan review. A render/identity-only row — its runtime stays in the brain's
+    // The synchronous Codex plan review. A render/identity-only row — its runtime stays in the planner's
     // `review_plan` tool; the driver NEVER executes it.
-    kind: 'plan_review',
+    kind: 'codex_review',
     agent: Agent.META_PLAN_REVIEW,
     engine: 'codex',
     mode: 'review',
@@ -143,7 +143,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     reasoningEffort: 'high',
     laneKind: 'main',
     inputPolicy: 'operator',
-    operatorInput: false,
+    operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
   },
@@ -151,7 +151,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The post-ship PR-lifecycle thread-group thread: the ATLAS_MAIN brain exploded into its own context-fresh,
     // isolated-session persona — PR creation, the authoritative base reconcile, and ongoing PR maintenance
     // (failing checks / review comments / conflicts), on a lean prompt that strips the planning apparatus.
-    kind: 'ci',
+    kind: 'ship',
     agent: Agent.CI,
     engine: 'claude',
     mode: 'conversational',
@@ -159,7 +159,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     reasoningEffort: 'high',
     laneKind: 'main',
     inputPolicy: 'operator',
-    operatorInput: false,
+    operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
   },
@@ -182,7 +182,7 @@ export function coerceThreadRole(raw: unknown): ThreadRole {
 }
 
 /** The kinds the DRIVER's top loop executes as build sections (`builder` + `master_review`). Everything
- *  else is a child (`review_agent`/`review_fix`) or render-only (`planning`/`plan_review`/`post_build`/`ci`). */
+ *  else is a child (`review_agent`/`review_fix`) or render-only (`planner`/`codex_review`/`post_build`/`ship`). */
 export const driverExecutableKinds: ReadonlySet<ThreadRole> = new Set(
   THREAD_KIND_SPECS.filter((s) => s.execution === 'top-level').map(
     (s) => s.kind,

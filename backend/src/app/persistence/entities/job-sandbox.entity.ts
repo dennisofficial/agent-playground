@@ -78,30 +78,6 @@ export class JobSandboxEntity extends TimestampedEntity {
   session_id!: string | null;
 
   /**
-   * COMPACTION SEED — a durable, one-shot handoff summary stashed when the brain session is compacted
-   * (e.g. on `dispatch_build`, once the plan is durable). Compaction summarizes the fat session, then
-   * NULLs `session_id` (abandoning the heavy transcript) and stores the lean summary here. The next brain
-   * turn folds this into its prompt and starts a FRESH session with it (see the fold in `runChatTurnInner`),
-   * then clears it the instant that fresh session is born. Best-effort: if lost to a crash, the fresh
-   * session re-orients from durable state (`/context`) on its own. Null when there's
-   * no pending compaction.
-   */
-  @Column({ type: 'text', nullable: true })
-  pending_compaction_seed!: string | null;
-
-  /**
-   * The SDK session id compaction is ABANDONING (set at the start of the summary turn, before the engine
-   * runs). While set, `TurnRecoveryService` must NOT surface that session's transcript — its tail is the
-   * internal compaction summary, which would otherwise leak into the operator log as a `chat` message. Held
-   * through a successful reseed (which nulls `session_id` but keeps this) until the FRESH session is born
-   * (the eager session-id persist clears it alongside `pending_compaction_seed`). If `session_id` still
-   * points at this value after a restart, the reseed never committed — the boot reconciler completes it.
-   * Null when no compaction is in flight.
-   */
-  @Column({ type: 'text', nullable: true })
-  compacting_session_id!: string | null;
-
-  /**
    * Last time a turn ran for this thread (bumped at turn start). Drives the idle reaper: an `attached` row
    * idle past the idle TTL is reaped to `detached`. Null until the first turn.
    */

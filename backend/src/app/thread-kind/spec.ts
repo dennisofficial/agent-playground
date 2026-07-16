@@ -20,18 +20,18 @@ import type {
 /**
  * The ROLE of a `threads` row — the single differentiator across every thread-like concept (renamed from
  * `ThreadRowKind`, d2/d7 — grouping now lives on `threadGroup.kind`, see `../thread-group-kind`). Mapping from the old
- * kind vocabulary: `main→planning`, `review_lens→review_agent`, `post_review→review_fix`; `post_build` and
- * `ci` are new roles for the split-off ship/CI thread groups (d14).
+ * kind vocabulary: `main→planner`, `review_lens→review_agent`, `post_review→review_fix`; `post_build` and
+ * `ship` are new roles for the split-off ship/CI thread groups (d14).
  */
 export type ThreadRole =
-  | 'planning' // the job brain session (operator conversation). Render/identity-only — driver never executes it.
-  | 'plan_review' // the synchronous Codex plan review. Render/identity-only — runtime stays in the brain.
+  | 'planner' // the planner thread (operator conversation). Render/identity-only — driver never executes it.
+  | 'codex_review' // the synchronous Codex plan review. Render/identity-only — runtime stays in the planner.
   | 'builder' // a build lane's own execute session. Top-level executable; parents its review children.
   | 'review_agent' // one post-build review lens over a builder's diff. Driven as a CHILD of the builder.
   | 'review_fix' // the fix pass that applies a builder's deduped lens findings. Driven as a CHILD.
   | 'master_review' // the ship-time Codex whole-diff review-&-fix. Top-level executable, runs last.
   | 'post_build' // the ship-gate thread-group thread: build summary, preview proposal, and amend loop.
-  | 'ci'; // the post-ship PR-lifecycle thread-group thread: PR creation, CI handling, review comments, conflicts.
+  | 'ship'; // the post-ship PR-lifecycle thread-group thread: PR creation, CI handling, review comments, conflicts.
 
 /**
  * How the DRIVER treats a role:
@@ -39,7 +39,7 @@ export type ThreadRole =
  *  - `child` — driven ONLY via its parent builder's child mechanism (`review_agent`, `review_fix`), never
  *    entered by the top loop.
  *  - `render-only` — a first-class row for identity + tree placement, but the driver NEVER executes it; its
- *    runtime lives elsewhere (`planning` = the AgentSessionManager session; `plan_review` = the brain's
+ *    runtime lives elsewhere (`planner` = the AgentSessionManager session; `codex_review` = the planner's
  *    synchronous `review_plan` tool).
  */
 export type ThreadExecution = 'top-level' | 'child' | 'render-only';

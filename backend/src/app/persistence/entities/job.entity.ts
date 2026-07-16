@@ -6,15 +6,15 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
+import type { AutoApproveMode } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '@shared/domain/decision-record';
 import type { JobProvenance } from '@shared/domain/job';
 import type { CiCounts } from '../../git';
-import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';
 import { OrganizationEntity } from './organization.entity';
 import { RepoEntity } from './repo.entity';
+import { ThreadEntity } from './thread.entity';
 import { UserEntity } from './user.entity';
 
 /**
@@ -121,8 +121,8 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'planning' | 'plan_review' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'done' | 'cancelled' | 'deleting'
-  @Column({ type: 'text', default: 'open' })
+  // 'scoping' | 'planning' | 'plan_reviewing' | 'awaiting_approval' | 'building' | 'master_review' | 'ready' | 'shipping' | 'pr_open' | 'merged' | 'amending' | 'blocked' | 'cancelled' | 'deleting'
+  @Column({ type: 'text', default: 'scoping' })
   status!: string;
 
   /**
@@ -135,27 +135,6 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   ship_review_approved_at!: Date | null;
-
-  /**
-   * What the SYSTEM is doing on this job RIGHT NOW — the ephemeral "working" axis (see {@link JobActivity}):
-   * `idle | turn | plan_review | build | master_review`. Orthogonal to `status` (the build phase) and
-   * `halt` (the failure gate); any non-`idle` value suppresses the "needs you" dot in `deriveNeedsYou`
-   * because the system, not the operator, owns the next step. Reset to `idle` on boot (no in-flight work
-   * survives a process restart) so a crash mid-work can't leave a thread looking "working" forever. Column
-   * stays `text`; the union is enforced in TS.
-   */
-  @Column({ type: 'text', default: 'idle' })
-  activity!: JobActivity;
-
-  /**
-   * Whether an unresolved TURN-FAILURE operator box is outstanding (a stop-the-world engine error the
-   * operator must Resume or reply past). A SEPARATE axis from `status`/`activity`: chat-turn failures
-   * never touch `status`, so this is what makes a stopped thread render as errored. Set in
-   * `saySystemOperator`, cleared when the next turn starts (`runChatTurn`). UNLIKE `activity` it is NOT
-   * reset on boot — a real unresolved error must survive a process restart.
-   */
-  @Column({ type: 'boolean', default: false })
-  halted!: boolean;
 
   /**
    * The durable HUMAN-INPUT GATE: how many `ask_question` cards on this thread are still awaiting an
@@ -336,22 +315,6 @@ export class JobEntity extends TimestampedEntity {
   session_limit_text_misfires!: number;
 
   /**
-   * PASSIVE pipeline-milestone awareness buffer — durable per-thread record of build milestones the
-   * brain hasn't been told about yet + the watermark of the last pipeline state conveyed. Drained and
-   * prepended to the next OPERATOR turn's input (never pushed; never wakes the brain). See the
-   * `ThreadPipelineAwareness` doc + `driver/pipeline-awareness.store.ts`.
-   */
-  @Column({
-    type: 'jsonb',
-    // Plain-literal default (NOT a `() => '...'::jsonb` expression): only a non-function
-    // default routes TypeORM's `defaultEqual` through its jsonb-aware deepCompare branch.
-    // A function default falls back to naive string compare, which never matches the
-    // cast-stripped, whitespace-normalized value Postgres reads back → migration regenerates forever.
-    default: { markerQueue: [], conveyedStateSig: null },
-  })
-  pipeline_awareness!: ThreadPipelineAwareness;
-
-  /**
    * The WORKING SET of decisions locked during grilling via `create_decision`, BEFORE any proposal exists.
    * Deliberately separate from `decision_records` so the proposal lifecycle (a fresh record + supersede
    * on every `submit_plan`) stays intact: `submit_plan` snapshots this set into a new decision record.
@@ -361,48 +324,6 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'jsonb', default: [] })
   pending_decisions!: Decision[];
-
-  /**
-   * The PHASE-PRESERVING HALT — the orthogonal failure/pause axis. `status` stays the pure build phase;
-   * when the build halts (a failure, a credential/budget block, or an incomplete turn) this is populated
-   * and the phase is preserved, so the sidebar renders the job under the phase it halted in with a red
-   * mark. Null when healthy; cleared only on operator re-engagement (retry/resume) or a brain re-drive.
-   * Job-scoped mirror of `ThreadEntity.terminal_record` (nullable jsonb, no default — a `() => '...'::jsonb`
-   * default makes `migration:generate` loop forever; nullable avoids a default entirely).
-   */
-  @Column({ type: 'jsonb', nullable: true })
-  halt!: JobHalt | null;
-
-  /**
-   * Which lane is parked on {@link session_resume_at} + why, so the sweep dispatches to the right resume
-   * rail (`main` re-drives via the seed path; `build` calls `ThreadDriver.resumePaused`). `resetSource`
-   * records how the reset instant was determined (the live usage API vs. a best-effort parse of the CLI's
-   * "resets 5:20pm" string). `kind` distinguishes a `session_limit` park (park-until-reset) from a `retry`
-   * park (the 10×/10s host backstop), so the resume sweep dispatches to the right rail. Null when not
-   * parked. Nullable jsonb, no default — a `() => '...'::jsonb` default makes `migration:generate` loop
-   * forever (see {@link halt}).
-   */
-  @Column({ type: 'jsonb', nullable: true })
-  session_resume!: {
-    lane: 'main' | 'build';
-    reason: string;
-    resetSource: 'usage_api' | 'parsed_string';
-    kind?: 'session_limit' | 'retry';
-  } | null;
-
-  /**
-   * The ADR-0005 LIVE-VERIFICATION verdict for the DIRECT-BUILD ship path (the brain-owned
-   * `finalize_build` gate — the direct-path analog of a driver thread's `terminal_record.liveVerification`).
-   * Written on BOTH the pass and the refusal path so the same prod audit SQL that surfaced the direct-build
-   * gap can confirm the fix: a direct-build job with a runtime diff now shows a verdict here, and a
-   * validation-skipping ship is blocked at `finalize_build` with `liveVerificationAdequate: false`. Null for
-   * jobs that never ran a direct build (driver builds record their verdict on the thread terminal record).
-   */
-  @Column({ type: 'jsonb', nullable: true })
-  direct_build_verification!: {
-    verdict: LiveVerificationVerdict;
-    at: string;
-  } | null;
 
   /**
    * When the DIRECT-BUILD implementation turn actually STARTED — stamped the instant `dispatch_build` fires
@@ -417,16 +338,29 @@ export class JobEntity extends TimestampedEntity {
   direct_build_started_at!: Date | null;
 
   /**
-   * Which BUILD PATH was committed for this job: 'direct' (the fast, brain-implemented path) or 'plan'
-   * (the driver-run multi-thread path). Null until an approval commits the path — a proposal still sitting
-   * at `awaiting_approval` (which can still be re-proposed as the other path) has no value here, so a
-   * requested-but-unapproved direct build is NOT yet a committed direct build. Stamped ATOMICALLY with the
-   * `awaiting_approval → running` flip in `BrainStoreService.approve()`. The UI reads this (surfaced as
-   * `buildPath` on the pipeline DTO) to suppress the plan-oriented empty-state placeholders — build lanes,
-   * `plan.md`, generated docs — that never apply to a direct build.
+   * Which BUILD PATH this job runs: 'direct' (the fast, brain-implemented path) or 'plan' (the
+   * driver-run multi-thread path, the default). Set at job creation — the scheduler reads it to decide
+   * whether a `section` thread group runs review children + spawns `master_review`. The UI reads this
+   * (surfaced as `buildPath` on the pipeline DTO) to suppress the plan-oriented empty-state placeholders —
+   * build lanes, `plan.md`, generated docs — that never apply to a direct build.
    */
-  @Column({ type: 'text', nullable: true })
-  build_path!: 'direct' | 'plan' | null;
+  @Column({ type: 'text', default: 'plan' })
+  build_path!: 'direct' | 'plan';
+
+  /**
+   * The server-authoritative ROUTING pointer the console opens to (FK → threads.id, SET NULL). Distinct
+   * from session liveness (whether a thread currently has a running session) — this is purely "which
+   * thread does /workspace/:jobId/:threadId resolve to". The host advances it as the pipeline moves
+   * (create → planner thread; approve → the first Section's first Leg; etc.); an operator click on a
+   * thread in the sidebar overrides it. Named "focused", deliberately not "active", to keep routing
+   * separate from liveness. Null only in the sliver before the planner thread is created.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  focused_thread_id!: string | null;
+
+  @ManyToOne(() => ThreadEntity, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'focused_thread_id' })
+  focusedThread?: ThreadEntity | null;
 
   /** Per-job AUTO-APPROVE MODE: which of the plan-approval / ship-review gates on this job auto-advance
    *  with no human click (still posting the card for audit). Seeded from the org's

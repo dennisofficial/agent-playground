@@ -16,23 +16,21 @@ describe('thread-group-kind registry', () => {
     expect(() => validateThreadGroupKinds()).not.toThrow();
   });
 
-  it('defines all seven thread-group kinds exactly once', () => {
+  it('defines all five thread-group kinds exactly once', () => {
     const kinds = THREAD_GROUP_KIND_SPECS.map((s) => s.kind).sort();
     expect(kinds).toEqual(
       [
-        'build',
-        'ci',
-        'direct_build',
-        'master_review',
         'planning',
-        'plan_review',
+        'section',
+        'master_review',
         'post_build',
+        'ship',
       ].sort(),
     );
   });
 
-  it('build contains sequential builder legs (d1) + 0..N review_agent + exactly one review_fix', () => {
-    const spec = threadGroupKindSpec('build');
+  it('section contains sequential builder legs (d1) + 0..N review_agent + exactly one review_fix', () => {
+    const spec = threadGroupKindSpec('section');
     expect(spec.hasReview).toBe(true);
     expect(spec.titleRequired).toBe(true);
     expect(spec.spawnAt).toBe('dispatch');
@@ -46,20 +44,12 @@ describe('thread-group-kind registry', () => {
     expect(reviewFix).toEqual({ role: 'review_fix', min: 1, max: 1 });
   });
 
-  it('direct_build is the no-review fast path (d9): a single builder, no review roles, no title', () => {
-    const spec = threadGroupKindSpec('direct_build');
-    expect(spec.hasReview).toBe(false);
-    expect(spec.titleRequired).toBe(false);
-    expect(spec.roles).toEqual([{ role: 'builder', min: 1, max: 1 }]);
-  });
-
   it('planning requires a title (round disambiguation); other singleton kinds do not', () => {
     expect(threadGroupKindSpec('planning').titleRequired).toBe(true);
     for (const kind of [
-      'plan_review',
       'master_review',
       'post_build',
-      'ci',
+      'ship',
     ] as const) {
       expect(threadGroupKindSpec(kind).titleRequired).toBe(false);
     }
@@ -68,10 +58,9 @@ describe('thread-group-kind registry', () => {
   it('each singleton kind declares exactly one role, min 1 max 1', () => {
     for (const kind of [
       'planning',
-      'plan_review',
       'master_review',
       'post_build',
-      'ci',
+      'ship',
     ] as const) {
       const spec = threadGroupKindSpec(kind);
       expect(spec.roles).toHaveLength(1);
@@ -82,16 +71,14 @@ describe('thread-group-kind registry', () => {
 
   it('spawnAt names the orchestration seam for every kind', () => {
     expect(threadGroupKindSpec('planning').spawnAt).toBe('job_start');
-    expect(threadGroupKindSpec('plan_review').spawnAt).toBe('plan');
-    expect(threadGroupKindSpec('build').spawnAt).toBe('dispatch');
-    expect(threadGroupKindSpec('direct_build').spawnAt).toBe('dispatch');
+    expect(threadGroupKindSpec('section').spawnAt).toBe('dispatch');
     expect(threadGroupKindSpec('master_review').spawnAt).toBe(
       'after_build_thread_groups',
     );
     expect(threadGroupKindSpec('post_build').spawnAt).toBe(
       'after_master_review',
     );
-    expect(threadGroupKindSpec('ci').spawnAt).toBe('after_ship');
+    expect(threadGroupKindSpec('ship').spawnAt).toBe('after_ship');
   });
 
   it('threadGroupKindSpec throws on an unknown kind', () => {
@@ -150,7 +137,7 @@ describe('thread-group-kind registry', () => {
     const bad: ThreadGroupKindSpec[] = [
       {
         ...threadGroupKindSpec('planning'),
-        roles: [{ role: 'planning', min: 2, max: 1 }],
+        roles: [{ role: 'planner', min: 2, max: 1 }],
       },
     ];
     expect(() => validateThreadGroupKinds(bad)).toThrow(/max < min/);

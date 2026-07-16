@@ -24,10 +24,10 @@ describe('thread-kind registry', () => {
     expect(kinds).toEqual(
       [
         'builder',
-        'ci',
+        'ship',
         'master_review',
-        'planning',
-        'plan_review',
+        'planner',
+        'codex_review',
         'post_build',
         'review_agent',
         'review_fix',
@@ -42,19 +42,19 @@ describe('thread-kind registry', () => {
     ]);
     expect(isDriverExecutableKind('builder')).toBe(true);
     expect(isDriverExecutableKind('master_review')).toBe(true);
-    expect(isDriverExecutableKind('planning')).toBe(false);
+    expect(isDriverExecutableKind('planner')).toBe(false);
     expect(isDriverExecutableKind('review_agent')).toBe(false);
     expect(isDriverExecutableKind('review_fix')).toBe(false);
-    expect(isDriverExecutableKind('plan_review')).toBe(false);
+    expect(isDriverExecutableKind('codex_review')).toBe(false);
     expect(isDriverExecutableKind('post_build')).toBe(false);
-    expect(isDriverExecutableKind('ci')).toBe(false);
+    expect(isDriverExecutableKind('ship')).toBe(false);
   });
 
-  it('planning/plan_review/post_build/ci are render-only; review_agent + review_fix are children', () => {
-    expect(threadKindSpec('planning').execution).toBe('render-only');
-    expect(threadKindSpec('plan_review').execution).toBe('render-only');
+  it('planner/codex_review/post_build/ship are render-only; review_agent + review_fix are children', () => {
+    expect(threadKindSpec('planner').execution).toBe('render-only');
+    expect(threadKindSpec('codex_review').execution).toBe('render-only');
     expect(threadKindSpec('post_build').execution).toBe('render-only');
-    expect(threadKindSpec('ci').execution).toBe('render-only');
+    expect(threadKindSpec('ship').execution).toBe('render-only');
     expect(threadKindSpec('review_agent').execution).toBe('child');
     expect(threadKindSpec('review_fix').execution).toBe('child');
   });
@@ -73,16 +73,16 @@ describe('thread-kind registry', () => {
     expect(() => threadKindSpec('nope')).toThrow(/unknown kind/);
   });
 
-  it('operatorInput (d12): enabled for builder + planning, read-only elsewhere by default', () => {
+  it('operatorInput (d12): enabled for builder + planner + post_build + ship, read-only elsewhere by default', () => {
     expect(threadKindSpec('builder').operatorInput).toBe(true);
-    expect(threadKindSpec('planning').operatorInput).toBe(true);
+    expect(threadKindSpec('planner').operatorInput).toBe(true);
+    expect(threadKindSpec('post_build').operatorInput).toBe(true);
+    expect(threadKindSpec('ship').operatorInput).toBe(true);
     for (const role of [
-      'plan_review',
+      'codex_review',
       'review_agent',
       'review_fix',
       'master_review',
-      'post_build',
-      'ci',
     ]) {
       expect(threadKindSpec(role).operatorInput).toBe(false);
     }
@@ -121,7 +121,7 @@ describe('thread-kind registry', () => {
   });
 
   it("laneDefaultFooter surfaces each kind's reasoning effort — 'high' for the Claude lanes, 'xhigh' for master review", () => {
-    expect(laneDefaultFooter('planning').effort).toBe('high');
+    expect(laneDefaultFooter('planner').effort).toBe('high');
     expect(laneDefaultFooter('builder').effort).toBe('high');
     expect(laneDefaultFooter('master_review').effort).toBe('xhigh');
   });

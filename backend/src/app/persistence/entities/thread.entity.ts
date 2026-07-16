@@ -13,8 +13,8 @@ import { ThreadGroupEntity } from './thread-group.entity';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
- * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planning | builder |
- * master_review | review_agent | review_fix | plan_review | post_build | ci`) and related by
+ * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planner | codex_review |
+ * builder | master_review | review_agent | review_fix | post_build | ship`) and related by
  * `parent_thread_id` (a builder is the parent of its `review_agent`/`review_fix` siblings, now grouped
  * primarily via `thread_group_id` per d2). Builders stack on the job's one feature branch and run sequentially
  * (ORDER BY ordinal) as the thread group's rotating legs (d1); non-build roles are singletons. `status` is the
@@ -56,13 +56,13 @@ export class ThreadEntity extends TimestampedEntity {
   threadGroup?: ThreadGroupEntity;
 
   /**
-   * The thread ROLE — `planning | builder | master_review | review_agent | review_fix | plan_review |
-   * post_build | ci`. The single differentiator across all thread-like concepts (subsumes
+   * The thread ROLE — `planner | codex_review | builder | master_review | review_agent | review_fix |
+   * post_build | ship`. The single differentiator across all thread-like concepts (subsumes
    * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `threadGroup.kind`). The role
    * registry (thread 2) binds each role to a prompt-kit `Agent`, an engine, a driver mode, and the
    * operator-chat toggle (d12). Executable roles (`builder`, `master_review`) are driven as top-level
-   * thread group members; `review_agent`/`review_fix` are driven as thread-group-scoped children; `planning`/
-   * `plan_review`/`post_build`/`ci` reuse the brain's prompting (d14). No column default — every write
+   * thread group members; `review_agent`/`review_fix` are driven as thread-group-scoped children; `planner`/
+   * `codex_review`/`post_build`/`ship` reuse the planner's prompting (d14). No column default — every write
    * site sets it explicitly (persistPlan / the child-thread materializer). Stays `text` (no DB enum); the
    * union type lives in code (thread 2).
    */
@@ -71,7 +71,7 @@ export class ThreadEntity extends TimestampedEntity {
 
   /**
    * Self-FK (→ threads.id) — the parent thread in the tree. A `builder` is the parent of its `review_lens`
-   * and `post_review` children; `main`/`master_review`/`plan_review` are root/job-level (null). Indexed;
+   * and `post_review` children; `planner`/`master_review`/`codex_review` are root/job-level (null). Indexed;
    * FK cascades with the rest so deleting a builder deletes its review children.
    */
   @Column({ type: 'uuid', nullable: true })
@@ -145,13 +145,9 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   handoff_out!: string | null;
 
-  // 'pending' | 'planning' | 'reviewing' | 'executing' | 'auto_fixing' | 'done' — the PURE LINEAR step (pause/failure/skip live on `condition`)
-  @Column({ type: 'text', default: 'pending' })
+  // 'idle' | 'done' — idle is the dormant/resumable resting state; done means `terminal_record` is present.
+  @Column({ type: 'text', default: 'idle' })
   status!: string;
-
-  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record)
-  @Column({ type: 'text', default: 'none' })
-  condition!: string;
 
   /**
    * The engine session this thread's live turn resumes (relocated from `steps.session_id`, d5 — the
@@ -161,9 +157,15 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   session_id!: string | null;
 
+  /** DISPLAY-ONLY reason the thread's last turn ended abnormally (`session_limit | error | …`). Set when a
+   *  turn ends abnormally, cleared on the next turn start. NEVER drives auto-resume — purely informational
+   *  for the UI (the halt/gating apparatus that used to read this is gone). */
+  @Column({ type: 'text', nullable: true })
+  halt_reason!: string | null;
+
   /**
    * Set on commit, mirroring the old `steps.commit_sha` batch-anchor marker (relocated by d5). Per d13
-   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build thread group reviewers
+   * its role is the REVIEW DIFF head, not a resume/crash guard: section thread group reviewers
    * receive the range `start_sha..commit_sha` (the thread group's cumulative diff). Sentinel `(nothing)` =
    * "committed, empty diff". Null on non-build roles and before the thread's first commit.
    */
