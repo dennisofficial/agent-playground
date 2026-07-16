@@ -25,6 +25,7 @@ import type {
   MessageType,
   SeedRow,
   TurnEnvelope,
+  UnblockBlockerInfo,
 } from '@shared/domain';
 import { MemoryStore } from '../memory';
 import {
@@ -109,6 +110,7 @@ import {
   foldCompactionSeed,
   renderEventDelivery,
   renderFollowUpJobSeed,
+  renderBornBlockedUnblockPrefix,
   frameAnswer,
   composeTurn,
   composeSeedTurn,
@@ -959,26 +961,29 @@ export class AgentSessionManager
    * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
    * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
    * was manually blocked while it already had a session resumes that session with a synthetic wake
-   * stimulus. `note` (d1) names any blocker that did NOT merge so the brain re-checks its assumptions.
-   * Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via handleChatTurn/startFollowUpJob.
+   * stimulus. `blockers` names each job that was holding this one (and how it resolved), so each variant can
+   * name them and reorient: the born-blocked seed gets a fresh-start prefix, the resumed session a
+   * rebase/re-scope nudge. Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via
+   * handleChatTurn/startFollowUpJob.
    */
   async wakeUnblockedJob(
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; note: string | null },
+    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
   ): Promise<void> {
     if (input.seed != null) {
-      const firstMessage = input.note
-        ? `${input.note}\n\n${input.seed}`
-        : input.seed;
+      const firstMessage =
+        input.blockers.length > 0
+          ? `${renderBornBlockedUnblockPrefix(input.blockers)}\n\n${input.seed}`
+          : input.seed;
       await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
       return;
     }
     const stimulus = seedEnvelope({
       ...seedBase({ jobId, orgId, repoId }),
       type: 'unblocked_job_wake',
-      note: input.note,
+      blockers: input.blockers,
     });
     await this.handleChatTurn(stimulus);
   }

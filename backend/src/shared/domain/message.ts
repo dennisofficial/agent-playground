@@ -178,11 +178,28 @@ export type RequestChangesMessage = MessageBase & {
   decisionRecordId: string;
 };
 
-/** Wake once every blocking job resolved (the job already had a session). */
+/** How a blocker job that was holding a dependent resolved, for the unblock wake message.
+ *  `removed` = the operator manually lifted the dependency edge (the blocker may still be running). */
+export type BlockerResolutionKind =
+  | 'merged'
+  | 'closed_unmerged'
+  | 'cancelled'
+  | 'deleted'
+  | 'removed';
+
+/** One blocker named in an unblock wake message: which job it was and how it resolved. */
+export type UnblockBlockerInfo = {
+  jobId: string;
+  title: string | null;
+  how: BlockerResolutionKind;
+};
+
+/** Wake once every blocking job resolved (the job already had a session). `blockers` names each job that
+ *  was holding this one (with how it resolved) so the wake message can reorient the brain. */
 export type UnblockedJobMessage = MessageBase & {
   type: 'unblocked_job_wake';
   trust: 'system';
-  note: string | null;
+  blockers: UnblockBlockerInfo[];
 };
 
 /** Seed framing for a follow-up thread spawned by ANOTHER Atlas job via `create_job`. */
