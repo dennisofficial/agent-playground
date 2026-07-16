@@ -1,4 +1,7 @@
-import type { EventMessage } from '@shared/domain/message';
+import type {
+  EventMessage,
+  UnblockBlockerInfo,
+} from '@shared/domain/message';
 import type { JobProvenance } from '@shared/domain/job';
 import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
 import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
@@ -147,15 +150,81 @@ export function renderWorkOwedNudge(): AgentMessage {
 
 // ── Unblocked-job wake ──────────────────────────────────────────────────────────────────────────────────
 
+/** Human phrasing for how a blocker resolved, used in the unblock wake message's blocker list. */
+const BLOCKER_HOW_LABEL: Record<UnblockBlockerInfo['how'], string> = {
+  merged: 'merged',
+  closed_unmerged: 'PR closed without merging',
+  cancelled: 'job cancelled',
+  deleted: 'job deleted',
+  removed: 'block lifted by the operator',
+};
+
 /**
- * WAKE body for `AgentSessionManager.wakeUnblockedJob`'s synthetic-stimulus path (every blocker resolved,
- * the job already had a session). `note` (d1) names any blocker that did NOT merge, when present.
+ * The shared blocker roster + soft-reason framing shared by both unblock wake variants: a bulleted list of
+ * the jobs that were holding this one (title|jobId + how each resolved), the "this may not be a hard reason"
+ * framing, and — when any blocker did NOT land on the base branch — a caveat to re-check assumptions. An
+ * empty list (e.g. a sweep whose blocker edge simply vanished) degrades to a single generic line.
  */
-export function wakeUnblockedJobBody(note: string | null): AgentMessage {
+function renderBlockerContext(blockers: UnblockBlockerInfo[]): string {
+  if (blockers.length === 0) {
+    return 'Every job that was blocking you has resolved.';
+  }
+  const roster = blockers
+    .map((b) => `  • "${b.title ?? b.jobId}" (${BLOCKER_HOW_LABEL[b.how]}) — job ${b.jobId}`)
+    .join('\n');
+  const notLanded = blockers.filter(
+    (b) => b.how === 'closed_unmerged' || b.how === 'cancelled' || b.how === 'deleted',
+  );
+  const caveat =
+    notLanded.length > 0
+      ? `\n\nNote: ${notLanded.length} of those job(s) did NOT merge, so the base branch may not contain their changes — re-check any assumptions that depended on them.`
+      : '';
+  return (
+    `You were blocked by ${blockers.length} job(s):\n${roster}\n\n` +
+    'Being blocked was NOT necessarily a hard dependency. One of those jobs may have depended on yours or ' +
+    'overlapped its scope; the operator may have wanted to sequence the work; or they simply may not have ' +
+    'wanted too many jobs running at once. They may have explained why in an earlier message, or said ' +
+    'nothing at all.' +
+    caveat
+  );
+}
+
+/**
+ * WAKE body for a job blocked MID-WORK and now resumed (the `unblocked_job_wake` synthetic stimulus — the
+ * job already had a session). Names the blockers, frames the block as possibly soft, and steers the brain to
+ * find out why, REBASE, and re-check whether those jobs changed its scope before resuming its planned work.
+ */
+export function wakeUnblockedRunningJobBody(
+  blockers: UnblockBlockerInfo[],
+): AgentMessage {
   return agentMessage(
-    note
-      ? `${note}\n\nAll blocking jobs have now resolved — you are unblocked. Resume the work you had planned.`
-      : 'All blocking jobs have now resolved — you are unblocked. Resume the work you had planned.',
+    'You were BLOCKED mid-flight and are now UNBLOCKED — resuming.\n\n' +
+      renderBlockerContext(blockers) +
+      '\n\nBefore you charge ahead:\n' +
+      '  • Check your recent operator messages for a stated reason.\n' +
+      '  • Rebase onto the latest base branch so you build on whatever those jobs landed.\n' +
+      '  • Re-examine whether those jobs complement, overlap with, or change the scope of your work — your ' +
+      "plan's assumptions may no longer hold. Adjust before continuing.\n\n" +
+      'Then resume the work you had planned.',
+  );
+}
+
+/**
+ * FIRST-TURN prefix for a BORN-BLOCKED job (created via create_job dependsOn, never ran) whose blockers have
+ * now resolved. Prepended to its stored opening seed by `AgentSessionManager.wakeUnblockedJob`. Unlike the
+ * mid-work variant this job has NO prior plan, so it frames a fresh start — start from the latest base and
+ * factor the resolved jobs into planning — with no "resume"/"your plan's assumptions" language.
+ */
+export function renderBornBlockedUnblockPrefix(
+  blockers: UnblockBlockerInfo[],
+): string {
+  return (
+    'This job was CREATED already blocked, and the job(s) it was waiting on have now resolved. You have NOT ' +
+    'started any work yet — the brief below is your starting point.\n\n' +
+    renderBlockerContext(blockers) +
+    '\n\nAs you scope this job:\n' +
+    '  • Start from the latest base branch so you build on whatever those jobs landed.\n' +
+    '  • Factor those jobs into your plan — they may overlap, complement, or change what this job should do.'
   );
 }
 

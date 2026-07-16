@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import type { UnblockBlockerInfo } from '@shared/domain/message';
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
@@ -41,12 +42,6 @@ export type BlockerResolution =
 
 /** A non-terminal-safe classification of a blocker (excludes the in-flight `merged` case). */
 type NonLandedResolution = Exclude<BlockerResolution, 'merged'>;
-
-const HUMAN_RESOLUTION: Record<NonLandedResolution, string> = {
-  closed_unmerged: 'PR closed without merging',
-  cancelled: 'job cancelled',
-  deleted: 'job deleted',
-};
 
 /** A blocker row of a job — the compact projection `blockersOf` returns. */
 export type JobBlockerRow = {
@@ -289,6 +284,8 @@ export class JobDependencyService {
     dependsOnJobId: string;
   }): Promise<void> {
     const { orgId, repoId, jobId, dependsOnJobId } = args;
+    // Capture the edge the operator is lifting BEFORE the delete, so the wake message can still name it.
+    const removed = await this.jobs.findOne({ where: { id: dependsOnJobId } });
     await this.deps.delete({
       org_id: orgId,
       repo_id: repoId,
@@ -301,7 +298,13 @@ export class JobDependencyService {
       this.isTerminalState(b.prState, b.status),
     );
     if (allTerminal) {
-      await this.unblockAndWake(jobId, null);
+      const infos: UnblockBlockerInfo[] = [
+        ...(removed
+          ? [{ jobId: removed.id, title: removed.title, how: 'removed' as const }]
+          : []),
+        ...this.classifiedBlockerInfos(blockers),
+      ];
+      await this.unblockAndWake(jobId, infos);
     }
   }
 
@@ -309,8 +312,8 @@ export class JobDependencyService {
    * BACKSTOP reconcile for ONE `blocked` job (the {@link JobUnblockSweep} entrypoint): if every remaining
    * blocker is terminal-or-ABSENT (a deleted blocker row simply doesn't appear in `blockersOf`, so an empty
    * or all-terminal set unblocks), unpark + wake it. Idempotent — the conditional UPDATE no-ops if the job
-   * already moved off `blocked`. `note` is null: the event path composes the "didn't land" note; the sweep is
-   * a dropped-event backstop and has no live resolution to report. Returns whether it unblocked.
+   * already moved off `blocked`. The sweep is a dropped-event backstop with no live resolution to report, so
+   * it classifies the remaining terminal blockers from their persisted state. Returns whether it unblocked.
    */
   async reconcileBlockedJob(jobId: string): Promise<boolean> {
     const blockers = await this.blockersOf(jobId);
@@ -318,7 +321,7 @@ export class JobDependencyService {
       this.isTerminalState(b.prState, b.status),
     );
     if (!allTerminal) return false;
-    return this.unblockAndWake(jobId, null);
+    return this.unblockAndWake(jobId, this.classifiedBlockerInfos(blockers));
   }
 
   /** The blocker jobs of `jobId` (what it depends on), as a compact row per blocker. */
@@ -424,7 +427,11 @@ export class JobDependencyService {
       .execute();
     if (!upd.affected) return; // lost the race — already unblocked.
 
-    const note = this.renderDidntLandNote(blockers, blockerJobId, resolution);
+    const blockerInfos = this.resolvedBlockerInfos(
+      blockers,
+      blockerJobId,
+      resolution,
+    );
     try {
       await this.brainGateway.wakeUnblockedJob(
         dependent.id,
@@ -432,7 +439,7 @@ export class JobDependencyService {
         dependent.repo_id,
         {
           seed: dependent.blocked_seed_message,
-          note,
+          blockers: blockerInfos,
         },
       );
       // Only drop the seed once the wake is confirmed dispatched — otherwise a sweep-driven retry would
@@ -466,46 +473,42 @@ export class JobDependencyService {
     return 'cancelled';
   }
 
-  /** The "didn't land" note (d1) for any blocker that resolved WITHOUT merging, or null if all merged. */
-  private renderDidntLandNote(
+  /** The full blocker roster for an event-driven unblock: the blocker resolving RIGHT NOW carries its live
+   *  `resolution`; every other (already-terminal) blocker is classified from its persisted state. Feeds the
+   *  wake message so it can name each job that was holding this one and how it resolved. */
+  private resolvedBlockerInfos(
     blockers: JobBlockerRow[],
     blockerJobId: string,
     resolution: BlockerResolution,
-  ): string | null {
-    const nonLanded = blockers
-      .map((b) => ({
-        title: b.title,
-        jobId: b.jobId,
-        how:
-          b.jobId === blockerJobId
-            ? resolution
-            : this.classifyResolvedBlocker(b.prState, b.status),
-      }))
-      .filter(
-        (
-          b,
-        ): b is {
-          title: string | null;
-          jobId: string;
-          how: NonLandedResolution;
-        } => b.how !== 'merged',
-      );
-
-    if (nonLanded.length === 0) return null;
-    return (
-      `Heads up — your work was blocked on ${nonLanded.length} job(s) that did NOT merge:\n` +
-      nonLanded
-        .map((b) => `  • "${b.title ?? b.jobId}" (${HUMAN_RESOLUTION[b.how]})`)
-        .join('\n') +
-      `\nThe base branch may not contain those changes, so re-check your plan's assumptions before building.`
-    );
+  ): UnblockBlockerInfo[] {
+    return blockers.map((b) => ({
+      jobId: b.jobId,
+      title: b.title,
+      how:
+        b.jobId === blockerJobId
+          ? resolution
+          : this.classifyResolvedBlocker(b.prState, b.status),
+    }));
   }
 
-  /** Conditional unblock + wake used by the manual-unblock path (`removeDependency`); `note` is null since
-   *  there's no blocker resolution to report. */
+  /** Classify a set of already-terminal blockers from their persisted state (the manual-unblock/sweep paths,
+   *  which have no live resolution to report). */
+  private classifiedBlockerInfos(
+    blockers: JobBlockerRow[],
+  ): UnblockBlockerInfo[] {
+    return blockers.map((b) => ({
+      jobId: b.jobId,
+      title: b.title,
+      how: this.classifyResolvedBlocker(b.prState, b.status),
+    }));
+  }
+
+  /** Conditional unblock + wake used by the manual-unblock (`removeDependency`) and sweep
+   *  (`reconcileBlockedJob`) paths; `blockers` names the jobs that were holding this one so the wake message
+   *  can reorient the brain. */
   private async unblockAndWake(
     jobId: string,
-    note: string | null,
+    blockers: UnblockBlockerInfo[],
   ): Promise<boolean> {
     const upd = await this.jobs
       .createQueryBuilder()
@@ -523,7 +526,7 @@ export class JobDependencyService {
     try {
       await this.brainGateway.wakeUnblockedJob(jobId, job.org_id, job.repo_id, {
         seed: job.blocked_seed_message,
-        note,
+        blockers,
       });
       // Only drop the seed once the wake is confirmed dispatched.
       await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
