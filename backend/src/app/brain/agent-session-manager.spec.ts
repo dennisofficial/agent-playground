@@ -3425,6 +3425,13 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 });
 
 describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/persistence', () => {
+  // Clear mock CALL RECORDS between cases (not implementations/return values) so a spy's calls from one test
+  // never bleed into another's call-count assertions — the same event-doubling signature this suite exercises
+  // surfaced once as a cross-test flake here.
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   const TEAM_ID = 'T-STREAM';
   const PROJECT_ID = 'stream-proj';
   const THREAD_ID = 'th-stream-001';
