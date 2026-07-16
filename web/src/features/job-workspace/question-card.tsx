@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Clock, HelpCircle, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, HelpCircle, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { Markdown } from "./markdown";
@@ -14,6 +14,7 @@ import {
   useComposerStagedAnswers,
   type StagedAnswer,
 } from "@/lib/api/composer-store";
+import { cardSendState } from "./send-state";
 
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional
@@ -58,7 +59,7 @@ export function QuestionCardView({
     });
   }
 
-  if (staged) {
+  if (staged && !staged.submitting) {
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-dashed border-accent-line bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
@@ -96,6 +97,29 @@ export function QuestionCardView({
             <p className="text-[12px] text-faint">
               Withdrawn
               {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (staged?.submitting || cardSendState(card.answer != null, card.deliveredAt) === "sending") {
+    return (
+      <div
+        className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface"
+        style={{ opacity: 0.7 }}
+      >
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Loader2 size={15} className="animate-spin text-faint" />
+          <div className="min-w-0">
+            <p className="truncate text-[12.5px] text-dim">{card.question}</p>
+            <p className="text-[13px] font-medium text-text">
+              {card.answer ?? staged?.answer}
+            </p>
+            <p className="mt-0.5 flex items-center gap-1 text-[10px] font-mono text-faint">
+              <Loader2 size={9} className="animate-spin" />
+              sending…
             </p>
           </div>
         </div>

@@ -32,6 +32,7 @@ import { McpProposalCard } from "./mcp-proposal-card";
 import { SkillProposalCard } from "./skill-proposal-card";
 import { FileCardView } from "./file-card";
 import { ReviewCommentsCardView } from "./review-comments-card";
+import { messageSendState } from "./send-state";
 import { AttachmentsCardView } from "./attachments-card";
 import { SubagentCard, indexDurableSubagents, subagentNode } from "./subagents";
 import { AgentPromptBlock } from "./phases";
@@ -890,7 +891,7 @@ function buildLogItems(
             key={message.ts}
             text={message.text}
             time={message.postedAt}
-            pending={message.local}
+            pending={messageSendState(message) === "sending"}
           />,
         );
         break;
@@ -948,6 +949,7 @@ function buildLogItems(
             key={message.ts}
             card={c.card}
             time={message.postedAt}
+            pending={messageSendState(message) === "sending"}
           />,
         );
         break;

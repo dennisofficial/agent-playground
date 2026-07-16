@@ -304,24 +304,27 @@ export function Composer({
     const hasAttachments = attachments.length > 0;
     const hasStaged = stagedAnswers.length > 0;
     if (hasStaged || hasText || hasAttachments) {
-      // No eager staged-tray/text clear here — `useMessage`'s `onSuccess` prunes only the staged items the
-      // backend actually applied, and the typed note is cleared below only on success, so a failed send
-      // leaves both the tray and the note intact for retry.
+      // Eager clear: the composer text and staged tray clear the instant Send is hit, so the lifecycle
+      // renders through a server-driven "sending" state (the message/card themselves) rather than sitting
+      // in the composer until the mutation settles. A failed send restores both below.
+      const stagedSnapshot = stagedAnswers;
+      const stagedIds = stagedSnapshot.map((a) => a.cardId);
       const items: MessageInput[] = [
-        ...stagedAnswers.map(toMessageItem),
+        ...stagedSnapshot.map(toMessageItem),
         ...(hasText || hasAttachments
           ? [{ type: "user" as const, text: trimmed, ...(lane ? { lane } : {}) }]
           : []),
       ];
+      composerStore.setText(jobRef, "");
+      if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, true);
       message.mutate(
         { messages: items, attachments, threadId },
         {
-          // Only the note text is deferred to success — a failed send (e.g. a 4xx the network-error
-          // fallback below doesn't re-queue) must leave the typed note intact for retry, same as the old
-          // `useSubmitStagedAnswers`'s onSuccess-only clear.
-          onSuccess: () => composerStore.setText(jobRef, ""),
-          onError: (e) =>
-            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
+          onError: (e) => {
+            composerStore.setText(jobRef, trimmed);
+            if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, false);
+            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments });
+          },
         },
       );
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob

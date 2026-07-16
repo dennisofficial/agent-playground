@@ -222,6 +222,13 @@ export function useJobEvents(ref: JobRef): void {
         qc.setQueryData(qk.orgUsage(orgId), frame.usage);
         return;
       }
+      if (frame?.type === "messages_changed") {
+        // A message row's delivery state changed (e.g. `delivered_at` stamped) without a new row being
+        // posted — the same scoped refetch `{ type: 'message' }` triggers, since a message-level patch
+        // can't reach the nested `card.deliveredAt`/`delivered_at` on question/file/secret cards.
+        refetch();
+        return;
+      }
       // `{ type: 'message' }` (or any non-stream frame) — a durable post landed → change-signal refetch.
       refetch();
     };

@@ -41,10 +41,16 @@ export interface QueuedMessage {
  * per `cardId` (re-staging replaces). Held in memory only — file/secret content is sensitive (never
  * serialized to sessionStorage), and question answers are cheap to re-enter after a reload.
  */
-export type StagedAnswer =
+export type StagedAnswer = (
   | { kind: "question"; cardId: string; label: string; answer: string }
   | { kind: "file"; cardId: string; label: string; filename: string; content: string }
-  | { kind: "secret"; cardId: string; label: string; value: string };
+  | { kind: "secret"; cardId: string; label: string; value: string }
+) & {
+  /** Set true the instant Send is hit — the tray filters these out and the card shows a "sending…" shell
+   *  instead of reverting to its open/staged state, until the batch settles (success removes it via
+   *  `pruneStagedAnswers`; failure reverts it back to false). */
+  submitting?: boolean;
+};
 
 export interface ComposerDraft {
   /** Captured so the offline-send flusher can POST without a mounted view (no ref to rebuild otherwise). */
@@ -249,6 +255,16 @@ class ComposerStore {
   /** Drop one staged answer (the tray's remove `X`, or a card's own "Remove" reverting it to answerable). */
   removeStagedAnswer(ref: JobRef, cardId: string): void {
     this.setStagedAnswers(ref, (prev) => prev.filter((a) => a.cardId !== cardId));
+  }
+
+  /** Flip `submitting` on the staged answers matching `cardIds` — set true the instant Send is hit (so the
+   *  tray hides them without removing them, and the card can show a "sending…" shell), reverted to false on
+   *  a failed send so the tray/card fall back to their staged state for retry. */
+  markSubmitting(ref: JobRef, cardIds: string[], submitting: boolean): void {
+    const ids = new Set(cardIds);
+    this.setStagedAnswers(ref, (prev) =>
+      prev.map((a) => (ids.has(a.cardId) ? { ...a, submitting } : a)),
+    );
   }
 
   /**
