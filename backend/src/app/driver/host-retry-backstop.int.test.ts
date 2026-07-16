@@ -443,6 +443,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           resolveForTurn: async () => [],
           resolveReviewSkillsForThread: async () => [],
         } as never,
+        { select: async () => [] } as never,
         {
           ensureContainer: async () => ({
             sandbox: {

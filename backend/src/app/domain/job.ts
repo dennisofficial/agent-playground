@@ -218,6 +218,9 @@ export interface Thread {
    *  single differentiator across all thread-like concepts (a `master_review` is the whole-diff Codex
    *  review-&-fix appended last). See {@link ThreadEntity.kind}. */
   kind: string;
+  /** The owning thread group (`threads.thread_group_id`) — the rotation-stable grain a build's legs share.
+   *  Every thread row belongs to exactly one group. See {@link ThreadEntity.thread_group_id}. */
+  threadGroupId: string;
   /** The scope TYPE (`backend | frontend | docs | testing | infra | data | general`) — the deterministic
    *  routing key `reviewAgentsForThread` selects review lenses on. See {@link ThreadEntity.type}. */
   type: ThreadType;

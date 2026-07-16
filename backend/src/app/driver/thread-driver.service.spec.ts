@@ -40,6 +40,7 @@ import type {
   TaskEventSink,
 } from '../surface';
 import { TurnHarnessFactory } from '../surface';
+import type { SkillResolver, SkillNudgeSelector } from '../skills';
 import type { CredentialResolver } from '../onboarding';
 import type { ClaudeCredentialStore } from '../onboarding/claude-credential.store';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
@@ -103,6 +104,8 @@ interface StoreState {
   systemNotices?: string[];
   /** A builder's materialized review children (review_agent + review_fix rows). Lazily created. */
   reviewChildren?: ReviewChildRow[];
+  /** Persisted `thread_groups.config` keyed by group id — backs the skill-nudge read-after-write fakes. */
+  threadGroupConfigs?: Record<string, Record<string, unknown>>;
 }
 
 function makeStore(state: StoreState): {
@@ -179,6 +182,7 @@ function makeStore(state: StoreState): {
       status: 'pending',
       condition: 'none',
       kind: input.kind,
+      threadGroupId,
       type: 'general',
       parentThreadId: null,
       startSha: null,
@@ -536,6 +540,27 @@ function makeStore(state: StoreState): {
       return dropped;
     }),
     recordActiveLeg: vi.fn(async () => undefined),
+    // Skill-nudge selection persisted on the build thread GROUP — a stateful bucket so a persist within a
+    // test is readable back (the reuse path reads what an earlier leg wrote). A present key (even empty
+    // skills) counts as "already decided".
+    readGroupSkillNudge: vi.fn(async (threadGroupId: string) => {
+      const v = state.threadGroupConfigs?.[threadGroupId]?.skillNudge;
+      return v != null && typeof v === 'object' && !Array.isArray(v)
+        ? (v as { skills: { name: string; reason: string }[]; at: string })
+        : null;
+    }),
+    persistGroupSkillNudge: vi.fn(
+      async (
+        threadGroupId: string,
+        nudge: { skills: { name: string; reason: string }[]; at: string },
+      ) => {
+        const buckets = (state.threadGroupConfigs ??= {});
+        buckets[threadGroupId] = {
+          ...(buckets[threadGroupId] ?? {}),
+          skillNudge: nudge,
+        };
+      },
+    ),
     getLegsForJob: vi.fn(async (_jobId: string) => []),
     threadJobId: vi.fn(async (threadId: string) => {
       const s = state.threads.find((x) => x.id === threadId);
@@ -948,6 +973,7 @@ function thread(
     status,
     condition,
     kind: isMasterReview ? 'master_review' : 'builder',
+    threadGroupId: `thread-group-${id}`,
     type,
     parentThreadId: null,
     startSha: null,
@@ -989,6 +1015,13 @@ function assemble(
     /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
      *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
     usageUtilization?: number;
+    /** Override `SkillResolver` so a test can surface build-surface skills the nudge selector picks from. */
+    skillResolver?: Pick<
+      SkillResolver,
+      'resolveForTurn' | 'resolveReviewSkillsForThread'
+    >;
+    /** Override the Haiku skill-nudge selector — defaults to one that picks nothing. */
+    skillNudgeSelector?: SkillNudgeSelector;
   } = {},
 ) {
   const { store } = makeStore(state);
@@ -1201,11 +1234,15 @@ function assemble(
     } as never,
     // McpOAuthService: no OAuth servers in tests (and the fake SANDBOX_PROVIDER has no kickMcpHubRefresh anyway).
     { refreshForSandbox: async () => ({ rotated: false }) } as never,
-    // SkillResolver: no skills in tests.
-    {
+    // SkillResolver: no skills in tests unless a test provides them (drives the nudge-selection path).
+    (opts.skillResolver ?? {
       resolveForTurn: async () => [],
       resolveReviewSkillsForThread: async () => [],
-    } as never,
+    }) as never,
+    // SKILL_NUDGE_SELECTOR: picks no skills by default; opts.skillNudgeSelector lets a test return real ones.
+    (opts.skillNudgeSelector ?? {
+      select: async () => [],
+    }) as unknown as SkillNudgeSelector,
     // JobLifecycleService: returns the thread's pre-provisioned sandbox — the ONLY sandbox path now
     // (the brain provisions every thread before any build runs). Its branch is the source of truth.
     {
@@ -1880,6 +1917,163 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     // The old `build_event` relay is gone — no build_event posts to the surface.
     expect(h.posts.every((p) => !p.includes('[tool]'))).toBe(true);
+  });
+
+  it('splices the Haiku-selected skill nudge into the build turn and persists the group selection', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const select = vi.fn(async () => [
+      { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
+    ]);
+    const h = assemble(state, {
+      skillResolver: {
+        resolveForTurn: async () =>
+          [
+            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+          ] as never,
+        resolveReviewSkillsForThread: async () => [],
+      },
+      skillNudgeSelector: { select } as unknown as SkillNudgeSelector,
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const prompts = h.sunk
+      .filter((s) => s.block.kind === 'build_anchor')
+      .map((a) => String(a.block.meta?.prompt));
+    expect(
+      prompts.some(
+        (p) =>
+          p.includes('<available_skills>') &&
+          p.includes('`nestjs-best-practices`') &&
+          p.includes('load it with the `Skill` tool'),
+      ),
+    ).toBe(true);
+    // The selection was persisted on the build thread GROUP (the rotation-stable grain).
+    expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
+      'thread-group-sec-be',
+      expect.objectContaining({
+        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
+      }),
+    );
+  });
+
+  it('renders no nudge block when the selector picks nothing — byte-identical to the no-nudge task', async () => {
+    // Baseline: no build-surface skills at all → selector never even consulted → no block.
+    const baseline: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const hBase = assemble(baseline);
+    await hBase.driver.dispatch(baseline.job);
+    await flushUntil(() => baseline.job.status === 'done');
+    const basePrompt = String(
+      hBase.sunk.find(
+        (s) =>
+          s.block.kind === 'build_anchor' &&
+          s.block.meta?.phaseId === 'sec-be-ph0',
+      )?.block.meta?.prompt,
+    );
+
+    // Skills DO resolve, but the Haiku selector returns nothing → still no block, byte-identical output.
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const select = vi.fn(async () => []);
+    const h = assemble(state, {
+      skillResolver: {
+        resolveForTurn: async () =>
+          [
+            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+          ] as never,
+        resolveReviewSkillsForThread: async () => [],
+      },
+      skillNudgeSelector: { select } as unknown as SkillNudgeSelector,
+    });
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+    const prompt = String(
+      h.sunk.find(
+        (s) =>
+          s.block.kind === 'build_anchor' &&
+          s.block.meta?.phaseId === 'sec-be-ph0',
+      )?.block.meta?.prompt,
+    );
+
+    expect(select).toHaveBeenCalled();
+    expect(prompt).not.toContain('<available_skills>');
+    expect(prompt).toBe(basePrompt);
+  });
+
+  it('reuses a prior group selection on a later leg without re-calling the selector', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: makeSections(),
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+      // Simulate a group already decided by an earlier leg — a present key = "decided", even when empty.
+      threadGroupConfigs: {
+        'thread-group-sec-be': {
+          skillNudge: {
+            skills: [{ name: 'nestjs-best-practices', reason: 'prior leg' }],
+            at: new Date().toISOString(),
+          },
+        },
+        'thread-group-sec-fe': {
+          skillNudge: { skills: [], at: new Date().toISOString() },
+        },
+      },
+    };
+    const select = vi.fn(async () => [
+      { name: 'must-not-be-used', reason: 'x' },
+    ]);
+    const h = assemble(state, {
+      skillResolver: {
+        resolveForTurn: async () =>
+          [
+            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+          ] as never,
+        resolveReviewSkillsForThread: async () => [],
+      },
+      skillNudgeSelector: { select } as unknown as SkillNudgeSelector,
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    // A decided group short-circuits before Haiku — the selector is never consulted again…
+    expect(select).not.toHaveBeenCalled();
+    // …and never re-persisted (the prior stands).
+    expect(h.store.persistGroupSkillNudge).not.toHaveBeenCalled();
+    // …yet the persisted pick still renders into the build turn.
+    const prompts = h.sunk
+      .filter((s) => s.block.kind === 'build_anchor')
+      .map((a) => String(a.block.meta?.prompt));
+    expect(
+      prompts.some(
+        (p) =>
+          p.includes('<available_skills>') &&
+          p.includes('`nestjs-best-practices`'),
+      ),
+    ).toBe(true);
   });
 
   it('re-attaches a still-live build turn on resume instead of re-running it (recovery parity with the brain)', async () => {
@@ -3538,6 +3732,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
       status: 'pending',
       condition: 'none',
       kind: 'main',
+      threadGroupId: 'thread-group-main-1',
       type: 'general',
       parentThreadId: null,
       startSha: null,

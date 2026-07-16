@@ -60,12 +60,25 @@ export function renderBatchTask(
   record: DecisionRecord | null,
   thread: DriverThread,
   steps: Step[],
+  skillNudge: { name: string; reason: string }[] = [],
 ): AgentMessage {
   const decisions = record?.decisions.length
     ? record.decisions
         .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
         .join('\n')
     : '(none)';
+  // JIT skill-relevance nudge (empty by default — keeps existing callers byte-identical). Directs the model
+  // to load a directly-relevant skill with the `Skill` tool before implementing, rather than working from
+  // memory when a matching skill exists. Selection is chosen upstream (host-side Haiku selector).
+  const skillBlock = skillNudge.length
+    ? [
+        '\n<available_skills>',
+        'A skill that looks directly relevant to THIS thread is available. Before you start implementing,',
+        'load it with the `Skill` tool to pull its guidance — do not work from memory when a matching skill exists:',
+        ...skillNudge.map((s) => `- \`${s.name}\` — ${s.reason}`),
+        '</available_skills>',
+      ].join('\n')
+    : '';
   const blocks = steps
     .map(
       (p, i) => `### Step ${i + 1}: ${p.title ?? `#${p.ordinal}`}\n${p.brief}`,
@@ -98,6 +111,7 @@ export function renderBatchTask(
         ` this turn (a missing secret/service, or a substantive decision that needs deliberation), just end` +
         ` your turn without calling \`complete_thread\` — it surfaces as not-done to the operator` +
         ` automatically, rather than guessing or stopping silently.\n\n${blocks}`,
+      ...(skillBlock ? [skillBlock] : []),
       COMMIT_AND_PUSH_INSTRUCTION,
     ].join('\n'),
   );

@@ -77,7 +77,11 @@ import {
   ConventionProfileResolver,
   type ResolvedConventions,
 } from '../conventions';
-import { SkillResolver } from '../skills';
+import {
+  SkillResolver,
+  SKILL_NUDGE_SELECTOR,
+  type SkillNudgeSelector,
+} from '../skills';
 import { LeaderElectionService } from '../cluster';
 import { SANDBOX_PROVIDER, type SandboxProvider } from '../sandbox';
 import { CONTAINER_CONTEXT } from '../sandbox/container-paths';
@@ -297,6 +301,10 @@ export class ThreadDriver implements JobDispatcher {
     // This repo's skills for build turns — forwarded on `RunTurnInput.skills` (rendered in-container as
     // SKILL.md the SDK loads), resolved for the 'build' surface exactly like `userMcpServers`.
     private readonly skills: SkillResolver,
+    // Host-side Haiku skill-relevance selector — picks the skill(s) directly relevant to a build thread so the
+    // build turn can nudge the model to load it. Fail-soft: any failure resolves to no nudge (see below).
+    @Inject(SKILL_NUDGE_SELECTOR)
+    private readonly skillNudge: SkillNudgeSelector,
     private readonly threadLifecycle: JobLifecycleService,
     private readonly ship: BuildShipService,
     // The ONE merge resolution path — the manual "Merge PR" click lands here (resolveMergeApprovalDurably)
@@ -3123,10 +3131,14 @@ export class ThreadDriver implements JobDispatcher {
     // The instruction the engine receives — the build turn's "first message". Computed once here so it
     // can both kick off the turn AND be persisted on the anchor row (the web renders it like a subagent's
     // Task prompt, so the step transcript shows what was asked, not just the engine's reply).
+    const nudge =
+      thread.kind === 'builder'
+        ? await this.resolveSkillNudge(job, thread, record)
+        : [];
     const baseTask =
       thread.kind === 'master_review'
         ? renderMasterReviewTask(record, repo)
-        : renderBatchTask(record, thread, steps);
+        : renderBatchTask(record, thread, steps, nudge);
     // LEG-ROTATION SEED FOLD: if a prior Leg rotated, its structured handoff is stashed on the anchor step.
     // Prepend it so the FRESH Leg session continues mid-flight (its WIP is already on disk in the worktree)
     // instead of restarting the batch. The seed is cleared the instant the fresh session is born (turn-runner
@@ -4205,6 +4217,66 @@ export class ThreadDriver implements JobDispatcher {
         `renderLiveServicesBlock(${jobId.slice(0, 8)}) failed: ${err}`,
       );
       return '';
+    }
+  }
+
+  /**
+   * Pick the skill(s) directly relevant to a build thread so the build turn can nudge the model to load them.
+   * GROUP-GRAINED: the selection is persisted on the build thread GROUP (all rotation legs of one build share
+   * one group), so the Haiku selector runs at most ONCE per build — a later leg reuses the persisted pick. A
+   * PRESENT persisted key (even `{skills:[]}`) means "already decided": reuse it and skip selection. FAIL-SOFT
+   * end to end — the whole body is wrapped in try/catch (belt-and-suspenders over the selector's own fail-soft)
+   * so no key / any error / an empty pick all resolve to `[]` and never throw into the build path.
+   */
+  private async resolveSkillNudge(
+    job: Job,
+    thread: DriverThread,
+    record: DecisionRecord | null,
+  ): Promise<{ name: string; reason: string }[]> {
+    try {
+      const groupId = thread.threadGroupId;
+      const prior = await this.store.readGroupSkillNudge(groupId);
+      if (prior) return prior.skills;
+
+      const resolved = await this.skills.resolveForTurn(
+        job.orgId,
+        job.repoId,
+        'build',
+      );
+      if (!resolved.length) {
+        await this.store.persistGroupSkillNudge(groupId, {
+          skills: [],
+          at: new Date().toISOString(),
+        });
+        return [];
+      }
+
+      const decisions = record?.decisions.length
+        ? record.decisions
+            .map((d) => `- [${d.decisionClass}] ${d.title}: ${d.ruling}`)
+            .join('\n')
+        : '(none)';
+      const context = [
+        record?.overview ?? '',
+        `Thread: ${thread.brief}`,
+        `Locked decisions:\n${decisions}`,
+      ].join('\n');
+
+      const picked = await this.skillNudge.select({
+        context,
+        skills: resolved.map(({ name, description }) => ({ name, description })),
+        orgId: job.orgId,
+      });
+      await this.store.persistGroupSkillNudge(groupId, {
+        skills: picked,
+        at: new Date().toISOString(),
+      });
+      return picked;
+    } catch (err) {
+      this.logger.debug(
+        `resolveSkillNudge(${thread.id.slice(0, 8)}) failed: ${err}`,
+      );
+      return [];
     }
   }
 

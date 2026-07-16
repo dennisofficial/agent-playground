@@ -60,6 +60,7 @@ const baseThread: DriverThread = {
   handoffOut: null,
   status: 'executing',
   kind: 'builder',
+  threadGroupId: 't1',
   parentThreadId: null,
   startSha: null,
 } as DriverThread;
@@ -83,6 +84,14 @@ describe('driver-run turn prose golden snapshots', () => {
     await expect(
       renderBatchTask(record, baseThread, steps),
     ).toMatchFileSnapshot('./__snapshots__/render-batch-task-with-record.txt');
+  });
+
+  it('renderBatchTask — with a skill nudge (the <available_skills> block spliced in)', async () => {
+    await expect(
+      renderBatchTask(record, baseThread, steps, [
+        { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
+      ]),
+    ).toMatchFileSnapshot('./__snapshots__/render-batch-task-with-nudge.txt');
   });
 
   it('renderMasterReviewTask', async () => {
