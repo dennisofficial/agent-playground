@@ -10,6 +10,10 @@ engine-entrypoint.mjs
 mcp-bridge-server.mjs
 # generated in-sandbox MCP hub bundle (re-bundled on boot alongside the engine bundle)
 mcp-hub-server.mjs
+# generated engine app bundle (nest build engine --webpack; baked at image-build time, regenerable via
+# `pnpm -C backend build:engine`, mirrored live at boot by ensureEngineApp())
+engine-app.js
+engine-app.js.map
 
 # logs
 *.log

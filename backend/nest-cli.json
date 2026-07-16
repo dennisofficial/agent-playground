@@ -19,6 +19,16 @@
         "tsConfigPath": "src/app/tsconfig.json",
         "//": "No sandbox-image assets: the build context lives in the fixed committed dir backend/sandbox/ (see sandboxContextDir), identical at build time and runtime, so nothing needs copying into dist."
       }
+    },
+    "engine": {
+      "type": "application",
+      "root": "src/engine",
+      "entryFile": "main",
+      "sourceRoot": "src",
+      "compilerOptions": {
+        "tsConfigPath": "src/engine/tsconfig.json",
+        "webpack": true
+      }
     }
   }
 }

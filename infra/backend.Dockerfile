@@ -50,6 +50,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 RUN pnpm run build:packages                  # packages/** (pg-realtime, nestjs-core, auth, langfuse, langchain)
 RUN pnpm --filter @workspace/shared run build # shared/ (also built via its install `prepare`; explicit = safe)
 RUN pnpm --filter backend run build           # `nest build app` → backend/dist (+ sandbox image assets)
+RUN pnpm --filter backend run build:engine    # `nest build engine --webpack` → backend/sandbox/engine-app.js(+.map)
 
 # ─── migrator ──────────────────────────────────────────────────────────────────────
 # One-shot migration runner (typeorm-ts-node-commonjs needs src/ + cli/ + tsconfig.cli.json, all here).

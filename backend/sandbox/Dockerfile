@@ -276,7 +276,8 @@ RUN mkdir -p /usr/local/lib/atlas \
   && cd /usr/local/lib/atlas \
   && printf '{"name":"atlas-engine-runtime","private":true}\n' > package.json \
   && npm install "@anthropic-ai/claude-agent-sdk@${CLAUDE_SDK_VERSION}" "@openai/codex-sdk@${CODEX_SDK_VERSION}"
-COPY engine-entrypoint.mjs /usr/local/lib/atlas/engine-entrypoint.mjs
+COPY engine-app.js /usr/local/lib/atlas/engine-app.js
+COPY engine-app.js.map /usr/local/lib/atlas/engine-app.js.map
 # The Codex MCP tool-bridge server (spawned by codex via config.toml). Baked as a fallback; the host
 # bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.
 COPY mcp-bridge-server.mjs /usr/local/lib/atlas/mcp-bridge-server.mjs
@@ -286,7 +287,7 @@ COPY mcp-hub-server.mjs /usr/local/lib/atlas/mcp-hub-server.mjs
 RUN node --check /usr/local/lib/atlas/mcp-hub-server.mjs
 # Pin the engine to THIS image's Node 22 by absolute path — fnm rewrites PATH for the agent's build
 # shells, so calling `node` unqualified here would risk launching the engine under a repo-pinned Node.
-RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node /usr/local/lib/atlas/engine-entrypoint.mjs "$@"\n' \
+RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"\n' \
       > /usr/local/bin/atlas-engine-turn \
   && chmod +x /usr/local/bin/atlas-engine-turn
 

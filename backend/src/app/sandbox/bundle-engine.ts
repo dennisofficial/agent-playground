@@ -127,6 +127,57 @@ export async function bundleEngine(): Promise<string> {
   return live;
 }
 
+/** In-context home of the NEW webpacked engine app (written here at BUILD time by `pnpm -C backend
+ *  build:engine` — see webpack.engine.config.js — NOT re-bundled at runtime, unlike the old esbuild
+ *  bundle above). COPY'd by the Dockerfile as a baked fallback, bind-mounted live for hot-reload. */
+function engineAppImagePath(): string {
+  return join(sandboxContextDir(), 'engine-app.js');
+}
+function engineAppMapImagePath(): string {
+  return join(sandboxContextDir(), 'engine-app.js.map');
+}
+
+/** The live bind-mount source for the engine app bundle (honors `ENGINE_APP_BUNDLE_PATH`, same rationale
+ *  as {@link engineBundlePath}). */
+export function engineAppBundlePath(): string {
+  return process.env.ENGINE_APP_BUNDLE_PATH ?? engineAppImagePath();
+}
+/** The live bind-mount source for the engine app's external sourcemap (honors `ENGINE_APP_MAP_PATH`). */
+export function engineAppMapPath(): string {
+  return process.env.ENGINE_APP_MAP_PATH ?? engineAppMapImagePath();
+}
+
+/**
+ * Ensure the PRE-BUILT engine app (+ sourcemap) is mirrored to its live bind-mount location. Unlike
+ * {@link bundleEngine}, this does NOT invoke any build tooling — `nest build engine --webpack` only runs
+ * at image-build/dev time (where the `@nestjs/cli` devDependency exists; prod prunes devDeps, so invoking
+ * the Nest CLI here would fail in a pruned runtime). It only copies the already-built
+ * `backend/sandbox/engine-app.js`(`.map`) to the override path when `ENGINE_APP_BUNDLE_PATH`/
+ * `ENGINE_APP_MAP_PATH` point elsewhere (mirrors the mirroring step in {@link bundleEngine}). Throws if the
+ * in-context file is missing (caller should catch + warn, same pattern as the other bundle refreshers) —
+ * that means `pnpm build:engine` hasn't been run yet (dev) or the image build stage skipped it (prod bug).
+ */
+export function ensureEngineApp(): { js: string; map: string } {
+  const jsSrc = engineAppImagePath();
+  if (!existsSync(jsSrc)) {
+    throw new Error(
+      `engine-app.js not found at ${jsSrc} — run \`pnpm -C backend build:engine\` first`,
+    );
+  }
+  const jsLive = engineAppBundlePath();
+  if (jsLive !== jsSrc) {
+    mkdirSync(dirname(jsLive), { recursive: true });
+    copyFileSync(jsSrc, jsLive);
+  }
+  const mapSrc = engineAppMapImagePath();
+  const mapLive = engineAppMapPath();
+  if (existsSync(mapSrc) && mapLive !== mapSrc) {
+    mkdirSync(dirname(mapLive), { recursive: true });
+    copyFileSync(mapSrc, mapLive);
+  }
+  return { js: jsLive, map: mapLive };
+}
+
 /** In-context home of the Codex MCP tool-bridge server bundle (COPY'd by the Dockerfile, bind-mounted live,
  *  and spawned by codex inside the sandbox — see `mcp-bridge-server.ts`). Mirrors {@link imageBundlePath}. */
 function mcpBridgeImageBundlePath(): string {

@@ -12,6 +12,7 @@ import {
   bundleEngine,
   bundleMcpBridge,
   bundleMcpHub,
+  ensureEngineApp,
   sandboxContextDir,
 } from './bundle-engine';
 import {
@@ -78,6 +79,12 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
       this.logger.warn(
         `engine rebundle skipped (using existing bundle): ${err}`,
       );
+    }
+    try {
+      const { js } = ensureEngineApp();
+      this.logger.log(`engine app bundle present → ${js}`);
+    } catch (err) {
+      this.logger.warn(`engine app bundle missing (using existing/baked): ${err}`);
     }
     try {
       const out = await bundleMcpBridge();
