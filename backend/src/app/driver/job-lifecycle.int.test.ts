@@ -585,23 +585,26 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('job_sandboxes')).toBe(0);
   });
 
-  it('deleteJobDeep removes the durable host-side /playground and /context scratch dirs', async () => {
+  it('deleteJobDeep removes durable host-side scratch dirs and redundant session JSONL', async () => {
     const { jobId } = await create();
 
     // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
-    for (const dir of [playground, context]) {
+    const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
+    for (const dir of [playground, context, transcriptDir]) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'junk.txt'), 'x');
     }
     expect(existsSync(playground)).toBe(true);
     expect(existsSync(context)).toBe(true);
+    expect(existsSync(transcriptDir)).toBe(true);
 
     await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
 
     expect(existsSync(playground)).toBe(false);
     expect(existsSync(context)).toBe(false);
+    expect(existsSync(transcriptDir)).toBe(false);
   });
 
   it('claimDeleteJob is single-flight: flips status→deleting once, then returns false', async () => {
@@ -667,6 +670,20 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(
       await threadLifecycle.claimArchiveJob(randomUUID(), FAKE_TEAM_ID),
     ).toBe(false);
+  });
+
+  it('claimArchiveJob does not steal a job already claimed for hard delete', async () => {
+    const { jobId } = await create();
+
+    expect(await threadLifecycle.claimDeleteJob(jobId, FAKE_TEAM_ID)).toBe(
+      true,
+    );
+    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(
+      false,
+    );
+    expect((await jobs.findOneOrFail({ where: { id: jobId } })).status).toBe(
+      'deleting',
+    );
   });
 
   it('archiveJobDeep reclaims the container + worktree and drops /playground + the on-disk session JSONL, but KEEPS the jobs row, /context, and transcript', async () => {
@@ -738,6 +755,18 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       const noTranscript = await create('No-transcript merged job');
       await jobs.update({ id: noTranscript.jobId }, { pr_state: 'closed' });
 
+      // Ineligible: already claimed for hard delete. The archive sweep must not convert a hard-delete drain
+      // into a retained archived row, even if the PR is terminal and the transcript is idle.
+      const deleting = await create('Deleting merged job');
+      await seedTranscriptMessageAt(
+        deleting.jobId,
+        new Date(Date.now() - 10_000),
+      );
+      await jobs.update(
+        { id: deleting.jobId },
+        { status: 'deleting', pr_state: 'merged' },
+      );
+
       // Not an exact count: this file never truncates between cases/runs, so earlier eligible rows may
       // still be sitting around. Assert the count includes ours and check each job's own outcome below.
       const archivedCount = await threadLifecycle.archiveInactiveJobs();
@@ -749,6 +778,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       expect(await statusOf(active.jobId)).not.toBe('archived');
       expect(await statusOf(open.jobId)).not.toBe('archived');
       expect(await statusOf(noTranscript.jobId)).not.toBe('archived');
+      expect(await statusOf(deleting.jobId)).toBe('deleting');
     } finally {
       delete process.env.ARCHIVE_INACTIVITY_TTL_MS;
     }
@@ -790,6 +820,15 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(
       await threadLifecycle.findSandbox(randomUUID(), FAKE_TEAM_ID),
     ).toBeNull();
+  });
+
+  it('findSandbox returns null for a closed sandbox row so archived reads do not touch reclaimed worktrees', async () => {
+    const { jobId } = await create();
+    await sandboxes.update({ job_id: jobId }, { lifecycle: 'closed' });
+
+    await expect(
+      threadLifecycle.findSandbox(jobId, FAKE_TEAM_ID),
+    ).resolves.toBeNull();
   });
 
   // ── ensureProvisioned — lazy first-turn provisioning (the conversation prerequisite) ───────────────

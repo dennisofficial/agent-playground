@@ -62,7 +62,8 @@ export function JobMenu({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const canBlock = BLOCKABLE_STATUSES.has(status);
+  const archived = status === "archived";
+  const canBlock = !archived && BLOCKABLE_STATUSES.has(status);
   const addDependency = useAddJobDependency(jobRef);
   const unblock = useUnblockJob(jobRef, blockedBy);
   const { toast, show: showToast } = useEphemeralToast();
@@ -100,12 +101,15 @@ export function JobMenu({
           {onStartRename ? (
             <button
               type="button"
+              disabled={archived}
+              title={archived ? "This job is archived" : undefined}
               onClick={() => {
+                if (archived) return;
                 onStartRename();
                 setOpen(false);
                 setConfirm(false);
               }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-text transition hover:bg-surface-2"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-text transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Pencil size={13} className="text-dim" />
               Rename job

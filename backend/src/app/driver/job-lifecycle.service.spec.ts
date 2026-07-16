@@ -1189,11 +1189,12 @@ describe('JobLifecycleService — archive lifecycle', () => {
     expect(claim).toHaveBeenCalledWith('a', 'T1');
     expect(deep).toHaveBeenCalledWith('a', 'T1');
     expect(claim).toHaveBeenCalledWith('b', 'T2');
-    // Eligibility: exclude already-archived, require a terminal PR state, and anchor idleness on
-    // MAX(transcript_messages.created_at) < cutoff — NOT jobs.updated_at. A NULL MAX (no transcript rows)
-    // fails the `<` predicate, so such a job is never auto-archived (enforced in SQL — see the int test).
+    // Eligibility: exclude already-archived / hard-deleting rows, require a terminal PR state, and anchor
+    // idleness on MAX(transcript_messages.created_at) < cutoff — NOT jobs.updated_at. A NULL MAX (no
+    // transcript rows) fails the `<` predicate, so such a job is never auto-archived (enforced in SQL — see
+    // the int test).
     const sql = predicates.join(' ');
-    expect(sql).toContain("status <> :arch");
+    expect(sql).toContain('status NOT IN');
     expect(sql).toContain('pr_state IN');
     expect(sql).toContain('MAX(m.created_at)');
     expect(sql).toContain('< :cutoff');

@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { CurrentOrgCtx } from '../org/current-org.decorator';
 import { WebSurfaceController } from './web-surface.controller';
@@ -13,14 +13,24 @@ import { WebSurfaceController } from './web-surface.controller';
  * Pure unit test — the controller is instantiated with mocked repos; `threads.findOne` returns a row only
  * when its `org_id` matches, emulating the scoped query.
  */
-function makeController(threadOrgId: string) {
+function makeController(
+  threadOrgId: string,
+  thread: Record<string, unknown> = {},
+) {
   const archiveJobDeep = vi.fn(async () => undefined);
   const claimArchiveJob = vi.fn(async () => true);
+  const closeJobPullRequest = vi.fn(async () => undefined);
   const threads = {
     findOne: vi.fn(
       async ({ where }: { where: { id: string; org_id: string } }) =>
         where.org_id === threadOrgId
-          ? { id: where.id, org_id: threadOrgId, repo_id: 'repo-1' }
+          ? {
+              id: where.id,
+              org_id: threadOrgId,
+              repo_id: 'repo-1',
+              status: 'running',
+              ...thread,
+            }
           : null,
     ),
     delete: vi.fn(async () => ({ affected: 1 })),
@@ -34,7 +44,7 @@ function makeController(threadOrgId: string) {
     {} as never, // surface
     {} as never, // liveTurns
     {} as never, // driverStore
-    { archiveJobDeep, claimArchiveJob } as never, // threadLifecycle
+    { archiveJobDeep, claimArchiveJob, closeJobPullRequest } as never, // threadLifecycle
     {} as never, // autoMerge
     {} as never, // orgService
     threads as never,
@@ -69,7 +79,14 @@ function makeController(threadOrgId: string) {
     {} as never, // moduleRef (ModuleRef)
     {} as never, // intake (StimulusIntake)
   );
-  return { controller, archiveJobDeep, claimArchiveJob, threads, messages };
+  return {
+    controller,
+    archiveJobDeep,
+    claimArchiveJob,
+    closeJobPullRequest,
+    threads,
+    messages,
+  };
 }
 
 describe('WebSurfaceController — cross-tenant authz', () => {
@@ -101,5 +118,26 @@ describe('WebSurfaceController — cross-tenant authz', () => {
     // Claims the archive (durable `archived` state), then backgrounds the org-scoped filesystem reclaim.
     expect(claimArchiveJob).toHaveBeenCalledWith('my-thread-id', 'orgB');
     expect(archiveJobDeep).toHaveBeenCalledWith('my-thread-id', 'orgB');
+  });
+
+  it('deleteThread on an archived thread 409s before closing an open PR or reclaiming again', async () => {
+    const {
+      controller,
+      archiveJobDeep,
+      claimArchiveJob,
+      closeJobPullRequest,
+    } = makeController('orgB', {
+      status: 'archived',
+      pr_state: 'open',
+      pr_number: 123,
+    });
+
+    await expect(
+      controller.deleteThread(orgB, 'my-thread-id', 'close'),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    expect(closeJobPullRequest).not.toHaveBeenCalled();
+    expect(claimArchiveJob).not.toHaveBeenCalled();
+    expect(archiveJobDeep).not.toHaveBeenCalled();
   });
 });

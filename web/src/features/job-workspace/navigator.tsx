@@ -380,7 +380,10 @@ export function Navigator({
             <AutoApproveToggle
               mode={autoApproveMode}
               disabled={
-                st === "done" || st === "cancelled" || st === "deleting"
+                st === "done" ||
+                st === "cancelled" ||
+                st === "deleting" ||
+                st === "archived"
               }
               onChange={onSetAutoApprove}
               autoMerge={autoMerge}

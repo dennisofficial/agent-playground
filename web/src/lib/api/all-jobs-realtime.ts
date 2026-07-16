@@ -226,6 +226,7 @@ export function useAllJobsRealtime(): void {
             }),
           });
         }
+        void qc.invalidateQueries({ queryKey: qk.archivedJobs() });
         invalidate();
       } else {
         invalidate(); // snapshot / add → refetch the enriched list

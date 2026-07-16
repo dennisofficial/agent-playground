@@ -3,7 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { CredentialResolver, OnboardingService } from '../onboarding';
@@ -395,8 +395,9 @@ export class JobLifecycleService {
   }
 
   /**
-   * Look up the sandbox row for a thread, returning its current `FeatureSandbox` (or null if none
-   * exists). Read-only (no attach) — used where a live container isn't required (e.g. plan-review).
+   * Look up the sandbox row for a thread, returning its current worktree-backed `FeatureSandbox` (or null
+   * if none exists or it is closed/reclaimed). Read-only (no attach) — used where a live container isn't
+   * required (e.g. diff/repo-tree reads).
    */
   async findSandbox(
     jobId: string,
@@ -405,7 +406,7 @@ export class JobLifecycleService {
     const row = await this.sandboxes.findOne({
       where: { job_id: jobId, org_id: orgId },
     });
-    if (!row) return null;
+    if (!row || row.lifecycle === 'closed') return null;
     return this.rowToSandbox(row);
   }
 
@@ -669,6 +670,7 @@ export class JobLifecycleService {
     //     BOTH /playground and /context (unlike archive, which keeps /context — decision d2).
     this.removeJobPlaygroundDir(orgId, jobId);
     this.removeJobContextDir(orgId, jobId);
+    this.removeOnDiskSessionJsonl(jobId);
 
     // 2. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
     //    (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
@@ -701,13 +703,14 @@ export class JobLifecycleService {
    * Atomically CLAIM a job for archiving — flip `status` → `'archived'` + stamp `archived_at` in a single
    * conditional UPDATE, returning whether THIS caller won the claim. Mirrors {@link claimDeleteJob}, but
    * archive is the TERMINAL, in-place lifecycle (the row + transcript + analytics + /context all survive):
-   * the guard is `status <> 'archived'`, so a second concurrent archive matches 0 rows and returns false
-   * (single-flight). The archived state commits IMMEDIATELY so reads/realtime flip the UI to read-only before
-   * the slow physical reclaim ({@link archiveJobDeep}) runs in the background. Org-scoped.
+   * the guard excludes both `archived` and `deleting`, so a second concurrent archive matches 0 rows and an
+   * in-flight hard-delete cannot be converted into a retained archive. The archived state commits IMMEDIATELY
+   * so reads/realtime flip the UI to read-only before the slow physical reclaim ({@link archiveJobDeep}) runs
+   * in the background. Org-scoped.
    */
   async claimArchiveJob(jobId: string, orgId: string): Promise<boolean> {
     const res = await this.jobs.update(
-      { id: jobId, org_id: orgId, status: Not('archived') },
+      { id: jobId, org_id: orgId, status: Not(In(['archived', 'deleting'])) },
       { status: 'archived', archived_at: new Date() },
     );
     return (res.affected ?? 0) > 0;
@@ -812,16 +815,19 @@ export class JobLifecycleService {
    * idle longer than {@link archiveInactivityTtlMs} — anchored on its LAST TRANSCRIPT ACTIVITY
    * (`MAX(transcript_messages.created_at)`, NOT `jobs.updated_at`, which background reconcilers bump without
    * real activity). A job with zero transcript rows (`MAX` is NULL) does NOT match — NULL fails `<`, the safe
-   * default (it needs a manual archive). Set-based eligibility query, then claim-then-archive per job
-   * (best-effort). Drains the detached-worktree backlog on the first sweeps. Leader-only (runs from the reap
-   * timer). Returns how many it archived.
+   * default (it needs a manual archive). Already-`deleting` rows are also excluded so the org/repo hard-delete
+   * drain stays destructive. Set-based eligibility query, then claim-then-archive per job (best-effort).
+   * Drains the detached-worktree backlog on the first sweeps. Leader-only (runs from the reap timer). Returns
+   * how many it archived.
    */
   async archiveInactiveJobs(): Promise<number> {
     const cutoff = new Date(Date.now() - this.archiveInactivityTtlMs);
     const rows = await this.jobs
       .createQueryBuilder('j')
       .select(['j.id', 'j.org_id'])
-      .where('j.status <> :arch', { arch: 'archived' })
+      .where('j.status NOT IN (:...archiveExcluded)', {
+        archiveExcluded: ['archived', 'deleting'],
+      })
       .andWhere('j.pr_state IN (:...terminal)', {
         terminal: ['merged', 'closed'],
       })
@@ -956,15 +962,18 @@ export class JobLifecycleService {
   }
 
   /**
-   * Poll the PR of every non-archived thread that has one (the PR lives on the THREAD now) whose sandbox
-   * isn't `closed`; when it has merged or closed (or was deleted), stamp the terminal `pr_state` (via
-   * `applyGithubPrState`). Merge no longer tears anything down here (decision d5) — this is now purely the
-   * authoritative-state backstop the webhook fast path mirrors. Best-effort per thread. Returns how many
-   * threads it transitioned to a terminal PR state.
+   * Poll the PR of every non-archived, non-deleting thread that has one (the PR lives on the THREAD now)
+   * whose sandbox isn't `closed`; when it has merged or closed (or was deleted), stamp the terminal
+   * `pr_state` (via `applyGithubPrState`). Merge no longer tears anything down here (decision d5) — this is
+   * now purely the authoritative-state backstop the webhook fast path mirrors. Best-effort per thread.
+   * Returns how many threads it transitioned to a terminal PR state.
    */
   async pollPrClosures(): Promise<number> {
     const threads = await this.jobs.find({
-      where: { pr_number: Not(IsNull()), status: Not('archived') },
+      where: {
+        pr_number: Not(IsNull()),
+        status: Not(In(['archived', 'deleting'])),
+      },
     });
     let applied = 0;
     for (const thread of threads) {
