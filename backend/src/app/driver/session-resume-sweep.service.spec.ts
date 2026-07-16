@@ -88,7 +88,7 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
     expect(driver.resumeRetry).not.toHaveBeenCalled();
   });
 
-  it('main + retry park → seeds the "Reconnecting…" nudge + clears the clock, NOT the session-limit copy', async () => {
+  it('main + retry park → seeds the SILENT re-drive nudge + clears the clock, NOT the session-limit copy', async () => {
     due = [
       job({
         session_resume: {
@@ -106,8 +106,8 @@ describe('SessionResumeSweep — retry vs session-limit park routing', () => {
     expect(repoId).toBe('repo-1');
     expect(jobId).toBe('job-1');
     expect(nudge).toEqual(retryResumeNudge('Add retries'));
-    expect(opts.seedRow.label).toBe('Reconnecting to Claude…');
-    expect(opts.seedRow.chunkKey).toMatch(/^seed:retry:/);
+    // The retry re-drive renders NO operator-facing pill — it still drives the turn, silently.
+    expect(opts.seedRow).toBe('skip');
     // Main lane has no halt — the clock is the park marker, so the sweep clears it.
     expect(driverStore.setSessionResume).toHaveBeenCalledWith(
       'job-1',

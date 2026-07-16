@@ -4241,7 +4241,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
           PROJECT_ID,
           THREAD_ID,
           retryResumeNudge(undefined),
-          { orgId: TEAM_ID },
+          { orgId: TEAM_ID, seedRow: 'skip' },
         );
       } finally {
         vi.useRealTimers();
