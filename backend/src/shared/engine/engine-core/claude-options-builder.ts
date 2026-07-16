@@ -1,6 +1,9 @@
 import type { HookCallback, Options } from '@anthropic-ai/claude-agent-sdk';
 import { join } from 'node:path';
-import type { EngineLocalHooks } from '@workspace/agent-engine';
+import type {
+  EngineLocalHooks,
+  JitInjectionRule,
+} from '@workspace/agent-engine';
 import {
   detectInstallCommand,
   githubFetchGuardRule,
@@ -57,6 +60,9 @@ export interface BuildClaudeOptionsParams {
   /** Reads the LIVE main-agent context occupancy the `postToolUseContext` hook needs mid-query (declared via
    *  `let` in `runClaude`, mutated per round-trip). */
   getContextTokens: () => number | undefined;
+  /** Reports a JIT additionalContext injection the instant a PostToolUse hook produces it, keyed by the
+   *  SDK tool_use_id so the host can tag the exact tool block (decision d6). */
+  onJitInjection?: (inj: { toolUseId: string; rule: JitInjectionRule; text: string }) => void;
 }
 
 /**
@@ -77,6 +83,9 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
   // `postToolUseContext` hook (shared with the Codex adapter — see `buildEngineLocalHooks` above);
   // install-awareness rides the SAME `Bash` matcher. Callbacks read `getContextTokens()` (the live main-agent
   // occupancy) and only run later, mid-query.
+  const toolUseIdOf = (input: unknown): string =>
+    (input as { tool_use_id?: string }).tool_use_id ?? '';
+
   const bashPostToolUseHooks: HookCallback[] = [];
   if (p.hooks?.postToolUseContext) {
     bashPostToolUseHooks.push(async (input) => {
@@ -87,6 +96,11 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
         p.getContextTokens() ?? 0,
       );
       if (additionalContext == null) return {};
+      p.onJitInjection?.({
+        toolUseId: toolUseIdOf(input),
+        rule: 'svc-nudge',
+        text: additionalContext,
+      });
       return {
         hookSpecificOutput: {
           hookEventName: 'PostToolUse' as const,
@@ -118,6 +132,11 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
           ),
         ]);
         if (typeof text !== 'string' || !text) return {};
+        p.onJitInjection?.({
+          toolUseId: toolUseIdOf(input),
+          rule: 'install-awareness',
+          text,
+        });
         return {
           hookSpecificOutput: {
             hookEventName: 'PostToolUse' as const,
@@ -143,10 +162,16 @@ export function buildClaudeOptions(p: BuildClaudeOptionsParams): Options {
       const url = (input as { tool_input?: { url?: unknown } }).tool_input?.url;
       const fetched = typeof url === 'string' ? url : '';
       if (!githubGuard.match(fetched)) return {};
+      const text = githubFetchGuardRule.render({ url: fetched });
+      p.onJitInjection?.({
+        toolUseId: toolUseIdOf(input),
+        rule: 'github-fetch-guard',
+        text,
+      });
       return {
         hookSpecificOutput: {
           hookEventName: 'PostToolUse' as const,
-          additionalContext: githubFetchGuardRule.render({ url: fetched }),
+          additionalContext: text,
         },
       };
     });

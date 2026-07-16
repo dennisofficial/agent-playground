@@ -90,6 +90,17 @@ describe('THREADS_MODEL.mapRow', () => {
     );
     expect(row.needsYou).toBe(true);
   });
+
+  it('surfaces sectionFirstEntered from the raw row', () => {
+    const sectionFirstEntered = { running: '2026-07-08T00:00:00.000Z' };
+    const row = mapRow(baseRow({ section_first_entered: sectionFirstEntered }));
+    expect(row.sectionFirstEntered).toEqual(sectionFirstEntered);
+  });
+
+  it('emits sectionFirstEntered:null when absent from the raw row', () => {
+    const row = mapRow(baseRow({}));
+    expect(row.sectionFirstEntered).toBeNull();
+  });
 });
 
 describe('THREADS_MODEL config', () => {

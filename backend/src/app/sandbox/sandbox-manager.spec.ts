@@ -490,6 +490,36 @@ describe('SandboxManager.attach — onMilestone', () => {
     expect(onMilestone).not.toHaveBeenCalledWith('image_build');
   });
 
+  it('caps the sandbox: init + default CPU/memory/PID ceilings on a cold create', async () => {
+    const { engine, createContainer } = fullFakeEngine(null);
+    const mgr = new SandboxManager(
+      engine,
+      fakeBuilder(false),
+      env({ AGENT_HOME_ROOT: agentHomeRoot }),
+    );
+
+    await mgr.attach({
+      sandbox: sandbox(),
+      orgId: 'org1',
+      jobId: 'job1',
+    } as SandboxAttachInput);
+
+    const spec = (
+      createContainer.mock.calls[0] as unknown as [
+        {
+          init?: boolean;
+          nanoCpus?: number;
+          memoryBytes?: number;
+          pidsLimit?: number;
+        },
+      ]
+    )[0];
+    expect(spec.init).toBe(true);
+    expect(spec.nanoCpus).toBe(6 * 1e9);
+    expect(spec.memoryBytes).toBe(24 * 1024 ** 3);
+    expect(spec.pidsLimit).toBe(8192);
+  });
+
   it('binds the durable per-job /playground scratch mount, keyed by jobId and outside the worktree', async () => {
     const { engine, createContainer } = fullFakeEngine(null);
     const mgr = new SandboxManager(

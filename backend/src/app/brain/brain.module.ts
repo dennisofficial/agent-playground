@@ -14,6 +14,7 @@ import {
   InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
+  OrganizationEntity,
 } from '../persistence/entities';
 import { BRAIN_SINK, StimulusModule, type BrainSink } from '../stimulus';
 import { AgentSessionManager } from './agent-session-manager.service';
@@ -65,6 +66,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
         InboundMessageEntity,
         RepoEntity,
         JobSandboxEntity,
+        OrganizationEntity,
       ],
       DB_CONNECTION,
     ),
