@@ -213,8 +213,6 @@ beforeAll(async () => {
       dispatch: dispatchSpy,
       retry: vi.fn(async () => undefined),
       redriveThread: vi.fn(async () => undefined),
-      deliverOwedHaltWakes: vi.fn(async () => undefined),
-      deliverOwedDoneWakes: vi.fn(async () => undefined),
     })
     .overrideProvider(CredentialResolver)
     .useValue(fakeCreds)

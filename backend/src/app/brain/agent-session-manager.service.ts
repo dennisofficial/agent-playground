@@ -18,6 +18,7 @@ import { modeApprovesPlan } from '@workspace/shared';
 import { LeaderElectionService } from '../cluster';
 import type {
   ChatStimulus,
+  EventMessage,
   EventStimulus,
   Job,
   JobKind,
@@ -108,8 +109,6 @@ import {
   renderRequestChangesDelivery,
   renderEventDelivery,
   renderFollowUpJobSeed,
-  renderDoneDelivery,
-  doneRecordBody,
   frameAnswer,
   composeTurn,
   composeSeedTurn,
@@ -123,12 +122,7 @@ import {
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
 // agent-session-manager.spec) keep resolving after the content catalog moved into the prompt-kit hub.
-export {
-  CONTINUATION_PREAMBLE,
-  haltTriageGuidance,
-  renderDoneDelivery,
-  doneRecordBody,
-} from '../prompt-kit/harness';
+export { CONTINUATION_PREAMBLE } from '../prompt-kit/harness';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -7386,7 +7380,15 @@ export class AgentSessionManager
     const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
     if (row?.delivered_at) return;
 
-    const body = renderEventDelivery(stimulus);
+    // STOPGAP (thread 2 owns the full EventStimulus→EventMessage migration across BrainSink/pumpEvent/
+    // deliverEvent — see 02-backend-brain-retirement.md). `renderEventDelivery` only reads
+    // `source`/`severity`/`body`, all present on `EventStimulus`; the cast covers the fields `EventStimulus`
+    // doesn't carry (`eventKind`, `type` vs `kind`, `receivedAt` string vs Date) which this call never touches.
+    const body = renderEventDelivery({
+      ...stimulus,
+      type: 'event',
+      receivedAt: stimulus.receivedAt.toISOString(),
+    } as unknown as EventMessage);
     const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)

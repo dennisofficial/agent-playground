@@ -35,11 +35,7 @@ const noopTurnHarness = {
 } as unknown as TurnHarnessFactory;
 import type { Repository } from 'typeorm';
 import type { JobSandboxEntity } from '../persistence/entities';
-import {
-  AgentSessionManager,
-  renderDoneDelivery,
-  doneRecordBody,
-} from './agent-session-manager.service';
+import { AgentSessionManager } from './agent-session-manager.service';
 import { ProvisioningNotReadyError } from '../driver/job-lifecycle.service';
 import {
   EngineAuthError,

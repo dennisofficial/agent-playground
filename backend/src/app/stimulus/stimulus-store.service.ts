@@ -35,13 +35,6 @@ type ReplyRouteJson = NonNullable<InboundMessageEntity['reply_route']> & {
   seedFileIds?: string[];
 };
 
-/** A persisted event stimulus + the thread it seeded. */
-export interface SeededEvent {
-  stimulus: EventStimulus;
-  thread: JobEntity;
-  message: TranscriptMessageEntity;
-}
-
 /** Raised when the unique (team, project, source, dedupe_key) index rejects a live duplicate insert. */
 export class DuplicateStimulusError extends Error {
   constructor(public readonly dedupeKey: string) {
@@ -59,14 +52,13 @@ const HOST_SEED_AUTHOR = { id: 'U-SYSTEM', displayName: 'System' } as const;
 
 /**
  * Persistence for the intake seam — the single place stimuli/threads/messages land on the 'atlas'
- * connection. Realizes "notification-seeds-a-thread":
+ * connection.
  *
- *  - `seedEventThread` — an `EventStimulus` OPENS a new `threads` row (origin 'event') on the
- *    routed repo, persists the originating `messages` row (the notification body)
- *    AND the `stimuli` event row. The partial-unique index on (org, repo, source,
- *    dedupe_key) is the durable backstop to the in-memory filter: a racing duplicate that slips past
- *    the window is rejected at insert (→ `DuplicateStimulusError`), so we never seed two threads for
- *    one event.
+ *  - `attachEventToJob` — an `EventStimulus` is delivered to the brain of the job that already OWNS its
+ *    PR/branch: persists the operator-visible `messages` row + the `stimuli` event row atomically. The
+ *    partial-unique index on (org, repo, source, dedupe_key) is the durable backstop to the in-memory
+ *    filter: a racing duplicate that slips past the window is rejected at insert (→ `DuplicateStimulusError`),
+ *    so one event collapses to one delivered message.
  *  - `recordChatStimulus` — a `ChatStimulus` CONTINUES its existing thread: persists the inbound
  *    `messages` row + the `stimuli` chat row (no new thread, no dedupe).
  *
@@ -101,109 +93,11 @@ export class StimulusStoreService {
   }
 
   /**
-   * Open a NEW thread for a notification and persist its first message + the event stimulus row.
-   * The event row's id becomes the returned `EventStimulus.id`. The unique index enforces "one live
-   * event per dedupe_key" at the DB even if the in-memory filter is bypassed — a violation surfaces
-   * as `DuplicateStimulusError` (the caller drops the duplicate without seeding a thread).
-   */
-  async seedEventThread(input: {
-    orgId: string;
-    repoId: string;
-    source: string;
-    dedupeKey: string;
-    severity: EventStimulus['severity'];
-    /** Render-time discriminant threaded from ingress onto the transcript row's `meta` (never persisted
-     *  on the event row). */
-    eventKind: EventKind;
-    body: string;
-    title: string;
-  }): Promise<SeededEvent> {
-    const thread = await this.jobs.save(
-      this.jobs.create({
-        org_id: input.orgId,
-        repo_id: input.repoId,
-        origin: 'event',
-        kind: 'event', // notification/CI-seeded intake — first-class job kind (drives the EVENT badge + job-kind prompt)
-        surface_thread_ref: null, // set when the announcement is posted (W6)
-        title: input.title,
-      }),
-    );
-    // Bootstrap the thread's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for an
-    // event-seeded thread that never gets a plan proposed.
-    await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, input.orgId);
-    const threadId = await this.planningThreadId(thread.id);
-
-    const message = await this.messages.save(
-      this.messages.create({
-        job_id: thread.id,
-        thread_id: threadId,
-        author: input.source,
-        author_id: input.source,
-        author_bot_id: null,
-        text: input.body,
-        // Operator-visible provenance: renders as a distinct EVENT bubble (not an operator/atlas line).
-        // `eventSource`/`severity` drive the bubble's header. The body stays the clean human-readable
-        // text — the untrusted fence is applied only to the copy delivered to the brain.
-        meta: {
-          source: 'system_event',
-          eventSource: input.source,
-          severity: input.severity,
-          eventKind: input.eventKind,
-        },
-      }),
-    );
-
-    let row: InboundMessageEntity;
-    try {
-      row = await this.stimuli.save(
-        this.stimuli.create({
-          org_id: input.orgId,
-          repo_id: input.repoId,
-          kind: 'event',
-          type: 'event',
-          trust: 'untrusted',
-          body: input.body,
-          job_id: thread.id,
-          author_id: null,
-          reply_route: null,
-          source: input.source,
-          dedupe_key: input.dedupeKey,
-          severity: input.severity,
-        }),
-      );
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        // A racing duplicate beat us to the unique index — roll back the thread/message we just
-        // opened so we don't leave an orphan, then signal the caller to drop it.
-        await this.messages.delete({ id: message.id }).catch(() => undefined);
-        await this.jobs.delete({ id: thread.id }).catch(() => undefined);
-        throw new DuplicateStimulusError(input.dedupeKey);
-      }
-      throw err;
-    }
-
-    const stimulus: EventStimulus = {
-      id: row.id,
-      orgId: input.orgId,
-      repoId: input.repoId,
-      kind: 'event',
-      trust: 'untrusted',
-      jobId: thread.id,
-      body: input.body,
-      source: input.source,
-      dedupeKey: input.dedupeKey,
-      severity: input.severity,
-      receivedAt: row.created_at,
-    };
-    return { stimulus, thread, message };
-  }
-
-  /**
-   * Attach an event to an EXISTING job (its brain) instead of seeding a new thread — the return-path
-   * for a GitHub event on a PR/branch Atlas already owns (CI failure, merge conflict, review comment).
-   * Mirrors {@link seedEventThread} (message row with `system_event` provenance + a `kind:'event'`
-   * stimulus row) but reuses the given `jobId`, so the same at-least-once boot sweep + `delivered_at`
-   * machinery drives delivery. Dedup rides the SAME (org, repo, source, dedupe_key) unique index — a
+   * Attach an event to an EXISTING job (its brain) — the return-path for a GitHub event on a PR/branch
+   * Atlas already owns (CI failure, merge conflict, review comment). Persists a `messages` row with
+   * `system_event` provenance + a `kind:'event'` stimulus row against the given `jobId`, so the same
+   * at-least-once boot sweep + `delivered_at` machinery drives delivery. Dedup rides the SAME (org, repo,
+   * source, dedupe_key) unique index — a
    * repeated conflict/CI/review event collapses to one delivered message.
    *
    * ROUTING (thread 4 §CI-routing): once the job's `ci` thread group thread exists (post-ship —
@@ -382,7 +276,10 @@ export class StimulusStoreService {
     // mid-turn process restart) leave a transcript row with no stimulus behind it — it renders but no turn
     // ever runs and the durable delivery pump can't recover a row that was never written. One transaction
     // makes it both-or-neither.
-    const type: MessageType =
+    // `'seed'` is retired from the `Message` union but is still a valid persisted `type` string for the
+    // legacy brain-side direct callers (mirrors `recordHostSeed`'s raw `'seed'` write); the intake seam now
+    // passes an explicit `input.type` and never falls through to it.
+    const type: MessageType | 'seed' =
       input.type ??
       (input.author.id === SYSTEM_SEED_AUTHOR.id ? 'seed' : 'user');
 

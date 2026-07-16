@@ -91,9 +91,13 @@ function makeController() {
   };
   const election = { isLeader: () => true };
   const intakeCalls: Array<{ message: unknown; transport: unknown }> = [];
+  const composedCalls: Array<{ input: unknown; transport: unknown }> = [];
   const intake = {
     intakeChat: vi.fn(async (message: unknown, transport: unknown) => {
       intakeCalls.push({ message, transport });
+    }),
+    intakeComposedSeed: vi.fn(async (input: unknown, transport: unknown) => {
+      composedCalls.push({ input, transport });
     }),
   };
 
@@ -135,6 +139,7 @@ function makeController() {
     seedCalls,
     intake,
     intakeCalls,
+    composedCalls,
     threadLifecycle,
   };
 }
@@ -307,7 +312,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
 
 describe('WebSurfaceController — /message (mixed: answered cards + an operator message)', () => {
   it('composes ONE pre-framed seed turn (answer notices + the operator message, user-last) and delivers it via StimulusIntake', async () => {
-    const { controller, store, secrets, seedCalls, intake, intakeCalls } =
+    const { controller, store, secrets, seedCalls, intake, composedCalls } =
       makeController();
     const user = { id: 'u-1', displayName: 'Dennis', name: 'Dennis' };
     const res = await controller.postMessage(owner, user as never, 'job-1', {
@@ -338,19 +343,17 @@ describe('WebSurfaceController — /message (mixed: answered cards + an operator
     expect(secrets.write).toHaveBeenCalledTimes(2);
 
     // The mixed case bypasses `surface.seedSystemNotification` entirely (no double-wrap) — it goes
-    // through the `StimulusIntake` seam instead.
+    // through the `StimulusIntake` composed-seed seam instead.
     expect(seedCalls).toHaveLength(0);
-    expect(intake.intakeChat).toHaveBeenCalledOnce();
+    expect(intake.intakeComposedSeed).toHaveBeenCalledOnce();
 
-    const { message: seedMessage, transport } = intakeCalls[0];
-    expect(seedMessage).toMatchObject({
-      type: 'seed',
-      trust: 'system',
+    const { input, transport } = composedCalls[0];
+    expect(input).toMatchObject({
       deliveredQuestionIds: ['q-1'],
       deliveredFileIds: ['f-1'],
       deliveredSecretIds: ['s-1'],
     });
-    const body = (seedMessage as { body: string }).body;
+    const body = (input as { body: string }).body;
     // Answer notices frame as `<system_notice>` chunks; the operator message is the trailing `<user>`
     // chunk (renderTurn's canonical ordering — user always last).
     expect(body).toContain('Postgres');

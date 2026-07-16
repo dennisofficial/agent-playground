@@ -5,21 +5,20 @@
  * body), and (c) how the frontend renders it.
  *
  * DESIGNED WHOLE, WIRED IN STAGES (see `/context/specs/data-model.md`):
- *  - Job 1 wires the four client-originated variants (`UserMessage`, `AnswerQuestionMessage`,
+ *  - Job 1 wired the four client-originated variants (`UserMessage`, `AnswerQuestionMessage`,
  *    `FileAnsweredMessage`, `SecretProvidedMessage`) + the `eventKind` render discriminant on
- *    `EventMessage`, PLUS a transitional `SeedMessage` that carries every current internal-seed field
- *    verbatim so the brain (`agent-session-manager.service.ts`) stays untouched (strangler-fig seam).
- *  - Job 2 decomposes `SeedMessage` into the enumerated typed internal-seed variants, migrates the
- *    inbound `EventStimulus → EventMessage` union, and removes the carry-through fields.
- *
- * This file is additive alongside `./stimulus.ts` (`ChatStimulus`/`EventStimulus` stay the brain's
- * working currency in Job 1 — rewriting `agent-session-manager.service.ts` onto `Message` is Job 2's
- * blast radius, not this thread's).
+ *    `EventMessage`, behind a transitional `SeedMessage` catch-all that carried every internal-seed
+ *    field verbatim so the brain stayed untouched (strangler-fig seam).
+ *  - Job 2 (this file's current state) decomposed `SeedMessage` into the enumerated typed internal-seed
+ *    variants (`InternalSeedMessage`), enriched `SecretProvidedMessage` with the server-confirmation
+ *    sub-cases, and gave `EventMessage` its own `body`. The ONE centralized renderer is
+ *    `prompt-kit/harness/compose-message.ts` (`composeMessageBody`), whose exhaustive switch turns each
+ *    variant into its `AgentMessage` body + optional `SeedRow`.
  */
 
 import type { ChunkKind } from '../stimulus/chunk-vocabulary';
-import type { TurnChunk } from '../stimulus/chunk-vocabulary';
-import type { EventSeverity, SeedRow } from './stimulus';
+import type { EventSeverity } from './stimulus';
+import type { JobProvenance } from './job';
 
 export type { ChunkKind };
 
@@ -46,7 +45,7 @@ export type MessageAttachment = {
   size: number;
 };
 
-// ─── Client-originated variants (WIRED IN JOB 1) ──────────────────────────────────────────────────
+// ─── Client-originated variants ───────────────────────────────────────────────────────────────────
 
 /** A free-text operator chat message — trusted, rendered `<user>`. */
 export type UserMessage = MessageBase & {
@@ -79,16 +78,29 @@ export type FileAnsweredMessage = MessageBase & {
   filename: string;
 };
 
-/** Confirmation that a `request_secret` card's value was provided — the secret VALUE is written at
- *  intake, never in the union/row. */
+/**
+ * Confirmation that a `request_secret` card's value was provided — the secret VALUE is written at
+ * intake, never in the union/row. Carries the SERVER-INITIATED provide-secret confirmation sub-case
+ * (`outcome`) so the compose switch renders the right body (secretStored / secretEphemeralDelivered /
+ * secretEphemeralUndelivered / mcpSecretStored / mcpSecretOauthRefused / mcpSecretStoreFailed) and the
+ * right chunkKey. A plain operator-supplied provide (no `outcome`) renders the generic notice.
+ */
 export type SecretProvidedMessage = MessageBase & {
   type: 'secret_provided';
   trust: 'system';
   requestId: string;
   secretKind: 'durable' | 'mcp' | 'ephemeral';
+  /** For the masked/stored confirmation body. */
+  name?: string;
+  path?: string;
+  /** mcp-target confirmation. */
+  mcp?: { server: string; slot: 'header' | 'env'; key: string };
+  outcome?: 'delivered' | 'undelivered' | 'stored' | 'oauth_refused' | 'store_failed';
+  /** ephemeral-undelivered reason. */
+  reason?: string;
 };
 
-// ─── Untrusted variant (inbound union WIRED IN JOB 2; render-type + eventKind WIRED IN JOB 1) ─────
+// ─── Untrusted variant ────────────────────────────────────────────────────────────────────────────
 
 /**
  * The render-time subtype of an inbound GitHub/webhook event, derived from the raw event
@@ -102,12 +114,14 @@ export type EventKind =
   | 'review_approved'
   | 'review_comment';
 
-/** A notification event — untrusted, dedupe-keyed, severity-tagged. The Job-2 inbound-union
- *  migration (dedupe/severity/correlation/routing onto this shape) is OUT of Job 1's scope; `eventKind`
- *  is introduced now as the render discriminant so Job 2's variant needs no rework. */
+/** A notification event — untrusted, dedupe-keyed, severity-tagged. `body` is the raw event text,
+ *  fenced `<untrusted>` at the delivery seam (`renderEventDelivery`). `correlation` is transient —
+ *  consumed at routing, never persisted. */
 export type EventMessage = MessageBase & {
   type: 'event';
   trust: 'untrusted';
+  /** The raw event text, fenced `<untrusted>` at delivery. */
+  body: string;
   /** The gateway id, e.g. 'github' | 'webhook' (NOT the event category). */
   source: string;
   eventKind: EventKind;
@@ -117,35 +131,163 @@ export type EventMessage = MessageBase & {
   resumeThreadId?: string;
 };
 
-// ─── Transitional seam for Job 1 (strangler-fig) ───────────────────────────────────────────────────
+// ─── Internal-seed variants (host-authored system turns) ────────────────────────────────────────────
+// Each carries every input its `seed-catalog` builder needs AND every id its compose-switch chunkKey/label
+// references, so `composeMessageBody` can reproduce today's body AND chunkKey byte-for-byte. `jobId`/`orgId`/
+// `repoId` ride on `MessageBase`; the OTHER ids are declared explicitly.
 
-/**
- * TRANSITIONAL: carries every current `ChatStimulus` internal-seed field verbatim, so Job 1 can
- * introduce the union WITHOUT rewriting the brain-side seed producers/consumers in
- * `agent-session-manager.service.ts`. Job 2 decomposes this into the enumerated typed internal-seed
- * variants (`reset_verify`, `compaction`, `ship_open_pr`, …) and removes this variant.
- *
- * NOTE: `seedHaltWake`/`seedDoneWake` stay in this transitional shape for Job 1 so any remaining producer
- * compiles unchanged. Job 2 owns the coordinated dead-code sweep.
- */
-export type SeedMessage = MessageBase & {
-  type: 'seed';
+/** A no-op wake after a sandbox reset — guarded-consumed on the first cold-attaching turn. */
+export type ResetVerifyMessage = MessageBase & {
+  type: 'reset_verify';
   trust: 'system';
-  body: string;
-  seedResetVerify?: boolean;
-  seedHaltWake?: boolean;
-  seedDoneWake?: boolean;
-  resumeThreadId?: string;
-  compact?: boolean;
-  seedRow?: SeedRow;
-  priority?: 'now' | 'queue' | 'later';
-  chunks?: TurnChunk[];
-  card?: Record<string, unknown>;
-  /** Per-card delivery-stamp ids (composed-turn bookkeeping, generalizes answer-batch). */
-  deliveredQuestionIds?: string[];
-  deliveredFileIds?: string[];
-  deliveredSecretIds?: string[];
 };
+
+/** Triggers the summarization (compaction) turn — its own brain-side special-casing, not a plain notice. */
+export type CompactionMessage = MessageBase & {
+  type: 'compaction';
+  trust: 'system';
+};
+
+/** Nudge to resume an interrupted `review_plan`. */
+export type WorkOwedNudgeMessage = MessageBase & {
+  type: 'work_owed_nudge';
+  trust: 'system';
+  reviewId: string;
+};
+
+/** Wake after the operator approved an amend proposal. */
+export type AmendApprovedMessage = MessageBase & {
+  type: 'amend_approved_wake';
+  trust: 'system';
+};
+
+/** The ship-time open-PR turn body — `shipOpenPrBody` needs all three fields. */
+export type ShipOpenPrMessage = MessageBase & {
+  type: 'ship_open_pr';
+  trust: 'system';
+  branch: string;
+  defaultBranch: string;
+  title: string;
+};
+
+/** Delivery of an operator's request-changes note into the resumed planning session. */
+export type RequestChangesMessage = MessageBase & {
+  type: 'request_changes';
+  trust: 'system';
+  note: string;
+  decisionRecordId: string;
+};
+
+/** Wake once every blocking job resolved (the job already had a session). */
+export type UnblockedJobMessage = MessageBase & {
+  type: 'unblocked_job_wake';
+  trust: 'system';
+  note: string | null;
+};
+
+/** Seed framing for a follow-up thread spawned by ANOTHER Atlas job via `create_job`. */
+export type FollowUpJobSeedMessage = MessageBase & {
+  type: 'follow_up_job_seed';
+  trust: 'system';
+  firstMessage: string;
+  parent: JobProvenance | null;
+};
+
+/** The `/retry-turn` resume nudge. */
+export type RetryResumeMessage = MessageBase & {
+  type: 'retry_resume_nudge';
+  trust: 'system';
+  title?: string;
+};
+
+/** The auto-resume nudge after a session-limit reset. */
+export type SessionLimitResetMessage = MessageBase & {
+  type: 'session_limit_reset_nudge';
+  trust: 'system';
+  title?: string;
+};
+
+// Approval confirmations (constructed in web-surface.controller approve handlers). Each carries the builder
+// args PLUS the requestId its chunkKey uses.
+
+export type McpApprovedMessage = MessageBase & {
+  type: 'mcp_approved';
+  trust: 'system';
+  requestId: string;
+  committed: string[];
+  scope: 'org' | 'repo' | undefined;
+  needSecrets: string[];
+  needConnect: string[];
+  readyStatic: number;
+};
+
+export type McpRemovedMessage = MessageBase & {
+  type: 'mcp_removed';
+  trust: 'system';
+  requestId: string;
+  removed: string[];
+  scope: 'org' | 'repo' | undefined;
+};
+
+export type ConventionAttachedMessage = MessageBase & {
+  type: 'convention_attached';
+  trust: 'system';
+  requestId: string;
+  profileName: string;
+};
+
+export type ConventionEditedMessage = MessageBase & {
+  type: 'convention_edited';
+  trust: 'system';
+  requestId: string;
+  mode: string;
+  name: string;
+};
+
+export type SkillApprovedMessage = MessageBase & {
+  type: 'skill_approved';
+  trust: 'system';
+  requestId: string;
+  mode: string;
+  name: string;
+  scope: string;
+};
+
+export type SkillEditApprovedMessage = MessageBase & {
+  type: 'skill_edit_approved';
+  trust: 'system';
+  requestId: string;
+  name: string;
+  forkedTo?: string;
+};
+
+export type SkillEditGoneMessage = MessageBase & {
+  type: 'skill_edit_gone';
+  trust: 'system';
+  requestId: string;
+  name: string;
+};
+
+/** The union of every host-authored internal-seed variant. `messageChunkKind` returns `system_notice`
+ *  for all of them; `composeMessageBody` owns their body + `SeedRow`. */
+export type InternalSeedMessage =
+  | ResetVerifyMessage
+  | CompactionMessage
+  | WorkOwedNudgeMessage
+  | AmendApprovedMessage
+  | ShipOpenPrMessage
+  | RequestChangesMessage
+  | UnblockedJobMessage
+  | FollowUpJobSeedMessage
+  | RetryResumeMessage
+  | SessionLimitResetMessage
+  | McpApprovedMessage
+  | McpRemovedMessage
+  | ConventionAttachedMessage
+  | ConventionEditedMessage
+  | SkillApprovedMessage
+  | SkillEditApprovedMessage
+  | SkillEditGoneMessage;
 
 /** The canonical inbound union. Every message carries `type` as its discriminant. */
 export type Message =
@@ -154,7 +296,7 @@ export type Message =
   | FileAnsweredMessage
   | SecretProvidedMessage
   | EventMessage
-  | SeedMessage;
+  | InternalSeedMessage;
 
 /** The message-type discriminant, standalone (for column/param types that don't need the full union). */
 export type MessageType = Message['type'];
@@ -171,7 +313,7 @@ export function assertNever(value: never): never {
 /**
  * The chunk kind a `Message` type frames into (`tag-vocabulary.ts`'s vocabulary) — the low-level
  * render layer the Message union sits on top of. Many message types share one chunk kind (every
- * answer/file/secret confirmation is a `system_notice`).
+ * answer/file/secret confirmation and every internal seed is a `system_notice`).
  */
 export function messageChunkKind(type: MessageType): ChunkKind {
   switch (type) {
@@ -180,11 +322,26 @@ export function messageChunkKind(type: MessageType): ChunkKind {
     case 'answer_question':
     case 'file_answered':
     case 'secret_provided':
+    case 'reset_verify':
+    case 'compaction':
+    case 'work_owed_nudge':
+    case 'amend_approved_wake':
+    case 'ship_open_pr':
+    case 'request_changes':
+    case 'unblocked_job_wake':
+    case 'follow_up_job_seed':
+    case 'retry_resume_nudge':
+    case 'session_limit_reset_nudge':
+    case 'mcp_approved':
+    case 'mcp_removed':
+    case 'convention_attached':
+    case 'convention_edited':
+    case 'skill_approved':
+    case 'skill_edit_approved':
+    case 'skill_edit_gone':
       return 'system_notice';
     case 'event':
       return 'untrusted';
-    case 'seed':
-      return 'system_notice';
     default:
       return assertNever(type);
   }

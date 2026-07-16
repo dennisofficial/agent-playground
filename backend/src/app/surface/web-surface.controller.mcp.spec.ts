@@ -13,6 +13,7 @@ import { WebSurfaceController } from './web-surface.controller';
  */
 type Mocks = {
   seedSystemNotification: ReturnType<typeof vi.fn>;
+  intakeChat: ReturnType<typeof vi.fn>;
   getMcpProposalCard: ReturnType<typeof vi.fn>;
   markMcpProposalApproved: ReturnType<typeof vi.fn>;
   clearAwaitingSecret: ReturnType<typeof vi.fn>;
@@ -39,6 +40,7 @@ function makeController(opts?: {
   const threadRepoId = opts?.threadRepoId ?? 'repo-1';
   const m: Mocks = {
     seedSystemNotification: vi.fn(() => 'ts-1'),
+    intakeChat: vi.fn(async () => undefined),
     getMcpProposalCard: vi.fn(async () => opts?.card ?? null),
     markMcpProposalApproved: vi.fn(async () => undefined),
     clearAwaitingSecret: vi.fn(async () => undefined),
@@ -110,7 +112,7 @@ function makeController(opts?: {
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
     {} as never, // moduleRef (ModuleRef)
-    {} as never, // intake (StimulusIntake)
+    { intakeChat: m.intakeChat } as never, // intake (StimulusIntake)
   );
   return { controller, m };
 }
@@ -223,9 +225,18 @@ describe('WebSurfaceController — MCP proposal approve (owner-gated commit)', (
     expect(jiraInput.authKind).toBe('oauth');
     // An UNCONNECTED oauth server must NOT be static-probed (its endpoint 401s until the owner connects).
     expect(m.validate).not.toHaveBeenCalled();
-    const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
-    expect(notice).toContain('Connect');
-    expect(notice).not.toContain('No secrets needed'); // the static "ready" copy must not fire for oauth
+    // The approve seeds a typed `mcp_approved` confirmation: the oauth server rides `needConnect` (→ the
+    // "Connect" copy) and contributes no `readyStatic` (→ the "No secrets needed" copy stays silent).
+    expect(m.intakeChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'mcp_approved',
+        committed: ['jira'],
+        needConnect: ['jira'],
+        needSecrets: [],
+        readyStatic: 0,
+      }),
+      expect.anything(),
+    );
   });
 
   it('is idempotent — a re-approve of an already-committed card writes nothing', async () => {
@@ -292,10 +303,18 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
     expect(m.validate).toHaveBeenCalledTimes(1);
     // Per-card lane: stamps provided_at + decrements open_secret_count in one transaction (no pointer to clear).
     expect(m.markSecretProvidedPerCard).toHaveBeenCalledWith('job-1', 's-1');
-    // The masked confirmation names the server/slot, never the value.
-    const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
-    expect(notice).toContain('github');
-    expect(notice).not.toContain('ghp_x');
+    // The masked confirmation is a typed `secret_provided` seed naming the server/slot — the value is never
+    // carried in the message (compose-message.ts derives the masked body).
+    expect(m.intakeChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'secret_provided',
+        secretKind: 'mcp',
+        outcome: 'stored',
+        mcp: expect.objectContaining({ server: 'github', key: 'Authorization' }),
+      }),
+      expect.anything(),
+    );
+    expect(JSON.stringify(m.intakeChat.mock.calls)).not.toContain('ghp_x');
   });
 
   it('refuses a secret write to an OAuth server (no setSecret, no probe) and withdraws the card', async () => {
@@ -325,9 +344,18 @@ describe('WebSurfaceController — provide-secret MCP-target lane', () => {
       's-1',
       expect.any(String),
     );
-    const notice = m.seedSystemNotification.mock.calls.at(-1)![2] as string;
-    expect(notice).toContain('OAuth');
-    expect(notice).not.toContain('Bearer x');
+    // The failure confirmation is a typed `secret_provided` seed with the oauth-refused outcome; the pasted
+    // value never rides the message.
+    expect(m.intakeChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'secret_provided',
+        secretKind: 'mcp',
+        outcome: 'oauth_refused',
+        mcp: expect.objectContaining({ server: 'jira' }),
+      }),
+      expect.anything(),
+    );
+    expect(JSON.stringify(m.intakeChat.mock.calls)).not.toContain('Bearer x');
   });
 
   it('withdraws the card + fails cleanly when the target MCP server is gone', async () => {

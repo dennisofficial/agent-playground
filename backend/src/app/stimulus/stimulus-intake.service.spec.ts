@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
+  AmendApprovedMessage,
   ChatStimulus,
   EventStimulus,
-  SeedMessage,
+  ResetVerifyMessage,
   UserMessage,
 } from '../domain';
 import type { EventFilterService, FilterVerdict } from './event-filter.service';
@@ -276,27 +277,21 @@ describe('StimulusIntake.intakeChat', () => {
   });
 
   it('SYSTEM SEED: persists a durable stimulus row and routes through the chat pump', async () => {
-    const seedRow = {
-      label: 'Question answered',
-      chunkKey: 'seed:q:thread-9:q1',
-    };
-    const message: SeedMessage = {
-      type: 'seed',
+    // A typed internal-seed variant: `composeMessageBody` derives the body + curated pill; intake forwards
+    // the pill on `systemChunk` and persists under the variant's own `type`.
+    const message: AmendApprovedMessage = {
+      type: 'amend_approved_wake',
       trust: 'system',
       id: '',
       orgId: 'T1',
       repoId: 'web',
       jobId: 'thread-9',
       receivedAt: new Date().toISOString(),
-      body: '<system_notice>The operator answered your question "X": A</system_notice>',
-      seedRow,
-      deliveredQuestionIds: ['q1'],
     };
     const recorded = recordedStimulus({
       id: 'chat-seed-1',
       author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
       seed: true,
-      seedQuestionIds: ['q1'],
     });
     const store = {
       recordChatStimulus: vi.fn(async () => recorded),
@@ -305,13 +300,13 @@ describe('StimulusIntake.intakeChat', () => {
     const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
 
     await intake.intakeChat(message, TRANSPORT);
-    // The seed's curated pill rides `systemChunk`; its answered-card id is threaded as the PLURAL
-    // `seedQuestionIds` (the bridge wraps a singular id into a one-element array).
     expect(store.recordChatStimulus).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemChunk: seedRow,
-        seedQuestionIds: ['q1'],
-        type: 'seed',
+        type: 'amend_approved_wake',
+        systemChunk: expect.objectContaining({
+          label: expect.anything(),
+          chunkKey: expect.any(String),
+        }),
       }),
     );
     expect(chats[0]).toMatchObject({
@@ -326,15 +321,15 @@ describe('StimulusIntake.intakeChat', () => {
   });
 
   it('SYSTEM SEED without a seedRow gets the generic visible system pill, not a raw chat bubble', async () => {
-    const message: SeedMessage = {
-      type: 'seed',
+    // `reset_verify` renders a plain body with NO curated pill — intake fills in the generic system pill.
+    const message: ResetVerifyMessage = {
+      type: 'reset_verify',
       trust: 'system',
       id: '',
       orgId: 'T1',
       repoId: 'web',
       jobId: 'thread-9',
       receivedAt: new Date().toISOString(),
-      body: '<system_notice>Retry the interrupted turn.</system_notice>',
     };
     const recorded = recordedStimulus({ id: 'chat-seed-2', seed: true });
     const store = {
