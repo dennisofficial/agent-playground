@@ -722,6 +722,17 @@ export class DriverStoreService {
     await this.threads.update({ id: threadId }, { status });
   }
 
+  /** Set (or clear, with `null`) the thread's DISPLAY-ONLY `halt_reason` (`session_limit | error |
+   *  incomplete`): written when a turn ends abnormally, cleared at the next turn's start. Purely
+   *  informational for the UI — it never drives auto-resume (the halt/gating apparatus that used to read it
+   *  is gone), so a stale value only ever mislabels a dormant thread until its next turn clears it. */
+  async setThreadHaltReason(
+    threadId: string,
+    reason: string | null,
+  ): Promise<void> {
+    await this.threads.update({ id: threadId }, { halt_reason: reason });
+  }
+
   // The per-thread `condition` overlay column was dropped (status alone carries idle|done now). Retained as
   // a no-op so its many driver call sites keep compiling until the driver's architectural collapse removes
   // them; nothing reads a condition anymore.

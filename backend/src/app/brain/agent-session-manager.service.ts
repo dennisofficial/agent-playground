@@ -496,6 +496,22 @@ export class AgentSessionManager
     return this.jobBootstrap.planningThreadId(jobId);
   }
 
+  /** Update the brain thread's DISPLAY-ONLY `halt_reason` (d8): set when a turn ends abnormally, cleared at
+   *  the next turn's start. A brain (chattable) thread just sits dormant with this label — it never drives
+   *  auto-resume. Swallows any error (display-only; tolerant of a store mock that predates the column). */
+  private async markHaltReason(
+    threadId: string,
+    reason: string | null,
+  ): Promise<void> {
+    try {
+      await this.driverStore.setThreadHaltReason(threadId, reason);
+    } catch (err) {
+      this.logger.debug(
+        `setThreadHaltReason(${reason ?? 'clear'}) failed (display-only): ${err}`,
+      );
+    }
+  }
+
   /**
    * Resolve the git auth the brain's turns use to fetch/push/merge against the remote from inside the
    * sandbox. The repo url + org id are STABLE for a job, so they're resolved once (via the RESOLVED repo —
@@ -2959,6 +2975,14 @@ export class AgentSessionManager
       },
     };
 
+    // DISPLAY-ONLY halt label (d8): a brain (chattable) thread — planner/post_build/ship — sits dormant with
+    // its `halt_reason` if a turn ends abnormally. Resolve the thread this turn belongs to and CLEAR the label
+    // at the turn's START; it is re-set below only if THIS turn ends on a session limit or a genuine failure.
+    const haltThreadId =
+      stimulus.resumeThreadId ??
+      (await this.planningThreadId(stimulus.jobId).catch(() => null));
+    if (haltThreadId) await this.markHaltReason(haltThreadId, null);
+
     let result;
     try {
       result = await runner.run(runArgs);
@@ -2991,6 +3015,9 @@ export class AgentSessionManager
       this.logger.error(
         `in-sandbox turn failed for thread=${stimulus.jobId}: ${err}`,
       );
+      // DISPLAY-ONLY (d8): label the thread's dormant state. A benign-abort/transient path re-drives and
+      // clears this at its next turn start; a terminal failure leaves it for the operator to see.
+      if (haltThreadId) await this.markHaltReason(haltThreadId, 'error');
       // A normal turn's benign abort finishes (keeps its partial) and gets the continue-nudge below; a real
       // failure always keeps its partial.
       const benignAbort = this.isBenignStreamAbort(err);
@@ -3166,6 +3193,8 @@ export class AgentSessionManager
         await streamer.discard();
         return;
       }
+      // DISPLAY-ONLY (d8): mark the thread parked on a session limit — cleared at its next (auto-)resume start.
+      if (haltThreadId) await this.markHaltReason(haltThreadId, 'session_limit');
       const rlType = result.sessionLimit.rateLimitType;
       const source = result.sessionLimit.source;
       const util =

@@ -127,6 +127,20 @@ export const COMMIT_AND_PUSH_INSTRUCTION: AgentMessage = agentMessage(
 );
 
 /**
+ * The WAKE-ON-STOP reminder: the single synthetic nudge a MACHINE-role thread gets when its turn ended
+ * without asserting completion. Delivered once, resuming the SAME session, to give it one chance to either
+ * finish the remaining work or call `complete_thread`. Not a retry loop — if this nudged turn also ends
+ * without `complete_thread`, the thread is left dormant (see `ThreadDriver.wakeMachineThreadOnStop`).
+ */
+export function renderWakeOnStopReminder(): AgentMessage {
+  return agentMessage(
+    `Your turn ended without calling \`complete_thread\`, so this work is not recorded as done. Finish the` +
+      ` remaining work now and then call \`complete_thread\` with a one-line summary of what you did. If you` +
+      ` already believe the work is complete, call \`complete_thread\` now. Do nothing else.`,
+  );
+}
+
+/**
  * The task for the MASTER-REVIEW thread — a Codex `execute` turn that reviews the whole merged feature diff
  * and applies fixes IN-CONTAINER (where the repo toolchain lives), then verifies with the repo's own build.
  * Execute-voice counterpart to the old read-only `run_master_review` tool prompt. No writer-subagent mention

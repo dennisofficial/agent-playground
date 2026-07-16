@@ -112,6 +112,7 @@ import {
   ROTATION_REMINDER_NUDGE,
   RECORD_LEG_HANDOFF_STOP,
   renderCommitTurnTask,
+  renderWakeOnStopReminder,
 } from '../prompt-kit';
 import { chunkKey, composeTurn } from '../prompt-kit/harness';
 import { fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
@@ -1902,7 +1903,10 @@ export class ThreadDriver implements JobDispatcher {
     await this.store
       .setThreadCondition(thread.id, 'none')
       .catch(() => undefined);
-    const { outcome, reports } = await this.executeSteps(
+    // Clear the DISPLAY-ONLY halt_reason at the START of the turn (d8) — a resumed/retried thread must not
+    // keep a stale "ended abnormally" label while it is live again. Re-set below only if THIS turn halts.
+    await this.markHaltReason(thread.id, null);
+    let { outcome, reports } = await this.runExecuteTurn(
       job,
       route,
       sandbox,
@@ -1911,6 +1915,53 @@ export class ThreadDriver implements JobDispatcher {
       repo,
       sectionStartSha,
     );
+
+    // WAKE-ON-STOP (d8): a MACHINE-role thread (registry `operatorInput:false` — codex_review, review_agent,
+    // review_fix, master_review) that ended WITHOUT `complete_thread` gets ONE synthetic reminder turn,
+    // immediately, resuming its own session so it can finish or call `complete_thread`. Event-driven, never
+    // timed. A CHATTABLE role (planner/builder/post_build/ship) is left dormant instead (§8.3). Straight-line
+    // (not a loop), so it fires exactly once: if the nudged turn ALSO ends incomplete we do NOT re-nudge —
+    // the thread falls through to the dormant `incomplete` path below with its halt_reason set.
+    if (
+      outcome === 'incomplete' &&
+      !threadKindSpec(thread.kind).operatorInput
+    ) {
+      const woke = await this.wakeMachineThreadOnStop(
+        job,
+        route,
+        sandbox,
+        thread,
+        record,
+        repo,
+        sectionStartSha,
+      ).catch((err) => {
+        this.logger.warn(
+          `wake-on-stop nudge for thread ${thread.ordinal} "${thread.brief}" crashed (leaving dormant): ${shortReason(err)}`,
+        );
+        return null;
+      });
+      if (woke) {
+        reports = [...reports, ...woke.reports];
+        // If the nudged turn asserted `complete_thread`, FINALIZE it through the normal path: re-entering
+        // `executeSteps` now hits the restart-safe short-circuit (a persisted `done` terminal record ⇒ no
+        // re-kick) and runs the commit + step-done marking a first-pass completion would have. A still-
+        // incomplete nudge is NOT re-run (that would re-kick the batch) — the thread falls through to the
+        // dormant path below. Either way the nudge fired exactly once.
+        if (woke.outcome === 'done') {
+          const finalized = await this.runExecuteTurn(
+            job,
+            route,
+            sandbox,
+            thread,
+            record,
+            repo,
+            sectionStartSha,
+          );
+          outcome = finalized.outcome;
+          reports = [...reports, ...finalized.reports];
+        }
+      }
+    }
 
     // ROTATED (d1): the builder self-authored a leg handoff (`record_leg_handoff`), so the store abandoned
     // this session and inserted the NEXT builder thread row (carrying the handoff on its own `handoff_in`).
@@ -1940,6 +1991,10 @@ export class ThreadDriver implements JobDispatcher {
       await this.store
         .setThreadCondition(thread.id, condition)
         .catch(() => undefined);
+      // DISPLAY-ONLY (d8): label the dormant thread so the UI explains why it stopped. A thrown session-limit/
+      // error end never reaches here (it propagates from `runExecuteTurn` already labelled); this is the clean
+      // "turn ended without asserting completion" case — for a machine role, after its one wake-on-stop nudge.
+      await this.markHaltReason(thread.id, 'incomplete');
       this.logger.warn(
         `thread ${thread.ordinal} "${thread.brief}" not done — ${outcome}`,
       );
@@ -2704,6 +2759,193 @@ export class ThreadDriver implements JobDispatcher {
       await new Promise((r) => setTimeout(r, intervalMs));
     }
     return '(No response from the operator within the time limit. Proceed using your best judgment, keep the change minimal and reversible, and clearly note the assumption you made in your report.)';
+  }
+
+  /** Update the thread's DISPLAY-ONLY `halt_reason` (d8), swallowing any error — it never blocks a turn and
+   *  tolerates a store mock that predates the column (a stale label only mis-explains a dormant thread until
+   *  its next turn clears it). */
+  private async markHaltReason(
+    threadId: string,
+    reason: string | null,
+  ): Promise<void> {
+    try {
+      await this.store.setThreadHaltReason(threadId, reason);
+    } catch (err) {
+      this.logger.debug(
+        `setThreadHaltReason(${reason ?? 'clear'}) failed (display-only): ${shortReason(err)}`,
+      );
+    }
+  }
+
+  /** Run the thread's execute turn, labelling an ABNORMAL (thrown) ending onto the thread's DISPLAY-ONLY
+   *  `halt_reason` before the exception propagates to the drive loop's park/fail handling (d8). A detached/
+   *  drain end is the engine still living (boot re-attaches), not a halt, so it is never labelled. A clean
+   *  stop without `complete_thread` does NOT throw — it returns `incomplete` and is labelled by `runThread`. */
+  private async runExecuteTurn(
+    job: Job,
+    route: JobRoute,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    record: DecisionRecord | null,
+    repo: ResolvedRepo,
+    sectionStartSha: string | undefined,
+  ): Promise<{ outcome: ThreadOutcome; reports: string[] }> {
+    try {
+      return await this.executeSteps(
+        job,
+        route,
+        sandbox,
+        thread,
+        record,
+        repo,
+        sectionStartSha,
+      );
+    } catch (err) {
+      if (!isEngineDetachedError(err) && !this.election.isDraining()) {
+        await this.markHaltReason(
+          thread.id,
+          isSessionLimitError(err) ? 'session_limit' : 'error',
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * WAKE-ON-STOP nudge (d8): resume a MACHINE-role thread's OWN session with a single synthetic reminder so a
+   * turn that ended without `complete_thread` gets exactly one immediate chance to finish or assert done. The
+   * turn carries the full build tool bridge (so `complete_thread` is reachable), then we re-read the terminal
+   * record to resolve the outcome. Best-effort + self-contained: any error is labelled onto `halt_reason` and
+   * absorbed to an `incomplete` result — the bonus reminder must NEVER itself park/fail the job (the original
+   * turn already ended cleanly-incomplete). Invoked once, straight-line, so it can never become a retry loop.
+   */
+  private async wakeMachineThreadOnStop(
+    job: Job,
+    route: JobRoute,
+    sandbox: FeatureSandbox,
+    thread: DriverThread,
+    record: DecisionRecord | null,
+    repo: ResolvedRepo,
+    sectionStartSha: string | undefined,
+  ): Promise<{ outcome: ThreadOutcome; reports: string[] } | null> {
+    const steps = await this.store.stepsForThread(thread.id);
+    const anchor = steps[0];
+    if (!anchor?.sessionId) return null; // no live session to resume — nothing to wake
+
+    const spec = threadKindSpec(thread.kind);
+    const lane = laneFor('builder', thread.id);
+    const channel = route.channel ?? job.repoId;
+    const metaTag = { phaseId: anchor.id, wakeOnStop: true };
+    const harness = this.turnHarness.create({
+      jobId: job.id,
+      orgId: job.orgId,
+      threadId: thread.id,
+      channel,
+      lane,
+      metaTag,
+    });
+    const task = renderWakeOnStopReminder();
+    await harness.emitPrompt(task, `wake:${anchor.id}`);
+    const deadline = new PausableDeadline(
+      this.phaseTimeoutMs,
+      `wake-on-stop "${thread.brief}"`,
+    );
+    const toolBridge = this.buildTurnBridge(
+      job,
+      thread,
+      route,
+      deadline,
+      sandbox,
+      record,
+      sectionStartSha,
+      null,
+    );
+    const repoConventions = await this.repoConventionsFor(job);
+    const evidenceDir = await this.evidenceDirForThread(job, thread);
+    this.logger.log(
+      `thread ${thread.ordinal} "${thread.brief}" (${thread.kind}) ended without complete_thread — waking once`,
+    );
+    try {
+      const result = await this.runTurnBounded(
+        {
+          orgId: job.orgId,
+          jobId: job.id,
+          stepId: anchor.id, // resumes the machine thread's persisted session — same conversation
+          sandbox,
+          engine: spec.engine,
+          mode: 'execute',
+          systemPrompt: renderAgentPrompt(spec.agent, {
+            jobKind: job.kind,
+            settings: { repoConventions },
+            turnPhase: 'batch',
+          }),
+          evidenceDir,
+          ...(spec.reasoningEffort
+            ? { modelReasoningEffort: spec.reasoningEffort }
+            : {}),
+          task,
+          auth: await this.creds.engineAuth(job.orgId, spec.engine),
+          userMcpServers: await this.mcp.resolveForTurn(
+            job.orgId,
+            job.repoId,
+            'build',
+          ),
+          skills: await this.skills.resolveForTurn(
+            job.orgId,
+            job.repoId,
+            'build',
+          ),
+          ...(repoConventions ? { repoConventions } : {}),
+          gitAuth: await this.resolveTurnGitAuth(
+            job.orgId,
+            repo.projectRepo.gitUrl,
+          ),
+          toolBridge,
+          richStream: true,
+          turnMeta: {
+            jobId: job.id,
+            orgId: job.orgId,
+            channel,
+            lane,
+            kind: 'step',
+            ctx: {
+              repoId: job.repoId,
+              threadId: thread.id,
+              anchorStepId: anchor.id,
+              wakeOnStop: true,
+            },
+          },
+          liveRoute: { channel, jobId: job.id, lane },
+          onEvent: (e) => harness.onEvent(e),
+        },
+        `wake-on-stop "${thread.brief}"`,
+        deadline,
+      );
+      await harness.finish(
+        result.report,
+        result.usage
+          ? { usage: result.usage, credentialId: result.credentialId ?? null }
+          : undefined,
+      );
+      const term = await this.store
+        .getTerminalRecord(thread.id)
+        .catch(() => null);
+      return {
+        outcome: term?.status === 'done' ? 'done' : 'incomplete',
+        reports: [result.report],
+      };
+    } catch (err) {
+      await harness.abort().catch(() => undefined);
+      // The bonus wake turn hit a session limit / infra error. Label it for DISPLAY, but do NOT re-throw:
+      // the original turn already ended cleanly-incomplete, so the job must not park/fail on the nudge.
+      if (!this.election.isDraining()) {
+        await this.markHaltReason(
+          thread.id,
+          isSessionLimitError(err) ? 'session_limit' : 'error',
+        );
+      }
+      return { outcome: 'incomplete', reports: [] };
+    }
   }
 
   /**
