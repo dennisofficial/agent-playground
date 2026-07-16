@@ -1489,6 +1489,15 @@ export class WebSurfaceController {
           jobId,
           body: renderTurn(chunks),
           operatorBubbleText: operatorText,
+          ...(attach
+            ? {
+                card: {
+                  type: 'attachments_card',
+                  items: attach.items,
+                  ...(operatorText ? { message: operatorText } : {}),
+                },
+              }
+            : {}),
           deliveredQuestionIds: applied
             .filter((a) => a.kind === 'question')
             .map((a) => a.id),
@@ -2201,7 +2210,10 @@ export class WebSurfaceController {
       throw new BadRequestException('no such secret request on this thread');
     }
     const seedTransport = {
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
     };
 

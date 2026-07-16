@@ -136,7 +136,10 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(
+      input.jobId,
+      input.orgId,
+    );
     const ciThreadId =
       (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
@@ -330,7 +333,10 @@ export class StimulusStoreService {
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
     // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
     if (!input.lane?.startsWith('thread:')) {
-      await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
+      await this.jobBootstrap?.ensurePlanningThreadGroup(
+        input.jobId,
+        input.orgId,
+      );
     }
     const threadId = input.lane?.startsWith('thread:')
       ? input.lane.slice('thread:'.length)
@@ -576,17 +582,26 @@ export class StimulusStoreService {
    *  operator bubble's `delivered_at` and a best-effort realtime nudge, so the transcript reflects "landed"
    *  the moment the SDK accepts the turn. A no-op (no second stamp, no emit) when already delivered/missing. */
   async markChatDelivered(id: string): Promise<void> {
-    const res = await this.stimuli.update(
-      { id, delivered_at: IsNull() },
-      { delivered_at: new Date() },
-    );
-    if (!res.affected) return; // already delivered or missing — idempotent no-op.
-    const row = await this.stimuli.findOne({ where: { id } });
-    await this.messages.update(
-      { stimulus_id: id, delivered_at: IsNull() },
-      { delivered_at: new Date() },
-    );
-    if (row) this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
+    const row = await this.dataSource.transaction(async (m) => {
+      const deliveredAt = new Date();
+      const res = await m.update(
+        InboundMessageEntity,
+        { id, delivered_at: IsNull() },
+        { delivered_at: deliveredAt },
+      );
+      if (!res.affected) return null; // already delivered or missing — idempotent no-op.
+      const delivered = await m.findOne(InboundMessageEntity, {
+        where: { id },
+      });
+      await m.update(
+        TranscriptMessageEntity,
+        { stimulus_id: id, delivered_at: IsNull() },
+        { delivered_at: deliveredAt },
+      );
+      return delivered;
+    });
+    if (row)
+      this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
   }
 
   /**

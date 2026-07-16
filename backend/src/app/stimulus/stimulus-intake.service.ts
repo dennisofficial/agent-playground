@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { EventMessage, Message, ParsedEvent, SeedRow } from '@shared/domain';
+import type {
+  EventMessage,
+  Message,
+  ParsedEvent,
+  SeedRow,
+} from '@shared/domain';
 import { assertNever } from '@shared/domain';
 import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
@@ -279,6 +284,8 @@ export class StimulusIntake {
       jobId: string;
       body: string;
       operatorBubbleText: string;
+      /** Optional render-only card payload for the operator bubble (e.g. composer attachments). */
+      card?: Record<string, unknown>;
       deliveredQuestionIds?: string[];
       deliveredFileIds?: string[];
       deliveredSecretIds?: string[];
@@ -301,6 +308,7 @@ export class StimulusIntake {
       replyRoute: transport.replyRoute,
       body: input.body,
       operatorBubbleText: input.operatorBubbleText,
+      card: input.card,
       seedQuestionIds: input.deliveredQuestionIds,
       seedFileIds: input.deliveredFileIds,
       seedSecretIds: input.deliveredSecretIds,
