@@ -268,6 +268,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       setActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
       clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
       awaitingSecretId: vi.fn().mockResolvedValue(null),
       getSecretCard: vi.fn().mockResolvedValue(null),
@@ -288,8 +289,6 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
       appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
       appendSystemNotice: vi.fn().mockResolvedValue(undefined),
-      // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
-      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
     };
 
     const lifecycle = {
@@ -324,6 +323,14 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
     const inert = {} as never;
     const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) };
+    const selfSufficiency = {
+      buildTools: () => ({
+        request_secret: vi.fn(),
+        request_file: vi.fn(),
+        recall: vi.fn(),
+        remember: vi.fn(),
+      }),
+    };
     const manager = new AgentSessionManager(
       store as never, // store (1)
       inert, // driverStore (2)
@@ -356,23 +363,24 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
       inert, // threadInput (29)
       inert, // liveVerificationJudge (30)
       usage as never, // usage (31)
-      undefined, // usageProjector (32)
-      undefined, // env (33)
-      undefined, // conventions (34)
-      undefined, // workspaceProfile (35)
-      undefined, // skills (36)
-      undefined, // skillStore (37)
-      undefined, // skillFiles (38)
-      undefined, // skillInstaller (39)
-      undefined, // mcpStore (40)
-      undefined, // scheduler (41)
-      undefined, // brainGateway (42)
-      undefined, // reattachRegistry (43)
-      undefined, // jit (44)
-      undefined, // prodDiagnostics (45)
-      undefined, // repoRows (46)
-      undefined, // liveTurns (47)
-      bootstrap, // jobBootstrap (48)
+      selfSufficiency as never, // selfSufficiency (32)
+      undefined, // usageProjector (33)
+      undefined, // env (34)
+      undefined, // conventions (35)
+      undefined, // workspaceProfile (36)
+      undefined, // skills (37)
+      undefined, // skillStore (38)
+      undefined, // skillFiles (39)
+      undefined, // skillInstaller (40)
+      undefined, // mcpStore (41)
+      undefined, // scheduler (42)
+      undefined, // brainGateway (43)
+      undefined, // reattachRegistry (44)
+      undefined, // jit (45)
+      undefined, // prodDiagnostics (46)
+      undefined, // repoRows (47)
+      undefined, // liveTurns (48)
+      bootstrap, // jobBootstrap (49)
     );
 
     return {

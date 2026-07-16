@@ -59,6 +59,7 @@ function makeManager(threadRole: ReturnType<typeof vi.fn>) {
     inert, // threadInput (ThreadInputService)
     inert, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     inert, // usage (OauthUsageService)
+    inert, // selfSufficiency (SelfSufficiencyToolsService, added by #268)
   );
   return manager;
 }

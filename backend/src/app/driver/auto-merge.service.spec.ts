@@ -121,7 +121,7 @@ function make(
   const planningThreadId = vi.fn(async () => 'thread-1');
   const jobBootstrap = {
     planningThreadId,
-    ensurePlanningStage: vi.fn(async () => undefined),
+    ensurePlanningThreadGroup: vi.fn(async () => undefined),
   } as unknown as JobBootstrapService;
 
   const svc = new AutoMergeService(

@@ -126,22 +126,6 @@ export interface ChatStimulus extends BaseStimulus {
    */
   seedResetVerify?: boolean;
   /**
-   * HALT-WAKE SEED (ADR 0004 Phase 3): a synthetic wake delivering a halted build thread's terminal record to
-   * the brain to triage. Carries the halted `threadId` + the `gen` (`halt_fix_attempts`) captured when the
-   * wake fired. Stamped `halt_waked_at` on the turn's SUCCESS TAIL (generation-keyed CAS) — so a swallowed
-   * engine error / guard-hit / detach leaves the halt un-waked, letting the periodic + boot sweeps retry it
-   * (at-least-once, matching `seedQuestionId`'s delivered-on-success semantics). In-memory only.
-   */
-  seedHaltWake?: { threadId: string; gen: number };
-  /**
-   * COMPLETION-WAKE SEED (decision d1): a synthetic wake delivering a CLEAN completion to the brain — either
-   * the FINAL thread (whole build parked at the ship gate) or a NOTABLE completion (done-with-gaps). Carries
-   * the completed `threadId` + the `reason` that drives the wake framing. Stamped `done_waked_at` on the
-   * turn's SUCCESS TAIL (a swallowed engine error / guard-hit / detach leaves it un-waked, letting the
-   * periodic + boot sweeps retry it — at-least-once, mirroring {@link seedHaltWake}). In-memory only.
-   */
-  seedDoneWake?: { threadId: string; reason: 'final' | 'notable'; gen: number };
-  /**
    * SEED RENDER COMMAND (see {@link SeedRow}): how this seed turn shows in the transcript. Read by the
    * central `persistSeedRow` at turn intake. In-memory only — never persisted on the stimulus row.
    */
@@ -209,7 +193,7 @@ export interface EventStimulus extends BaseStimulus {
   correlation?: { branch?: string | null; prNumber?: number | null };
   /**
    * SESSION RE-HOME (mirrors {@link ChatStimulus.resumeThreadId}): when the owning job already has a live
-   * `ci` stage-thread, this event resumes/persists THAT thread's session instead of the job's planning
+   * `ci` thread group, this event resumes/persists THAT thread's session instead of the job's planning
    * thread — so a GitHub/CI webhook wakes the `ci` thread post-ship rather than dragging planning back in.
    * Derived at read time from the persisted `stimuli.lane` (`thread:<ciThreadId>`), same durable coordinate
    * `recordChatStimulus` already uses for chat — so a sweep re-drive resolves it identically to the first

@@ -152,8 +152,8 @@ export class JobLifecycleService {
     // outside `AutoMergeService.mergeNow`. No DI cycle: DriverStoreService doesn't depend on this service.
     @Optional()
     private readonly driverStore?: DriverStoreService,
-    // Bootstraps the job's ONE planning stage + thread right after the bare `JobEntity` row is inserted
-    // (d7: `stage_id` is never null, even for a job that never gets a plan). @Optional (trailing), same
+    // Bootstraps the job's ONE planning thread group + thread right after the bare `JobEntity` row is inserted
+    // (d7: `thread_group_id` is never null, even for a job that never gets a plan). @Optional (trailing), same
     // reason as `driverStore` above.
     @Optional()
     private readonly jobBootstrap?: JobBootstrapService,
@@ -230,9 +230,9 @@ export class JobLifecycleService {
       `created thread ${thread.id} for ${orgId}/${project.slug} on ${baseBranch}`,
     );
 
-    // Bootstrap the job's ONE planning stage + thread — d7: `stage_id` is never null, even for a job
+    // Bootstrap the job's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for a job
     // that never gets a plan proposed.
-    await this.jobBootstrap?.ensurePlanningStage(thread.id, orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, orgId);
 
     // Provision the sandbox on the base branch.
     const sandboxRow = await this.provisionSandbox(thread, project, baseBranch);

@@ -47,7 +47,7 @@ export class ChatStimulusBridge
     private readonly intake: StimulusIntake,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    // Bootstraps a freshly-opened chat-origin thread's ONE planning stage + thread (d7: `stage_id` is never
+    // Bootstraps a freshly-opened chat-origin thread's ONE planning thread group + thread (d7: `thread_group_id` is never
     // null). @Optional (trailing) so the existing direct-construction unit tests (positional args) keep
     // compiling without a trailing argument.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
@@ -145,9 +145,9 @@ export class ChatStimulusBridge
         title: null,
       }),
     );
-    // Bootstrap the thread's ONE planning stage + thread — d7: `stage_id` is never null, even for a
+    // Bootstrap the thread's ONE planning thread group + thread — d7: `thread_group_id` is never null, even for a
     // chat-origin thread that never gets a plan proposed.
-    await this.jobBootstrap?.ensurePlanningStage(thread.id, msg.orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(thread.id, msg.orgId);
     return thread;
   }
 }

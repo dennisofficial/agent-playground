@@ -42,6 +42,7 @@ export function limitFromRateEvent(info: {
     resetAt: resetEpochToIso(info.resetsAt),
     rateLimitType: info.rateLimitType,
     utilization: info.utilization,
+    source: 'structured',
   };
 }
 
@@ -102,4 +103,27 @@ export function parseResetAt(
   reset.setHours(hour, minutes, 0, 0);
   if (reset.getTime() <= now.getTime()) reset.setDate(reset.getDate() + 1);
   return reset.toISOString();
+}
+
+/** Build a text/thrown-error-fallback hit (no structured frame corroborated it). */
+export function textSessionLimitHit(text: string): SessionLimitHit {
+  return { source: 'text', resetAt: parseResetAt(text) };
+}
+
+/** A text-only hit is corroborated as a REAL wall only when the binding usage window is this full (0-100). */
+export const SESSION_LIMIT_CORROBORATE_MIN_UTIL = 95;
+/** Consecutive UNCORROBORATED text misfires before we give up and durably park anyway (backstop). */
+export const SESSION_LIMIT_TEXT_MISFIRE_MAX = 3;
+
+/** True when a session-limit hit should durably park WITHOUT needing the misfire count — a structured
+ *  frame, or a text hit the real usage window corroborates as near-capped. */
+export function isCorroboratedSessionLimit(
+  source: 'structured' | 'text' | undefined,
+  windowUtilization: number | undefined,
+): boolean {
+  if (source !== 'text') return true; // structured (or legacy/undefined) = genuine wall
+  return (
+    windowUtilization != null &&
+    windowUtilization >= SESSION_LIMIT_CORROBORATE_MIN_UTIL
+  );
 }

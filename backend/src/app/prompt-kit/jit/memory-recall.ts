@@ -6,7 +6,7 @@
 
 import { stripTags } from '../harness/tag-vocabulary';
 
-export type RecalledForPrefix = { fact: string; scope: string };
+export type RecalledForPrefix = { id: string; fact: string; scope: string };
 
 // Trivial-message thresholds (d2): below either, we skip the embedding call so "ok"/"thanks" never fire.
 const MIN_QUERY_CHARS = 12;
@@ -20,13 +20,18 @@ const MIN_QUERY_WORDS = 3;
 export function renderMemoryRecall(facts: RecalledForPrefix[]): string {
   if (facts.length === 0) return '';
   const lines = facts
-    .map((f) => stripTags(f.fact).replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-    .map((fact) => `  • ${fact}`);
+    .map((f) => ({
+      id: f.id,
+      text: stripTags(f.fact).replace(/\s+/g, ' ').trim(),
+    }))
+    .filter((f) => f.text)
+    .map((f) => `  • [${f.id}] ${f.text}`);
   if (lines.length === 0) return '';
   return (
     'Relevant memories recalled for this message (semantic match; may be partial — verify before ' +
-    `relying on them):\n${lines.join('\n')}`
+    `relying on them):\n${lines.join('\n')}\n` +
+    'To correct or drop any of these, call update_memory({ id, fact }) to rewrite one, or ' +
+    'forget({ id }) to delete one (use the [id] shown above).'
   );
 }
 

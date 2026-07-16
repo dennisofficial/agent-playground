@@ -10,7 +10,7 @@ import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, StageEntity, ThreadEntity } from '../persistence/entities';
+import { JobEntity, ThreadGroupEntity, ThreadEntity } from '../persistence/entities';
 import {
   TurnHarnessFactory,
   laneFor,
@@ -127,7 +127,7 @@ export interface PlanReviewRow {
 /** Parse a `plan_review` thread's `config` jsonb into the typed {@link PlanReviewConfig}, tolerating the
  *  migration backfill shape (`codexStatus`, findings stored as the serialized string) as well as forward
  *  writes (`status`, findings as `ReviewFinding[]`). */
-/** Stages/threads are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
+/** Thread groups/threads are gap-numbered (10, 20, 30…) so a re-plan can splice without renumbering. */
 const ORDINAL_GAP = 10;
 
 /** Rebuild the flat {@link PlanReviewRow} read-model from a `plan_review` thread row + its `config`.
@@ -192,8 +192,8 @@ export class PlanReviewService {
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
-    @InjectRepository(StageEntity, DB_CONNECTION)
-    private readonly stages: Repository<StageEntity>,
+    @InjectRepository(ThreadGroupEntity, DB_CONNECTION)
+    private readonly threadGroups: Repository<ThreadGroupEntity>,
     private readonly turnHarness: TurnHarnessFactory,
     private readonly election: LeaderElectionService,
     @Inject(BLOCK_SINK) private readonly blockSink: BlockSink,
@@ -248,7 +248,7 @@ export class PlanReviewService {
     const specHash = await this.hashSpecs(input.jobId, input.orgId);
     const isResume = Boolean(row?.codex_session_id);
 
-    // Find-or-create the job's `plan_review` stage + thread and flip its config to `running`. The thread IS
+    // Find-or-create the job's `plan_review` thread group + thread and flip its config to `running`. The thread IS
     // the authoritative work-owed/recovery source now (retired `codex_reviews`); the driver never executes
     // it (render-only role). Idempotent — a resume/re-review reuses the same thread.
     row = await this.persistRow(row, input, specHash, 'running', null, null);
@@ -496,24 +496,24 @@ export class PlanReviewService {
   }
 
   /**
-   * Find-or-create the job's ONE `plan_review` stage + its render/identity-only thread; returns the thread
-   * id. The stage appends after existing stages (gap-numbered); the thread is a top-level (parent null) row
+   * Find-or-create the job's ONE `plan_review` thread group + its render/identity-only thread; returns the thread
+   * id. The thread group appends after existing thread groups (gap-numbered); the thread is a top-level (parent null) row
    * whose ordinal is job-GLOBAL-unique (past the highest existing top-level ordinal — the `planning` thread
    * at 0), to satisfy the job-wide UNIQUE(job_id, parent_thread_id, ordinal). Idempotent: a resume/re-review
-   * reuses the same stage + thread. The driver never executes the row (render-only role).
+   * reuses the same thread group + thread. The driver never executes the row (render-only role).
    */
   private async ensurePlanReviewThread(
     jobId: string,
     orgId: string,
   ): Promise<string> {
-    let stage = await this.stages.findOne({
+    let threadGroup = await this.threadGroups.findOne({
       where: { job_id: jobId, kind: 'plan_review' },
       order: { ordinal: 'ASC' },
     });
-    if (!stage) {
-      const ordinal = (await this.maxOrdinal(this.stages, jobId)) + ORDINAL_GAP;
-      stage = await this.stages.save(
-        this.stages.create({
+    if (!threadGroup) {
+      const ordinal = (await this.maxOrdinal(this.threadGroups, jobId)) + ORDINAL_GAP;
+      threadGroup = await this.threadGroups.save(
+        this.threadGroups.create({
           job_id: jobId,
           org_id: orgId,
           ordinal,
@@ -523,7 +523,7 @@ export class PlanReviewService {
       );
     }
     const existingThread = await this.threads.findOne({
-      where: { stage_id: stage.id, role: 'plan_review' },
+      where: { thread_group_id: threadGroup.id, role: 'plan_review' },
     });
     if (existingThread) return existingThread.id;
     const threadOrdinal =
@@ -534,7 +534,7 @@ export class PlanReviewService {
       )) + ORDINAL_GAP;
     const thread = await this.threads.save(
       this.threads.create({
-        stage_id: stage.id,
+        thread_group_id: threadGroup.id,
         job_id: jobId,
         org_id: orgId,
         role: 'plan_review',
@@ -551,7 +551,7 @@ export class PlanReviewService {
 
   /**
    * Upsert the job's plan-review state onto its `plan_review` thread's `config` (find-or-creating the
-   * stage + thread), fold the Codex session onto `thread.session_id` (done by the caller's session event),
+   * thread group + thread), fold the Codex session onto `thread.session_id` (done by the caller's session event),
    * and return the flat {@link PlanReviewRow}. A transition to `running` refreshes the spec hash + clears
    * stale findings; `resumeCount` is the plan-version/round number, bumped ONLY when the specs actually
    * changed (a genuine re-review). A same-spec_hash re-drive is a RECOVERY of the same round — keep the

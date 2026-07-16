@@ -8,7 +8,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   MessageEntity,
-  StageEntity,
+  ThreadGroupEntity,
   RepoEntity,
   ThreadEntity,
   StimulusEntity,
@@ -22,6 +22,7 @@ import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import { JitHostExecutor } from './jit-host-executor';
 import { PlanReviewService } from './plan-review.service';
+import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
 import { TurnRecoveryService } from './turn-recovery.service';
 
 /**
@@ -58,7 +59,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
       [
         JobEntity,
         MessageEntity,
-        StageEntity,
+        ThreadGroupEntity,
         DecisionRecordEntity,
         ThreadEntity,
         StimulusEntity,
@@ -76,6 +77,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     AgentSessionManager,
     DrainService,
     JitHostExecutor,
+    SelfSufficiencyToolsService,
     // INPUT SEAM — the brain IS the sink (chat → its session, event → a harness-message delivery).
     {
       provide: BRAIN_SINK,
@@ -96,6 +98,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     DecisionApprovalService,
     BrainStoreService,
     JitHostExecutor,
+    SelfSufficiencyToolsService,
     BRAIN_SINK,
   ],
 })

@@ -9,28 +9,28 @@ import {
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { OrganizationEntity } from './organization.entity';
 import { JobEntity } from './job.entity';
-import { StageEntity } from './stage.entity';
+import { ThreadGroupEntity } from './thread-group.entity';
 import type { ReviewFinding } from '../../autofix/autofix.types';
 
 /**
  * One THREAD of a job — a first-class, typed lane differentiated only by `role` (`planning | builder |
  * master_review | review_agent | review_fix | plan_review | post_build | ci`) and related by
  * `parent_thread_id` (a builder is the parent of its `review_agent`/`review_fix` siblings, now grouped
- * primarily via `stage_id` per d2). Builders stack on the job's one feature branch and run sequentially
- * (ORDER BY ordinal) as the stage's rotating legs (d1); non-build roles are singletons. `status` is the
+ * primarily via `thread_group_id` per d2). Builders stack on the job's one feature branch and run sequentially
+ * (ORDER BY ordinal) as the thread group's rotating legs (d1); non-build roles are singletons. `status` is the
  * explicit, resumable cursor. Gap-numbered ordinals so a re-plan can splice without renumbering.
  *
  * Which roles the driver actually EXECUTES vs merely renders is owned by the `thread-kind`/role registry
  * (thread 2), not this row — the row is just typed state + tree structure. Every thread belongs to
- * exactly one stage (`stage_id` NOT NULL, d7) — stages are the pipeline unit; threads are its rows.
+ * exactly one thread group (`thread_group_id` NOT NULL, d7) — thread groups are the pipeline unit; threads are its rows.
  */
 @Entity({ name: 'threads' })
 @Index(['job_id'])
-@Index(['stage_id'])
+@Index(['thread_group_id'])
 @Index(['parent_thread_id'])
 // Hands-off: uq_threads_job_parent_ordinal is UNIQUE(job_id, decision_record_id, parent_thread_id, ordinal)
 // … NULLS NOT DISTINCT, unexpressible in TypeORM metadata. The DDL lives in the migrations; this only
-// tells migration:generate never to DROP it. `decision_record_id` moved to `stages` (d7); this legacy
+// tells migration:generate never to DROP it. `decision_record_id` moved to `thread_groups` (d7); this legacy
 // index name is kept as-is (renaming it is cosmetic, not load-bearing) but now only covers
 // (job_id, parent_thread_id, ordinal).
 @Index('uq_threads_job_parent_ordinal', { synchronize: false })
@@ -46,22 +46,22 @@ export class ThreadEntity extends TimestampedEntity {
   @JoinColumn({ name: 'job_id' })
   thread?: JobEntity;
 
-  /** The owning stage (FK → stages.id) — every thread belongs to exactly one stage (d2/d7). NOT NULL:
+  /** The owning thread group (FK → thread_groups.id) — every thread belongs to exactly one thread group (d2/d7). NOT NULL:
    *  there is no job-level ungrouped thread. */
   @Column({ type: 'uuid' })
-  stage_id!: string;
+  thread_group_id!: string;
 
-  @ManyToOne(() => StageEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'stage_id' })
-  stage?: StageEntity;
+  @ManyToOne(() => ThreadGroupEntity, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'thread_group_id' })
+  threadGroup?: ThreadGroupEntity;
 
   /**
    * The thread ROLE — `planning | builder | master_review | review_agent | review_fix | plan_review |
    * post_build | ci`. The single differentiator across all thread-like concepts (subsumes
-   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `stage.kind`). The role
+   * `is_master_review`; renamed from `kind`, d2/d7 — grouping now lives on `threadGroup.kind`). The role
    * registry (thread 2) binds each role to a prompt-kit `Agent`, an engine, a driver mode, and the
    * operator-chat toggle (d12). Executable roles (`builder`, `master_review`) are driven as top-level
-   * stage members; `review_agent`/`review_fix` are driven as stage-scoped children; `planning`/
+   * thread group members; `review_agent`/`review_fix` are driven as thread-group-scoped children; `planning`/
    * `plan_review`/`post_build`/`ci` reuse the brain's prompting (d14). No column default — every write
    * site sets it explicitly (persistPlan / the child-thread materializer). Stays `text` (no DB enum); the
    * union type lives in code (thread 2).
@@ -149,7 +149,7 @@ export class ThreadEntity extends TimestampedEntity {
   @Column({ type: 'text', default: 'pending' })
   status!: string;
 
-  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record/halt_outcome)
+  // 'none' | 'paused' | 'incomplete' | 'failed' | 'skipped' — the orthogonal condition overlay (ADR-0004 detail stays in terminal_record)
   @Column({ type: 'text', default: 'none' })
   condition!: string;
 
@@ -163,8 +163,8 @@ export class ThreadEntity extends TimestampedEntity {
 
   /**
    * Set on commit, mirroring the old `steps.commit_sha` batch-anchor marker (relocated by d5). Per d13
-   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build stage reviewers
-   * receive the range `start_sha..commit_sha` (the stage's cumulative diff). Sentinel `(nothing)` =
+   * its role is the REVIEW DIFF head, not a resume/crash guard: build/direct_build thread group reviewers
+   * receive the range `start_sha..commit_sha` (the thread group's cumulative diff). Sentinel `(nothing)` =
    * "committed, empty diff". Null on non-build roles and before the thread's first commit.
    */
   @Column({ type: 'text', nullable: true })
@@ -183,72 +183,14 @@ export class ThreadEntity extends TimestampedEntity {
   deviations!: DeviationEntry[];
 
   /**
-   * The thread's TYPED terminal assertion — written by the orchestrator's `complete_thread`/`block_thread`
-   * tool call at the end of its build turn, then READ by the driver to decide the thread's outcome instead
-   * of inferring it from whether the turn threw (ADR 0004). Null until the tool is called; a clean turn
-   * that never wrote one is treated as `incomplete`, NOT `done`. `nullable` (no jsonb function-default — a
+   * The thread's TYPED done-report — written by the orchestrator's `complete_thread` tool call at the end of
+   * its build turn, then READ by the driver to decide the thread's outcome instead of inferring it from
+   * whether the turn threw. Its mere presence means `done`; a turn that never wrote one is treated as
+   * `incomplete` ("not done — needs the operator"), NOT `done`. `nullable` (no jsonb function-default — a
    * `() => '...'::jsonb` default makes `migration:generate` loop forever; nullable avoids a default entirely).
    */
   @Column({ type: 'jsonb', nullable: true })
   terminal_record!: ThreadTerminalRecord | null;
-
-  /**
-   * Phase 3 (ADR 0004 rider 4) — the "a halt is OWED a brain wake" signal. Set by the driver's `haltJob`
-   * to the non-`done` outcome (`blocked`/`incomplete`/`failed`) the moment a thread halts; the driver then
-   * wakes the job brain to triage it. Distinct from `terminal_record` (which is null for `incomplete`) and
-   * from a `request_operator_input` `awaiting_input` pause (which never sets this), so the owed-wake sweep
-   * keys on it unambiguously. Cleared on a re-drive so a fresh halt re-arms the wake. Null = no owed halt.
-   */
-  @Column({ type: 'text', nullable: true })
-  halt_outcome!: string | null;
-
-  /**
-   * Phase 3 halt-wake DEDUP marker. Stamped (generation-checked against `halt_fix_attempts`) only AFTER the
-   * brain wake turn is delivered; NULL while a wake is owed, so a crash before the stamp lets the boot sweep
-   * re-fire (at-least-once, matching the event/chat delivery sweeps). Cleared on a re-drive.
-   */
-  @Column({ type: 'timestamptz', nullable: true })
-  halt_waked_at!: Date | null;
-
-  /**
-   * Phase 3 LIFETIME autonomous re-drive budget AND the generation token for the wake-stamp CAS. CAS-
-   * incremented by the brain's `retry_thread` tool before each re-drive; over the cap the tool refuses and
-   * the brain must escalate. The increment also invalidates a stale wake's late stamp. Never resets.
-   */
-  @Column({ type: 'int', default: 0 })
-  halt_fix_attempts!: number;
-
-  /**
-   * Completion-wake OWED signal (mirrors {@link halt_outcome} for the clean-completion path, decision d1).
-   * Set true by `setDoneWakeOwed` only when a completion qualifies for an autonomous brain wake: the FINAL
-   * thread of a build (parked at the ship gate) or a NOTABLE completion (finished `done` but carrying
-   * gaps/unverified items). Intermediate clean completions never set it — they keep the cheap note-and-queue.
-   * The owed-wake sweep delivers it at-least-once. Unlike the halt path there is no generation CAS: a `done`
-   * thread is never re-driven, so the `done_waked_at IS NULL` guard alone is enough.
-   */
-  @Column({ type: 'boolean', default: false })
-  done_wake_owed!: boolean;
-
-  /** Why the completion wake was owed — `'final'` (whole build parked at ship gate) or `'notable'`
-   *  (done-with-gaps). Drives the wake framing. Null when no done-wake is owed. */
-  @Column({ type: 'text', nullable: true })
-  done_wake_reason!: string | null;
-
-  /** Completion-wake DEDUP marker: stamped by `markDoneWaked` only on the wake turn's SUCCESS TAIL (null
-   *  while owed), so a crash before the stamp lets the boot sweep re-fire (at-least-once). */
-  @Column({ type: 'timestamptz', nullable: true })
-  done_waked_at!: Date | null;
-
-  /**
-   * Completion-wake GENERATION token (mirrors {@link halt_fix_attempts}) — the wake-stamp CAS key AND the
-   * partial-supersede key. Atomically bumped by `claimDoneWakeGen` at each delivery START; the fresh value
-   * tags every durable block of that delivery (`meta.doneWakeGen` / `meta.doneWakeThreadId` via the harness
-   * `metaTag`) and keys `markDoneWaked`'s CAS. So a stale (crashed mid-stream) attempt's late stamp matches
-   * zero rows, and its truncated partial rows are deleted by the next attempt's `supersedeDoneWakeMessages`.
-   * Never resets — a `done` thread is never re-driven.
-   */
-  @Column({ type: 'int', default: 0 })
-  done_wake_gen!: number;
 
   /**
    * The thread's START HEAD — the feature-branch sha captured ONCE, the first time the thread begins
@@ -277,16 +219,19 @@ export interface SessionAnchor {
 }
 
 /**
- * A thread's typed terminal assertion (see {@link ThreadEntity.terminal_record}). The orchestrator writes
- * exactly one at the end of its work; the driver reads it to branch done / blocked / failed / incomplete.
+ * A thread's DONE-REPORT — the typed terminal assertion (see {@link ThreadEntity.terminal_record}) the
+ * orchestrator writes via `complete_thread`. Its mere presence means the thread is DONE (the host runs no
+ * verification gate); a turn that never wrote one is `incomplete` ("not done — needs the operator"). The
+ * self-reported `verification[]` is surfaced honestly on the ship card, ungraded.
  */
 export interface ThreadTerminalRecord {
-  status: 'done' | 'blocked' | 'failed';
-  /** One-line summary of what the thread did (or why it's blocked/failed). */
+  status: 'done';
+  /** One-line summary of what the thread did. */
   summary: string;
   /** What changed, terse — feeds the next thread's handoff. */
   changes?: string[];
-  /** Verification the orchestrator actually ran, with captured evidence (not prose claims). */
+  /** Verification the orchestrator actually ran, with captured evidence (not prose claims). Self-reported;
+   *  no judge grades it — the ship card surfaces it verbatim. */
   verification?: {
     kind: string;
     command: string;
@@ -295,52 +240,9 @@ export interface ThreadTerminalRecord {
   }[];
   /** Off-spec changes the orchestrator flagged. */
   deviations?: string[];
-  /** Honest known gaps / things to know — routed to the brain + next-thread orientation. */
+  /** Honest known gaps / things to know — routed to the brain + next-thread orientation, and any advisory
+   *  host observation (e.g. "committed nothing"). */
   gaps?: string[];
-  /** Set when status='blocked' (Phase 3 `block_thread`, or the ADR-0005 live-verification judge downgrade).
-   *  `judge_unavailable` is distinct from `unverified`: the work may well be verified, but the judge itself
-   *  was UNREACHABLE (transient Anthropic outage / key rate-or-credit limit) — a done thread must HOLD and
-   *  retry when the service recovers, NOT burn its autonomous fix budget and rest as `budget_exhausted`. */
-  blocked?: {
-    reason:
-      | 'question'
-      | 'needs_env'
-      | 'decision'
-      | 'unverified'
-      | 'judge_unavailable';
-    detail: string;
-  };
-  /** Operator "Skip & accept" marker for a judge_unavailable hold (jsonb, no migration): set by
-   *  `operatorAcceptStuckThread`, consumed + cleared by `finalizeAcceptedThread` inside the drive. */
-  acceptRequested?: boolean;
-  /** Set when status='failed' — the structured failure the driver relays. */
-  failure?: {
-    kind: 'build' | 'verification';
-    failingStep?: string;
-    command?: string;
-    exitCode?: number;
-    stderrTail?: string;
-  };
-  /** The ADR-0005 live-verification judge's verdict on this claim, when the gate ran. The basis for the
-   *  `blocked`/`unverified` downgrade above (also recorded when the claim passed, for observability). */
-  liveVerification?: {
-    verdict: {
-      runtimeSurfaceTouched: boolean;
-      liveVerificationAdequate: boolean;
-      reason: string;
-      missingChecks?: string;
-    };
-  };
-  /** The static-check judge's verdict on this claim (typecheck/lint/diagnostics/tests, "if applicable"), when
-   *  the sibling gate ran. Basis for a `blocked`/`unverified` downgrade (also recorded when the claim passed,
-   *  for observability). jsonb — no migration. */
-  staticVerification?: {
-    verdict: {
-      staticChecksAdequate: boolean;
-      reason: string;
-      missingChecks?: string;
-    };
-  };
 }
 
 /** One inline out-of-scope fix the orchestrator made while building a thread (see {@link ThreadEntity.deviations}). */
@@ -360,7 +262,8 @@ export interface ReviewAgentState {
   findings?: number;
 }
 
-/** One LLM-authored task, folded from `TaskCreate`/`TaskUpdate` tool calls (see `ThreadEntity.tasks`). */
+/** One LLM-authored task, written via the `task_create`/`task_update` host-bridge tools directly into a
+ *  stage-owned `TaskEntity` row (mirrored here as the read/wire shape). */
 export interface TaskItem {
   id: string;
   subject: string;

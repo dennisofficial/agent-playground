@@ -63,11 +63,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   request_operator_input: {
     question: z.string(),
   },
-  block_thread: {
-    reason: z.enum(['question', 'needs_env', 'decision']),
-    detail: z.string(),
-    gaps: z.array(z.string()).optional(),
-  },
   record_leg_handoff: {
     handoff: z.string(),
   },
@@ -98,6 +93,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     addBlocks: z.array(z.string()).optional(),
     removeBlocks: z.array(z.string()).optional(),
   },
+  task_list: {},
+  task_get: { taskId: z.string() },
   // Superset serving BOTH the driver gate and the brain — all fields optional.
   report_verification: {
     passed: z.boolean().optional(),
@@ -121,6 +118,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     fact: z.string(),
     scope: z.string().optional(),
   },
+  forget: { id: z.string() },
+  update_memory: { id: z.string(), fact: z.string() },
   ask_question: {
     question: z.string(),
     options: z
@@ -181,6 +180,8 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     overview: z.string(),
     goal: z.string(),
     kind: z.string().optional(),
+    // When true, re-title the job from `goal` via the titler; when omitted/false, keep the current title.
+    rename: z.boolean().optional(),
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
   },
@@ -397,9 +398,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'one-line summary plus, ideally, the changes you made and the verification you ran.',
   request_operator_input:
     'Ask the operator a blocking question when you need a human decision before you can continue.',
-  block_thread:
-    'Voluntarily HALT this thread — you cannot make progress this turn and there is nothing to poll for. ' +
-    'Use complete_thread when done instead.',
   record_leg_handoff:
     'Record a handoff note for the next leg of this thread before you stop.',
   record_deviation:
@@ -410,6 +408,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   task_update:
     'Update one task in your live task list — mark it in_progress when you start it and completed when it ' +
     'is done (exactly one task should be in_progress at a time). Use status "deleted" to remove a task.',
+  task_list:
+    'List your current live task list (every task in this thread, with its status and any blockers).',
+  task_get:
+    'Get the full detail (description, activeForm, blockedBy) of one task in your live list by its id.',
   report_verification:
     'Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once ' +
     'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
@@ -438,6 +440,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'List the convention (house-style) profiles for this repo.',
   recall: 'Recall stored facts relevant to an optional query.',
   remember: 'Store a durable fact at the given scope for later recall.',
+  forget: 'Delete (soft) a stored memory by its id.',
+  update_memory: 'Rewrite a stored memory fact by its id (re-embeds).',
   ask_question:
     'Ask the operator a question, optionally with pickable options and a decision class.',
   withdraw_question: 'Withdraw a pending question you no longer need answered.',
@@ -544,6 +548,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 export function toolJsonSchema(name: string): Record<string, unknown> {
   const shape = TOOL_SHAPES[name];
   return shape
-    ? (z.toJSONSchema(z.object(shape)) as Record<string, unknown>)
+    ? z.toJSONSchema(z.object(shape))
     : { type: 'object', additionalProperties: true };
 }

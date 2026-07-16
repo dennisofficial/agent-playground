@@ -38,10 +38,8 @@ import {
   renameJob,
   setAutoApprove,
   setAutoMerge,
-  acceptThread,
   retryJob,
   retryTurn,
-  retryVerification,
   sayMessage,
   sayMessageWithFiles,
   shipWithoutReview,
@@ -494,34 +492,6 @@ export function useRetryJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (opts?: { force?: boolean }) => retryJob(ref, opts),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
-}
-
-/** "Retry now" on a `judge_unavailable`-stuck thread — force a fresh re-drive of the live judge. Refreshes
- *  the pipeline (the lane flips back to running) + messages + the job list. */
-export function useRetryVerification(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (threadId: string) => retryVerification(ref, threadId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.allJobs() });
-    },
-  });
-}
-
-/** "Skip & accept" on a `judge_unavailable`-stuck thread — force-complete it (bypassing only the live
- *  judge) and advance the job. Refreshes the pipeline (the lane flips to done) + messages + the job list. */
-export function useAcceptThread(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (threadId: string) => acceptThread(ref, threadId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });

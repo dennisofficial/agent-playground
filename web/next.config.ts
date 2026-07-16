@@ -7,7 +7,7 @@ import "./src/lib/env";
 // server, which otherwise blocks `/_next/*` assets + the HMR socket with a 403 and leaves the
 // app stuck loading. Allow any preview service subdomain (one label under the preview domain).
 const previewDomain = process.env.ATLAS_PREVIEW_DOMAIN;
-const allowedDevOrigins = [previewDomain ? `*.${previewDomain}` : "*.atlas.dltechnologies.co"];
+const allowedDevOrigins = [previewDomain ? `*.${previewDomain}` : "*.preview.byatlas.io"];
 
 const nextConfig: NextConfig = {
   reactCompiler: true,

@@ -58,11 +58,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     gaps: ['No pagination yet.'],
   },
   request_operator_input: { question: 'Which environment should this target?' },
-  block_thread: {
-    reason: 'question',
-    detail: 'Need operator input to continue.',
-    gaps: ['Missing creds.'],
-  },
   record_leg_handoff: {
     handoff: 'Finished the migration; next leg wires the API.',
   },
@@ -89,6 +84,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     addBlocks: ['3'],
     removeBlocks: ['4'],
   },
+  task_list: {},
+  task_get: { taskId: 't1' },
   report_verification: {
     passed: true,
     verification: verificationPayload,
@@ -106,6 +103,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   list_convention_profiles: {},
   recall: { query: 'ledger schema' },
   remember: { fact: 'The ledger uses Postgres.', scope: 'repo' },
+  forget: { id: 'm1' },
+  update_memory: { id: 'm1', fact: 'The ledger uses Postgres 16.' },
   ask_question: {
     question: 'Which option should we go with?',
     options: [
@@ -288,7 +287,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   atlas_worktree_tree: { jobId: 'j1', subpath: 'src' },
   atlas_worktree_file: { jobId: 'j1', path: 'src/index.ts' },
   propose_prod_write: {
-    sql: "UPDATE threads SET halt_fix_attempts = 0 WHERE id = 't1'",
+    sql: "UPDATE threads SET ordinal = 0 WHERE id = 't1'",
   },
 };
 

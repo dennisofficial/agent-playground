@@ -14,11 +14,17 @@ export type { AtlasHostBridgeTool };
  * isn't reflected here is a compile error — no more silent drift.
  */
 export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
+  task_create: "Add task",
+  task_update: "Update task",
+  task_list: "Tasks",
+  task_get: "Task",
   report_verification: "Report verification",
   get_pipeline_state: "Pipeline state",
   get_decision_record: "Decision record",
   recall: "Recall memory",
   remember: "Remember",
+  forget: "Forget memory",
+  update_memory: "Update memory",
   ask_question: "Ask question",
   create_decision: "Lock decision",
   withdraw_question: "Withdraw question",

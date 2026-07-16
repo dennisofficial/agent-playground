@@ -69,13 +69,13 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       setCurrentBranch: vi.fn(async () => undefined),
       // The gate spawns `post_build` (not `ship()`); kept mocked for any incidental callers.
       ensurePostBuildThread: vi.fn(async () => ({
-        stageId: 'stage1',
+        threadGroupId: 'tg1',
         threadId: 'pb1',
       })),
-      // The ship path now ensures the `ci` stage-thread BEFORE the open-PR seed and enqueues the turn onto
-      // its session; latchPr re-ensures it once the PR is recorded (post-ship seam, d14).
+      // The ship path now ensures the `ci` thread-group thread BEFORE the open-PR seed and enqueues the turn
+      // onto its session; latchPr re-ensures it once the PR is recorded (post-ship seam, d14).
       ensureCiThread: vi.fn(async () => ({
-        stageId: 'stage2',
+        threadGroupId: 'tg2',
         threadId: 'ci1',
       })),
       ...over,
@@ -153,6 +153,18 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
       'j1',
       'https://github.com/acme/widget/pull/7',
       7,
+    );
+    expect(store.ensureCiThread).toHaveBeenCalledWith({
+      jobId: 'j1',
+      orgId: 'o1',
+      decisionRecordId: null,
+    });
+    expect(
+      (store.ensureCiThread as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      (store.setPrReady as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0],
     );
     expect(store.setJobStatus).not.toHaveBeenCalled();
     expect(result).toEqual({

@@ -53,7 +53,7 @@ async function purge(ds: DataSource): Promise<void> {
   await ds.query(`DELETE FROM organizations WHERE id = $1`, [ORG_ID]);
 }
 
-async function insertStage(
+async function insertThreadGroup(
   ds: DataSource,
   args: {
     jobId: string;
@@ -62,7 +62,7 @@ async function insertStage(
   },
 ): Promise<string> {
   const rows = await ds.query(
-    `INSERT INTO stages (job_id, org_id, ordinal, kind, decision_record_id)
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind, decision_record_id)
      VALUES ($1, $2, $3, 'build', $4) RETURNING id`,
     [args.jobId, ORG_ID, args.ordinal, args.decisionRecordId ?? null],
   );
@@ -142,13 +142,13 @@ describe('restored schema indexes (live Postgres)', () => {
     );
     const jobId = jobRows[0].id as string;
 
-    const stageId = await insertStage(ds, { jobId, ordinal: 10 });
+    const threadGroupId = await insertThreadGroup(ds, { jobId, ordinal: 10 });
 
     const insertThread = () =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, stage_id, role, ordinal, brief, parent_thread_id)
+        `INSERT INTO threads (job_id, org_id, thread_group_id, role, ordinal, brief, parent_thread_id)
          VALUES ($1, $2, $3, 'builder', 10, 'first', NULL)`,
-        [jobId, ORG_ID, stageId],
+        [jobId, ORG_ID, threadGroupId],
       );
 
     await insertThread();
@@ -180,26 +180,26 @@ describe('restored schema indexes (live Postgres)', () => {
        VALUES ($1, $2, $3, 'rev one'), ($1, $2, $3, 'rev two') RETURNING id`,
       [ORG_ID, repoId, jobId],
     );
-    const [stageA, stageB] = await Promise.all([
-      insertStage(ds, {
+    const [threadGroupA, threadGroupB] = await Promise.all([
+      insertThreadGroup(ds, {
         jobId,
         ordinal: 10,
         decisionRecordId: recRows[0].id as string,
       }),
-      insertStage(ds, {
+      insertThreadGroup(ds, {
         jobId,
         ordinal: 20,
         decisionRecordId: recRows[1].id as string,
       }),
     ]);
-    const insertAt10 = (stageId: string) =>
+    const insertAt10 = (threadGroupId: string) =>
       ds.query(
-        `INSERT INTO threads (job_id, org_id, stage_id, role, ordinal, brief, parent_thread_id)
+        `INSERT INTO threads (job_id, org_id, thread_group_id, role, ordinal, brief, parent_thread_id)
          VALUES ($1, $2, $3, 'builder', 10, 'lane', NULL)`,
-        [jobId, ORG_ID, stageId],
+        [jobId, ORG_ID, threadGroupId],
       );
-    // `decision_record_id` now lives on stages, not threads, so root thread ordinals are job-global.
-    await insertAt10(stageA);
-    await expect(insertAt10(stageB)).rejects.toThrow();
+    // `decision_record_id` now lives on thread_groups, not threads, so root thread ordinals are job-global.
+    await insertAt10(threadGroupA);
+    await expect(insertAt10(threadGroupB)).rejects.toThrow();
   });
 });

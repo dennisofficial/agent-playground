@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { AppDataSource } from './data-source';
-import { MessageEntity, StageEntity, ThreadEntity } from '../src/app/persistence/entities';
+import { MessageEntity, ThreadGroupEntity, ThreadEntity } from '../src/app/persistence/entities';
 import { atlasAgentHomeBase } from '../src/app/engine/engine-home';
 import { parseSessionTranscriptTurns } from '../src/app/brain/session-transcript';
 import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
@@ -93,18 +93,18 @@ async function main(): Promise<void> {
   await AppDataSource.initialize();
   try {
     const messages = AppDataSource.getRepository(MessageEntity);
-    const stage = await AppDataSource.getRepository(StageEntity).findOne({
+    const threadGroup = await AppDataSource.getRepository(ThreadGroupEntity).findOne({
       where: { job_id: jobId, kind: 'planning' },
       order: { ordinal: 'ASC' },
     });
-    const planningThread = stage
+    const planningThread = threadGroup
       ? await AppDataSource.getRepository(ThreadEntity).findOne({
-          where: { stage_id: stage.id },
+          where: { thread_group_id: threadGroup.id },
           order: { ordinal: 'ASC' },
         })
       : null;
     if (!planningThread) {
-      console.error(`recover-turn: job ${jobId} has no planning-stage thread to anchor recovered messages`);
+      console.error(`recover-turn: job ${jobId} has no planning thread group thread to anchor recovered messages`);
       process.exit(1);
     }
     const inserted = await backfillThreadFromTurns(messages, jobId, planningThread.id, recoverable);

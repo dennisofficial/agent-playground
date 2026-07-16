@@ -168,7 +168,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     surface.post.mockClear();
     surface.seedSystemNotification.mockClear();
     await ds.query(
-      'TRUNCATE prod_maintenance_write, messages, tasks, threads, stages, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE prod_maintenance_write, messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -187,20 +187,19 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         base_branch: BASE_BRANCH,
       }),
     );
-    const [stage] = await ds.query(
-      `INSERT INTO stages (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    const [threadGroup] = await ds.query(
+      `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
       [job.id, ORG_ID],
     );
     const thread = await threads.save(
       threads.create({
-        stage_id: stage.id,
+        thread_group_id: threadGroup.id,
         role: 'builder',
         job_id: job.id,
         org_id: ORG_ID,
-        ordinal: 10,
+        ordinal: 3,
         brief: 'Backend — deadlocked at the fix cap',
         status: 'executing',
-        halt_fix_attempts: 3,
       }),
     );
     return { jobId: job.id, threadId: thread.id };
@@ -223,7 +222,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
   it('propose → pending ledger row + durable card, target row UNCHANGED (writer untouched pre-approval)', async () => {
     const { jobId, threadId } = await seedDeadlockedThread();
-    const sql = `UPDATE threads SET halt_fix_attempts = 0 WHERE id = '${threadId}'`;
+    const sql = `UPDATE threads SET ordinal = 0 WHERE id = '${threadId}'`;
 
     const res = await svc.proposeWrite(stimulusFor(jobId), sql);
     expect(res.ok).toBe(true);
@@ -259,12 +258,12 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     // A live SSE nudge was posted — but NO write ran: the target row is untouched.
     expect(surface.post).toHaveBeenCalledTimes(1);
     const after = await threads.findOne({ where: { id: threadId } });
-    expect(after?.halt_fix_attempts).toBe(3);
+    expect(after?.ordinal).toBe(3);
   });
 
   it('executeApproved → runs on mcp_writer, row CHANGES, ledger executed w/ affectedRows, job notified', async () => {
     const { jobId, threadId } = await seedDeadlockedThread();
-    const sql = `UPDATE threads SET halt_fix_attempts = 0 WHERE id = '${threadId}'`;
+    const sql = `UPDATE threads SET ordinal = 0 WHERE id = '${threadId}'`;
     const { writeId } = await svc.proposeWrite(stimulusFor(jobId), sql);
 
     await svc.executeApproved(writeId, APPROVER_ID, jobId);
@@ -279,7 +278,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
     // The real mutation landed via the DML-only role.
     const after = await threads.findOne({ where: { id: threadId } });
-    expect(after?.halt_fix_attempts).toBe(0);
+    expect(after?.ordinal).toBe(0);
 
     // The job was notified of the outcome.
     expect(surface.seedSystemNotification).toHaveBeenCalledTimes(1);
@@ -308,7 +307,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
 
   it('denyWrite → rejected, no mutation', async () => {
     const { jobId, threadId } = await seedDeadlockedThread();
-    const sql = `UPDATE threads SET halt_fix_attempts = 0 WHERE id = '${threadId}'`;
+    const sql = `UPDATE threads SET ordinal = 0 WHERE id = '${threadId}'`;
     const { writeId } = await svc.proposeWrite(stimulusFor(jobId), sql);
 
     await svc.denyWrite(writeId, APPROVER_ID, jobId);
@@ -317,7 +316,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     expect(row?.status).toBe('rejected');
     expect(row?.approved_by).toBe(APPROVER_ID);
     const after = await threads.findOne({ where: { id: threadId } });
-    expect(after?.halt_fix_attempts).toBe(3); // untouched
+    expect(after?.ordinal).toBe(3); // untouched
     const card = await messages.findOne({
       where: {
         job_id: jobId,

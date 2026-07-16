@@ -40,11 +40,9 @@ import { cn } from "@/lib/cn";
 import { pipelineJob, resolveJob, ThreadApiError } from "@/lib/api/job-api";
 import { isOutputGroupHidden } from "./output-group";
 import {
-  useAcceptThread,
   useJobCreatedJobs,
   useJobDiffSummary,
   useRetryJob,
-  useRetryVerification,
   useServices,
   useShipWithoutReview,
 } from "@/lib/api/job-queries";
@@ -832,23 +830,26 @@ function ThreadRows({
     );
   }
 
-  // One renderer for every stage: running/done/failed threads expand to their live task list; pre-approval
-  // drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the hero ghost row —
-  // EXCEPT a committed direct build, which never grows lanes, so its "approve the plan" ghost is just noise.
+  // One renderer for every thread group: running/done/failed threads expand to their live task list;
+  // pre-approval drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the
+  // hero ghost row — EXCEPT a committed direct build, which never grows lanes, so its "approve the plan"
+  // ghost is just noise.
   // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
   // build over already-DONE work can leave the active lanes empty while history persists — show history then.
   const prior = job?.priorRevisions ?? [];
-  // The tree renders every stage EXCEPT planning/plan_review (those are pinned above), so "no lanes yet" is
-  // the absence of any buildable stage — not just an empty stage list.
-  const hasBuildStages =
+  // The tree renders every thread group EXCEPT planning/plan_review (those are pinned above), so "no lanes
+  // yet" is the absence of any buildable thread group — not just an empty thread group list.
+  const hasBuildThreadGroups =
     job != null &&
-    job.stages.some((s) => s.kind !== "planning" && s.kind !== "plan_review");
-  if (!job || (!hasBuildStages && prior.length === 0)) {
+    job.threadGroups.some(
+      (s) => s.kind !== "planning" && s.kind !== "plan_review",
+    );
+  if (!job || (!hasBuildThreadGroups && prior.length === 0)) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
   return (
     <>
-      {hasBuildStages ? (
+      {hasBuildThreadGroups ? (
         <PipelineTree
           job={job}
           status={status}
@@ -890,7 +891,11 @@ function PriorRevisionSection({
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const revJob: PipelineJob = { ...job, stages: revision.stages, halt: null };
+  const revJob: PipelineJob = {
+    ...job,
+    threadGroups: revision.threadGroups,
+    halt: null,
+  };
   return (
     <details className="mt-1 opacity-70">
       <summary className="cursor-pointer list-none px-2 py-1.5 text-[10.5px] font-medium uppercase tracking-wide text-dim">
@@ -1309,93 +1314,20 @@ function StateBanner({
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
-  /** Surface a human-readable notice (the server's refusal `reason`) — a stuck-thread control that the
-   *  backend declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
+  /** Surface a human-readable notice (the server's refusal `reason`) — a banner control the backend
+   *  declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
   onNotice: (message: string) => void;
 }) {
   const retry = useRetryJob(jobRef);
-  const retryVerification = useRetryVerification(jobRef);
-  const acceptThread = useAcceptThread(jobRef);
   const shipWithoutReview = useShipWithoutReview(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
 
-  // The judge_unavailable escape hatch takes precedence over the classic job.halt banners: a thread held on
-  // a verification-judge outage stays recoverable both during patient auto-retry (job.halt still null) AND
-  // after the backstop rest stamps job.halt='incomplete' — the classic Retry can't re-run a blocked lane.
-  const stuck = job?.stages
-    .flatMap((s) => s.threads)
-    .find(
-      (t) => t.condition === "paused" && t.blockReason === "judge_unavailable",
-    );
-  if (stuck) {
-    const pending = retryVerification.isPending || acceptThread.isPending;
-    // The endpoints return HTTP 200 with `{ ok:false, reason }` for expected refusals (hold isn't
-    // judge_unavailable, static gate not passed, drive in flight, thread already done, …). `webJson` only
-    // throws on non-2xx, so those resolve as mutation "success" — inspect `res.ok` and toast the server's
-    // `reason` instead of navigating away as if the bypass worked.
-    const onRetryNow = () =>
-      retryVerification.mutate(stuck.id, {
-        onSuccess: (res) =>
-          res.ok
-            ? onConversation()
-            : onNotice(res.reason ?? "Retry was refused."),
-      });
-    const onAccept = () =>
-      acceptThread.mutate(stuck.id, {
-        onSuccess: (res) =>
-          res.ok
-            ? onConversation()
-            : onNotice(res.reason ?? "Accept was refused."),
-      });
-    // "Skip & accept" shows only when the LIVE judge was the outage and the static gate already passed (d4);
-    // "Retry now" is always safe (it just re-runs the judge), so it shows for any judge_unavailable hold.
-    const canAccept = stuck.acceptableOnJudgeOutage === true;
-    return (
-      <div
-        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
-        style={{
-          borderColor: "var(--border)",
-          borderLeftColor: "var(--accent-line)",
-          background: "var(--surface-2)",
-        }}
-      >
-        <div className="mb-1 flex items-center gap-1.5">
-          <Hourglass size={11} className="text-dim" />
-          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
-            VERIFICATION UNAVAILABLE
-          </span>
-        </div>
-        <p className="text-[10.5px] leading-snug text-dim">
-          The verification judge was unreachable. Retry it, or accept the work
-          as-is.
-        </p>
-        <div className="mt-2 flex gap-1.5">
-          <BannerBtn
-            tone="accent"
-            icon={<RotateCw size={10} />}
-            label={retryVerification.isPending ? "Retrying…" : "Retry now"}
-            onClick={onRetryNow}
-            disabled={pending}
-          />
-          {canAccept && (
-            <BannerBtn
-              tone="neutral"
-              label={acceptThread.isPending ? "Accepting…" : "Skip & accept"}
-              onClick={onAccept}
-              disabled={pending}
-            />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // The Codex-outage hold on the ship-time master_review: a transient infra hold (mirroring
-  // judge_unavailable), not a terminal failure — the job auto-retries on the resume clock, or the
-  // operator can jump straight to the ship-review gate without the automated whole-diff pass.
+  // The Codex-outage hold on the ship-time master_review: a transient infra hold, not a terminal
+  // failure — the job auto-retries on the resume clock, or the operator can jump straight to the
+  // ship-review gate without the automated whole-diff pass.
   if (job?.halt?.kind === "codex_review_unavailable") {
     const pending = retry.isPending || shipWithoutReview.isPending;
     const onShipWithoutReview = () =>
@@ -1450,9 +1382,7 @@ function StateBanner({
 
   if (
     job?.halt &&
-    (job.halt.kind === "failed" ||
-      job.halt.kind === "budget_exhausted" ||
-      job.halt.kind === "incomplete")
+    (job.halt.kind === "failed" || job.halt.kind === "incomplete")
   ) {
     return (
       <div
@@ -1465,12 +1395,12 @@ function StateBanner({
         <div className="mb-1 flex items-center gap-1.5">
           <AlertTriangle size={11} className="text-red" />
           <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
-            HALTED
+            NOT DONE
           </span>
         </div>
         <p className="text-[10.5px] leading-snug text-dim">
-          The run stopped — read the conversation for the halt, then steer or
-          retry.
+          This build didn&apos;t reach a clean finish — it needs you. Steer it
+          via chat, or retry.
         </p>
         <div className="mt-2 flex gap-1.5">
           <BannerBtn

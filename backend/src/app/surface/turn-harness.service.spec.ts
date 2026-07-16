@@ -5,7 +5,6 @@ import {
   type BlockSink,
   EntityTaskEventSink,
   type SubagentStore,
-  type TaskEventSink,
   TurnHarnessFactory,
 } from './turn-harness.service';
 
@@ -48,9 +47,6 @@ function setup() {
       });
     }),
   };
-  const taskSink: TaskEventSink = {
-    applyTaskEvent: vi.fn(async () => undefined),
-  };
   const usage = {
     applyHarvest: vi.fn().mockResolvedValue(undefined),
   } as unknown as OauthUsageService;
@@ -63,10 +59,9 @@ function setup() {
   return {
     live,
     persisted,
-    taskSink,
     subagentStore,
     subagentUpserts,
-    factory: new TurnHarnessFactory(live, sink, taskSink, usage, subagentStore),
+    factory: new TurnHarnessFactory(live, sink, usage, subagentStore),
   };
 }
 
@@ -280,7 +275,7 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     h.onEvent({ kind: 'tool_use', id: 't1', name: 'Bash', input: {} });
     h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
     await h.finish('What shipped — …', {
-      usage: { inputTokens: 1, outputTokens: 1 } as never,
+      usage: { inputTokens: 1, outputTokens: 1 },
     });
 
     // Every persisted block (including the turn_meta divider) carries the wake tag → supersede can find them.
@@ -399,156 +394,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(chat?.block.meta).toMatchObject({ phaseId: 's1' });
   });
 
-  describe('task-event capture (LLM-authored task list)', () => {
-    it('folds TaskCreate on the stable thread:<id> lane into thread scope', async () => {
-      const { taskSink, factory } = setup();
-      const h = factory.create({
-        jobId: 'J',
-        threadId: 'th1',
-        channel: 'R',
-        lane: 'thread:TH1',
-        metaTag: { phaseId: 's1' },
-      });
-      h.onEvent({
-        kind: 'tool_use',
-        id: 't1',
-        name: 'TaskCreate',
-        input: { subject: 'Do the thing' },
-      });
-      h.onEvent({
-        kind: 'tool_result',
-        id: 't1',
-        result: { task: { id: 'tsk1' } },
-      });
-      await h.finish();
-
-      expect(taskSink.applyTaskEvent).toHaveBeenCalledWith(
-        { kind: 'thread', id: 'TH1' },
-        'taskcreate',
-        { subject: 'Do the thing' },
-        { task: { id: 'tsk1' } },
-      );
-    });
-
-    it('does NOT fold tasks on an autofix:* lane (not a task-tracked session)', async () => {
-      const { taskSink, factory } = setup();
-      const h = factory.create({
-        jobId: 'J',
-        threadId: 'th1',
-        channel: 'R',
-        lane: 'autofix:AF1:fix',
-      });
-      h.onEvent({
-        kind: 'tool_use',
-        id: 't1',
-        name: 'TaskUpdate',
-        input: { taskId: 'tsk1', status: 'completed' },
-      });
-      h.onEvent({ kind: 'tool_result', id: 't1', result: {} });
-      await h.finish();
-
-      expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
-    });
-
-    it('ignores a subagent’s own TaskCreate (parentToolUseId set)', async () => {
-      const { taskSink, factory } = setup();
-      const h = factory.create({
-        jobId: 'J',
-        threadId: 'th1',
-        channel: 'R',
-        lane: 'thread:TH1',
-      });
-      h.onEvent({
-        kind: 'tool_use',
-        id: 't1',
-        name: 'TaskCreate',
-        input: { subject: 'x' },
-        parentToolUseId: 'tu1',
-      });
-      h.onEvent({
-        kind: 'tool_result',
-        id: 't1',
-        result: { task: { id: 'tsk1' } },
-      });
-      await h.finish();
-
-      expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
-    });
-
-    it('folds TaskCreate on the default main lane into main scope (the brain’s own checklist)', async () => {
-      const { taskSink, factory } = setup();
-      const h = factory.create({ jobId: 'J', threadId: 'th1', channel: 'R' }); // default `main` lane
-      h.onEvent({
-        kind: 'tool_use',
-        id: 't1',
-        name: 'TaskCreate',
-        input: { subject: 'Draft the plan' },
-      });
-      h.onEvent({
-        kind: 'tool_result',
-        id: 't1',
-        result: { task: { id: 'tsk1' } },
-      });
-      await h.finish();
-
-      expect(taskSink.applyTaskEvent).toHaveBeenCalledWith(
-        { kind: 'main', id: 'J' },
-        'taskcreate',
-        { subject: 'Draft the plan' },
-        { task: { id: 'tsk1' } },
-      );
-    });
-
-    it('ignores task tool calls on lanes that are not task-tracked (phase, autofix, subagent)', async () => {
-      const { taskSink, factory } = setup();
-      for (const lane of [
-        'phase:s1',
-        'autofix:J:correctness',
-        'subagent:tu1',
-      ]) {
-        const h = factory.create({
-          jobId: 'J',
-          threadId: 'th1',
-          channel: 'R',
-          lane,
-        });
-        h.onEvent({
-          kind: 'tool_use',
-          id: 't1',
-          name: 'TaskCreate',
-          input: { subject: 'x' },
-        });
-        h.onEvent({
-          kind: 'tool_result',
-          id: 't1',
-          result: { task: { id: 'tsk1' } },
-        });
-        await h.finish();
-      }
-      expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
-    });
-
-    it('ignores non-task tool calls even on a task-tracked lane', async () => {
-      const { taskSink, factory } = setup();
-      const h = factory.create({
-        jobId: 'J',
-        threadId: 'th1',
-        channel: 'R',
-        lane: 'thread:TH1',
-      });
-      h.onEvent({
-        kind: 'tool_use',
-        id: 't1',
-        name: 'Bash',
-        input: { command: 'ls' },
-      });
-      h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
-      await h.finish();
-
-      expect(taskSink.applyTaskEvent).not.toHaveBeenCalled();
-    });
-  });
-
   describe('subagent tracking (d4)', () => {
     it('a spawned Task upserts a subagents row on finish, and tags its child blocks with the same subagent_id', async () => {
       const { persisted, subagentUpserts, factory } = setup();
@@ -647,20 +492,34 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   });
 });
 
-describe('EntityTaskEventSink — the per-scope task fold writer', () => {
-  /** A minimal in-memory `tasks` table stand-in, keyed by row id. */
+describe('EntityTaskEventSink — #N (ordinal) CRUD on the thread-group-owned tasks rows', () => {
+  /** A minimal in-memory `tasks` table stand-in, keyed by row id. Honors the `thread_group_id` filter on
+   *  find/findOne and ordinal ordering on find, so the sink's queries behave as they would against PG. */
   function fakeTasksRepo(
     seed: Array<{
       id: string;
       title: string;
       status: string;
+      ordinal?: number;
       blocked_by?: string[];
     }>,
   ) {
-    const rows = new Map(
+    type Row = {
+      id: string;
+      thread_group_id: string;
+      org_id: string;
+      ordinal: number;
+      title: string;
+      brief: string | null;
+      active_form: string | null;
+      status: string;
+      blocked_by: string[];
+    };
+    const rows = new Map<string, Row>(
       seed.map((r) => [
         r.id,
         {
+          thread_group_id: 'S',
           org_id: 'O',
           ordinal: 10,
           brief: null,
@@ -671,14 +530,27 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
       ]),
     );
     let nextId = 100;
+    const matches = (row: Row, where: Partial<Row> = {}) =>
+      (where.id === undefined || row.id === where.id) &&
+      (where.thread_group_id === undefined ||
+        row.thread_group_id === where.thread_group_id) &&
+      (where.ordinal === undefined || row.ordinal === where.ordinal);
     return {
       rows,
-      find: vi.fn(async () => [...rows.values()]),
+      find: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) =>
+        [...rows.values()]
+          .filter((r) => matches(r, where))
+          .sort((a, b) => a.ordinal - b.ordinal),
+      ),
+      findOne: vi.fn(async ({ where }: { where?: Partial<Row> } = {}) => {
+        const hit = [...rows.values()].find((r) => matches(r, where));
+        return hit ?? null;
+      }),
       create: vi.fn((partial: Record<string, unknown>) => ({ ...partial })),
       save: vi.fn(async (partial: Record<string, unknown>) => {
         const id = String(nextId++);
-        const row = { id, ...partial } as { id: string };
-        rows.set(id, row as never);
+        const row = { id, ...partial } as Row;
+        rows.set(id, row);
         return row;
       }),
       update: vi.fn(
@@ -692,79 +564,174 @@ describe('EntityTaskEventSink — the per-scope task fold writer', () => {
       }),
       createQueryBuilder: () => ({
         select: () => ({
-          where: () => ({ getRawOne: async () => ({ max: 10 }) }),
+          where: () => ({
+            // Mirror the real `MAX(ordinal)` over CURRENT rows — recomputed each call so a delete of the
+            // highest #N lowers the max (and the next create reuses that number).
+            getRawOne: async () => ({
+              max: [...rows.values()].reduce(
+                (m, r) => Math.max(m, r.ordinal),
+                0,
+              ),
+            }),
+          }),
         }),
       }),
     };
   }
 
-  it('serializes concurrent folds on one scope so a batch of updates never loses a write', async () => {
-    // A batch turn fires task events fire-and-forget; unserialized, both folds read the same snapshot
-    // and the second write erases the first's change (live-observed as "deleted tasks still showing").
-    const tasks = fakeTasksRepo([
-      { id: '1', title: 'a', status: 'pending' },
-      { id: '2', title: 'b', status: 'pending' },
-    ]);
-    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
-    const threads = { findOne: vi.fn() };
-    const sink = new EntityTaskEventSink(
+  const threadSink = (tasks: ReturnType<typeof fakeTasksRepo>) => {
+    const threadGroups = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
+    const threads = {
+      findOne: vi.fn(async () => ({ id: 'th1', thread_group_id: 'S', org_id: 'O' })),
+    };
+    return new EntityTaskEventSink(
       threads as never,
-      stages as never,
+      threadGroups as never,
       tasks as never,
     );
+  };
+  const scope = { kind: 'thread' as const, id: 'th1' };
 
-    await Promise.all([
-      sink.applyTaskEvent(
-        { kind: 'main', id: 'J' },
-        'taskupdate',
-        { taskId: '1', status: 'deleted' },
-        {},
-      ),
-      sink.applyTaskEvent(
-        { kind: 'main', id: 'J' },
-        'taskupdate',
-        { taskId: '2', status: 'deleted' },
-        {},
-      ),
+  /** Find a stored row by its per-stage ordinal (the #N the tool surface now uses as the id). */
+  const byOrdinal = (
+    tasks: ReturnType<typeof fakeTasksRepo>,
+    ordinal: number,
+  ) => [...tasks.rows.values()].find((r) => r.ordinal === ordinal);
+
+  it('createTask returns the short per-stage #N (dense) and updateTask by that #N hits the SAME row', async () => {
+    const tasks = fakeTasksRepo([]);
+    const sink = threadSink(tasks);
+
+    const a = await sink.createTask(scope, { subject: 'A' });
+    const b = await sink.createTask(scope, { subject: 'B' });
+    expect(a.id).toBe('1');
+    expect(b.id).toBe('2');
+    expect([...tasks.rows.values()].map((r) => r.ordinal).sort()).toEqual([
+      1, 2,
     ]);
 
-    // Deletes REMOVE tasks; without serialization one of the two removals is lost.
-    expect([...tasks.rows.keys()]).toEqual([]);
+    // The #N returned by createTask IS a valid updateTask key — resolved by (thread_group_id, ordinal).
+    const res = await sink.updateTask(scope, {
+      taskId: '2',
+      status: 'in_progress',
+    });
+    expect(res).toEqual({ ok: true });
+    expect(byOrdinal(tasks, 2)?.status).toBe('in_progress');
   });
 
-  it('creates a row for a TaskCreate then updates the SAME row on a later TaskUpdate by its SDK id', async () => {
-    const tasks = fakeTasksRepo([]);
-    const stages = { findOne: vi.fn(async () => ({ id: 'S', org_id: 'O' })) };
-    const threads = {
-      findOne: vi.fn(async () => ({ id: 'th1', stage_id: 'S', org_id: 'O' })),
-    };
-    const sink = new EntityTaskEventSink(
-      threads as never,
-      stages as never,
-      tasks as never,
-    );
-    const scope = { kind: 'thread' as const, id: 'th1' };
+  it('updateTask status:deleted removes the row; an unknown #N and a non-numeric taskId both error', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+    ]);
+    const sink = threadSink(tasks);
 
-    await sink.applyTaskEvent(
-      scope,
-      'taskcreate',
-      { subject: 'Write tests' },
-      'Task #8 created successfully',
-    );
-    expect([...tasks.rows.values()]).toHaveLength(1);
-    const [created] = [...tasks.rows.values()];
-    expect((created as { title: string }).title).toBe('Write tests');
-
-    await sink.applyTaskEvent(
-      scope,
-      'taskupdate',
-      { taskId: '8', status: 'in_progress' },
-      'Task #8 updated',
-    );
-    expect([...tasks.rows.values()]).toHaveLength(1);
     expect(
-      (tasks.rows.get((created as { id: string }).id) as { status: string })
-        .status,
-    ).toBe('in_progress');
+      await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
+    ).toEqual({ ok: true });
+    expect([...tasks.rows.keys()]).toEqual([]);
+
+    expect(
+      await sink.updateTask(scope, { taskId: '9', status: 'completed' }),
+    ).toEqual({ ok: false, error: 'task 9 not found' });
+    expect(
+      await sink.updateTask(scope, { taskId: 'nope', status: 'completed' }),
+    ).toEqual({ ok: false, error: 'invalid taskId nope' });
+  });
+
+  it('readTasks surfaces the ordinal as #N, ordinal-ordered, mapped to TaskItem', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u2', title: 'second', status: 'pending', ordinal: 2 },
+      { id: 'u1', title: 'first', status: 'completed', ordinal: 1 },
+    ]);
+    const sink = threadSink(tasks);
+
+    expect(await sink.readTasks(scope)).toEqual([
+      { id: '1', subject: 'first', status: 'completed' },
+      { id: '2', subject: 'second', status: 'pending' },
+    ]);
+  });
+
+  it('deleting the highest #N lets the next create reuse that number; lower ids are unaffected', async () => {
+    const tasks = fakeTasksRepo([]);
+    const sink = threadSink(tasks);
+    await sink.createTask(scope, { subject: 'A' }); // #1
+    await sink.createTask(scope, { subject: 'B' }); // #2
+
+    await sink.updateTask(scope, { taskId: '2', status: 'deleted' });
+    const c = await sink.createTask(scope, { subject: 'C' });
+    expect(c.id).toBe('2'); // reused — max(ordinal) is 1 again after the delete
+
+    expect(await sink.readTasks(scope)).toEqual([
+      { id: '1', subject: 'A', status: 'pending' },
+      { id: '2', subject: 'C', status: 'pending' },
+    ]);
+  });
+
+  it('serializes concurrent creates on one scope so they get distinct dense ordinals', async () => {
+    const tasks = fakeTasksRepo([]);
+    const sink = threadSink(tasks);
+
+    await Promise.all([
+      sink.createTask(scope, { subject: 'A' }),
+      sink.createTask(scope, { subject: 'B' }),
+    ]);
+
+    const ordinals = [...tasks.rows.values()].map((r) => r.ordinal).sort();
+    expect(ordinals).toEqual([1, 2]); // no collision — the second create saw the first's write
+  });
+
+  it('createTask stores blockedBy as #N (dropping unknown #N); addBlocks writes the source #N onto the target', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+    ]);
+    const sink = threadSink(tasks);
+
+    const blocked = await sink.createTask(scope, {
+      subject: 'blocked',
+      blockedBy: ['1', '9'],
+    });
+    expect(blocked.id).toBe('2');
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual(['1']); // '9' dropped — no such row
+
+    // "this new task blocks #1" → #1 now waits on the new task's #N (not a uuid).
+    const blocker = await sink.createTask(scope, {
+      subject: 'blocker',
+      addBlocks: ['1'],
+    });
+    expect(blocker.id).toBe('3');
+    expect(byOrdinal(tasks, 1)?.blocked_by).toEqual(['3']);
+  });
+
+  it('updateTask recomputes blockedBy in #N space (add then remove)', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'a', status: 'pending', ordinal: 1 },
+      { id: 'u2', title: 'b', status: 'pending', ordinal: 2 },
+    ]);
+    const sink = threadSink(tasks);
+
+    await sink.updateTask(scope, { taskId: '2', addBlockedBy: ['1', '9'] });
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual(['1']); // '9' dropped
+
+    await sink.updateTask(scope, { taskId: '2', removeBlockedBy: ['1'] });
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual([]);
+  });
+
+  it('delete removes the deleted #N from sibling blockedBy edges', async () => {
+    const tasks = fakeTasksRepo([
+      { id: 'u1', title: 'blocker', status: 'pending', ordinal: 1 },
+      {
+        id: 'u2',
+        title: 'blocked',
+        status: 'pending',
+        ordinal: 2,
+        blocked_by: ['1'],
+      },
+    ]);
+    const sink = threadSink(tasks);
+
+    expect(
+      await sink.updateTask(scope, { taskId: '1', status: 'deleted' }),
+    ).toEqual({ ok: true });
+    expect(byOrdinal(tasks, 2)?.blocked_by).toEqual([]);
   });
 });

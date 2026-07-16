@@ -19,8 +19,8 @@ import type { JobBootstrapService } from '../job-bootstrap';
 function makeBootstrap() {
   return {
     planningThreadId: vi.fn(async () => 'thread-planning'),
-    ensurePlanningStage: vi.fn(async () => undefined),
-    // No `ci` stage-thread by default — attachEventToJob falls back to planning (§CI-routing).
+    ensurePlanningThreadGroup: vi.fn(async () => undefined),
+    // No `ci` thread group thread by default — attachEventToJob falls back to planning (§CI-routing).
     ciThreadId: vi.fn(async () => null),
   } as unknown as JobBootstrapService;
 }
@@ -227,7 +227,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     });
   });
 
-  it('attachEventToJob routes to the ci stage-thread once one exists (§CI-routing)', async () => {
+  it('attachEventToJob routes to the ci thread group thread once one exists (§CI-routing)', async () => {
     const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<MessageEntity>('msg');
     const stimuli = fakeRepo<StimulusEntity>('stim');
@@ -236,7 +236,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     );
     const bootstrap = {
       planningThreadId: vi.fn(async () => 'thread-planning'),
-      ensurePlanningStage: vi.fn(async () => undefined),
+      ensurePlanningThreadGroup: vi.fn(async () => undefined),
       ciThreadId: vi.fn(async () => 'thread-ci-1'),
     } as unknown as JobBootstrapService;
     const store = new StimulusStoreService(

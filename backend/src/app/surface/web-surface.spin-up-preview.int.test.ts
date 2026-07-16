@@ -233,7 +233,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
        VALUES ($1, $2, $3, 'control', 'Ready build', 'feature', 'awaiting_ship_review', 'idle')`,
       [GATE_JOB, ORG, REPO],
     );
-    await bootstrap.ensurePlanningStage(GATE_JOB, ORG);
+    await bootstrap.ensurePlanningThreadGroup(GATE_JOB, ORG);
     await seedShipCardRow(GATE_JOB);
   }
 
@@ -314,7 +314,7 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
        VALUES ($1, $2, $3, 'control', 'Building build', 'feature', 'running', 'build')`,
       [RUNNING_JOB, ORG, REPO],
     );
-    await bootstrap.ensurePlanningStage(RUNNING_JOB, ORG);
+    await bootstrap.ensurePlanningThreadGroup(RUNNING_JOB, ORG);
     await seedShipCardRow(RUNNING_JOB);
 
     const res = await request(server)

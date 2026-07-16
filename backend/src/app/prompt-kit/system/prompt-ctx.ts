@@ -29,6 +29,9 @@ export interface PromptCtx {
   job?: {
     /** "owner/repo", parsed from the git url (via the resolved repo). */
     repoName?: string;
+    /** The job's CURRENT sidebar label — so the brain can judge whether a propose_plan should re-title it
+     *  (via the `rename` flag). Omitted until the job has a title. */
+    title?: string;
     /** The feature branch this job stacks on (or the observed live HEAD); omitted until a branch is cut. */
     branch?: string;
     /** The base branch the build cuts from (`job.baseBranch` ?? the repo default). */

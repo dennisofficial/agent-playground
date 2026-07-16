@@ -121,24 +121,31 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
 /**
  * Byte-parity guard for the ATLAS_MAIN → PLANNING split (Thread 1 of the "explode the brain" plan). Every
  * fragment-audience change in that split was ADDITIVE ONLY — PLANNING was never removed from a fragment,
- * and no fragment's TEXT was edited — so `Agent.PLANNING`'s assembled prompt must be byte-identical to
- * `Agent.ATLAS_MAIN`'s pre-split output. These sha256 hashes were captured from the pre-split commit
- * (`c4d27b77`, the base of the split) by rendering `renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind })` for
- * each kind — a genuine golden snapshot, not a guess. A failure here means PLANNING's prompt drifted from
- * the legacy brain; that's either a real regression or an intentional change that needs a fresh snapshot.
+ * and no fragment's TEXT was edited — so `Agent.PLANNING`'s assembled prompt must be byte-identical to the
+ * legacy monolithic brain's output for the SAME fragment set.
+ *
+ * SNAPSHOT REFRESHED at the merge of this branch with `main` (`df8f77e8`). The original golden was captured
+ * from the split base (`c4d27b77`); since then `main` legitimately ADVANCED the brain prompt (task-list
+ * tools, forget/update_memory, session-limit prose, …), all of which flow into PLANNING because the split
+ * kept PLANNING in every fragment those changes touch. The refresh was verified NOT to be a merge
+ * regression: the merged PLANNING prompt (a) still contains the planning core (grilling / propose_plan) and
+ * every `main` addition (LIVE TASK LIST, task_create, forget, update_memory), and (b) contains ZERO
+ * ship-persona text (`postBuildTools`/`ciTools`/`postShipContext`/`autonomyPostShip` are gated to
+ * POST_BUILD/CI and never leak into PLANNING). A failure here means PLANNING's prompt drifted from the
+ * legacy brain; that's either a real regression or an intentional change that needs a fresh snapshot.
  */
-describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with pre-split ATLAS_MAIN', () => {
+describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with the monolithic brain prompt', () => {
   const PRE_SPLIT_SHA256: Record<string, string> = {
     feature:
-      '9f91cb4ea0bb9c71d506de07cbd91572478d0336a431d819dfec0f5c6fa128ae',
-    bugfix: '273740cbfad1c562a81c3eab57f7e88fe2a02afc22937fd590131337a2c9563b',
+      'ff6df9eb363e2c18e0840bc3511aa840a8654de67dade2de1c4485ba65f303b9',
+    bugfix: '8ac1c196d8f8fb78ccf29f430a52c405127a01882a054c6dabfb65f09ba16cba',
     onboarding:
-      'f205e216f00f2c387b817fb6db7daa9c82a897ec900cac82df3036d9e83720bf',
-    review: '5f59250d21b2ee47a5c708e3d76c58efbef307f8946550f702b3e1895f317898',
+      '0d8393508147d5c3181d5e38a2ec1a3ae5aad4c2033f68d540c382ca04e956ce',
+    review: 'e974415c5b8c6f07654a657d83e6264244bb54dfcd5f9f1037a21ef758d58780',
   };
 
   it.each(['feature', 'bugfix', 'onboarding', 'review'] as const)(
-    'jobKind=%s renders byte-identical to the pre-split ATLAS_MAIN snapshot',
+    'jobKind=%s renders byte-identical to the monolithic brain snapshot',
     (jobKind) => {
       const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       const sha256 = createHash('sha256').update(out).digest('hex');

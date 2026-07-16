@@ -9,7 +9,7 @@ import type {
 
 /**
  * PASSIVE pipeline-milestone awareness — the DURABLE half. Owns the `threads.pipeline_awareness` jsonb
- * buffer: build stages APPEND milestones here (no turn runs), and the next OPERATOR turn DRAINS them.
+ * buffer: build thread groups APPEND milestones here (no turn runs), and the next OPERATOR turn DRAINS them.
  *
  * Concurrency is the whole point: the driver runs fire-and-forget OUTSIDE the brain's per-thread turn
  * queue, so an `appendMarker` (driver) and a `drainAndAdvance` (a human turn) can race on the same row.
@@ -29,7 +29,7 @@ export class PipelineAwarenessStore {
 
   /**
    * Durably append a milestone to a thread's buffer — idempotent: a marker whose `id` is already queued
-   * is dropped (the same stage fires repeatedly). Runs under a row lock so it can't lose a concurrent
+   * is dropped (the same thread group fires repeatedly). Runs under a row lock so it can't lose a concurrent
    * drain's clear or another append. A missing thread is a no-op.
    */
   async appendMarker(jobId: string, marker: PipelineMarker): Promise<void> {

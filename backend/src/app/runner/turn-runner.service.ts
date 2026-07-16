@@ -340,7 +340,7 @@ export class TurnRunnerService {
           { session_id: result.sessionId },
         );
       }
-      const { resetAt, rateLimitType } = result.sessionLimit;
+      const { resetAt, rateLimitType, source } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
       throw new EngineSessionLimitError(
         message,
@@ -348,6 +348,7 @@ export class TurnRunnerService {
         rateLimitType,
         result.sessionId,
         input.auth?.refreshBack?.credentialId,
+        source ?? 'structured',
       );
     }
 
@@ -524,7 +525,7 @@ export class TurnRunnerService {
         .catch(() => undefined);
     }
     if (result.sessionLimit) {
-      const { resetAt, rateLimitType } = result.sessionLimit;
+      const { resetAt, rateLimitType, source } = result.sessionLimit;
       const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
       throw new EngineSessionLimitError(
         message,
@@ -532,6 +533,7 @@ export class TurnRunnerService {
         rateLimitType,
         result.sessionId,
         input.credentialId,
+        source ?? 'structured',
       );
     }
     const credentialId = result.credentialId ?? input.credentialId ?? null;

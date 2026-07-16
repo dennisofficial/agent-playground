@@ -8,10 +8,10 @@ import { threadLane } from "./phases";
 import { overlayLiveTasks } from "./live-tasks";
 import type {
   PipelineJob,
-  PipelineStage,
+  PipelineThreadGroup,
   PipelineThread,
   PipelineReviewChild,
-  StageKind,
+  ThreadGroupKind,
   TaskItem,
   JobStatus,
   ThreadStatus,
@@ -20,12 +20,12 @@ import type {
 
 /**
  * The Thread Navigator's THREADS region — design handoff "thread navigation": an ACCORDION. Selecting a
- * stage reveals, in place, the things the stage owns — its LLM-authored TASKS (server-folded from the
- * SDK TaskCreate/TaskUpdate calls), its ordered builder LEGS, and its read-only REVIEW AGENTS (navigable
- * child threads addressed by their own id) capped by the navigable "Post-review fixes" row — and whichever
- * stage was open collapses (open = the selected lane, or the stage whose review agent is open). The
- * whole-diff master review is now just another stage in the list (rendered "Master Review" with no
- * review-agents fold), not a pinned region.
+ * thread group reveals, in place, the things the thread group owns — its LLM-authored TASKS (server-folded
+ * from the SDK TaskCreate/TaskUpdate calls), its ordered builder LEGS, and its read-only REVIEW AGENTS
+ * (navigable child threads addressed by their own id) capped by the navigable "Post-review fixes" row — and
+ * whichever thread group was open collapses (open = the selected lane, or the thread group whose review
+ * agent is open). The whole-diff master review is now just another thread group in the list (rendered
+ * "Master Review" with no review-agents fold), not a pinned region.
  */
 
 // ── shared nav primitives (also used by the navigator skeleton) ──────────────────────────────────
@@ -266,17 +266,17 @@ function ThreadStatusGlyph({
 export interface TreeProps {
   job: PipelineJob;
   status: JobStatus;
-  /** The job id — each fold subscribes to its stage's live lane to overlay mid-turn task calls. */
+  /** The job id — each fold subscribes to its thread group's live lane to overlay mid-turn task calls. */
   jobId: string;
-  /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the owning stage's
-   *  fold; a review-child id (review agents + the post-review fix are child threads too) opens its PARENT
-   *  stage's fold and highlights that child row. */
+  /** The LEFT pane's open lane (`?lane=`) — the selected thread. A bare thread id opens the owning thread
+   *  group's fold; a review-child id (review agents + the post-review fix are child threads too) opens its
+   *  PARENT thread group's fold and highlights that child row. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }
 
-/** The stage-kind → sidebar label, used when a stage carries no explicit `title`. */
-const STAGE_LABELS: Record<StageKind, string> = {
+/** The thread-group-kind → sidebar label, used when a thread group carries no explicit `title`. */
+const THREAD_GROUP_LABELS: Record<ThreadGroupKind, string> = {
   planning: "Planning",
   plan_review: "Plan Review",
   build: "Build",
@@ -286,18 +286,19 @@ const STAGE_LABELS: Record<StageKind, string> = {
   ci: "CI",
 };
 
-/** A stage's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when set,
- *  else derived from its kind. */
-function stageLabel(stage: PipelineStage): string {
-  return stage.title?.trim() || STAGE_LABELS[stage.kind];
+/** A thread group's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when
+ *  set, else derived from its kind. */
+function threadGroupLabel(threadGroup: PipelineThreadGroup): string {
+  return threadGroup.title?.trim() || THREAD_GROUP_LABELS[threadGroup.kind];
 }
 
 /**
- * The THREADS build lanes — one accordion fold per STAGE. Each stage owns its live TASKS (server-folded from
- * the SDK task tools) and, for a build stage, its ordered builder LEGS + read-only REVIEW AGENTS (the
- * builders' review-child threads) capped by the derived Post-review fixes row. Draft stages (pre-approval or
- * not yet reached) fold to the drafting empty state. The Main (planning) row and the plan-review row are
- * pinned above the tree by the navigator, so they are skipped here.
+ * The THREADS build lanes — one accordion fold per THREAD GROUP. Each thread group owns its live TASKS
+ * (server-folded from the SDK task tools) and, for a build thread group, its ordered builder LEGS +
+ * read-only REVIEW AGENTS (the builders' review-child threads) capped by the derived Post-review fixes row.
+ * Draft thread groups (pre-approval or not yet reached) fold to the drafting empty state. The Main
+ * (planning) row and the plan-review row are pinned above the tree by the navigator, so they are skipped
+ * here.
  */
 export function PipelineTree({
   job,
@@ -306,7 +307,7 @@ export function PipelineTree({
   laneNode,
   onSelectNode,
 }: TreeProps) {
-  const stages = job.stages.filter(
+  const threadGroups = job.threadGroups.filter(
     (s) => s.kind !== "planning" && s.kind !== "plan_review",
   );
   // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
@@ -316,8 +317,8 @@ export function PipelineTree({
     status === "awaiting_approval";
   // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point over
   // the whole flattened thread list — the in-flight thread (furthest non-`done`/non-`pending`) is where the
-  // run stopped; later ones never ran. Identify it by id so it maps across the stage grouping.
-  const allThreads = job.stages.flatMap((s) => s.threads);
+  // run stopped; later ones never ran. Identify it by id so it maps across the thread group grouping.
+  const allThreads = job.threadGroups.flatMap((s) => s.threads);
   const haltIdx = job.halt != null ? haltThreadIdx(allThreads) : -1;
   const haltThreadId = haltIdx >= 0 ? (allThreads[haltIdx]?.id ?? null) : null;
   const notReached = new Set(
@@ -326,10 +327,10 @@ export function PipelineTree({
 
   return (
     <>
-      {stages.map((stage) => (
-        <StageFold
-          key={stage.id}
-          stage={stage}
+      {threadGroups.map((threadGroup) => (
+        <ThreadGroupFold
+          key={threadGroup.id}
+          threadGroup={threadGroup}
           jobId={jobId}
           drafted={drafted}
           haltThreadId={haltThreadId}
@@ -343,14 +344,14 @@ export function PipelineTree({
 }
 
 /**
- * One accordion fold — the clickable stage header (status glyph · label · count chip) over the open body
- * (TASKS → LEGS → REVIEW children → Post-review fixes, or the draft empty state). A stage is OPEN when one
- * of its threads (a builder leg / master review / the singleton thread) OR one of its review CHILD threads
- * is the open lane — they all ride the same LEFT pane as bare thread nodes. Clicking the header opens the
- * stage's latest thread; navigate back to Main by clicking the Main row itself.
+ * One accordion fold — the clickable thread group header (status glyph · label · count chip) over the open
+ * body (TASKS → LEGS → REVIEW children → Post-review fixes, or the draft empty state). A thread group is
+ * OPEN when one of its threads (a builder leg / master review / the singleton thread) OR one of its review
+ * CHILD threads is the open lane — they all ride the same LEFT pane as bare thread nodes. Clicking the
+ * header opens the thread group's latest thread; navigate back to Main by clicking the Main row itself.
  */
-function StageFold({
-  stage,
+function ThreadGroupFold({
+  threadGroup,
   jobId,
   drafted,
   haltThreadId,
@@ -358,7 +359,7 @@ function StageFold({
   laneNode,
   onSelectNode,
 }: {
-  stage: PipelineStage;
+  threadGroup: PipelineThreadGroup;
   jobId: string;
   drafted: boolean;
   /** The id of the thread that owns the job halt, or null when the job is healthy. */
@@ -369,21 +370,23 @@ function StageFold({
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const roots = stage.threads;
-  // The latest thread drives the header glyph + live task overlay (a build stage's newest builder leg; a
-  // singleton stage's one thread). A stage should never be empty, but guard so a malformed one renders nothing.
+  const roots = threadGroup.threads;
+  // The latest thread drives the header glyph + live task overlay (a build thread group's newest builder
+  // leg; a singleton thread group's one thread). A thread group should never be empty, but guard so a
+  // malformed one renders nothing.
   const primary = roots[roots.length - 1];
 
   // REALTIME: fold the latest thread's live lane over the durable list, so mid-turn task calls tick instantly
   // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
-  // Hook must run unconditionally (Rules of Hooks) — stage.threads can be empty on some renders of the
-  // same component instance (e.g. a freshly materialized stage), so the early-return below must come after.
+  // Hook must run unconditionally (Rules of Hooks) — threadGroup.threads can be empty on some renders of the
+  // same component instance (e.g. a freshly materialized thread group), so the early-return below must come
+  // after.
   const liveTurn = useLiveTurn(jobId, threadLane(primary?.id ?? ""));
   if (!primary) return null;
 
   const state = laneState(primary.status, primary.condition, drafted);
   const isHalt = roots.some((t) => t.id === haltThreadId);
-  const stageNotReached = roots.every((t) => notReached.has(t.id));
+  const threadGroupNotReached = roots.every((t) => notReached.has(t.id));
 
   const reviewChildren = roots.flatMap((t) => t.children ?? []);
   const reviewLenses = reviewChildren.filter((c) => c.role === "review_agent");
@@ -394,7 +397,7 @@ function StageFold({
     (roots.some((t) => t.id === laneNode) ||
       reviewChildren.some((c) => c.id === laneNode));
 
-  const tasks = overlayLiveTasks(stage.tasks, liveTurn);
+  const tasks = overlayLiveTasks(threadGroup.tasks, liveTurn);
   const done = tasks.filter((t) => t.status === "completed").length;
   const isDraft = state === "draft";
   const count = isDraft
@@ -410,7 +413,7 @@ function StageFold({
         onClick={() => onSelectNode(primary.id)}
         className={cn(
           "flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2",
-          stageNotReached && "opacity-60",
+          threadGroupNotReached && "opacity-60",
         )}
       >
         <ThreadStatusGlyph state={state} isHalt={isHalt} />
@@ -419,12 +422,12 @@ function StageFold({
             "flex-1 truncate text-[12px]",
             open
               ? "font-semibold text-text"
-              : stageNotReached
+              : threadGroupNotReached
                 ? "font-medium text-faint"
                 : "font-medium text-dim",
           )}
         >
-          {stageLabel(stage)}
+          {threadGroupLabel(threadGroup)}
         </span>
         {count ? (
           <span className="shrink-0 text-right font-mono text-[8px] text-faint">
@@ -503,8 +506,9 @@ const DONE_TAIL = 2;
  *  two behind a disclosure isn't worth the click — the list just renders in full, pure id order). */
 const DONE_FOLD_MIN = 2;
 
-/** The open stage's TASKS section — the stage's live, LLM-authored checklist. Exported for the navigator's
- *  Main row, whose fold shows the brain session's own list (`pipelineMainTasks`) the same way. */
+/** The open thread group's TASKS section — the thread group's live, LLM-authored checklist. Exported for
+ *  the navigator's Main row, whose fold shows the brain session's own list (`pipelineMainTasks`) the same
+ *  way. */
 export function TasksBody({
   tasks,
   done,
@@ -730,9 +734,9 @@ function ReviewAgentsBody({
 
 /**
  * The LEGS body (context-rot rotation) — one NAVIGABLE row per sequential builder thread ("Leg") in a build
- * stage. Each rotated builder is a first-class thread: clicking a Leg opens that thread's own transcript.
- * Rendered only once a build stage has rotated ≥1× (2+ builder legs); a single-leg stage shows nothing here
- * (its one thread is addressed by the stage header itself).
+ * thread group. Each rotated builder is a first-class thread: clicking a Leg opens that thread's own
+ * transcript. Rendered only once a build thread group has rotated ≥1× (2+ builder legs); a single-leg thread
+ * group shows nothing here (its one thread is addressed by the thread group header itself).
  */
 function LegsBody({
   threads,

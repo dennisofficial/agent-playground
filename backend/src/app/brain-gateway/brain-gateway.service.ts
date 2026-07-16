@@ -19,7 +19,7 @@ export interface BrainGatewayHandler {
     branch: string;
     defaultBranch: string;
     title: string;
-    /** The `ci` stage-thread this open-PR seed is enqueued onto — its OWN fresh session, isolated from the
+    /** The `ci` thread-group thread this open-PR seed is enqueued onto — its OWN fresh session, isolated from the
      *  planning brain's session (d14/d15). Enqueued on the ci lane (serialized behind any live post_build turn
      *  via the per-job `active_turns` guard); the PR is latched by the reconciler once the queued turn opens it. */
     threadId: string;

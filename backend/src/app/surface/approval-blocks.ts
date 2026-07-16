@@ -10,8 +10,8 @@ export const APPROVE_ACTION_ID = 'atlas_approval:approve';
 export const REQUEST_CHANGES_ACTION_ID = 'atlas_approval:request_changes';
 export const DENY_ACTION_ID = 'atlas_approval:deny';
 export const VIEW_PLAN_ACTION_ID = 'atlas_approval:view_plan';
-/** The SHIP-REVIEW gate's "Ship it" button — the SECOND human gate (after `APPROVE_ACTION_ID` at the plan
- *  stage). Clicked at `awaiting_ship_review` to open the PR; its button `value` carries only `{ jobId }`
+/** The SHIP-REVIEW gate's "Ship it" button — the SECOND human gate (after `APPROVE_ACTION_ID` at the
+ *  planning thread group). Clicked at `awaiting_ship_review` to open the PR; its button `value` carries only `{ jobId }`
  *  (no decision record — nothing to re-rule, just resume the driver). Routed through the SAME `/approve`
  *  endpoint + `approval$` bridge, but the bridge dispatches it to the driver's ship-resume, not a verdict. */
 export const SHIP_ACTION_ID = 'atlas_approval:ship';

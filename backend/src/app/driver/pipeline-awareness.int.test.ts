@@ -2,7 +2,7 @@
  * PipelineAwarenessStore — the DURABLE half of passive pipeline-milestone awareness, against live Postgres.
  *
  * Proves the buffer's three load-bearing properties:
- *  - idempotent append (a stage fires the same `id` repeatedly → one marker), and durability across a
+ *  - idempotent append (a thread group fires the same `id` repeatedly → one marker), and durability across a
  *    "process restart" (a fresh store instance reads the persisted buffer);
  *  - atomic drain + watermark advance (markers cleared once, state summary conveyed once per change);
  *  - the drain/append RACE doesn't drop a marker — the driver appends fire-and-forget while a human turn

@@ -319,9 +319,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // The SDK is allowed to ride out its own retryable API errors natively (default 10 retries) instead of
     // failing the turn on the first overloaded/5xx blip.
     expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('10');
-    // settingSources ['user'] = only <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op), never CLAUDE.md,
-    // never the untrusted worktree's own project-scope config (see engine-core.ts's options comment).
-    expect(opts.settingSources).toEqual(['user']);
+    // settingSources ['user','project'] = user-scope settings.json PLUS native worktree memory: the repo's
+    // CLAUDE.md loads (root at launch, nested subdirs on read). See engine-core.ts's options comment for why
+    // our programmatic options (model, disallowedTools) stay authoritative over a worktree's own `.claude/`.
+    expect(opts.settingSources).toEqual(['user', 'project']);
     // skills 'all' turns on native skill discovery (the single SDK-level switch, auto-enables Skill tool).
     expect(opts.skills).toBe('all');
     // Result + usage surfaced.
@@ -1274,8 +1275,9 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       auth: { secret: 'tok' },
     });
     const opts = captured.options!;
-    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + the task
-    // tools (live task list) + web. Writes/Bash still fall through to canUseTool.
+    // Auto-approve: safe reads + subagent spawning + subagent management (nudge/peek/stop) + web.
+    // Writes/Bash still fall through to canUseTool. (The task list is the atlas-host-bridge `task_*` tools
+    // now, not the disabled SDK-native ones.)
     expect(opts.allowedTools).toEqual([
       'Read',
       'Glob',
@@ -1284,10 +1286,6 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
       'SendMessage',
       'TaskOutput',
       'TaskStop',
-      'TaskCreate',
-      'TaskUpdate',
-      'TaskList',
-      'TaskGet',
       'WebSearch',
       'WebFetch',
     ]);

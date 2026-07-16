@@ -40,7 +40,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'conversational',
     execution: 'render-only',
     reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'main',
     inputPolicy: 'operator',
     operatorInput: true,
@@ -58,7 +57,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // (`plan-review.service.ts` reads it from here, single source of truth).
     reasoningEffort: 'xhigh',
     execution: 'render-only',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'codex-review',
     inputPolicy: 'agent',
     operatorInput: false,
@@ -74,7 +72,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'execute',
     execution: 'top-level',
     reasoningEffort: 'high',
-    gates: { verification: true, liveVerification: true },
     laneKind: 'builder',
     inputPolicy: 'none',
     operatorInput: true,
@@ -99,7 +96,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'review',
     execution: 'child',
     reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'autofix-lens',
     inputPolicy: 'none',
     operatorInput: false,
@@ -114,7 +110,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'execute',
     execution: 'child',
     reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'autofix-fix',
     inputPolicy: 'none',
     operatorInput: false,
@@ -130,7 +125,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'execute',
     execution: 'top-level',
     reasoningEffort: 'xhigh',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'builder',
     inputPolicy: 'none',
     operatorInput: false,
@@ -138,7 +132,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'execute-turn',
   },
   {
-    // The ship-review GATE stage-thread: the ATLAS_MAIN brain exploded into its own context-fresh,
+    // The ship-review GATE thread-group thread: the ATLAS_MAIN brain exploded into its own context-fresh,
     // isolated-session persona — build summary + preview proposal + the amend loop, on a lean prompt that
     // strips the planning apparatus (grilling, decision-record, plan authoring). Does not open the PR.
     kind: 'post_build',
@@ -147,7 +141,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'conversational',
     execution: 'render-only',
     reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'main',
     inputPolicy: 'operator',
     operatorInput: false,
@@ -155,7 +148,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'session-backed',
   },
   {
-    // The post-ship PR-lifecycle stage-thread: the ATLAS_MAIN brain exploded into its own context-fresh,
+    // The post-ship PR-lifecycle thread-group thread: the ATLAS_MAIN brain exploded into its own context-fresh,
     // isolated-session persona — PR creation, the authoritative base reconcile, and ongoing PR maintenance
     // (failing checks / review comments / conflicts), on a lean prompt that strips the planning apparatus.
     kind: 'ci',
@@ -164,7 +157,6 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     mode: 'conversational',
     execution: 'render-only',
     reasoningEffort: 'high',
-    gates: { verification: false, liveVerification: false },
     laneKind: 'main',
     inputPolicy: 'operator',
     operatorInput: false,
@@ -179,7 +171,7 @@ const BY_KIND = new Map<string, ThreadKindSpec>(
 
 const THREAD_ROLE_SET = new Set<string>(THREAD_KIND_SPECS.map((s) => s.kind));
 
-/** Coerce any raw value to a valid ThreadRole, or throw — mirrors `coerceStageKind`'s strict shape: a
+/** Coerce any raw value to a valid ThreadRole, or throw — mirrors `coerceThreadGroupKind`'s strict shape: a
  *  role is a closed, code-controlled vocabulary (registry-backed), never open user data like `ThreadType`. */
 export function coerceThreadRole(raw: unknown): ThreadRole {
   const value = String(raw ?? '').trim();

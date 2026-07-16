@@ -13,7 +13,6 @@ import type {
   JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
-  ThreadBlockReason,
 } from "@workspace/shared";
 
 // ── Backend (wire) enums ─────────────────────────────────────────────────────────────────────────
@@ -128,6 +127,25 @@ export interface WebCardAction {
   value: string;
 }
 
+/** One build thread's SELF-REPORTED verification, carried on the `ship` card (backend `ShipThreadVerification`
+ *  in `web-approval-card.ts`). No judge grades it — `unverified` just flags a thread that asserted done with
+ *  zero evidence, so the operator knows to eyeball it. */
+export interface ShipThreadVerification {
+  /** The build thread's title/brief. */
+  title: string;
+  /** Whether this thread asserted completion; `not_done` is advisory on the ship card. */
+  status: "done" | "not_done";
+  /** The thread's captured verification evidence (command + exit code + output tail). */
+  verification: {
+    kind: string;
+    command: string;
+    exitCode: number;
+    outputTail: string;
+  }[];
+  /** The thread asserted done but reported no verification evidence at all. */
+  unverified: boolean;
+}
+
 export interface WebApprovalCard {
   type: "approval_card";
   jobId: string;
@@ -150,6 +168,9 @@ export interface WebApprovalCard {
   actions: WebCardAction[];
   /** ISO timestamp stamped when the operator clicks "Spin up preview" at the ship gate — hides the button. */
   previewRequestedAt?: string;
+  /** `ship` card only — each build thread's self-reported verification evidence. Verbatim passthrough,
+   *  no judge; rendered so the operator reviews the honest signal before shipping. */
+  verifications?: ShipThreadVerification[];
   /** `db_write` card only — the exact proposed single SQL statement (the approved artifact). */
   sql?: string;
   /** `db_write` card only — the EXPLAIN-estimated row count, when available. */
@@ -441,10 +462,10 @@ export interface PipelineReviewChild {
 }
 
 /**
- * One task in a stage's LIVE, LLM-authored checklist — folded server-side from `TaskCreate`/`TaskUpdate`
- * tool calls (no fixed/expected set: `[]` just means nobody has created a task yet, not "not started").
- * Owned by the STAGE (not a single thread), so it survives builder-leg rotation within a build stage.
- * `dropped` is the SDK's `deleted` status.
+ * One task in a thread group's LIVE, LLM-authored checklist — written server-side by the `task_create`/
+ * `task_update` host-bridge tools (no fixed/expected set: `[]` just means nobody has created a task
+ * yet, not "not started"). Owned by the THREAD GROUP (not a single thread), so it survives builder-leg
+ * rotation within a build thread group. `dropped` is the `deleted` status.
  */
 export interface TaskItem {
   id: string;
@@ -462,7 +483,7 @@ export interface TaskItem {
 /** The thread ROLE — the single differentiator (subsumes the old `kind`/`is_master_review` split).
  *  Mirrors backend `ThreadRole` (`thread-kind/spec.ts`). `planning`/`post_build`/`ci` all reuse the brain's
  *  conversational session machinery; `builder`/`master_review` are top-level executable; `review_agent`/
- *  `review_fix` are stage-scoped children of a builder; `plan_review` is the Codex plan-review dialogue. */
+ *  `review_fix` are thread-group-scoped children of a builder; `plan_review` is the Codex plan-review dialogue. */
 export type ThreadRole =
   | "planning"
   | "plan_review"
@@ -474,11 +495,11 @@ export type ThreadRole =
   | "ci";
 
 /**
- * One THREAD — a first-class row differentiated by {@link ThreadRole}, grouped under a {@link PipelineStage}.
- * A builder's `review_agent`/`review_fix` children live in the SAME stage as their parent (related by a
+ * One THREAD — a first-class row differentiated by {@link ThreadRole}, grouped under a {@link PipelineThreadGroup}.
+ * A builder's `review_agent`/`review_fix` children live in the SAME thread group as their parent (related by a
  * backend `parentId` link the web never needs directly — they arrive pre-nested as {@link children}).
  * No more `steps`/`legs`/`tasks` on a thread: a thread IS the leaf now (a "leg" is just an ordinary builder
- * thread — see {@link PipelineStage.threads}), and the task checklist moved up to the owning stage.
+ * thread — see {@link PipelineThreadGroup.threads}), and the task checklist moved up to the owning thread group.
  */
 export interface PipelineThread {
   id: string;
@@ -490,18 +511,6 @@ export interface PipelineThread {
   status: ThreadStatus;
   /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
   condition: ThreadCondition;
-  /**
-   * Why this lane is held on its `blocked` terminal record (`condition==='paused'`); `null` otherwise.
-   * Mirrors backend `terminal_record.blocked.reason`. `'judge_unavailable'` drives the operator
-   * escape-hatch banner ("Retry now" / "Skip & accept").
-   */
-  blockReason?: ThreadBlockReason | null;
-  /**
-   * True only when the LIVE judge was the outage AND the static build+tests already passed — gates the
-   * "Skip & accept" button (mirrors the backend accept guard, so the UI never offers an unsafe accept).
-   * "Retry now" shows for ANY `judge_unavailable` hold; accept only when this is true.
-   */
-  acceptableOnJudgeOutage?: boolean;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The resumable engine session id, or null before the thread's first turn. */
@@ -526,10 +535,10 @@ export interface PipelineThread {
   children: PipelineReviewChild[];
 }
 
-/** The stage KIND — the single differentiator for a pipeline grouping. Mirrors backend `StageKind`
- *  (`stage-kind/spec.ts`). Only `build`/`direct_build` hold multiple threads (sequential builder legs +
- *  review children); every other kind is a singleton stage (exactly one thread). */
-export type StageKind =
+/** The thread group KIND — the single differentiator for a pipeline grouping. Mirrors backend `ThreadGroupKind`
+ *  (`thread-group-kind/spec.ts`). Only `build`/`direct_build` hold multiple threads (sequential builder legs +
+ *  review children); every other kind is a singleton thread group (exactly one thread). */
+export type ThreadGroupKind =
   | "planning"
   | "plan_review"
   | "build"
@@ -539,31 +548,31 @@ export type StageKind =
   | "ci";
 
 /**
- * A STAGE — the first-class §N pipeline grouping. A job's pipeline is the ordinal-ordered sequence of its
- * stages. A `build`/`direct_build` stage owns MULTIPLE threads (sequential builder legs — rotation is just
- * "insert the next builder-thread row" — plus its review_agent(s)/review_fix) and a shared task checklist
- * that survives leg rotation; every other kind is a singleton stage wrapping one thread.
+ * A THREAD GROUP — the first-class §N pipeline grouping. A job's pipeline is the ordinal-ordered sequence of
+ * its thread groups. A `build`/`direct_build` thread group owns MULTIPLE threads (sequential builder legs —
+ * rotation is just "insert the next builder-thread row" — plus its review_agent(s)/review_fix) and a shared
+ * task checklist that survives leg rotation; every other kind is a singleton thread group wrapping one thread.
  */
-export interface PipelineStage {
+export interface PipelineThreadGroup {
   id: string;
-  kind: StageKind;
+  kind: ThreadGroupKind;
   /** Human label — populated only for `build`/`direct_build` (the slice name, e.g. "Foundation") and
    *  `planning` (to disambiguate re-plan rounds, e.g. "Re-plan #2"); other kinds derive their sidebar label
    *  from `kind` alone. */
   title: string | null;
-  /** The build slice's review-selection TYPE (backend/frontend/docs/…) — null on non-build stages. */
+  /** The build slice's review-selection TYPE (backend/frontend/docs/…) — null on non-build thread groups. */
   type: string | null;
   ordinal: number;
   status: ThreadStatus;
   condition: ThreadCondition;
-  /** The plan revision this stage belongs to, or null for a revision-agnostic/legacy stage. */
+  /** The plan revision this thread group belongs to, or null for a revision-agnostic/legacy thread group. */
   decisionRecordId: string | null;
-  /** This stage's ROOT threads, ordinal-sorted (a build stage's sequential builder legs, oldest first; a
-   *  singleton stage's one thread). Each thread nests its own review children — see
+  /** This thread group's ROOT threads, ordinal-sorted (a build thread group's sequential builder legs, oldest
+   *  first; a singleton thread group's one thread). Each thread nests its own review children — see
    *  {@link PipelineThread.children}. */
   threads: PipelineThread[];
-  /** This stage's shared task checklist — owned by the stage (not any one thread) so it survives builder-
-   *  leg rotation (d1/d6). For a singleton stage this is just that one thread's checklist. */
+  /** This thread group's shared task checklist — owned by the thread group (not any one thread) so it survives
+   *  builder-leg rotation (d1/d6). For a singleton thread group this is just that one thread's checklist. */
   tasks: TaskItem[];
 }
 
@@ -614,7 +623,7 @@ export interface PipelineJob {
   /** The plan-review (Codex) thread — a first-class navigator row that opens the `codex-review:<jobId>`
    *  lane (the review dialogue Main communicates with). Null when no review has run. */
   planReview: { status: string; defaultFooter?: LaneDefaultFooter } | null;
-  /** The opened PR (ARTIFACTS), or null until the PR-tail stage opens one. */
+  /** The opened PR (ARTIFACTS), or null until the PR-tail thread group opens one. */
   prUrl: string | null;
   prNumber: number | null;
   /** Observed PR lifecycle (`jobs.pr_state`) — same source as the sidebar glyph; null until a PR exists. */
@@ -633,29 +642,30 @@ export interface PipelineJob {
    *  until first sampled / on detached HEAD. */
   currentBranch: string | null;
   baseBranch: string | null;
-  /** The whole pipeline: ordinal-ordered stages, each owning its own threads + task checklist. Replaces the
-   *  old flat `threads` array + job-level `mainTasks`/`mainDefaultFooter` — the planning stage's own single
-   *  thread (+ its stage's `tasks`) is now the Main row's data source; see {@link pipelineMainTasks} /
-   *  {@link pipelineMainDefaultFooter}. */
-  stages: PipelineStage[];
+  /** The whole pipeline: ordinal-ordered thread groups, each owning its own threads + task checklist.
+   *  Replaces the old flat `threads` array + job-level `mainTasks`/`mainDefaultFooter` — the planning thread
+   *  group's own single thread (+ its thread group's `tasks`) is now the Main row's data source; see
+   *  {@link pipelineMainTasks} / {@link pipelineMainDefaultFooter}. */
+  threadGroups: PipelineThreadGroup[];
   /**
-   * Prior PLAN REVISIONS' STAGES as read-only, browsable history — present only once a re-propose over
+   * Prior PLAN REVISIONS' THREAD GROUPS as read-only, browsable history — present only once a re-propose over
    * already-DONE work has forged a new revision (the common single-revision job sends `[]`/absent). Each
-   * entry is a superseded revision with its own executable stages; `revision` is 1-based by age (oldest = v1).
-   * The navigator renders each as a collapsed "Previous plan (vN)" section below the active stages.
+   * entry is a superseded revision with its own executable thread groups; `revision` is 1-based by age
+   * (oldest = v1). The navigator renders each as a collapsed "Previous plan (vN)" section below the active
+   * thread groups.
    */
   priorRevisions?: {
     decisionRecordId: string;
     revision: number;
     status: string;
-    stages: PipelineStage[];
+    threadGroups: PipelineThreadGroup[];
   }[];
 }
 
 /**
  * `no_job` = the job never entered the build lifecycle (still `open`, chatting/planning). It still
- * carries the brain's own `mainTasks` (folded from its always-present planning stage) so the navigator's
- * Main row can show the checklist pre-plan.
+ * carries the brain's own `mainTasks` (folded from its always-present planning thread group) so the
+ * navigator's Main row can show the checklist pre-plan.
  */
 export type PipelineState =
   | PipelineJob
@@ -675,27 +685,27 @@ export type PipelineState =
 
 /**
  * The Main brain session's task list, from either pipeline shape. `no_job` carries `mainTasks` directly
- * (folded from its planning stage). An active job has NO top-level `mainTasks` any more — it's the
- * planning stage's own `tasks` (planning is always exactly one singleton stage).
+ * (folded from its planning thread group). An active job has NO top-level `mainTasks` any more — it's the
+ * planning thread group's own `tasks` (planning is always exactly one singleton thread group).
  */
 export function pipelineMainTasks(
   pipeline: PipelineState | undefined,
 ): TaskItem[] {
   if (!pipeline) return [];
   if (pipeline.status === "no_job") return pipeline.mainTasks ?? [];
-  return pipeline.stages.find((s) => s.kind === "planning")?.tasks ?? [];
+  return pipeline.threadGroups.find((s) => s.kind === "planning")?.tasks ?? [];
 }
 
 /**
  * The Main row's live footer default, from either pipeline shape. `no_job` carries `mainDefaultFooter`
- * directly; an active job derives it from the planning stage's own (singleton) thread.
+ * directly; an active job derives it from the planning thread group's own (singleton) thread.
  */
 export function pipelineMainDefaultFooter(
   pipeline: PipelineState | undefined,
 ): LaneDefaultFooter | undefined {
   if (!pipeline) return undefined;
   if (pipeline.status === "no_job") return pipeline.mainDefaultFooter;
-  return pipeline.stages.find((s) => s.kind === "planning")?.threads[0]
+  return pipeline.threadGroups.find((s) => s.kind === "planning")?.threads[0]
     ?.defaultFooter;
 }
 

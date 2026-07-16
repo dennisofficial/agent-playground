@@ -43,6 +43,7 @@ export class IdentityGroup {
     const job = ctx.job;
     if (!job) return '';
     const lines = ['CURRENT JOB'];
+    if (job.title) lines.push(`- Title: ${job.title}`);
     if (job.repoName) lines.push(`- Repo: ${job.repoName}`);
     if (job.branch && job.baseBranch) {
       lines.push(`- Branch: ${job.branch}  ·  Base: ${job.baseBranch}`);

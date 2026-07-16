@@ -19,9 +19,9 @@ import type {
 
 /**
  * The ROLE of a `threads` row — the single differentiator across every thread-like concept (renamed from
- * `ThreadRowKind`, d2/d7 — grouping now lives on `stage.kind`, see `../stage-kind`). Mapping from the old
+ * `ThreadRowKind`, d2/d7 — grouping now lives on `threadGroup.kind`, see `../thread-group-kind`). Mapping from the old
  * kind vocabulary: `main→planning`, `review_lens→review_agent`, `post_review→review_fix`; `post_build` and
- * `ci` are new roles for the split-off ship/CI stages (d14).
+ * `ci` are new roles for the split-off ship/CI thread groups (d14).
  */
 export type ThreadRole =
   | 'planning' // the job brain session (operator conversation). Render/identity-only — driver never executes it.
@@ -30,8 +30,8 @@ export type ThreadRole =
   | 'review_agent' // one post-build review lens over a builder's diff. Driven as a CHILD of the builder.
   | 'review_fix' // the fix pass that applies a builder's deduped lens findings. Driven as a CHILD.
   | 'master_review' // the ship-time Codex whole-diff review-&-fix. Top-level executable, runs last.
-  | 'post_build' // the ship-gate stage-thread: build summary, preview proposal, and amend loop.
-  | 'ci'; // the post-ship PR-lifecycle stage-thread: PR creation, CI handling, review comments, conflicts.
+  | 'post_build' // the ship-gate thread-group thread: build summary, preview proposal, and amend loop.
+  | 'ci'; // the post-ship PR-lifecycle thread-group thread: PR creation, CI handling, review comments, conflicts.
 
 /**
  * How the DRIVER treats a role:
@@ -74,9 +74,6 @@ export interface ThreadKindSpec {
   execution: ThreadExecution;
   /** Engine-agnostic reasoning effort (e.g. `xhigh` for master review); undefined = the engine default. */
   reasoningEffort?: ReasoningEffort;
-  /** Host-side gates that run after this kind's execute turn (the diagnostics done-gate + the ADR-0005
-   *  live-verification judge). Master review carries its own verify mandate, so both are off for it. */
-  gates: { verification: boolean; liveVerification: boolean };
   /** The wire lane this kind streams on — resolved through `surface/thread-registry.ts` (`laneFor`). */
   laneKind: LaneKind;
   /** Who holds the input side (operator composer / another agent / read-only). */

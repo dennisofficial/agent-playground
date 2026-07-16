@@ -96,12 +96,7 @@ async function loadSandbox(
 
 function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
   if (!tr) return null;
-  if (tr.summary) return tr.summary;
-  if (tr.blocked) return `blocked(${tr.blocked.reason}): ${tr.blocked.detail}`;
-  if (tr.failure) {
-    return `failure(${tr.failure.kind}): ${tr.failure.failingStep ?? tr.failure.command ?? ''} exit=${tr.failure.exitCode ?? ''}`;
-  }
-  return null;
+  return tr.summary ?? null;
 }
 
 // ── atlas_query / atlas_schema ────────────────────────────────────────────────────────────────────────

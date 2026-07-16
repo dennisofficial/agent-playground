@@ -109,6 +109,7 @@ function makeManager(pending: ChatStimulus[]) {
     { register: () => undefined } as never, // threadInput (ThreadInputService)
     { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     { getResetAt: () => undefined } as never, // usage (OauthUsageService)
+    inert, // selfSufficiency
   );
 }
 
