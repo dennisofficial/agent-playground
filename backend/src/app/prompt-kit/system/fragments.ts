@@ -181,10 +181,12 @@ export const GIT_SAFETY_NOTE =
  * of rediscovering the layout/conventions with a grep-storm.
  */
 export const DOCS_BEFORE_GREP =
-  'DOCS BEFORE GREP: if the repo has orienting docs (CLAUDE.md, AGENTS.md, README.md, ARCHITECTURE.md, ' +
-  'CONTRIBUTING.md, docs/), read those FIRST to skip a grep-storm rediscovering where things live and how ' +
-  'this codebase does things, then Grep/Read to confirm the exact files you will touch. Docs may be stale — ' +
-  'the CODE is authoritative; where they disagree, trust the code.';
+  'DOCS BEFORE GREP: CLAUDE.md memory loads automatically (root at session start; a nested CLAUDE.md loads ' +
+  'the moment you read a file in its subtree), so you already have that context — no need to re-read it. For ' +
+  'the OTHER orienting docs (AGENTS.md, README.md, ARCHITECTURE.md, CONTRIBUTING.md, docs/), read those FIRST ' +
+  'to skip a grep-storm rediscovering where things live and how this codebase does things, then Grep/Read to ' +
+  'confirm the exact files you will touch. Docs may be stale — the CODE is authoritative; where they ' +
+  'disagree, trust the code.';
 
 /**
  * VERIFY CURRENCY — the anti-"it's modern" trigger. A claim about whether a dependency/tool/framework is
