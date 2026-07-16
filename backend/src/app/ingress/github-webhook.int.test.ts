@@ -36,7 +36,7 @@ import {
   InboundMessageEntity,
 } from '../persistence/entities';
 import { JobBootstrapService } from '../job-bootstrap';
-import type { EventMessage } from '../domain';
+import type { EventMessage } from '@shared/domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';

@@ -13,7 +13,7 @@
  * the contract has ONE definition both edges agree on.
  */
 
-import { renderChunk } from './chunk-vocabulary';
+import { renderChunk } from '@shared/stimulus/chunk-vocabulary';
 
 /** LEGACY opening fence (pre-vocabulary). Retained so `stripTags` can still neutralize old markers. */
 export const UNTRUSTED_OPEN = '<<<UNTRUSTED_EVENT_DATA>>>';

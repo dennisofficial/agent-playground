@@ -4,7 +4,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -18,7 +18,7 @@ import {
 import { JobTitler } from '../titling';
 import { JobBootstrapService } from '../job-bootstrap';
 import { AgentSessionManager } from './agent-session-manager.service';
-import type { Message, TurnEnvelope } from '../domain';
+import type { Message, TurnEnvelope } from '@shared/domain';
 
 /**
  * MECHANISM validation for brain-session compaction (see the `atlas-brain-compaction` design). Boots the

@@ -9,7 +9,7 @@ import type { Repository } from 'typeorm';
 import type { CredentialResolver } from '../onboarding';
 import type { GithubPrService, PullDetail } from '../git';
 import type { StimulusStoreService } from '../stimulus';
-import type { CiSyncDelta } from '../domain';
+import type { CiSyncDelta } from '@shared/domain';
 import type { JobEntity, RepoEntity } from '../persistence/entities';
 import { GithubCiStateSync } from './github-ci-state-sync.service';
 

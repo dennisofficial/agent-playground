@@ -14,8 +14,11 @@ Single OVH box (64 GB, SYS-GAME-2). Docker + docker-compose. Caddy for TLS termi
 │   ├── refs/           # read-only reference repo clones (REFS_ROOT)
 │   ├── skills/         # central skills store, per-org dirs bind-mounted rw at /skills (SKILLS_ROOT)
 │   ├── golden/         # operator golden-seed files (ATLAS_GOLDEN_ROOT)
-│   └── engine/         # hot-reloaded engine bundle (ENGINE_BUNDLE_PATH parent)
-│       └── engine-entrypoint.mjs   # written by bundleEngine() at boot
+│   └── engine/         # hot-reloaded sandbox bundles
+│       ├── engine-app.js       # mirrored by ensureEngineApp() at boot
+│       ├── engine-app.js.map
+│       ├── mcp-bridge-server.mjs
+│       └── mcp-hub-server.mjs
 ├── pgdata/             # Postgres data directory (bind-mounted into postgres container)
 ├── .env                # compose interpolation store — POSTGRES_USER/PASSWORD/DB for ${..}
 │                       # substitution + pg-backup.sh; mode 600 (see infra/.env.compose.example)
@@ -283,8 +286,9 @@ docker compose -f infra/docker-compose.prod.yml up -d
 ```
 
 On first backend boot (backend-blue starts first), the process:
-1. Calls `bundleEngine()` → writes `engine-entrypoint.mjs` to the fixed
-   `backend/sandbox/` build-context dir AND to `ENGINE_BUNDLE_PATH`.
+1. Calls `ensureEngineApp()` → verifies `backend/sandbox/engine-app.js` and
+   `engine-app.js.map`, then mirrors them to `ENGINE_APP_BUNDLE_PATH` /
+   `ENGINE_APP_MAP_PATH` when those host-resolvable paths are configured.
 2. Calls `SandboxImageBuilder.ensureImage()` → builds `atlas-sandbox:latest` on the
    host Docker daemon. **This takes several minutes on first boot** — it installs
    Docker CE inside the image and pulls Node.js layers.
@@ -434,7 +438,7 @@ a failed deploy, stop the old color manually: `docker compose --env-file /srv/at
 
 **Sandbox build fails on first boot:** `docker logs atlas-backend-blue | grep -i sandbox`.
 Common causes: docker socket permission (check `ls -la /var/run/docker.sock`), or
-`ENGINE_BUNDLE_PATH` parent dir not created.
+`ENGINE_APP_BUNDLE_PATH` / `ENGINE_APP_MAP_PATH` parent dir not created.
 
 **Migration fails:** check that Postgres is healthy and the migrator can reach it
 on the `atlas` network. Run the migrator manually (step 7) with extra debug output:

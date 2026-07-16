@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { repoStateDir } from '../state-root';
+import { repoStateDir } from '@shared/state-root';
 
 /**
  * The host-only record of which worktree-relative paths were HYDRATED as secrets/seed into a given

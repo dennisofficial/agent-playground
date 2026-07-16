@@ -54,8 +54,8 @@ import {
   TurnHarnessFactory,
 } from '../surface';
 import type { AppVersionService } from '../cluster/app-version.service';
-import type { ToolBridgeOptions } from '../engine';
-import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '../engine';
+import type { ToolBridgeOptions } from '@shared/engine';
+import { HOST_RETRY_BACKOFF_MS, MAX_HOST_RETRIES } from '@shared/engine';
 import type { CredentialResolver } from '../onboarding';
 import type { OauthUsageService } from '../onboarding/oauth-usage.service';
 import type { LeaderElectionService } from '../cluster';

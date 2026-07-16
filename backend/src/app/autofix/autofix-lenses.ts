@@ -10,7 +10,7 @@
  */
 // Direct path (not the `../thread-kind` barrel, which re-exports `registry.ts` — that file imports
 // FROM here, so going through the barrel would cycle). `thread-types.ts` itself imports nothing.
-import type { ThreadType } from '../thread-kind/thread-types';
+import type { ThreadType } from '@shared/thread-kind/thread-types';
 import type {
   FindingSeverity,
   ReviewFinding,

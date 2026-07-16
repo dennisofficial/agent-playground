@@ -16,7 +16,7 @@ import {
   TOOL_DESCRIPTIONS,
   toolJsonSchema,
 } from './host-tool-schemas';
-import { WORKSPACE_PROFILE_TOOL_NAMES } from './workspace-profile-bridge-options';
+import { WORKSPACE_PROFILE_TOOL_NAMES } from '@shared/bridge-names/workspace-profile-bridge-options';
 
 // A single decision, fully populated, reused by every plan-shaped tool.
 const decisionItemPayload = {

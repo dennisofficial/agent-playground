@@ -9,7 +9,7 @@ import { AgentChatSurface, type CapturedApprovalCard } from '../agent-surface';
 import { AppModule } from '../app.module';
 import { AgentSessionManager, DecisionApprovalService } from '../brain';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER } from '../engine';
+import { ENGINE_RUNNER } from '@shared/engine';
 import { ThreadDriver } from '../driver/thread-driver.service';
 import { JobBootstrapService } from '../job-bootstrap';
 import {
@@ -29,7 +29,7 @@ import {
   UserEntity,
   OrganizationMemberEntity,
 } from '../persistence/entities';
-import type { Message, TurnEnvelope } from '../domain';
+import type { Message, TurnEnvelope } from '@shared/domain';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,

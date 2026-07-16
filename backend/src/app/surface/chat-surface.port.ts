@@ -1,8 +1,8 @@
 import type { Observable } from 'rxjs';
-import type { SeedRow } from '../domain/seed-row';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { SeedRow } from '@shared/domain/seed-row';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 
-import { renderChunk } from '../stimulus/chunk-vocabulary';
+import { renderChunk } from '@shared/stimulus/chunk-vocabulary';
 
 /**
  * DI token a hosting app binds its surface adapter to

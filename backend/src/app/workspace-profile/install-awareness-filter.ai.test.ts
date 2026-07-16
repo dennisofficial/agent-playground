@@ -19,7 +19,7 @@ import {
   AnthropicInstallAwarenessFilter,
   type InstallFilterVerdict,
 } from './install-awareness-filter';
-import type { InstallMatch } from '../prompt-kit/jit/install-awareness';
+import type { InstallMatch } from '@shared/prompt-kit/jit/install-awareness';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const describeLive = API_KEY ? describe : describe.skip;

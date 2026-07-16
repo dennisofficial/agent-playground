@@ -24,8 +24,8 @@ import type {
   Job,
   SessionEngine,
   ThreadCondition,
-} from '../domain';
-import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '../domain';
+} from '@shared/domain';
+import { CODEX_REVIEW_OUTAGE_RETRY_MS } from '@shared/domain';
 import {
   EngineAuthError,
   EngineSessionLimitError,
@@ -37,22 +37,22 @@ import {
   type EngineHomeType,
   type ToolBridgeOptions,
   type ToolImpl,
-} from '../engine';
-import type { GitAuth } from '../engine/engine.types';
+} from '@shared/engine';
+import type { GitAuth } from '@shared/engine/engine.types';
 import {
   HOST_RETRY_BACKOFF_MS,
   HOST_TRANSPORT_TRANSIENT_RE,
   MAX_HOST_RETRIES,
   isTransientAuthError,
   INTERNAL_PROFILE_AWARENESS_TOOL,
-} from '../engine/engine.types';
+} from '@shared/engine/engine.types';
 import { ProfileAwarenessService } from '../workspace-profile';
-import { summarizeTurnFailure } from '../engine/turn-failure-summary';
+import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
   SESSION_LIMIT_TEXT_MISFIRE_MAX,
-} from '../engine/session-limit';
+} from '@shared/engine/session-limit';
 import { GithubPrService, LocalGitService, type FeatureSandbox } from '../git';
 import {
   CHAT_SURFACE,
@@ -114,7 +114,7 @@ import {
   renderCommitTurnTask,
 } from '../prompt-kit';
 import { chunkKey, composeTurn } from '../prompt-kit/harness';
-import { fromExternal, type AgentMessage } from '../prompt-kit/message';
+import { fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
 import {
   StimulusStoreService,
   userChunkFor,
@@ -153,7 +153,7 @@ import {
   type LegRotationRunState,
   type LegRotationThresholds,
 } from './leg-rotation-watch';
-import { legRotationRule } from '../prompt-kit/jit';
+import { legRotationRule } from '@shared/prompt-kit/jit';
 import {
   DRIVER_REPO,
   type DriverRepoResolver,
@@ -3605,6 +3605,7 @@ export class ThreadDriver implements JobDispatcher {
               commitNudge: attempt,
             },
           },
+          liveRoute: { channel, jobId: job.id, lane },
           onEvent: (e) => harness.onEvent(e),
         },
         `commit nudge "${thread.brief}" #${attempt}`,
@@ -3694,6 +3695,7 @@ export class ThreadDriver implements JobDispatcher {
         lane: row.lane,
         kind: row.kind,
         engine: spec.engine,
+        liveRoute: { channel: row.channel, jobId: job.id, lane: row.lane },
         onEvent: (e) => harness.onEvent(e),
         // Re-supply the host tool closure — the in-sandbox session may have an in-flight
         // `request_operator_input` request whose response the re-attached host must still serve.
@@ -3979,6 +3981,7 @@ export class ThreadDriver implements JobDispatcher {
               batchOrdinal: anchor.batchOrdinal ?? null,
             },
           },
+          liveRoute: { channel, jobId: job.id, lane },
           // Stamp each folded host seed delivered the instant the Leg turn is durably registered (the
           // restart-survivable hand-off — a later crash resumes THIS turn rather than re-draining the seeds).
           ...(seedIds.length

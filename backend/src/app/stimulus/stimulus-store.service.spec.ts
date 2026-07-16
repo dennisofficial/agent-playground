@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { QueryFailedError } from 'typeorm';
 import type { DataSource, Repository } from 'typeorm';
-import type { SeedRow } from '../domain';
+import type { SeedRow } from '@shared/domain';
 import {
   TranscriptMessageEntity,
   InboundMessageEntity,

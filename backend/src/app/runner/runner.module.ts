@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { EngineModule } from '../engine';
+import { EngineModule } from '../engine/engine.module';
 import { GitModule } from '../git';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ThreadEntity } from '../persistence/entities';

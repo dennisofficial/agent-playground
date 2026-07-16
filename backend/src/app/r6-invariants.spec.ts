@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const SRC = join(__dirname);
+const SHARED_SRC = join(SRC, '..', 'shared');
 const LOCAL_GIT_SRC = join(SRC, 'git', 'local-git.service.ts');
 
 // ── (a) LocalGitService safety flags ─────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ describe('R6 invariant (c): cross-thread tool-scope denial (reference)', () => {
    */
   it('dispatchToolRequest source enforces per-thread scope before dispatching any tool', () => {
     const src = readFileSync(
-      join(SRC, 'engine', 'tool-bridge-host.ts'),
+      join(SHARED_SRC, 'engine', 'tool-bridge-host.ts'),
       'utf8',
     );
     // The guard: for a THREAD-SCOPED tool, if args includes a jobId field it must match the owning thread.

@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { type ObjectLiteral, Repository } from 'typeorm';
-import { ENGINE_RUNNER, type EngineRunnerPort } from '../engine';
-import type { EngineAuth, EngineHomeKey } from '../engine';
+import { ENGINE_RUNNER, type EngineRunnerPort } from '@shared/engine';
+import type { EngineAuth, EngineHomeKey } from '@shared/engine';
 import { JobLifecycleService } from '../driver/job-lifecycle.service';
 import { LeaderElectionService } from '../cluster';
 import { CredentialResolver } from '../onboarding';
@@ -333,6 +333,11 @@ export class PlanReviewService {
             signal: ac.signal,
             ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
             richStream: true,
+            liveRoute: {
+              channel,
+              jobId: input.jobId,
+              lane: codexReviewLane(input.jobId),
+            },
             onEvent: (e) => {
               if (e.kind === 'session' && e.sessionId) {
                 // The Codex session id folds onto the plan_review thread's own `session_id` (retired

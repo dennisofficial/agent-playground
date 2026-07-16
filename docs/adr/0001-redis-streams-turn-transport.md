@@ -86,3 +86,35 @@ Staged so no phase claims restart-survival before its spine exists, and one-shot
 - **Phase 4 — watchdog + heartbeat finalize + boot re-attach.** ✅ Done + live-validated. `TurnWatchdogService` finalizes stale (dead-engine) turns; `reattachInFlightTurns` resumes in-flight turns on boot (redis path; pipe keeps JSONL recovery). Restart-survival proven end-to-end with a real turn.
 - **Phase 5 — retention.** ✅ Streams `del`'d at finalize (no MAXLEN needed). **Per-turn ACL DROPPED** — this is a private single-tenant app (your repos, trusted sandboxes); cross-tenant isolation doesn't apply, so the ACL was unnecessary. Only remaining: the prod-deploy `atlas-bus` internal network + `SANDBOX_REDIS_URL=redis://redis:6379` in the prod/shared env (dev reaches redis via `host.docker.internal`).
 - **Phase 6 — cutover.** ✅ DONE. Redis is the **only** transport: `ENGINE_RUNNER` bound directly to `RedisEngineRunner`; deleted `DockerEngineRunner` (+spec), the entrypoint's stdin/stdout branch, the pipe `ToolBridgeHost` class (+its subprocess spec — `dispatchToolRequest` kept), and the `ENGINE_TRANSPORT` flag. Brain boot recovery is unconditional Redis re-attach. Validated live post-deletion (a real turn answered "Tokyo" over the redis-only path). `SANDBOX_REDIS_URL` is now required (set in dev `.env.personal`).
+- **Phase 7 — engine delivery: esbuild bundle → first-class NestJS app.** ✅ DONE (2026-07-16). This addendum
+  is orthogonal to the transport decided above (Redis Streams, unchanged) — it replaces HOW the in-container
+  engine code is built and delivered, not the wire it speaks. Before: a single esbuild-bundled
+  `engine-entrypoint.mjs`, hand-assembled and entangled in the `backend/src/app` tree. After: the engine is a
+  second NestJS application project under `backend/src/engine` (`nest-cli.json` monorepo, `nest build engine
+  --webpack`), sharing `@shared/*` (prompt-kit, wire types, domain, state-root, engine-core) with the host app
+  via a compiler-enforced leaf boundary. It compiles to a single webpacked `engine-app.js` + an external
+  `engine-app.js.map` (agent SDKs kept external; everything else — Nest, ioredis, rxjs, reflect-metadata —
+  inlined, so no pnpm-symlinked `node_modules` is ever mounted into the sandbox). Both files are bind-mounted
+  into every sandbox at `/usr/local/lib/atlas/` (same mount pattern as `mcp-bridge-server.mjs`/
+  `mcp-hub-server.mjs`), and the `atlas-engine-turn` launcher execs `node --enable-source-maps
+  /usr/local/lib/atlas/engine-app.js` directly. `SandboxImageBuilder.ensureEngineApp()` refreshes the bundle
+  on every backend boot; the Dockerfile's `atlas-engine-turn` script is baked into the sandbox base image and
+  content-hash-triggers an automatic image rebuild (`SandboxImageBuilder`'s `CONTEXT_HASH_LABEL`) when it
+  changes. Hot-reload-next-turn is preserved by construction: the bundle is a live bind mount, not a layer, so
+  a host-side rebuild reaches the next turn on an ALREADY-RUNNING sandbox with no container recreate.
+  **Hard cutover (no flag, no rollback path):** the old `bundleEngine()`/`engine-entrypoint.ts`, the dead
+  daemon build scaffold (`build-daemon.sh`, `daemon-build-inner.sh`), and the 3 ad-hoc `redis-*-smoke.mjs`
+  scripts referenced in *Validation* above were deleted in the same change and replaced by a permanent,
+  re-runnable harness at `backend/src/engine/__e2e__/` (`pnpm -C backend e2e:engine <sandboxId>`). Re-validated
+  live against real Haiku turns post-cutover: the full turn-behavior matrix (normal turn, steering, aborting,
+  reattach, error handling, tool bridge, MCP servers) plus an adversarial break-it pass all passed (one
+  non-gating observation: a tool-bridge turn has no independent timeout if the host consumes a `tool_request`
+  and then goes fully silent — it relies on the real host's heartbeat, which is always sent in production).
+  Queuing (2 turns on one sandbox execute sequentially, no interleave) — enforced by the HOST's
+  `RedisEngineRunner`/`activity.thread(containerId, ...)` semaphore, not the engine app, so it's out of scope
+  for the raw-`docker exec` harness — was proven separately through the real running product: two chat
+  messages fired 93ms apart at the same job/sandbox ran as exactly one `engine-app.js` process at a time, each
+  turn replying with its own distinct, correctly-attributed text, no cross-talk. A real job build shipped a
+  real PR end-to-end on the new engine; hot-reload-with-no-recreate was proven via an unchanged container
+  `StartedAt` across a rebuild + a follow-up live turn. Evidence: `$ATLAS_EVIDENCE_DIR` for the job that did
+  this cutover (thread "Hard cutover + exhaustive end-to-end validation").

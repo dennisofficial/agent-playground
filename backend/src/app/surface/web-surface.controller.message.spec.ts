@@ -111,6 +111,7 @@ function makeController() {
     threads as never, // threads (jobs)
     messages as never, // messages
     {} as never, // repos
+    {} as never, // subagents
     {} as never, // threadTitle
     {} as never, // usageBus
     { available: false } as never, // realtime

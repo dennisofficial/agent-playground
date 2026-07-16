@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LiveBlock } from "@/lib/api/job-stream";
-import { indexLiveSubagents } from "./subagents";
+import type { JobMessage } from "@/lib/api/job-api";
+import { indexDurableSubagents, indexLiveSubagents } from "./subagents";
 
 /**
  * The subagent card's live "running vs done" state.
@@ -71,5 +72,97 @@ describe("indexLiveSubagents — background subagent running state", () => {
     ]).summaryById.get("tu-bg")!;
     // A foreground run's bgSettled is never set; it must NOT keep it running.
     expect(done.running).toBe(false);
+  });
+
+  it("a DEFAULTED-background subagent (no run_in_background in input) is recognized via bgStarted", () => {
+    // Subagents run in the background BY DEFAULT, so the caller omits `run_in_background` — the input field is
+    // absent. The engine's `bg_task 'started'` frame (→ bgStarted) is what tells us it was backgrounded.
+    const running = indexLiveSubagents([
+      anchor({
+        input: { subagent_type: "test" }, // NOTE: no run_in_background
+        done: true, // the launch ack — NOT completion
+        bgStarted: true,
+      }),
+      child(),
+    ]).summaryById.get("tu-bg")!;
+    expect(running.background).toBe(true); // badge restored despite the missing input field
+    expect(running.running).toBe(true); // still working despite done=true (the bug this fixes)
+
+    const settled = indexLiveSubagents([
+      anchor({
+        input: { subagent_type: "test" },
+        done: true,
+        bgStarted: true,
+        bgSettled: true, // the bg_task completed/failed/stopped frame
+      }),
+      child(),
+    ]).summaryById.get("tu-bg")!;
+    expect(settled.running).toBe(false);
+  });
+});
+
+/**
+ * The DURABLE (reloaded / non-live) subagent card keys running/done off the AUTHORITATIVE `subagentStatus`
+ * the backend joins onto the anchor from the `subagents` table — NOT the anchor's `meta.result`, which is the
+ * launch-ack for a backgrounded run and would read "done" while the subagent is still working.
+ */
+const durableAnchor = (meta: Record<string, unknown>, over: Partial<JobMessage> = {}): JobMessage => ({
+  ts: "a1",
+  threadId: "t1",
+  subagentId: null,
+  author: "atlas",
+  authorId: "atlas",
+  authorName: "Atlas",
+  text: "",
+  kind: "tool",
+  source: "atlas",
+  postedAt: "2026-07-16T00:00:00.000Z",
+  meta: { id: "tu-bg", name: "Task", input: { subagent_type: "test" }, ...meta },
+  ...over,
+});
+
+const durableChild = (): JobMessage => ({
+  ts: "c1",
+  threadId: "t1",
+  subagentId: "s1",
+  author: "atlas",
+  authorId: "atlas",
+  authorName: "Atlas",
+  text: "working",
+  kind: "text",
+  source: "atlas",
+  postedAt: "2026-07-16T00:00:01.000Z",
+  meta: { parentToolUseId: "tu-bg" },
+});
+
+describe("indexDurableSubagents — authoritative status over launch-ack", () => {
+  it("subagentStatus 'running' keeps the card running even when meta.result is set (launch ack)", () => {
+    const summary = indexDurableSubagents([
+      durableAnchor({ result: "agentId: s1 …" }, { subagentStatus: "running" }),
+      durableChild(),
+    ]).summaryById.get("tu-bg")!;
+    expect(summary.running).toBe(true);
+  });
+
+  it("subagentStatus 'done' marks the card done", () => {
+    const summary = indexDurableSubagents([
+      durableAnchor({ result: "agentId: s1 …" }, { subagentStatus: "done" }),
+      durableChild(),
+    ]).summaryById.get("tu-bg")!;
+    expect(summary.running).toBe(false);
+  });
+
+  it("falls back to the meta.result cue when no subagentStatus is present (legacy anchor)", () => {
+    const stillRunning = indexDurableSubagents([
+      durableAnchor({}), // no result, no subagentStatus
+      durableChild(),
+    ]).summaryById.get("tu-bg")!;
+    expect(stillRunning.running).toBe(true);
+
+    const finished = indexDurableSubagents([
+      durableAnchor({ result: "done" }),
+      durableChild(),
+    ]).summaryById.get("tu-bg")!;
+    expect(finished.running).toBe(false);
   });
 });

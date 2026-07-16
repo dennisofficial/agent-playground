@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { EventMessage, Message, ParsedEvent, SeedRow } from '../domain';
-import { assertNever } from '../domain';
+import type { EventMessage, Message, ParsedEvent, SeedRow } from '@shared/domain';
+import { assertNever } from '@shared/domain';
 import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';

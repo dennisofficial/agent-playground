@@ -6,8 +6,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { AutoFixStage } from './autofix.stage';
 import { lensById } from './autofix-lenses';
 import type { AutoFixContext } from './autofix.types';
-import { EngineCore } from '../engine/engine-core';
-import type { EngineRunnerPort } from '../engine';
+import { EngineCore } from '@shared/engine/engine-core';
+import type { EngineRunnerPort } from '@shared/engine';
 import type { LocalGitService } from '../git';
 import type { TurnHarnessFactory } from '../surface/turn-harness.service';
 

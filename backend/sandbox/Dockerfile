@@ -267,7 +267,7 @@ RUN git config --system --add safe.directory '*'
 # Engine runtime: the two SDKs (each ships its native CLI via a per-platform package) + the bundled
 # atlas engine entrypoint. Pinned to match the host so a turn behaves identically (keep in sync; D5
 # may promote these to build args). The host passes secrets as exec env, never baked here.
-ARG CLAUDE_SDK_VERSION=0.3.201
+ARG CLAUDE_SDK_VERSION=0.3.204
 ARG CODEX_SDK_VERSION=0.137.0
 # Installed with plain `npm` (not pnpm): an isolated two-package install into a standalone package.json,
 # consumed only by ESM `import` from the .mjs bundles below — a flat node_modules resolves identically and
@@ -276,17 +276,20 @@ RUN mkdir -p /usr/local/lib/atlas \
   && cd /usr/local/lib/atlas \
   && printf '{"name":"atlas-engine-runtime","private":true}\n' > package.json \
   && npm install "@anthropic-ai/claude-agent-sdk@${CLAUDE_SDK_VERSION}" "@openai/codex-sdk@${CODEX_SDK_VERSION}"
-COPY engine-entrypoint.mjs /usr/local/lib/atlas/engine-entrypoint.mjs
+# Baked as a fallback; the host bind-mounts the live re-bundled copy over it (same hot-reload contract as
+# mcp-bridge-server.mjs / mcp-hub-server.mjs below).
+COPY engine-app.js /usr/local/lib/atlas/engine-app.js
+COPY engine-app.js.map /usr/local/lib/atlas/engine-app.js.map
 # The Codex MCP tool-bridge server (spawned by codex via config.toml). Baked as a fallback; the host
-# bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.
+# bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-app.js.
 COPY mcp-bridge-server.mjs /usr/local/lib/atlas/mcp-bridge-server.mjs
 # The persistent MCP hub (launched by sandbox-init.sh). Baked as a fallback; the host bind-mounts the live
-# re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.
+# re-bundled copy over it, same hot-reload contract as engine-app.js.
 COPY mcp-hub-server.mjs /usr/local/lib/atlas/mcp-hub-server.mjs
 RUN node --check /usr/local/lib/atlas/mcp-hub-server.mjs
 # Pin the engine to THIS image's Node 22 by absolute path — fnm rewrites PATH for the agent's build
 # shells, so calling `node` unqualified here would risk launching the engine under a repo-pinned Node.
-RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node /usr/local/lib/atlas/engine-entrypoint.mjs "$@"\n' \
+RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"\n' \
       > /usr/local/bin/atlas-engine-turn \
   && chmod +x /usr/local/bin/atlas-engine-turn
 

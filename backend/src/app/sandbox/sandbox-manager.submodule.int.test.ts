@@ -13,7 +13,7 @@ import type { EnvService } from '@core/config/env/env.service';
 import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LocalGitService, type FeatureSandbox, type ProjectRepo } from '../git';
-import { bundleEngine, bundleMcpBridge, bundleMcpHub } from './bundle-engine';
+import { bundleMcpBridge, bundleMcpHub, ensureEngineApp } from './bundle-engine';
 import { CONTAINER_GIT_COMMON, CONTAINER_WORKTREE } from './container-paths';
 import { DockerodeContainerEngine } from './dockerode-container-engine';
 import { SandboxImageBuilder } from './sandbox-image.builder';
@@ -180,9 +180,9 @@ describe('SandboxManager — submodule repo full-clone (integration, needs Docke
       );
       return;
     }
-    // The engine + MCP bundles are generated, not committed — produce them (as the API does on boot)
-    // before building the image, which COPYs them into the build context.
-    await bundleEngine();
+    // The engine app + MCP bundles are generated, not committed — ensure/produce them (as the API does on
+    // boot) before building the image, which COPYs them into the build context.
+    ensureEngineApp();
     await bundleMcpBridge();
     await bundleMcpHub();
     await builder.ensureImage();

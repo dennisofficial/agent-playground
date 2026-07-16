@@ -4,7 +4,7 @@ import type {
   ChatSurface,
   InboundChatMessage,
 } from '../surface/chat-surface.port';
-import { memoryPrependRule, renderPlanApprovedSeed } from '../prompt-kit/jit';
+import { memoryPrependRule, renderPlanApprovedSeed } from '@shared/prompt-kit/jit';
 import { JitHostExecutor } from './jit-host-executor';
 
 /** Captures the exact args a `seedSystemNotification` call receives — the parity proof. */

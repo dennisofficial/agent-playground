@@ -410,9 +410,9 @@ describe('SandboxManager.teardownByIdentity', () => {
 });
 
 describe('SandboxManager.attach — onMilestone', () => {
-  // CONFIG_REV is a private module constant (currently 15); mirrored here to construct a matching
+  // CONFIG_REV is a private module constant (currently 16); mirrored here to construct a matching
   // fingerprint label for the warm-reuse case. `atlas.cfg` mirrors the private L_CFG label key.
-  const CONFIG_REV = 15;
+  const CONFIG_REV = 16;
   const IMAGE_ID = 'img-1';
   const FINGERPRINT = `${IMAGE_ID}|cfg${CONFIG_REV}|mnone|snone`; // no mounts + no setup script in these tests
 

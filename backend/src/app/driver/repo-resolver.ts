@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { Job } from '../domain';
-import type { SandboxGitIdentity } from '../engine/engine.types';
+import type { Job } from '@shared/domain';
+import type { SandboxGitIdentity } from '@shared/engine/engine.types';
 import {
   GitIdentityService,
   LocalGitService,

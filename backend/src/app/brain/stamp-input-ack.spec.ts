@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Message, TurnEnvelope } from '../domain';
-import type { EngineEvent } from '../engine/engine.types';
+import type { Message, TurnEnvelope } from '@shared/domain';
+import type { EngineEvent } from '@shared/engine/engine.types';
 import { AgentSessionManager } from './agent-session-manager.service';
 
 const JOB_ID = 'th-ack-001';

@@ -1,6 +1,6 @@
-import { agentMessage, type AgentMessage } from '../message';
-import { COMMIT_AND_PUSH_NOTE, TASK_LIST_NOTE } from '../system';
-import type { DecisionRecord, Step } from '../../domain';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import { COMMIT_AND_PUSH_NOTE, TASK_LIST_NOTE } from '@shared/prompt-kit/system';
+import type { DecisionRecord, Step } from '@shared/domain';
 import type { TaskItem } from '../../persistence/entities';
 import type { ResolvedRepo } from '../../driver/repo-resolver';
 import type { DriverThread } from '../../driver/driver-store.service';

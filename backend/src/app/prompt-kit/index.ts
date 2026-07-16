@@ -17,8 +17,8 @@
  */
 // Pillar 1: the @Fragment/@FragmentGroup system-prompt library (assembler, TEXT catalog, audience/context
 // types, conditions, dev-only preview).
-export * from './system';
-export * from './message';
+export * from '@shared/prompt-kit/system';
+export * from '@shared/prompt-kit/message';
 export * from './prompt.service';
 export * from './prompt-kit.module';
 

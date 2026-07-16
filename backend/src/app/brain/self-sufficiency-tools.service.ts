@@ -3,7 +3,7 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { McpServerStore } from '../mcp';
 import { MemoryStore } from '../memory';
 import { webFileRequestCard, webSecretInputCard } from '../surface';
-import type { ToolImpl } from '../engine/engine.types';
+import type { ToolImpl } from '@shared/engine/engine.types';
 import { BrainStoreService } from './brain-store.service';
 
 /** The tenant + authoring context a build/brain thread supplies when asking for this toolset. */

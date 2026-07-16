@@ -11,7 +11,7 @@ import {
 } from './plan-review.service';
 import type { PlanReviewInput } from './plan-review.service';
 import { BrainStoreService } from './brain-store.service';
-import type { EngineRunnerPort, EngineRunResult } from '../engine/engine.types';
+import type { EngineRunnerPort, EngineRunResult } from '@shared/engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';

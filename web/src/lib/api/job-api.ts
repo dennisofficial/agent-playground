@@ -106,6 +106,12 @@ export interface RawThreadMessage {
    *  to the thread. Joins the same way `meta.id`/`meta.parentToolUseId` always has — this is an additional,
    *  denormalized cross-check field. */
   subagentId: string | null;
+  /** The spawned subagent's AUTHORITATIVE lifecycle status ('running'|'done'|'failed'), present only on the
+   *  anchor (Task launching) message. The durable subagent card keys its running/done off this instead of the
+   *  launch-ack heuristic. Absent on non-anchor messages and legacy anchors with no subagent row. */
+  subagentStatus?: string | null;
+  /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
+  subagentEndedAt?: string | null;
   ts: string | null;
   author: string;
   authorId: string;
@@ -149,6 +155,11 @@ export interface JobMessage {
   /** The subagent this block belongs to (a spawned Task tool run), or null for a block that belongs directly
    *  to the thread. */
   subagentId: string | null;
+  /** The spawned subagent's AUTHORITATIVE lifecycle status ('running'|'done'|'failed'), present only on the
+   *  anchor (Task launching) message. The durable subagent card keys running/done off this. */
+  subagentStatus?: string | null;
+  /** ISO end time of the spawned subagent, or null while running; present only on the anchor message. */
+  subagentEndedAt?: string | null;
   /** `atlas` (the agent) or `user` (a human — the operator). Drives bubble alignment. */
   author: "atlas" | "user";
   authorId: string;
@@ -184,6 +195,8 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     ts: r.ts ?? r.id ?? `srv-${r.postedAt}`,
     threadId: r.threadId,
     subagentId: r.subagentId,
+    subagentStatus: r.subagentStatus ?? null,
+    subagentEndedAt: r.subagentEndedAt ?? null,
     author: r.isAtlas ? "atlas" : "user",
     authorId: r.authorId,
     authorName: r.author,

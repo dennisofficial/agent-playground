@@ -83,6 +83,7 @@ function makeController(opts?: {
     threads as never,
     m.messages as never,
     {} as never, // repos
+    {} as never, // subagents
     {} as never, // threadTitle
     {} as never, // usageBus
     { available: false } as never, // realtime

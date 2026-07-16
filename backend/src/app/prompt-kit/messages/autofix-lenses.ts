@@ -5,7 +5,7 @@
  * a thread, and parsing/dedupe of the findings they return) stays in `autofix/autofix-lenses.ts` — this
  * file owns only the agent-facing TEXT.
  */
-import { agentMessage, type AgentMessage } from '../message';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { fence } from '../../prompt-fence';
 import type {
   AutoFixContext,

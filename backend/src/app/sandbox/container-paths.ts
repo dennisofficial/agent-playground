@@ -4,6 +4,7 @@
  */
 
 import { posix } from 'node:path';
+import { MCP_HUB_PORT as SHARED_MCP_HUB_PORT } from '@shared/mcp/mcp-hub-config';
 
 /**
  * The ENGINE's own isolated home INSIDE the sandbox — session transcripts (long-lived → resume across
@@ -175,7 +176,7 @@ export const CONTAINER_PLAYGROUND = '/playground';
  * inbound external port exposure (which sandboxes lack anyway). A constant, not a mount — see
  * `image/mcp-hub-server.ts` (the hub) + `image/user-mcp-bridge-options.ts` (the engine-side endpoints).
  */
-export const MCP_HUB_PORT = 8785;
+export const MCP_HUB_PORT = SHARED_MCP_HUB_PORT;
 
 /**
  * The MCP hub's per-JOB working dir INSIDE the sandbox (pidfile `hub.pid` + `hub.log`), under the durable

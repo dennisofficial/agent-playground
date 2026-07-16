@@ -54,6 +54,7 @@ function makeController(thread: {
     {} as never,
     {} as never,
     {} as never,
+    {} as never, // subagents
     {} as never, // usageBus
     { available: false } as never,
     {} as never,

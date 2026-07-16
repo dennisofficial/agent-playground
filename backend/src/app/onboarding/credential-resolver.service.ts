@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GitHubAppTokenService } from '../git/github-app-token.service';
 import { GitIdentityService } from '../git/git-identity.service';
-import type { EngineAuth, SandboxGitIdentity } from '../engine/engine.types';
+import type { EngineAuth, SandboxGitIdentity } from '@shared/engine/engine.types';
 import { ClaudeCredentialStore } from './claude-credential.store';
 import {
   TenantCredentialStore,

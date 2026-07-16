@@ -6,7 +6,7 @@ import {
   type EngineEvent,
   type EngineUsage,
   resolveContextLimit,
-} from '../engine';
+} from '@shared/engine';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -579,15 +579,25 @@ export interface TurnHarnessOptions {
    *  `${turnId}:${ordinal}` so a repeat (re)persist upserts instead of duplicating. Absent ⇒ blocks keep
    *  `idem_key = NULL` (build/plan-review lanes, legacy). */
   turnId?: string;
+  /**
+   * Mirror each engine event into `LiveTurnStore` from this harness. Default false because the real Redis
+   * runner owns live push through an independent consumer group; faked/direct runners can opt in so the same
+   * full-App flow still has a resumable live buffer.
+   */
+  livePush?: boolean;
 }
 
 /**
  * THE SHARED TRANSCRIPT SPINE.
  *
  * Lifted verbatim from the brain's former `makeTurnStreamer` so EVERY engine turn — the thread brain, a
- * build phase, a nested subagent — converts its engine event stream into the SAME two outputs:
- *   (a) a LIVE, resumable push to {@link LiveTurnStore} (token deltas + thinking + tool calls/results), and
- *   (b) the AUTHORITATIVE durable blocks (`chat`/`thinking`/`tool`), persisted at turn END via {@link BlockSink}.
+ * build phase, a nested subagent — converts its engine event stream into the AUTHORITATIVE durable blocks
+ * (`chat`/`thinking`/`tool`), persisted at turn END via {@link BlockSink} (+ an optional usage harvest).
+ *
+ * The LIVE, resumable push to {@link LiveTurnStore} is normally done by RedisEngineRunner's independent
+ * `realtime` consumer group (`liveRoute`), so a slow persistence path here can't delay the operator's live
+ * view. Faked/direct runners can opt this harness back into live mirroring. This factory still owns the live
+ * lane's LIFECYCLE (end/reset).
  *
  * What varies per role is ONLY the message sink: the `lane` it streams on and the `metaTag` stamped on its
  * blocks. Persisting at turn-END only (never mid-turn) is what prevents a double-render on reconnect: during
@@ -620,6 +630,7 @@ export class TurnHarnessFactory {
     const { jobId, orgId, channel, threadId } = options;
     const lane = options.lane ?? 'main';
     const metaTag = options.metaTag;
+    const livePush = options.livePush === true;
     let persistTurnId = options.turnId;
 
     type DurableBlock = {
@@ -745,8 +756,10 @@ export class TurnHarnessFactory {
 
       onEvent: (e: EngineEvent) => {
         if (closed) return;
-        // LIVE + RESUMABLE: the store fans the frame AND holds the cumulative turn for snapshot-on-connect.
-        this.liveTurns.push(channel, jobId, e, lane);
+        // Live push normally happens in RedisEngineRunner's independent `realtime` consumer group (driven by
+        // the caller's `liveRoute`), so a slow/blocked transcript-accumulation path here never delays the
+        // operator's live view. Faked/direct runners can opt into this fallback mirror.
+        if (livePush) this.liveTurns.push(channel, jobId, e, lane);
         switch (e.kind) {
           case 'text': {
             // `parentToolUseId` (set only for subagent blocks) is stamped into meta so the web can peel

@@ -1,5 +1,5 @@
 import type { FeatureSandbox } from '../git';
-import type { ResolvedMcpServer } from '../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 
 /** DI token for the {@link SandboxProvider}. */
 export const SANDBOX_PROVIDER = Symbol('SANDBOX_PROVIDER');

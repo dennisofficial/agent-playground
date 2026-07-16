@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
-import { agentMessage } from '../prompt-kit/message';
+import { agentMessage } from '@shared/prompt-kit/message';
 import type { EnvService } from '@core/config/env/env.service';
-import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
+import type { EngineEvent, RunEngineArgs } from '@shared/engine/engine.types';
 import type { ContainerEngine } from './container-engine.port';
 import type { SandboxActivityRegistry } from './sandbox-activity.registry';
 import type { TurnRegistry } from './turn-registry.service';
