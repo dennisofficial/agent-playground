@@ -62,14 +62,16 @@ export function composeMessageBody(
           chunkKey: chunkKey.qa(m.jobId, m.questionId),
         },
       };
-    case 'file_answered':
+    case 'file_answered': {
+      const fileNotice = maskedFileNotice(m.path);
       return {
-        body: maskedFileNotice(m.path),
+        body: systemNotice(fileNotice),
         seedRow: {
-          label: maskedFileNotice(m.path),
+          label: fileNotice,
           chunkKey: chunkKey.file(m.jobId, m.path),
         },
       };
+    }
     case 'secret_provided':
       return composeSecretProvided(m);
     case 'reset_verify':
@@ -180,42 +182,60 @@ export function composeMessageBody(
       });
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.mcpApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.mcpApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'mcp_removed': {
       const body = mcpRemoved(m.removed, m.scope);
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.mcpRemove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.mcpRemove(m.jobId, m.requestId),
+        },
       };
     }
     case 'convention_attached': {
       const body = conventionAttached(m.profileName);
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.convApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.convApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'convention_edited': {
       const body = conventionEdited(m.mode, m.name);
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.convEditApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.convEditApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'skill_approved': {
       const body = skillApproved(m.mode, m.name, m.scope);
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.skillApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.skillApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'skill_edit_approved': {
       const body = skillEditApproved(m.name, m.forkedTo);
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.skillEditApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.skillEditApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'skill_edit_gone': {
@@ -223,7 +243,10 @@ export function composeMessageBody(
       // Shares the skill-edit-approve chunkKey: both are terminal outcomes of the same approve endpoint.
       return {
         body,
-        seedRow: { label: body, chunkKey: chunkKey.skillEditApprove(m.jobId, m.requestId) },
+        seedRow: {
+          label: body,
+          chunkKey: chunkKey.skillEditApprove(m.jobId, m.requestId),
+        },
       };
     }
     case 'event':
@@ -243,61 +266,75 @@ function composeSecretProvided(
 ): ComposedBody {
   switch (m.outcome) {
     case 'undelivered': {
-      const body = secretEphemeralUndelivered(m.name!, m.reason!);
+      const label = secretEphemeralUndelivered(m.name!, m.reason!);
       return {
-        body,
+        body: systemNotice(label),
         seedRow: {
-          label: body,
+          label,
           chunkKey: chunkKey.secret(m.jobId, m.name!, { fail: true }),
         },
       };
     }
     case 'delivered': {
-      const body = secretEphemeralDelivered(m.name!);
+      const label = secretEphemeralDelivered(m.name!);
       return {
-        body,
-        seedRow: { label: body, chunkKey: chunkKey.secret(m.jobId, m.name!) },
+        body: systemNotice(label),
+        seedRow: { label, chunkKey: chunkKey.secret(m.jobId, m.name!) },
       };
     }
     case 'stored': {
       if (m.mcp) {
-        const body = mcpSecretStored(m.mcp.key, m.mcp.server, m.mcp.slot);
+        const label = mcpSecretStored(m.mcp.key, m.mcp.server, m.mcp.slot);
         return {
-          body,
+          body: systemNotice(label),
           seedRow: {
-            label: body,
+            label,
             chunkKey: chunkKey.mcpSecret(m.jobId, m.mcp.server, m.mcp.key),
           },
         };
       }
-      const body = secretStored(m.name!, m.path!);
+      const label = secretStored(m.name!, m.path!);
       return {
-        body,
-        seedRow: { label: body, chunkKey: chunkKey.secret(m.jobId, m.name!) },
+        body: systemNotice(label),
+        seedRow: { label, chunkKey: chunkKey.secret(m.jobId, m.name!) },
       };
     }
     case 'oauth_refused': {
-      const body = mcpSecretOauthRefused(m.mcp!.server);
+      const label = mcpSecretOauthRefused(m.mcp!.server);
       return {
-        body,
+        body: systemNotice(label),
         seedRow: {
-          label: body,
-          chunkKey: chunkKey.mcpSecret(m.jobId, m.mcp!.server, m.mcp!.key, 'oauth'),
+          label,
+          chunkKey: chunkKey.mcpSecret(
+            m.jobId,
+            m.mcp!.server,
+            m.mcp!.key,
+            'oauth',
+          ),
         },
       };
     }
     case 'store_failed': {
-      const body = mcpSecretStoreFailed(m.mcp!.key, m.mcp!.server);
+      const label = mcpSecretStoreFailed(m.mcp!.key, m.mcp!.server);
       return {
-        body,
+        body: systemNotice(label),
         seedRow: {
-          label: body,
-          chunkKey: chunkKey.mcpSecret(m.jobId, m.mcp!.server, m.mcp!.key, 'fail'),
+          label,
+          chunkKey: chunkKey.mcpSecret(
+            m.jobId,
+            m.mcp!.server,
+            m.mcp!.key,
+            'fail',
+          ),
         },
       };
     }
     default:
       // Plain operator-supplied provide — the generic Job-1 notice, no curated pill.
-      return { body: agentMessage('A secret was provided.') };
+      return { body: systemNotice(agentMessage('A secret was provided.')) };
   }
+}
+
+function systemNotice(body: AgentMessage): AgentMessage {
+  return agentMessage(renderChunk({ kind: 'system_notice', body }));
 }

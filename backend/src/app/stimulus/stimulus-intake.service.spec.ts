@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   AmendApprovedMessage,
-  TurnEnvelope,
+  AnswerQuestionMessage,
   EventMessage,
+  FileAnsweredMessage,
   ResetVerifyMessage,
+  SecretProvidedMessage,
+  TurnEnvelope,
   UserMessage,
 } from '../domain';
 import type { EventFilterService, FilterVerdict } from './event-filter.service';
@@ -297,7 +300,10 @@ describe('StimulusIntake.intakeChat', () => {
     };
     const recorded = recordedStimulus({
       id: 'chat-seed-1',
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
     });
     const store = {
       recordChatStimulus: vi.fn(async () => recorded),
@@ -353,5 +359,95 @@ describe('StimulusIntake.intakeChat', () => {
       }),
     );
     expect(enqueueChatCalls).toHaveLength(1);
+  });
+
+  it('card confirmation variants persist the central composed system-notice body and stable card chunk key', async () => {
+    const answer: AnswerQuestionMessage = {
+      type: 'answer_question',
+      trust: 'system',
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'thread-9',
+      receivedAt: new Date().toISOString(),
+      questionId: 'q-1',
+      question: 'Which database?',
+      answer: 'Postgres',
+    };
+    const file: FileAnsweredMessage = {
+      type: 'file_answered',
+      trust: 'system',
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'thread-9',
+      receivedAt: new Date().toISOString(),
+      requestId: 'file-1',
+      filename: '.env.local',
+      path: 'uploads/.env.local',
+    };
+    const secret: SecretProvidedMessage = {
+      type: 'secret_provided',
+      trust: 'system',
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'thread-9',
+      receivedAt: new Date().toISOString(),
+      requestId: 'secret-1',
+      secretKind: 'durable',
+      outcome: 'stored',
+      name: 'API_KEY',
+      path: '.env.local',
+    };
+    const store = {
+      recordChatStimulus: vi.fn(async () => recordedStimulus()),
+    } as unknown as StimulusStoreService;
+    const { sink } = collectSink();
+    const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
+
+    await intake.intakeChat(answer, TRANSPORT);
+    await intake.intakeChat(file, TRANSPORT);
+    await intake.intakeChat(secret, TRANSPORT);
+
+    expect(store.recordChatStimulus).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'answer_question',
+        body: '<system_notice>The operator answered your question "Which database?": Postgres</system_notice>',
+        seedQuestionId: 'q-1',
+        systemChunk: expect.objectContaining({
+          label:
+            'The operator answered your question "Which database?": Postgres',
+          chunkKey: 'seed:qa:thread-9:q-1',
+        }),
+      }),
+    );
+    expect(store.recordChatStimulus).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: 'file_answered',
+        body: '<system_notice>The operator uploaded the file for `uploads/.env.local` (stored encrypted, granted). Continue onboarding.</system_notice>',
+        seedFileId: 'file-1',
+        systemChunk: expect.objectContaining({
+          label:
+            'The operator uploaded the file for `uploads/.env.local` (stored encrypted, granted). Continue onboarding.',
+          chunkKey: 'seed:file:thread-9:uploads/.env.local',
+        }),
+      }),
+    );
+    expect(store.recordChatStimulus).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        type: 'secret_provided',
+        body: '<system_notice>The operator provided the secret `API_KEY` (stored encrypted, granted to `.env.local`). Continue onboarding.</system_notice>',
+        seedSecretId: 'secret-1',
+        systemChunk: expect.objectContaining({
+          label:
+            'The operator provided the secret `API_KEY` (stored encrypted, granted to `.env.local`). Continue onboarding.',
+          chunkKey: 'seed:secret:thread-9:API_KEY',
+        }),
+      }),
+    );
   });
 });

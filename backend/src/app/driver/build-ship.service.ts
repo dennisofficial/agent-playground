@@ -120,14 +120,16 @@ export class BuildShipService {
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
-    return confirmed
-      ? {
-          opened: true,
-          prConfirmed: true,
-          url: confirmed.url,
-          number: confirmed.number,
-        }
-      : { opened: true, prConfirmed: false };
+    if (confirmed) {
+      if (!job.prUrl) await notify(`:tada: PR ready: ${confirmed.url}`);
+      return {
+        opened: true,
+        prConfirmed: true,
+        url: confirmed.url,
+        number: confirmed.number,
+      };
+    }
+    return { opened: true, prConfirmed: false };
   }
 
   /**

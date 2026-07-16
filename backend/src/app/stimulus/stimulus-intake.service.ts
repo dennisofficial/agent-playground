@@ -192,23 +192,25 @@ export class StimulusIntake {
         input = { ...base, body: message.body, type: 'user' };
         break;
       case 'answer_question': {
-        const body = message.answer;
+        const { body, seedRow } = composeMessageBody(message);
         input = {
           ...base,
           body,
           seedQuestionId: message.questionId,
-          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'answer_question',
         };
         break;
       }
       case 'file_answered': {
-        const body = `File "${message.filename}" was uploaded.`;
+        const { body, seedRow } = composeMessageBody(message);
         input = {
           ...base,
           body,
           seedFileId: message.requestId,
-          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'file_answered',
         };
         break;
@@ -219,7 +221,8 @@ export class StimulusIntake {
           ...base,
           body,
           seedSecretId: message.requestId,
-          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'secret_provided',
         };
         break;
@@ -245,7 +248,8 @@ export class StimulusIntake {
         input = {
           ...base,
           body,
-          systemChunk: seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: message.type,
         };
         break;
