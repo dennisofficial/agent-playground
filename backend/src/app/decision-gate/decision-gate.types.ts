@@ -6,7 +6,7 @@
  *
  * Zero v1 imports: nothing here reaches `@harness/**` or the v1 `slack-app` surface.
  */
-import type { DecisionClass, DecisionRecord } from '../domain';
+import type { DecisionClass, DecisionRecord } from '@shared/domain';
 
 /**
  * The verdict a `DecisionClassifier` returns for a proposed decision. Three outcomes, mapping directly

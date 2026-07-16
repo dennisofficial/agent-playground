@@ -11,7 +11,7 @@ import type {
   IngressResult,
   NotificationSource,
   RawNotification,
-} from '../domain';
+} from '@shared/domain';
 import type { IntakeOutcome, StimulusIntake } from '../stimulus';
 import type {
   BaseMoveMergeabilitySync,

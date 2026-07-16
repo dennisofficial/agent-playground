@@ -1,4 +1,4 @@
-import { agentMessage, type AgentMessage } from '../message';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 
 /**
  * prompt-kit / messages / commit-turn — the COMMIT-NUDGE turn resumed on a writer's own session when its

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { repoStateDir } from '../state-root';
+import { repoStateDir } from '@shared/state-root';
 
 /**
  * Path helpers for the central, durable skills store — real directories on the host (`SKILL.md` +

@@ -7,8 +7,8 @@
  * These shapes live in THIS subfolder, never `domain/index.ts`. Zero imports from `harness/**` or the
  * v1 `slack-app` surface — the stage talks only to W1's `EngineRunner` + `LocalGitService`.
  */
-import type { EngineAuth, EngineHomeKey, GitAuth } from '../engine';
-import type { SessionEngine } from '../domain';
+import type { EngineAuth, EngineHomeKey, GitAuth } from '@shared/engine';
+import type { SessionEngine } from '@shared/domain';
 
 /** How severe a finding is — drives whether the fix turn is even attempted (see `fixMinSeverity`). */
 export type FindingSeverity = 'low' | 'medium' | 'high';

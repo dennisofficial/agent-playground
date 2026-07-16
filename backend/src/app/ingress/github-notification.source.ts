@@ -10,7 +10,7 @@ import type {
   ParsedEvent,
   PrStateDelta,
   RawNotification,
-} from '../domain';
+} from '@shared/domain';
 import { ProjectRoutingService } from '../stimulus';
 
 /**

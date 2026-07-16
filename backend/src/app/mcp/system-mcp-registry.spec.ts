@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LSP_SERVER_NAME } from '../engine/lsp-tools';
+import { LSP_SERVER_NAME } from '@shared/engine/lsp-tools';
 import { buildSystemMcpServers } from './system-mcp-registry';
 
 const byName = () =>

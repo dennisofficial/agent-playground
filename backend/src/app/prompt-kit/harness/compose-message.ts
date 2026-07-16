@@ -8,13 +8,13 @@
  * dedup key stay byte-identical to the construction sites this centralizes. A new `Message` variant with no arm
  * fails the build at `assertNever` — the exhaustiveness guard this refactor exists for.
  */
-import type { Message, UserMessage } from '../../domain/message';
-import { assertNever } from '../../domain/message';
-import type { SeedRow } from '../../domain/seed-row';
-import { agentMessage, type AgentMessage } from '../message';
+import type { Message, UserMessage } from '@shared/domain/message';
+import { assertNever } from '@shared/domain/message';
+import type { SeedRow } from '@shared/domain/seed-row';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { shipOpenPrBody } from '../messages/ship-open-pr';
-import { chunkKey } from './chunk-keys';
-import { renderChunk } from './tag-vocabulary';
+import { chunkKey } from '@shared/prompt-kit/harness/chunk-keys';
+import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 import {
   COMPACTION_INSTRUCTION,
   answeredQuestionBody,

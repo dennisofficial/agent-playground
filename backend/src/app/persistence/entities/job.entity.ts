@@ -8,8 +8,8 @@ import {
 } from 'typeorm';
 import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
-import type { Decision } from '../../domain/decision-record';
-import type { JobProvenance } from '../../domain/job';
+import type { Decision } from '@shared/domain/decision-record';
+import type { JobProvenance } from '@shared/domain/job';
 import type { CiCounts } from '../../git';
 import type { LiveVerificationVerdict } from '../../driver/live-verification-judge';
 import { DecisionRecordEntity } from './decision-record.entity';

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Message, TurnEnvelope } from '../domain';
-import type { EngineRunnerPort } from '../engine/engine.types';
+import type { Message, TurnEnvelope } from '@shared/domain';
+import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { LeaderElectionService } from '../cluster';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import { SYSTEM_SEED_AUTHOR } from '../surface';

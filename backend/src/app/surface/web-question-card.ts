@@ -9,7 +9,7 @@
  * Pure — no I/O, no NestJS. Zero v1 imports.
  */
 
-import type { DecisionClass } from '../domain/decision-record';
+import type { DecisionClass } from '@shared/domain/decision-record';
 
 /** One selectable answer in a question card. */
 export interface WebQuestionOption {

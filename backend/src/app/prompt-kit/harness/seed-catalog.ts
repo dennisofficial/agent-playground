@@ -1,7 +1,7 @@
-import type { EventMessage } from '../../domain/message';
-import type { JobProvenance } from '../../domain/job';
-import { agentMessage, fromExternal, type AgentMessage } from '../message';
-import { renderChunk } from './tag-vocabulary';
+import type { EventMessage } from '@shared/domain/message';
+import type { JobProvenance } from '@shared/domain/job';
+import { agentMessage, fromExternal, type AgentMessage } from '@shared/prompt-kit/message';
+import { renderChunk } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 /**
  * prompt-kit / harness — the seeded system-event CONTENT catalog.

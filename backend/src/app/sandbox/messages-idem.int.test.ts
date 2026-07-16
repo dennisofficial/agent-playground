@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { CLASSIFIER_LLM } from '../decision-gate';
-import { ENGINE_RUNNER, type EngineEvent } from '../engine';
+import { ENGINE_RUNNER, type EngineEvent } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import {
   BLOCK_SINK,

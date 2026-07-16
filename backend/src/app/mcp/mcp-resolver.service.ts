@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { ResolvedMcpServer } from '../engine/engine.types';
+import type { ResolvedMcpServer } from '@shared/engine/engine.types';
 import type { McpServerEntity, McpSurface } from '../persistence/entities';
 import { McpOAuthService } from './mcp-oauth.service';
 import { McpServerStore } from './mcp-server.store';

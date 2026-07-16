@@ -1,6 +1,6 @@
-import { agentMessage, type AgentMessage } from '../message';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import { CONTAINER_CONTEXT } from '../../sandbox/container-paths';
-import { renderHarnessTag } from '../harness/tag-vocabulary';
+import { renderHarnessTag } from '@shared/prompt-kit/harness/tag-vocabulary';
 
 /**
  * prompt-kit / messages / first-turn-seeds — the small XML seed blocks prepended to a job's first-turn

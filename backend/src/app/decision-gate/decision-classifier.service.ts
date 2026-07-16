@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Decision, DecisionClass } from '../domain';
+import type { Decision, DecisionClass } from '@shared/domain';
 import { CLASSIFIER_LLM, type ClassifierLlm } from './classifier-llm';
 import type {
   ClassifierRecord,

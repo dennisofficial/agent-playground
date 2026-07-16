@@ -73,7 +73,7 @@ import {
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
-import { renderTurn, type TurnChunk } from '../stimulus/chunk-vocabulary';
+import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
   closeTailFd,
@@ -137,8 +137,8 @@ import {
   UserEntity,
   SubagentEntity,
 } from '../persistence/entities';
-import { deriveNeedsYou } from '../domain/job';
-import type { JobKind } from '../domain/job';
+import { deriveNeedsYou } from '@shared/domain/job';
+import type { JobKind } from '@shared/domain/job';
 import type { McpSurface } from '../persistence/entities';
 import {
   RealtimeService,
@@ -150,7 +150,7 @@ import {
   renderUploadedFilesXml,
   type AttachmentCardItem,
 } from '../prompt-kit';
-import type { AgentMessage } from '../prompt-kit/message';
+import type { AgentMessage } from '@shared/prompt-kit/message';
 import {
   answeredQuestionBody,
   batchAnswerBody,

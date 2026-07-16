@@ -3,9 +3,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
-import type { ResolvedSkill } from '../engine/engine.types';
+import type { ResolvedSkill } from '@shared/engine/engine.types';
 import type { McpSurface, WorkspaceSkillEntity } from '../persistence/entities';
-import type { ThreadType } from '../thread-kind/thread-types';
+import type { ThreadType } from '@shared/thread-kind/thread-types';
 import { stripSkillFrontmatter } from './skill-frontmatter';
 import {
   managedGitSkillRelativeDir,

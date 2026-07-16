@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import Docker from 'dockerode';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FeatureSandbox } from '../git';
-import { bundleEngine } from './bundle-engine';
+import { ensureEngineApp } from './bundle-engine';
 import {
   CONTAINER_CONTEXT,
   CONTAINER_PLAYGROUND,
@@ -102,7 +102,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
       );
       return;
     }
-    await bundleEngine(); // the engine bundle is generated, not committed — produce it (as the API does on boot)
+    ensureEngineApp(); // the engine app bundle is generated, not committed — must already exist (run `pnpm build:engine`)
     await builder.ensureImage();
 
     const attached = await manager.attach({ sandbox, orgId: 'team1' });
@@ -134,7 +134,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
       marker,
     );
 
-    // HOT-RELOAD: the host engine bundle is bind-mounted (read-only) over the baked-in one, so engine
+    // HOT-RELOAD: the host engine app bundle is bind-mounted (read-only) over the baked-in one, so engine
     // updates land on the next turn with no recreate; the container carries the config fingerprint label.
     const raw = await new Docker()
       .getContainer(attached.containerId!)
@@ -142,7 +142,7 @@ describe('SandboxManager (integration, needs Docker)', () => {
     const mounts = (raw.Mounts ?? []) as Array<{ Destination?: string }>;
     expect(
       mounts.some(
-        (m) => m.Destination === '/usr/local/lib/atlas/engine-entrypoint.mjs',
+        (m) => m.Destination === '/usr/local/lib/atlas/engine-app.js',
       ),
     ).toBe(true);
     expect(raw.Config?.Labels?.['atlas.cfg']).toMatch(

@@ -9,7 +9,7 @@ import {
   JOB_ACTIVITIES,
   type JobActivity,
   type JobProvenance,
-} from '../domain/job';
+} from '@shared/domain/job';
 import type { CiCounts } from '../git';
 
 /**

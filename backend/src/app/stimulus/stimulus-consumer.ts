@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import type { EventMessage, TurnEnvelope } from '../domain';
+import type { EventMessage, TurnEnvelope } from '@shared/domain';
 
 /**
  * DI token the brain binds to — the single downstream of the intake seam (mirror of `CHAT_SURFACE` on

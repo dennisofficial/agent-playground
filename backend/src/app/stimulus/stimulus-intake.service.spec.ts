@@ -8,7 +8,7 @@ import type {
   SecretProvidedMessage,
   TurnEnvelope,
   UserMessage,
-} from '../domain';
+} from '@shared/domain';
 import type { EventFilterService, FilterVerdict } from './event-filter.service';
 import type { BrainSink } from './stimulus-consumer';
 import {
