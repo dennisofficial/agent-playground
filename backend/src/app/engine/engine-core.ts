@@ -670,7 +670,7 @@ export function applyPerRunCtxToAgents(
  * `CONTAINER_SKILLS_MANAGED`), a `managedGit` skill from `managedGitSkillsRoot` (Atlas's GIT-SOURCED
  * built-ins, synced by `ManagedSkillSyncService`, `CONTAINER_SKILLS_MANAGED_GIT`), every other skill from
  * `skillsRoot` (the org-scoped store, `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY
- * (`settingSources: ['user']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
+ * (`settingSources: ['user','project']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
  * EVERY turn (the config dir is durable across turns, so a skill removed/disabled since last turn must not
  * linger — same discipline the old plugin-render step used). A skill whose source dir isn't actually on
  * disk under its root yet (e.g. its DB row exists but nothing installed/authored the files, OR a
@@ -1223,7 +1223,7 @@ export class EngineCore {
 
     // This repo's skills (resolved host-side, dir paths + names only — no bodies) composed into
     // `<claudeConfigDir>/skills/` as write-through symlinks into the central skills store, for the SDK to
-    // discover NATIVELY (settingSources 'user' + skills 'all' below). Re-composed every turn (wipes a
+    // discover NATIVELY (settingSources 'user'/'project' + skills 'all' below). Re-composed every turn (wipes a
     // removed/disabled skill); a no-op wipe when the turn carries none.
     composeSkillsDir(
       claudeConfigDir,
@@ -1328,19 +1328,25 @@ export class EngineCore {
     const options: Options = {
       cwd,
       systemPrompt,
-      // 'user' loads ONLY <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op) and NEVER CLAUDE.md (the SDK
-      // requires 'project' for that) — so nothing from the untrusted worktree's own `.claude/` leaks in. The
-      // ONLY thing Atlas itself ever places under CLAUDE_CONFIG_DIR is the `skills/` dir composed above; no
-      // settings.json/CLAUDE.md/agents/commands are ever written there (verified clean at P0/P1 spike time).
-      settingSources: ['user'],
+      // 'user' loads <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op; the only thing Atlas places there is
+      // the composed `skills/` dir). 'project' turns on NATIVE worktree memory: the repo's root CLAUDE.md loads
+      // at session launch, and nested CLAUDE.md in subdirectories loads on-demand (once) when the agent reads a
+      // file in that subtree — replacing the old prose-only "go read CLAUDE.md yourself" orientation.
+      // Our programmatic options here stay AUTHORITATIVE over a worktree's own `.claude/`: `model` and
+      // `disallowedTools` win, so a repo cannot escalate (swap the model, re-enable a removed tool, or bypass).
+      // A worktree `.claude/settings.json` can only MERGE extra hooks or RESTRICT via `permissions.deny` —
+      // disrupt, never compromise. Trusted-repo posture (the user's own files, like Claude Code on a laptop);
+      // spiked end-to-end against SDK 0.3.204. If untrusted third-party `.claude/` ever needs isolating, the
+      // escape hatch is a memory-only PostToolUse injection hook keeping settingSources back at ['user'].
+      settingSources: ['user', 'project'],
       // Turns skills on for the whole resolved set — the single place the SDK needs (auto-enables the Skill
       // tool; no plugins key, no manual 'Skill' in allowedTools). See WORKER_TOOLS/REVIEW_TOOLS below for
       // why 'Skill' is still added to the `tools` ALLOWLIST (that list restricts, independent of this).
       skills: 'all',
       tools: planMode ? PLAN_TOOLS : readOnly ? REVIEW_TOOLS : WORKER_TOOLS,
-      // Programmatic subagent definitions — the only spawnable Task subagents. `settingSources: ['user']`
-      // never reads a project-scope `.claude/agents/` (excluded from the allowed sources), and Atlas's own
-      // CLAUDE_CONFIG_DIR never has a user-scope `agents/` dir either, so these always win by simple absence.
+      // Programmatic subagent definitions. With `settingSources: ['user','project']` a worktree's own
+      // project-scope `.claude/agents/` would ALSO be sourced (merged with these), but Atlas ships no such dir
+      // and this repo has none, so the programmatic map below is authoritative in practice by simple absence.
       // Advisory subagents (read-only, Sonnet) are always available; the WRITER subagents
       // (implement/implement-deep), the build-time VALIDATE subagent, and the design-fidelity PROTOTYPE
       // subagent are added ONLY on EXECUTE turns, so a plan/brain/review turn can never fan out a
