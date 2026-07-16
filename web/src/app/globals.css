@@ -3,7 +3,8 @@
 
 /* ============================================================================================
    ATLAS DESIGN TOKENS — ported verbatim from the design handoff (§7).
-   The app uses the single Daylight (Day) theme, defined on :root.
+   Daylight (Day) is the default theme, defined on :root; the Midnight (dark) overrides live in the
+   [data-theme="night"] block below.
    ============================================================================================ */
 
 :root {
@@ -88,6 +89,64 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 14px 44px rgba(0, 0, 0, 0.06);
   --shadow-menu: 0 18px 50px rgba(0, 0, 0, 0.22);
   --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.4);
+}
+
+/* Midnight (Cool Slate) — the dark theme. Overrides the same token names as :root; @theme inline maps
+   utilities to var(--x), so every utility adapts with no further changes.
+   Matches BOTH "night" (the mapped value next-themes' runtime effect applies post-hydration) and "dark"
+   (the raw, unmapped value its pre-paint anti-flash script writes for non-"class" attributes before
+   hydration runs) so the two transient attribute states render identically — no light flash between them. */
+[data-theme="night"],
+[data-theme="dark"] {
+  /* surfaces */
+  --bg: #14171d;
+  --bg-grid: rgba(255, 255, 255, 0.02);
+  --panel: #191d24;
+  --surface: #1b1f27;
+  --surface-2: #21252e;
+  --surface-3: #272c36;
+  /* borders / hairline */
+  --border: #2e333d;
+  --border-2: #3c424e;
+  --hair: rgba(255, 255, 255, 0.06);
+  /* text ramp */
+  --text: #eceef2;
+  --dim: #b5bac4;
+  --muted: #939aa7;
+  --faint: #6c7280;
+  /* brand accent (kept warm; nudged lighter for contrast on the dark ground) */
+  --accent: #d68027;
+  --accent-2: #c9700a;
+  --accent-soft: rgba(214, 128, 39, 0.15);
+  --accent-line: rgba(214, 128, 39, 0.4);
+  --glow: rgba(214, 128, 39, 0.1);
+  /* status — lightened to hold ~AA on dark; keep the -soft/-line alpha tints in step */
+  --green: #67b992;
+  --green-soft: rgba(103, 185, 146, 0.14);
+  --blue: #7d9be0;
+  --blue-soft: rgba(125, 155, 224, 0.14);
+  --red: #e08a80;
+  --red-soft: rgba(224, 138, 128, 0.12);
+  --red-line: rgba(224, 138, 128, 0.3);
+  --amber: #e0a850;
+  --amber-soft: rgba(224, 168, 80, 0.14);
+  --slate: #a79fd0;
+  --slate-soft: rgba(167, 159, 208, 0.14);
+  --slate-line: rgba(167, 159, 208, 0.32);
+  /* legacy avatar-palette hues (lightened for dark avatars) */
+  --purple: #a597e8;
+  --rose: #e06a92;
+  /* diff-row chrome on the (now dark) conversation surface — was near-white in light */
+  --add: #4ec98a;
+  --add-bg: rgba(63, 214, 139, 0.1);
+  --add-gut: rgba(63, 214, 139, 0.2);
+  --del: #f0857d;
+  --del-bg: rgba(251, 111, 111, 0.1);
+  --del-gut: rgba(251, 111, 111, 0.2);
+  /* shadows — deepen so cards read on dark (black-on-light values disappear on dark) */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 44px rgba(0, 0, 0, 0.5);
+  --shadow-menu: 0 18px 50px rgba(0, 0, 0, 0.55);
+  --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.7);
 }
 
 /* Map tokens to Tailwind utilities. `inline` keeps utilities referencing var(--x). */

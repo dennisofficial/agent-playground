@@ -8,6 +8,7 @@ import { orgSwatch } from "@/lib/org-display";
 import { auth } from "@/lib/auth";
 import { ROUTES } from "@/lib/routes";
 import { CreateOrgDialog } from "./create-org-dialog";
+import { ThemeToggle } from "./theme-toggle";
 
 /**
  * Derive a display handle + avatar initials from the operator's email. The backend doesn't store a
@@ -165,6 +166,8 @@ export function AccountMenu({
             <Building2 size={14} className="shrink-0" /> Create organization
           </button>
           <div className="my-1 h-px" style={{ background: "var(--hair)" }} />
+          <ThemeToggle />
+          <div className="my-1 h-px" style={{ background: "var(--hair)" }} />
           <button
             type="button"
             onClick={signOut}
@@ -187,7 +190,7 @@ function Avatar() {
   return (
     <span
       className="flex h-8 w-8 shrink-0 items-end justify-center overflow-hidden rounded-full border border-border-2"
-      style={{ background: "#e6e4de", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}
+      style={{ background: "var(--surface-3)", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" }}
     >
       <svg
         width="32"
@@ -196,8 +199,8 @@ function Avatar() {
         className="block"
         aria-hidden
       >
-        <circle cx="32" cy="26" r="12" fill="#b6b9c1" />
-        <path d="M12 59c0-11 9-18 20-18s20 7 20 18z" fill="#b6b9c1" />
+        <circle cx="32" cy="26" r="12" fill="var(--faint)" />
+        <path d="M12 59c0-11 9-18 20-18s20 7 20 18z" fill="var(--faint)" />
       </svg>
     </span>
   );

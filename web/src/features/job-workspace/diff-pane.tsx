@@ -5,7 +5,14 @@ import {
   useVirtualizer,
   type Range as VirtualRange,
 } from "@tanstack/react-virtual";
-import { Check, MessageSquarePlus, Plus, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  MessageSquarePlus,
+  Plus,
+  X,
+} from "lucide-react";
 import { useJobDiff, useJobMessages } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { JobDiffFile } from "@/lib/api/types";
@@ -34,7 +41,6 @@ import { useReviewComments } from "./review-comments";
  */
 
 const NBSP = " ";
-const GUTTER = 28;
 const SIGN = 16;
 /** `fileIdx * HUNK_KEY_STRIDE + hunkIdx` — a per-file-namespaced hunk id that doubles as the same-hunk
  *  contiguity guard: because it encodes `fileIdx`, comparing it also prevents a selection crossing files. */
@@ -103,6 +109,19 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   // Which stored comment thread is hovered — its exact lines get the full wash so OVERLAPPING comments
   // stay distinguishable (at rest each commented line shows only a quiet gutter marker, not a full wash).
   const [hoveredThreadKey, setHoveredThreadKey] = useState<string | null>(null);
+  // File keys whose body (hunks/rows/comments) is collapsed; the sticky header stays. In-memory for the
+  // session, keyed by `fileKey`. Empty = every file expanded (the default).
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const toggleFile = useCallback((key: string) => {
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   // The whole diff's skeleton: structural items (file/note/hunk/row) for every file, plus O(1) lookups
   // keyed by the GLOBAL, monotonic row index `gIdx`. `rowsByGIdx` is built in the SAME order `gIdx` is
@@ -115,6 +134,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     const lineMapByFile: Map<string, number>[] = [];
     const lastIdxByFile: number[] = [];
     let maxCodeLen = 0;
+    let maxLineNo = 0;
     let gIdx = 0;
 
     files.forEach((file, fileIdx) => {
@@ -139,8 +159,14 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
           });
           for (const r of rowsFromHunk(hunk, hi * HUNK_KEY_STRIDE)) {
             const row: FileRow = { ...r, gIdx, fileIdx, hunkKey };
-            if (row.oldNo != null) lineMap.set(`old:${row.oldNo}`, gIdx);
-            if (row.newNo != null) lineMap.set(`new:${row.newNo}`, gIdx);
+            if (row.oldNo != null) {
+              lineMap.set(`old:${row.oldNo}`, gIdx);
+              if (row.oldNo > maxLineNo) maxLineNo = row.oldNo;
+            }
+            if (row.newNo != null) {
+              lineMap.set(`new:${row.newNo}`, gIdx);
+              if (row.newNo > maxLineNo) maxLineNo = row.newNo;
+            }
             if (row.code.length > maxCodeLen) maxCodeLen = row.code.length;
             rowsByGIdx[gIdx] = row;
             fileRows.push(row);
@@ -163,13 +189,23 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
       lineMapByFile,
       lastIdxByFile,
       maxCodeLen,
+      maxLineNo,
     };
   }, [files]);
+
+  // Line-number gutter sized to the widest number actually present, so 4-digit+ line numbers render fully
+  // instead of clipping the fixed 28px box. `ch` + `tabular-nums` makes each digit exactly 1ch; the +14px
+  // is the span's `0 7px` horizontal padding (border-box, so it's part of `width`). Floor of 2 digits keeps
+  // small diffs as tight as before.
+  const gutterCh = Math.max(2, String(built.maxLineNo).length);
+  const gutterWidth = `calc(${gutterCh}ch + 14px)`;
 
   // Stable monospace content width computed from data (nothing is mounted to measure): as wide as the
   // WIDEST code line so add/del tints + the selection/anchor wash span the full width even scrolled right;
   // `minWidth:100%` (applied on the spacer/rows) keeps it never narrower than the container.
-  const contentWidth = `calc(${GUTTER * 2 + SIGN}px + ${Math.max(built.maxCodeLen, MIN_CODE_LEN)}ch)`;
+  // Two gutters (each `gutterCh`ch of digits) + the two gutters' padding (28px) + the sign column, then the
+  // widest code line — so add/del tints and the selection wash span the full width even scrolled right.
+  const contentWidth = `calc(${2 * gutterCh + Math.max(built.maxCodeLen, MIN_CODE_LEN)}ch + ${28 + SIGN}px)`;
 
   // Queued (still in the composer, removable) + sent (read back from review_comments_card messages, so they
   // persist on the diff after the batch is sent) threads across ALL files. One pass builds: `threadsByGIdx`
@@ -283,9 +319,20 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   // skeleton or comment set changes — NOT while dragging (the composer, which does depend on selection, is
   // spliced separately below).
   const baseItems = useMemo(() => {
-    if (threadsByGIdx.size === 0) return built.structural;
+    if (threadsByGIdx.size === 0 && collapsedFiles.size === 0)
+      return built.structural;
     const out: DiffItem[] = [];
+    // Structural items run in file order: a `file` item, then that file's note/hunk/row items, then the
+    // next file. Flip `collapsed` at each header and skip the collapsed file's body (and its docked
+    // comments), keeping only the header itself.
+    let collapsed = false;
     for (const item of built.structural) {
+      if (item.kind === "file") {
+        collapsed = collapsedFiles.has(item.key);
+        out.push(item);
+        continue;
+      }
+      if (collapsed) continue;
       out.push(item);
       if (item.kind === "row") {
         const threads = threadsByGIdx.get(item.row.gIdx);
@@ -295,7 +342,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
       }
     }
     return out;
-  }, [built, threadsByGIdx]);
+  }, [built, threadsByGIdx, collapsedFiles]);
 
   const range = selection
     ? {
@@ -434,7 +481,14 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
     (item: DiffItem) => {
       switch (item.kind) {
         case "file":
-          return <FileHeader file={item.file} first={item.fileIdx === 0} />;
+          return (
+            <FileHeader
+              file={item.file}
+              first={item.fileIdx === 0}
+              collapsed={collapsedFiles.has(item.key)}
+              onToggle={() => toggleFile(item.key)}
+            />
+          );
         case "note":
           return (
             <div
@@ -464,6 +518,7 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
             <DiffRowLine
               row={item.row}
               tokens={tokenizeLineSync(item.row.code, fileLangByIdx[item.fileIdx])}
+              gutterWidth={gutterWidth}
               selected={selected}
               marked={marked}
               hovered={hoveredIdx === gi && !selected}
@@ -508,6 +563,9 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
       beginSelect,
       onRowEnter,
       submitComment,
+      collapsedFiles,
+      toggleFile,
+      gutterWidth,
     ],
   );
 
@@ -579,17 +637,38 @@ export function DiffPane({ jobRef }: { jobRef: JobRef }) {
   );
 }
 
-/** The sticky per-file bar: path + add/del/status badges. Always shown (files are never collapsed). Pinned
- *  to the scroller's left edge so it stays in view during horizontal scroll, exactly like the inline
- *  comment/composer cards. */
-function FileHeader({ file, first }: { file: JobDiffFile; first: boolean }) {
+/** The sticky per-file bar: a chevron + path + add/del/status badges. Clicking anywhere on the bar
+ *  collapses/expands the file's body (the chevron reflects the state). Pinned to the scroller's left edge
+ *  so it stays in view during horizontal scroll, exactly like the inline comment/composer cards. */
+function FileHeader({
+  file,
+  first,
+  collapsed,
+  onToggle,
+}: {
+  file: JobDiffFile;
+  first: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const headerPath =
     file.status === "renamed" && file.oldPath
       ? `${file.oldPath} → ${file.path}`
       : file.path;
+  const Chevron = collapsed ? ChevronRight : ChevronDown;
   return (
     <div
-      className="flex w-full items-center gap-2 px-5 py-2.5"
+      role="button"
+      tabIndex={0}
+      aria-expanded={!collapsed}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      className="flex w-full cursor-pointer items-center gap-2 px-5 py-2.5"
       style={{
         position: "sticky",
         left: 0,
@@ -598,6 +677,12 @@ function FileHeader({ file, first }: { file: JobDiffFile; first: boolean }) {
         borderTop: first ? undefined : "1px solid var(--term-border)",
       }}
     >
+      <Chevron
+        size={13}
+        strokeWidth={2.4}
+        className="flex-none"
+        style={{ color: "var(--dim)" }}
+      />
       <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text">
         {headerPath}
       </span>
@@ -630,6 +715,7 @@ function FileHeader({ file, first }: { file: JobDiffFile; first: boolean }) {
 function DiffRowLine({
   row,
   tokens,
+  gutterWidth,
   selected,
   marked,
   hovered,
@@ -640,6 +726,8 @@ function DiffRowLine({
 }: {
   row: FileRow;
   tokens: ThemedToken[] | null | undefined;
+  /** CSS width for each line-number gutter span, sized to the diff's widest line number. */
+  gutterWidth: string;
   selected: boolean;
   /** Carries a comment but isn't the focused/selected one — shows a quiet gutter marker, not a full wash. */
   marked: boolean;
@@ -649,6 +737,9 @@ function DiffRowLine({
   onMouseLeaveRow: () => void;
   onAdd: () => void;
 }) {
+  // The add-comment `+` shows only while the pointer is over the line-number gutter (not the whole row),
+  // matching GitHub. Row-level hover (the wash) and drag-select stay on the outer row handlers.
+  const [gutterHovered, setGutterHovered] = useState(false);
   const isAdd = row.type === "add";
   const isDel = row.type === "del";
   const baseBg = isAdd
@@ -685,9 +776,12 @@ function DiffRowLine({
         onMouseDownRow(e.shiftKey);
       }}
       onMouseEnter={onMouseEnterRow}
-      onMouseLeave={onMouseLeaveRow}
+      onMouseLeave={() => {
+        setGutterHovered(false);
+        onMouseLeaveRow();
+      }}
     >
-      {hovered ? (
+      {gutterHovered ? (
         <button
           type="button"
           aria-label="Add a comment on this line"
@@ -710,30 +804,36 @@ function DiffRowLine({
           <Plus size={10} strokeWidth={3} />
         </button>
       ) : null}
-      <span
-        className="shrink-0 text-right tabular-nums"
-        style={{
-          width: GUTTER,
-          padding: "0 7px",
-          background: gutBg,
-          color: isDel ? "var(--term-del)" : "var(--term-dim)",
-          opacity: isDel ? 0.95 : 0.6,
-        }}
+      <div
+        className="flex shrink-0"
+        onMouseEnter={() => setGutterHovered(true)}
+        onMouseLeave={() => setGutterHovered(false)}
       >
-        {row.oldNo ?? NBSP}
-      </span>
-      <span
-        className="shrink-0 text-right tabular-nums"
-        style={{
-          width: GUTTER,
-          padding: "0 7px",
-          background: gutBg,
-          color: isAdd ? "var(--term-add)" : "var(--term-dim)",
-          opacity: isAdd ? 0.95 : 0.6,
-        }}
-      >
-        {row.newNo ?? NBSP}
-      </span>
+        <span
+          className="shrink-0 text-right tabular-nums"
+          style={{
+            width: gutterWidth,
+            padding: "0 7px",
+            background: gutBg,
+            color: isDel ? "var(--term-del)" : "var(--term-dim)",
+            opacity: isDel ? 0.95 : 0.6,
+          }}
+        >
+          {row.oldNo ?? NBSP}
+        </span>
+        <span
+          className="shrink-0 text-right tabular-nums"
+          style={{
+            width: gutterWidth,
+            padding: "0 7px",
+            background: gutBg,
+            color: isAdd ? "var(--term-add)" : "var(--term-dim)",
+            opacity: isAdd ? 0.95 : 0.6,
+          }}
+        >
+          {row.newNo ?? NBSP}
+        </span>
+      </div>
       <span
         className="shrink-0 text-center font-bold"
         style={{

@@ -9,9 +9,10 @@ import { HostStats } from "./host-stats";
 
 /**
  * The app-wide top bar. Pure chrome: the ATLAS lockup, the primary Jobs nav item, and the operator avatar.
- * Daylight-only (no theme toggle). Below the sidebar breakpoint (<768px) it also carries the hamburger
- * that opens the off-canvas sidebar drawer and a search shortcut for ⌘K, since neither is reachable
- * without a pointer/keyboard there.
+ * (The Light/Dark/System toggle lives in the account menu — sidebar header + settings top bar — not here;
+ * this bar's own avatar is a static initials badge with no dropdown.) Below the sidebar breakpoint (<768px)
+ * it also carries the hamburger that opens the off-canvas sidebar drawer and a search shortcut for ⌘K,
+ * since neither is reachable without a pointer/keyboard there.
  */
 export function TopBar({
   onOpenSidebar,
