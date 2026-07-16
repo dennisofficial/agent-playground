@@ -97,3 +97,46 @@ describe("job-stream jit_injection joins by tool_use_id", () => {
     expect(peekLiveTurn(jobId)?.blocks).toHaveLength(1);
   });
 });
+
+describe("job-stream user_text — parent→sub-agent SendMessage injection", () => {
+  it("pushes a standalone done:true 'user' block carrying the injection's parentToolUseId", () => {
+    const jobId = "job-user-text";
+
+    applyStreamFrame(jobId, MAIN_LANE, 1, {
+      kind: "user_text",
+      text: "keep going on the auth module",
+      parentToolUseId: "tu-sub-1",
+    });
+
+    const turn = peekLiveTurn(jobId);
+    expect(turn?.blocks).toHaveLength(1);
+    expect(turn?.blocks[0]).toMatchObject({
+      kind: "user",
+      text: "keep going on the auth module",
+      done: true,
+      parentToolUseId: "tu-sub-1",
+    });
+  });
+
+  it("never coalesces consecutive injections into one block (each is a discrete turn)", () => {
+    const jobId = "job-user-text-discrete";
+
+    applyStreamFrame(jobId, MAIN_LANE, 1, {
+      kind: "user_text",
+      text: "first nudge",
+      parentToolUseId: "tu-sub-2",
+    });
+    applyStreamFrame(jobId, MAIN_LANE, 2, {
+      kind: "user_text",
+      text: "second nudge",
+      parentToolUseId: "tu-sub-2",
+    });
+
+    const turn = peekLiveTurn(jobId);
+    expect(turn?.blocks).toHaveLength(2);
+    expect(turn?.blocks.map((b) => (b as { text: string }).text)).toEqual([
+      "first nudge",
+      "second nudge",
+    ]);
+  });
+});

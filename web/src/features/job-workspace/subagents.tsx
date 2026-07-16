@@ -65,6 +65,15 @@ export type SubBlock =
       postedAt?: string;
     }
   | {
+      /** A parent→sub-agent SendMessage injection, captured as `user_text` — rendered as a `UserBubble`
+       *  interleaved chronologically. A completed discrete turn, never streaming. */
+      kind: "user";
+      key: string;
+      text: string;
+      running?: boolean;
+      postedAt?: string;
+    }
+  | {
       kind: "thinking";
       key: string;
       text: string;
@@ -194,6 +203,8 @@ export function durableSubagentPrompt(
 
 export function durableSubBlocks(children: JobMessage[]): SubBlock[] {
   return children.map((m): SubBlock => {
+    if (m.kind === "user")
+      return { kind: "user", key: m.ts, text: m.text, postedAt: m.postedAt };
     if (m.kind === "thinking")
       return {
         kind: "thinking",

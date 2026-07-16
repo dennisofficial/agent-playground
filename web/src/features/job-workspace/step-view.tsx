@@ -562,6 +562,17 @@ function SubagentTranscript({
       continue;
     }
     flush();
+    if (b.kind === "user") {
+      items.push({
+        key: b.key,
+        node: (
+          <div className="group flex flex-col gap-0.5">
+            <UserBubble text={b.text} time={b.postedAt} />
+          </div>
+        ),
+      });
+      continue;
+    }
     if (b.kind === "text")
       items.push({
         key: b.key,
