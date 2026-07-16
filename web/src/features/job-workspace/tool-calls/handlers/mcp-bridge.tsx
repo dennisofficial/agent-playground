@@ -12,6 +12,7 @@ function BridgeBody({ tool }: { tool: ToolItem }) {
       input={input}
       result={formatPayload(tool.result)}
       isError={tool.isError}
+      superseded={tool.superseded}
     />
   );
 }

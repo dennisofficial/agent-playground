@@ -68,6 +68,38 @@ describe('LiveTurnStore — cumulative in-flight turn', () => {
     expect(store.snapshotsForRepo(REPO)).toHaveLength(0);
   });
 
+  it('tags an interrupt-aborted tool_result as `superseded` on the block AND the emitted live frame', () => {
+    const store = new LiveTurnStore();
+    const frames: LiveStreamFrame[] = [];
+    store.stream$.subscribe((f) => frames.push(f));
+
+    store.push(REPO, THREAD, {
+      kind: 'tool_use',
+      id: 'tu1',
+      name: 'Bash',
+      input: { command: 'echo hi' },
+    });
+    store.push(REPO, THREAD, {
+      kind: 'tool_result',
+      id: 'tu1',
+      result: 'MCP error -32001: AbortError: interrupt',
+      isError: true,
+    });
+
+    expect(store.snapshot(REPO, THREAD)!.blocks[0]).toMatchObject({
+      kind: 'tool',
+      isError: true,
+      superseded: true,
+      done: true,
+    });
+    const resultFrame = frames.find(
+      (f) => (f.event as { kind?: string }).kind === 'tool_result',
+    )!;
+    expect(
+      (resultFrame.event as { superseded?: boolean }).superseded,
+    ).toBe(true);
+  });
+
   it('interleaved thinking: authoritative text/thinking finalize their OPEN delta block, not the last one (no double stream)', () => {
     const store = new LiveTurnStore();
     // Adaptive thinking interleaves a thinking block before the text block, so BOTH stream open at once:

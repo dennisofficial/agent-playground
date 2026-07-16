@@ -18,6 +18,7 @@ import {
   type TaskItem,
   ThreadEntity,
 } from '../persistence/entities';
+import { isInterruptAbortResult } from '../brain/session-transcript';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope } from './thread-registry';
 import {
@@ -852,6 +853,9 @@ export class TurnHarnessFactory {
                   ...b.meta,
                   result: e.result ?? null,
                   isError: e.isError ?? false,
+                  ...(e.isError && isInterruptAbortResult(e.result)
+                    ? { superseded: true }
+                    : {}),
                   ...(e.structuredPatch
                     ? { structuredPatch: e.structuredPatch }
                     : {}),

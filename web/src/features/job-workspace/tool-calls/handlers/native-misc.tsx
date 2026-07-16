@@ -129,6 +129,7 @@ function TodoBody({ tool }: { tool: ToolItem }) {
         input={formatPayload(tool.input)}
         result={formatPayload(tool.result)}
         isError={tool.isError}
+        superseded={tool.superseded}
       />
     );
   }
@@ -169,7 +170,11 @@ function TodoBody({ tool }: { tool: ToolItem }) {
         })}
       </div>
       {tool.isError ? (
-        <StructuredPanel result={formatPayload(tool.result)} isError />
+        <StructuredPanel
+          result={formatPayload(tool.result)}
+          isError
+          superseded={tool.superseded}
+        />
       ) : null}
     </>
   );
@@ -183,6 +188,7 @@ function MiscBody({ tool }: { tool: ToolItem }) {
       input={formatPayload(tool.input)}
       result={formatPayload(tool.result)}
       isError={tool.isError}
+      superseded={tool.superseded}
     />
   );
 }

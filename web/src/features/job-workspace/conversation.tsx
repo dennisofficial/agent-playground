@@ -870,6 +870,7 @@ function buildLogItems(
           input: m.input,
           result: m.result,
           isError: Boolean(m.isError),
+          superseded: Boolean(m.superseded),
           structuredPatch: m.structuredPatch as ToolItem["structuredPatch"],
           jitContext: m.jitContext as ToolItem["jitContext"],
         },

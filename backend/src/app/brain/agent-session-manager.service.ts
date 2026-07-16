@@ -122,6 +122,7 @@ import {
   maskedFileNotice,
   wakeForAmendApprovedBody,
   retryResumeNudge,
+  interruptRedriveNudge,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
@@ -1752,28 +1753,45 @@ export class AgentSessionManager
       steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
       renderBody: (p) => this.engineBody(p),
       drainFreshTurn: async (collected) => {
-        await this.stimulusStore.leaseChatStimuli(collected.ids);
-        // Coalesce the WHOLE eligible-pending batch into one turn, heterogeneous per-row chunks: operator
-        // rows become `<user name at>`, system rows pass their already-framed body through verbatim
-        // (`passthrough`, timestamped). Base identity fields come from the oldest row; `containsOperator`
-        // and `cardBearingIds` are computed over the FULL batch so the downstream gates (awareness flush,
+        // ATOMIC claim: stamp the lease only on rows still eligible, and act ONLY on the ids actually won —
+        // a concurrent caller (another process/pass) may have claimed some or all of this same batch, in
+        // which case starting a turn here would duplicate-drive its message (the self-steer race this
+        // replaces the old check-then-lease two-step for).
+        const won = new Set(
+          await this.stimulusStore.claimChatStimuli(
+            collected.ids,
+            AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+          ),
+        );
+        if (won.size === 0) return; // another caller claimed this batch — it will deliver them
+        const claimed = collected.pending.filter((p) => won.has(p.id));
+        // Coalesce the CLAIMED batch into one turn, heterogeneous per-row chunks: operator rows become
+        // `<user name at>`, system rows pass their already-framed body through verbatim (`passthrough`,
+        // timestamped). Base identity fields come from the oldest claimed row; `containsOperator` and
+        // `cardBearingIds` are computed over the claimed batch so the downstream gates (awareness flush,
         // reset-spiral guard, JIT prepends, seed-card success tail) judge the batch as a whole, not just
         // the oldest row's authorship.
-        const chunks = collected.pending.map((p) => this.pendingRowToChunk(p));
-        const cardBearingIds = collected.pending
+        const chunks = claimed.map((p) => this.pendingRowToChunk(p));
+        const cardBearingIds = claimed
           .filter((p) => isSeedCardDelivery(p))
           .map((p) => p.id);
         const combined: TurnEnvelope = {
-          ...collected.pending[0],
-          // The clean `\n\n`-joined fallback body (logging + a `chunks`-less replay) — UNCHANGED from
-          // before; the engine-facing render always goes through `chunks` (see `engineBody`).
-          body: collected.pending.map((p) => p.body).join('\n\n'),
+          ...claimed[0],
+          // The clean `\n\n`-joined fallback body (logging + a `chunks`-less replay); the engine-facing
+          // render always goes through `chunks` (see `engineBody`).
+          body: claimed.map((p) => p.body).join('\n\n'),
           chunks,
-          containsOperator: collected.pending.some((p) => isOperatorAuthored(p)),
+          containsOperator: claimed.some((p) => isOperatorAuthored(p)),
           cardBearingIds,
         };
         await this.runChatTurn(combined, {
-          onRegistered: () => this.stampBatchOnRegistered(collected.pending),
+          // Threaded so the `BrainTurnAlreadyRunningError` registration-loss fallback can steer each claimed
+          // member individually (each needs its own ack) instead of only the combined head's id.
+          coalesced: claimed,
+          // Restart-survivable hand-off: stamp every claimed message delivered the instant the turn is
+          // registered + kicked (a later crash resumes THIS turn rather than re-running these messages); a
+          // card-bearing row defers its stamp to the success tail (handled inside stampBatchOnRegistered).
+          onRegistered: () => this.stampBatchOnRegistered(claimed),
         });
       },
     };
@@ -3156,7 +3174,14 @@ export class AgentSessionManager
         // lane with the live turn, and ending it would clobber the live turn's stream (no turn_start was
         // fanned yet — the first engine event fans it — so there is nothing to clean up). If the live turn
         // vanished in the meantime there is nothing to steer into; the pump sweep / boot re-seed re-drives.
-        if (!(await this.steerIntoLiveBrainTurn(stimulus))) {
+        // A coalesced batch steers each claimed member individually (each needs its own ack), falling back to
+        // the solo `stimulus` when this turn wasn't a coalesced delivery.
+        const members = opts?.coalesced?.length ? opts.coalesced : [stimulus];
+        let steered = false;
+        for (const m of members) {
+          if (await this.steerIntoLiveBrainTurn(m)) steered = true;
+        }
+        if (!steered) {
           this.logger.warn(
             `single-brain-turn guard hit but no live turn to steer for job=${stimulus.jobId} — leaving for re-drive`,
           );
@@ -3225,7 +3250,7 @@ export class AgentSessionManager
           const title = await this.store
             .jobTitle(stimulus.jobId)
             .catch(() => null);
-          const nudge = retryResumeNudge(title ?? undefined);
+          const nudge = interruptRedriveNudge(title ?? undefined);
           // `seedRow: 'skip'` keeps this re-drive SILENT: the durable stimulus row is still written (the
           // brain turn is driven), but no operator-facing transcript pill is rendered. This auto-resume was
           // always meant to have "no operator box" — a bare seed with no seedRow falls through to the generic
@@ -8044,6 +8069,12 @@ const WORK_OWED_RENUDGE_MS = 5 * 60_000;
 interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
   onRegistered?: () => void;
+  /** The individual won member envelopes that make up a coalesced fresh-turn batch (in order; the head is
+   *  `stimulus` itself for a solo delivery). Used ONLY by the `BrainTurnAlreadyRunningError` registration-loss
+   *  fallback in `runChatTurnInner`, so each coalesced member gets its OWN steer → its OWN `input_ack` → its
+   *  own `delivered_at` stamp, instead of one steer under the combined turn's head id leaving the other
+   *  members' rows un-acked (which would re-deliver them as duplicates once their lease expires). */
+  coalesced?: TurnEnvelope[];
 }
 
 type SeedCardStampResult = 'stamped' | 'missing' | 'failed';
