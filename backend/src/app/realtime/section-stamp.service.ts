@@ -1,6 +1,12 @@
 import { EnvService } from '@core/config/env/env.service';
-import { Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import pg from 'pg';
+import type { Subscription } from 'rxjs';
 import { LeaderElectionService } from '../cluster';
 import { pgConnectionString, resolveSsl } from '../persistence/database.module';
 import { SECTION_STAMP_DDL } from './section-stamp.constants';
@@ -14,8 +20,12 @@ import { SECTION_STAMP_DDL } from './section-stamp.constants';
  * dependency, so a failure here logs a warning instead of crashing boot.
  */
 @Injectable()
-export class SectionStampService implements OnApplicationBootstrap {
+export class SectionStampService
+  implements OnApplicationBootstrap, OnApplicationShutdown
+{
   private readonly logger = new Logger(SectionStampService.name);
+  private promoteSub?: Subscription;
+
   constructor(
     private readonly env: EnvService,
     private readonly election: LeaderElectionService,
@@ -23,7 +33,11 @@ export class SectionStampService implements OnApplicationBootstrap {
 
   onApplicationBootstrap(): void {
     if (this.env.get('POSTGRES_DB')?.endsWith('_test')) return;
-    this.election.onPromote(() => void this.ensure());
+    this.promoteSub = this.election.onPromote(() => void this.ensure());
+  }
+
+  onApplicationShutdown(): void {
+    this.promoteSub?.unsubscribe();
   }
 
   private async ensure(): Promise<void> {

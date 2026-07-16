@@ -37,7 +37,7 @@ export interface RawInboxThread {
    *  over `origin` for the badge when present (see `deriveInboxKind`). */
   kind?: string | null;
   /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
-  status: string;
+  status: WireJobStatus;
   /** Orthogonal backend activity axis; the server folds this into `needsYou`. */
   activity: WireJobActivity;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
@@ -64,7 +64,7 @@ export interface RawInboxThread {
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
   /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry. */
-  sectionFirstEntered?: Record<string, string> | null;
+  sectionFirstEntered?: Partial<Record<WireJobStatus, string>> | null;
   /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
    *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
   shipping?: boolean;
@@ -87,10 +87,10 @@ export interface InboxThread {
   status: JobStatus;
   /** Raw backend status ('open' | 'planning' | … | 'cancelled') — the `sectionFirstEntered` anchor-map
    *  key. Distinct from `status`, which is the UI-mapped status used for grouping. */
-  rawStatus: string;
+  rawStatus: WireJobStatus;
   /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry into that status. Drives
    *  the sidebar's per-section anchor sort (newest arrival on top). */
-  sectionFirstEntered?: Record<string, string> | null;
+  sectionFirstEntered?: Partial<Record<WireJobStatus, string>> | null;
   /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
   activity: WireJobActivity;
   /** The alert dot: this thread is waiting on you. */

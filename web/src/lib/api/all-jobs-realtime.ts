@@ -7,7 +7,15 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus, CiCounts } from "./types";
+import type {
+  WireJobStatus,
+  WireJobKind,
+  WireJobHalt,
+  WireJobActivity,
+  PrState,
+  CiStatus,
+  CiCounts,
+} from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -22,7 +30,7 @@ interface RealtimeRow {
   origin: string;
   /** Job build kind; null until scoped. Preferred over origin for the badge when present. */
   kind?: string | null;
-  status: string;
+  status: WireJobStatus;
   needsYou: boolean;
   /** The orthogonal "system is working" axis — replaces the old `turnActive`/`reviewRunning` inputs.
    *  `needsYou` already folds it in server-side; retained on the row for an optional live label. */
@@ -54,7 +62,7 @@ interface RealtimeRow {
   halt?: WireJobHalt | null;
   /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry; the map only ever grows,
    *  so an update always overwrites straight from the WAL row. */
-  sectionFirstEntered?: Record<string, string> | null;
+  sectionFirstEntered?: Partial<Record<WireJobStatus, string>> | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */

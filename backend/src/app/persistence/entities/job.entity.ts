@@ -142,8 +142,8 @@ export class JobEntity extends TimestampedEntity {
    * map only ever grows; keys come from the JobStatus union. Setting it in a service would fight the
    * trigger.
    */
-  @Column({ type: 'jsonb', nullable: true })
-  section_first_entered!: Partial<Record<JobStatus, string>> | null;
+  @Column({ type: 'jsonb', default: {} })
+  section_first_entered!: Partial<Record<JobStatus, string>>;
 
   /**
    * The SHIP-REVIEW gate marker — stamped by the ship-review approval click (the "Ship it" button), null
