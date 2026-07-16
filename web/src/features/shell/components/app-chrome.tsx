@@ -6,6 +6,7 @@ import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { CommandPalette } from "./command-palette";
 import { useAllJobsRealtime } from "@/lib/api/all-jobs-realtime";
+import { useDraftsRealtime } from "@/lib/api/draft-realtime";
 import { useBreakpoint } from "@/lib/use-breakpoint";
 import { Drawer } from "@/components/ui/drawer";
 import { LeftNavProvider } from "@/features/shell/left-nav";
@@ -32,6 +33,8 @@ export function AppChrome({
   // One shell-wide realtime subscription keeps every thread's "needs you" dot + status live across the
   // whole app (sidebar, dashboard, board) — independent of which thread, if any, is open.
   useAllJobsRealtime();
+  // One shell-wide subscription keeps the operator's own composer draft synced across their devices.
+  useDraftsRealtime();
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
 

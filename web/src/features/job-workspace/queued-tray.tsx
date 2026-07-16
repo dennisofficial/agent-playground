@@ -38,11 +38,10 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
         </span>
       </div>
       {outbox.map((msg) => {
-        const imageAttachment = msg.attachments.find((a) => a.kind === "image");
         const preview =
           msg.text ||
           msg.comments[0]?.quote ||
-          msg.attachments[0]?.file.name ||
+          (msg.hasAttachments ? "Attachment" : "") ||
           "Queued message";
         return (
           <div
@@ -53,15 +52,9 @@ export function QueuedTray({ jobRef }: { jobRef: JobRef }) {
               className="w-0.5 flex-none self-stretch rounded-full"
               style={{ background: "var(--red-line)" }}
             />
-            {imageAttachment ? (
-              <img
-                src={imageAttachment.url}
-                alt=""
-                className="h-[34px] w-[34px] flex-none rounded-[7px] object-cover"
-              />
-            ) : msg.attachments.length > 0 ? (
-              // A non-image attachment (e.g. a PDF/text file) has no preview URL worth loading — a generic
-              // file-icon thumb, same size as the image thumbnail, in place of the clock badge.
+            {msg.hasAttachments ? (
+              // The bytes live on the server draft (uploaded on-add), not in the outbox — no local preview
+              // URL to render, so show a generic file-icon thumb the same size as the old image thumbnail.
               <span className="grid h-[34px] w-[34px] flex-none place-items-center rounded-[7px] border border-border bg-surface-2 text-dim">
                 <ImageIcon size={15} strokeWidth={2} />
               </span>

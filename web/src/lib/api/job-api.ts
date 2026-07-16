@@ -17,6 +17,7 @@ import type {
   ServiceInfo,
   WebCard,
 } from "./types";
+import type { ReviewComment } from "@/features/job-workspace/review-comments";
 
 /**
  * The org → repo → thread web API (`/web/orgs/:orgId/repos/:repoId/threads/:jobId/...`). Every call
@@ -260,6 +261,74 @@ export async function fetchAttachmentUrl(
   );
   if (!res.ok) throw new ThreadApiError(res.status, res.statusText);
   return URL.createObjectURL(await res.blob());
+}
+
+// ── Composer draft (server-backed per-job composer) ──────────────────────────────────────────────
+// These mirror the backend `composer-draft.service.ts` wire shapes. There is no shared package, so the
+// types are kept in sync by hand (the same convention `ReviewComment` already follows).
+
+/** One staged card answer as it rides the draft wire — structurally the client `StagedAnswer` union. The
+ *  secret variant's `value` is cleartext on the wire; the server encrypts on PUT and decrypts on GET for
+ *  the owner's own devices. */
+export type DraftStagedAnswerWire =
+  | { kind: "question"; cardId: string; label: string; answer: string }
+  | { kind: "file"; cardId: string; label: string; filename: string; content: string }
+  | { kind: "secret"; cardId: string; label: string; value: string };
+
+/** The serializable draft body — `PUT .../draft` sends it, `GET .../draft` returns it under `payload`. */
+export interface DraftPayloadWire {
+  text: string;
+  stagedAnswers: DraftStagedAnswerWire[];
+  comments: ReviewComment[];
+}
+
+/** A server-stored draft attachment (already uploaded), as the draft endpoints return it. No raw bytes. */
+export interface DraftAttachmentDto {
+  id: string;
+  name: string;
+  kind: "image" | "file";
+  size: number;
+}
+
+/** Read the caller's own draft for a job. Never creates a row — an absent draft reads as empty. */
+export function getDraft(
+  ref: JobRef,
+): Promise<{ payload: DraftPayloadWire; attachments: DraftAttachmentDto[] }> {
+  return webJson(threadPath(ref, "/draft"));
+}
+
+/** Debounced autosave — replace the caller's whole draft body (attachments are managed separately). */
+export function putDraft(
+  ref: JobRef,
+  payload: DraftPayloadWire,
+): Promise<{ ok: boolean }> {
+  return webJson(threadPath(ref, "/draft"), {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Upload one draft attachment (multipart `files`, same caps as a normal attachment). Returns its row. */
+export function addDraftAttachment(
+  ref: JobRef,
+  file: File,
+): Promise<DraftAttachmentDto> {
+  const form = new FormData();
+  form.append("files", file, file.name);
+  return webJson<{ attachments: DraftAttachmentDto[] }>(
+    threadPath(ref, "/draft/attachments"),
+    { method: "POST", body: form },
+  ).then((r) => r.attachments[0]);
+}
+
+/** Remove one uploaded draft attachment by id. */
+export function deleteDraftAttachment(
+  ref: JobRef,
+  attachmentId: string,
+): Promise<{ ok: boolean }> {
+  return webJson(threadPath(ref, `/draft/attachments/${attachmentId}`), {
+    method: "DELETE",
+  });
 }
 
 /**

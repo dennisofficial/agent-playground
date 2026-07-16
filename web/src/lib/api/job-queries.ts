@@ -22,6 +22,7 @@ import {
   deleteThread,
   fetchContextFile,
   fetchCreatedJobs,
+  getDraft,
   fetchJobDiff,
   fetchJobDiffSummary,
   fetchMessages,
@@ -105,6 +106,20 @@ export function useJobMessages(ref: JobRef) {
     queryFn: () => fetchMessages(ref),
     enabled: hasRef(ref),
     staleTime: 5_000,
+  });
+}
+
+/**
+ * The caller's own server-backed composer draft for one job. The `composerStore` singleton owns the
+ * authoritative in-memory copy (paint + autosave + realtime reconcile); this hook exists so the drafts
+ * realtime path can drive a declarative refetch through the query cache (`qk.draft`) for any component
+ * that wants it. The store does its own `getDraft` fetch on hydrate, so this is not the store's paint path.
+ */
+export function useDraft(ref: JobRef) {
+  return useQuery({
+    queryKey: qk.draft(ref.jobId),
+    queryFn: () => getDraft(ref),
+    enabled: hasRef(ref),
   });
 }
 
@@ -227,7 +242,8 @@ interface SayContext {
   prev?: JobMessage[];
 }
 
-/** One pending composer attachment: the `File` to upload + its local blob preview URL + image/file kind. */
+/** One pending composer attachment: the `File` to upload + its local blob preview URL + image/file kind.
+ *  Used by the LOCAL-mode tray only (the New-job modal, which uploads its files at create time). */
 export interface PendingAttachment {
   file: File;
   /** `URL.createObjectURL(file)` — the instant local preview (revoked by the composer on send/remove). */
@@ -235,11 +251,29 @@ export interface PendingAttachment {
   kind: "image" | "file";
 }
 
-/** `useMessage`'s mutation input — a typed batch, its optional attachments (ties to the batch's `user`
- *  item for optimistic local-blob thumbnails), and the lane/thread the optimistic row belongs to. */
+/**
+ * A server-backed draft attachment (in-job composer, store-mode) — already uploaded via
+ * `POST .../draft/attachments`; unlike `PendingAttachment` it carries NO raw `File`. `url` is a
+ * same-session-only local objectURL preview (set at add-time from the picked File, before the upload even
+ * confirms) — absent after a hydration from `GET /draft` (no bytes endpoint for draft attachments exists,
+ * so a reload shows the name/kind chip without a thumbnail). `pending` marks an optimistic entry whose
+ * upload hasn't resolved yet: its `id` is a client temp id, not a server row id (so a `remove` of it must
+ * NOT hit the server).
+ */
+export interface DraftAttachment {
+  id: string;
+  name: string;
+  kind: "image" | "file";
+  size: number;
+  url?: string;
+  pending?: boolean;
+}
+
+/** `useMessage`'s mutation input — a typed batch and the lane/thread the optimistic row belongs to.
+ *  Attachments are NO LONGER sent here: the in-job composer uploads them on-add to the server draft, and
+ *  the send-path server-side `promoteOnSend` moves the already-uploaded draft attachments into the message. */
 export interface MessageSendInput {
   messages: MessageInput[];
-  attachments?: PendingAttachment[];
   threadId?: string;
 }
 
@@ -265,12 +299,7 @@ export function useMessage(ref: JobRef) {
     MessageSendInput,
     SayContext
   >({
-    mutationFn: (input) =>
-      postMessage(
-        ref,
-        input.messages,
-        input.attachments?.map((a) => a.file),
-      ),
+    mutationFn: (input) => postMessage(ref, input.messages),
     onMutate: async (input) => {
       const userItem = input.messages.find(
         (m): m is Extract<MessageInput, { type: "user" }> => m.type === "user",
@@ -279,15 +308,18 @@ export function useMessage(ref: JobRef) {
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
-      const card: WebAttachmentsCard | undefined = input.attachments?.length
+      // The attachments the server will promote onto this message are the caller's CURRENT staged draft
+      // attachments (uploaded on-add) — read them from the store for the optimistic thumbnail preview.
+      const draftAttachments = composerStore.getDraft(ref.jobId).attachments;
+      const card: WebAttachmentsCard | undefined = draftAttachments.length
         ? {
             type: "attachments_card",
-            items: input.attachments.map((a) => ({
-              name: a.file.name,
+            items: draftAttachments.map((a) => ({
+              name: a.name,
               path: "",
               kind: a.kind,
-              size: a.file.size,
-              localUrl: a.url,
+              size: a.size,
+              localUrl: a.url ?? "",
             })),
             ...(userItem.text ? { message: userItem.text } : {}),
           }

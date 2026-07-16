@@ -1,8 +1,16 @@
 "use client";
 
 import { useCallback, useSyncExternalStore } from "react";
-import type { JobMessage, JobRef } from "./job-api";
-import type { PendingAttachment } from "./job-queries";
+import {
+  getDraft,
+  putDraft,
+  type JobMessage,
+  type JobRef,
+  type DraftPayloadWire,
+  type DraftAttachmentDto,
+} from "./job-api";
+import type { DraftAttachment } from "./job-queries";
+import { connectivity } from "./connectivity";
 import type { ReviewComment } from "@/features/job-workspace/review-comments";
 
 /**
@@ -14,25 +22,28 @@ import type { ReviewComment } from "@/features/job-workspace/review-comments";
  * `useState` therefore BLEEDS from one Job into the next and is lost on reload. Holding it here — loaded
  * and saved explicitly on `jobId` change — keeps each Job's draft isolated and lets it outlive the view.
  *
- * A draft is `{ text, attachments, comments }` (+ `outbox`, populated by the offline-send queue). Only the
- * SERIALIZABLE parts — `text`, `comments`, and the outbox's serializable metadata — persist to
- * `sessionStorage["atlas.composer.draft.<jobId>"]` (debounced ~300ms). Attachments are `File` + blob URL,
- * neither serializable, so they live in memory only: they survive a Job-switch but not a full reload.
- * sessionStorage (not localStorage) is intentional — a draft survives reload / in-session navigation but
- * clears when the tab/browser is fully closed.
+ * A draft is `{ text, attachments, comments, stagedAnswers }` (+ `outbox`, populated by the offline-send
+ * queue). The draft body is SERVER-BACKED per (job, user): `text`/`stagedAnswers`/`comments` autosave to
+ * `PUT .../draft` (debounced) and attachments upload on-add to `POST .../draft/attachments`, so a draft
+ * syncs across the operator's own devices (via the drafts realtime stream) and survives a full reload.
+ * `sessionStorage["atlas.composer.draft.<jobId>"]` is kept only as an OFFLINE FALLBACK buffer — read first
+ * for an instant paint, then OVERWRITTEN the moment the server responds (server wins over stale storage).
+ * The `outbox` (offline-send queue) is unchanged: still sessionStorage-only serializable metadata.
  */
 
 /** The offline-send queue entry — one message the operator sent while disconnected, awaiting reconnect.
- *  Populated by the offline-send-queue thread; the store just carries and persists its metadata so a
- *  queued message survives reload. `attachments` are in-memory only (Job-switch, not reload). */
+ *  The store carries and persists its metadata so a queued message survives reload. `hasAttachments` is a
+ *  flag, not the bytes: the attachments themselves already live on the server draft (uploaded on-add), and
+ *  the reconnect-time send promotes whatever is still staged there. */
 export interface QueuedMessage {
   id: string;
   /** Wall-clock enqueue time — orders `allQueued()` FIFO across every Job, not just within one. */
   createdAt: number;
   text: string;
   comments: ReviewComment[];
-  /** In-memory ONLY — never persisted (File + blob URL are non-serializable), same rule as draft attachments. */
-  attachments: PendingAttachment[];
+  /** The composer had staged draft attachments at enqueue time — the reconnect send omits `files` so the
+   *  server promotes the already-uploaded draft attachments onto the message. */
+  hasAttachments: boolean;
 }
 
 /**
@@ -50,13 +61,13 @@ export interface ComposerDraft {
   /** Captured so the offline-send flusher can POST without a mounted view (no ref to rebuild otherwise). */
   ref: JobRef;
   text: string;
-  /** In-memory ONLY — never persisted. Survives Job-switch, not a full reload. */
-  attachments: PendingAttachment[];
-  /** Serializable metadata; the on-screen DOM `Range`/highlight is rebuilt per-mount by the provider. */
+  /** Server-backed (uploaded on-add). A hydrated entry carries no blob preview `url`, just name/kind/size. */
+  attachments: DraftAttachment[];
+  /** Server-backed. The on-screen DOM `Range`/highlight is rebuilt per-mount by the provider. */
   comments: ReviewComment[];
-  /** Per-Job offline-send queue. Its serializable metadata persists; its attachments do not. */
+  /** Per-Job offline-send queue. sessionStorage-only serializable metadata (NOT server-backed). */
   outbox: QueuedMessage[];
-  /** In-memory ONLY — never persisted. One staged answer per card, awaiting a batched Send. */
+  /** Server-backed. One staged answer per card, awaiting a batched Send. */
   stagedAnswers: StagedAnswer[];
 }
 
@@ -64,6 +75,11 @@ interface Entry {
   /** REPLACED (never mutated) on every change so `useSyncExternalStore` sees a new ref and re-renders. */
   state: ComposerDraft;
   listeners: Set<() => void>;
+  /** Wall-clock of the last LOCAL edit — the last-write-wins clock that decides whether an incoming server
+   *  payload (a realtime echo) is fresher than an unsynced local change. */
+  lastLocalEditAt: number;
+  /** A local edit is not yet confirmed by the server (a `putDraft` still owed) — re-sent on reconnect. */
+  dirty: boolean;
 }
 
 /** Shared snapshot for an unknown jobId / SSR — a stable identity keeps `useSyncExternalStore` quiet. */
@@ -83,12 +99,18 @@ const storageKey = (jobId: string): string => `${KEY_PREFIX}${jobId}`;
  *  that a draft is safely on disk before a realistic reload. */
 const PERSIST_DEBOUNCE_MS = 300;
 
+/** Debounce window for the server autosave (`PUT .../draft`) — idle-based, coarser than the sessionStorage
+ *  write so a burst of keystrokes settles into a single round-trip. */
+const DRAFT_AUTOSAVE_MS = 500;
+
 /** The serializable projection of a draft (what actually lands in sessionStorage — no attachments). */
 interface PersistedDraft {
   ref: JobRef;
   text: string;
   comments: ReviewComment[];
-  outbox: Array<Pick<QueuedMessage, "id" | "text" | "comments" | "createdAt">>;
+  outbox: Array<
+    Pick<QueuedMessage, "id" | "text" | "comments" | "createdAt" | "hasAttachments">
+  >;
 }
 
 function hasWindow(): boolean {
@@ -112,12 +134,24 @@ class ComposerStore {
     string,
     ReturnType<typeof setTimeout>
   >();
+  /** Debounced server-autosave timers (`PUT .../draft`), parallel to `persistTimers`. */
+  private readonly autosaveTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  /** Jobs whose one-time hydrate-from-server has already been kicked off (guards `ensure`'s per-render call). */
+  private readonly hydrated = new Set<string>();
   /** Global (not jobId-keyed) listeners fired on any outbox change — see `subscribeGlobal`. */
   private readonly globalListeners = new Set<() => void>();
 
   constructor() {
     if (hasWindow() && typeof window.addEventListener === "function") {
       window.addEventListener("pagehide", () => this.flushAll());
+      // Reconnect reconciliation: on an offline→online transition re-send every dirty draft (idempotent
+      // last-write-wins) and re-pull each open job to fold in edits from other devices missed while offline.
+      connectivity.subscribe(() => {
+        if (connectivity.getSnapshot() === "online") this.onReconnect();
+      });
     }
   }
 
@@ -146,7 +180,10 @@ class ComposerStore {
    *  A blank jobId is the ref-less sentinel (create-job modal) — it owns no draft, so ignore it. */
   ensure(ref: JobRef): void {
     if (!ref.jobId) return;
-    if (this.entries.has(ref.jobId)) return;
+    if (this.entries.has(ref.jobId)) {
+      this.hydrateFromServer(ref); // idempotent — the guard inside runs the fetch at most once per job
+      return;
+    }
     const persisted = readPersisted(ref.jobId);
     const state: ComposerDraft = {
       ref,
@@ -154,17 +191,23 @@ class ComposerStore {
       attachments: [],
       comments: persisted?.comments ?? [],
       stagedAnswers: [],
-      // An attachments-only queued item (no text, no comments) hydrates with nothing to send — its Files
-      // can't be restored, so drop it rather than leave a dead entry the flusher would silently discard.
+      // A queued item with neither text, comments, nor staged attachments has nothing to send — drop it
+      // rather than leave a dead entry the flusher would silently discard.
       outbox: (persisted?.outbox ?? [])
         .map((q) => ({
           ...q,
           createdAt: q.createdAt ?? Date.now(),
-          attachments: [],
+          hasAttachments: q.hasAttachments ?? false,
         }))
-        .filter((q) => q.text || q.comments.length > 0),
+        .filter((q) => q.text || q.comments.length > 0 || q.hasAttachments),
     };
-    this.entries.set(ref.jobId, { state, listeners: new Set() });
+    this.entries.set(ref.jobId, {
+      state,
+      listeners: new Set(),
+      lastLocalEditAt: 0,
+      dirty: false,
+    });
+    this.hydrateFromServer(ref);
   }
 
   getDraft(jobId: string): ComposerDraft {
@@ -185,6 +228,8 @@ class ComposerStore {
           stagedAnswers: [],
         },
         listeners: new Set(),
+        lastLocalEditAt: 0,
+        dirty: false,
       };
       this.entries.set(jobId, entry);
     }
@@ -205,6 +250,7 @@ class ComposerStore {
   setText(ref: JobRef, text: string): void {
     this.replace(ref, { text });
     this.schedulePersist(ref.jobId);
+    this.markEdited(ref.jobId);
   }
 
   setComments(
@@ -215,15 +261,17 @@ class ComposerStore {
     const prev = this.getDraft(ref.jobId).comments;
     this.replace(ref, { comments: updater(prev) });
     this.schedulePersist(ref.jobId);
+    this.markEdited(ref.jobId);
   }
 
   setAttachments(
     ref: JobRef,
-    updater: (prev: PendingAttachment[]) => PendingAttachment[],
+    updater: (prev: DraftAttachment[]) => DraftAttachment[],
   ): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).attachments;
-    // Attachments are never persisted, so no schedulePersist here.
+    // Attachments upload on-add to the server (not via the debounced draft autosave), so no persist/
+    // markEdited here — the array is a reflection of server rows, driven by `use-attachments`.
     this.replace(ref, { attachments: updater(prev) });
   }
 
@@ -233,8 +281,8 @@ class ComposerStore {
   ): void {
     this.ensure(ref);
     const prev = this.getDraft(ref.jobId).stagedAnswers;
-    // Staged answers are never persisted, so no schedulePersist here.
     this.replace(ref, { stagedAnswers: updater(prev) });
+    this.markEdited(ref.jobId);
   }
 
   /** Stage (or re-stage) one card's answer — upserts by `cardId` so re-answering the same card replaces its
@@ -264,6 +312,7 @@ class ComposerStore {
     const next = prev.filter((a) => !isStagedAnswerStale(a, messages));
     if (next.length === prev.length) return; // no-op guard, avoid churn on every refetch
     this.replace(ref, { stagedAnswers: next });
+    this.markEdited(ref.jobId);
   }
 
   setOutbox(
@@ -340,6 +389,137 @@ class ComposerStore {
     };
     this.notify(jobId);
     this.persistNow(jobId, entry.state);
+    // Push the cleared body to the server too. The /message send-path clears the draft server-side (this
+    // is then an idempotent no-op echo); the /review-comments path does not, so this is what syncs the
+    // reset across the operator's other devices.
+    this.markEdited(jobId);
+  }
+
+  // ── Server sync (draft body autosave + realtime reconcile) ─────────────────────────────────────
+
+  /** Record a local edit (the last-write-wins clock) and schedule a debounced server autosave. */
+  private markEdited(jobId: string): void {
+    const entry = this.entries.get(jobId);
+    if (!entry) return;
+    entry.lastLocalEditAt = Date.now();
+    entry.dirty = true;
+    this.scheduleAutosave(jobId);
+  }
+
+  private scheduleAutosave(jobId: string): void {
+    const existing = this.autosaveTimers.get(jobId);
+    if (existing) clearTimeout(existing);
+    this.autosaveTimers.set(
+      jobId,
+      setTimeout(() => {
+        this.autosaveTimers.delete(jobId);
+        this.pushDraft(jobId);
+      }, DRAFT_AUTOSAVE_MS),
+    );
+  }
+
+  /** PUT the job's current draft body. While offline it's a no-op — the `dirty` flag holds and a reconnect
+   *  re-sends. Clears `dirty` only if no newer edit slipped in during the round-trip. */
+  private pushDraft(jobId: string): void {
+    const entry = this.entries.get(jobId);
+    if (!entry) return;
+    if (connectivity.getSnapshot() !== "online") return;
+    const { ref, text, stagedAnswers, comments } = entry.state;
+    const stamp = entry.lastLocalEditAt;
+    void putDraft(ref, { text, stagedAnswers, comments })
+      .then(() => {
+        const cur = this.entries.get(jobId);
+        if (cur && cur.lastLocalEditAt === stamp) cur.dirty = false;
+      })
+      .catch(() => {
+        // Transient failure — keep `dirty` so the next reconnect re-sends.
+      });
+  }
+
+  /** One-time hydrate from the server draft (server wins over the sessionStorage fallback paint). Guarded
+   *  so `ensure`'s per-render call fetches at most once per job; a failed fetch reopens the guard so a
+   *  reconnect retries. */
+  private hydrateFromServer(ref: JobRef): void {
+    if (!ref.jobId || this.hydrated.has(ref.jobId)) return;
+    this.hydrated.add(ref.jobId);
+    this.fetchAndReconcile(ref, () => this.hydrated.delete(ref.jobId));
+  }
+
+  /** GET the server draft and fold it in UNLESS a local edit happened during the fetch (in-flight LWW —
+   *  used where no server `updatedAt` is available, i.e. hydrate + reconnect resync). */
+  private fetchAndReconcile(ref: JobRef, onError?: () => void): void {
+    const entry = this.entries.get(ref.jobId);
+    if (!entry) return;
+    const stamp = entry.lastLocalEditAt;
+    void getDraft(ref)
+      .then(({ payload, attachments }) => {
+        const cur = this.entries.get(ref.jobId);
+        if (!cur || cur.lastLocalEditAt !== stamp) return; // a local edit raced the fetch — keep it
+        this.applyPayload(ref.jobId, payload, attachments);
+      })
+      .catch(() => onError?.());
+  }
+
+  /** Realtime told us this job's server draft changed at `updatedAtMs` — refetch the real payload (never
+   *  carried on the WAL) and reconcile it under last-write-wins against `updatedAtMs`. */
+  pullServerDraft(jobId: string, updatedAtMs: number): void {
+    const ref = this.entries.get(jobId)?.state.ref;
+    if (!ref) return; // not a job the operator has open — nothing local to reconcile
+    void getDraft(ref)
+      .then(({ payload, attachments }) => {
+        this.applyServerPayload(jobId, payload, attachments, updatedAtMs);
+      })
+      .catch(() => {});
+  }
+
+  /** Fold a server payload in unless a fresher UNSYNCED local edit exists (its clock beats `updatedAt`). */
+  applyServerPayload(
+    jobId: string,
+    payload: DraftPayloadWire,
+    attachments: DraftAttachmentDto[],
+    updatedAt: number,
+  ): void {
+    const entry = this.entries.get(jobId);
+    if (!entry) return;
+    if (entry.lastLocalEditAt > updatedAt) return; // our own newer edit is in flight — don't clobber it
+    this.applyPayload(jobId, payload, attachments);
+  }
+
+  /** Replace the server-backed slices from a payload (does NOT touch the LWW clock / dirty flag). */
+  private applyPayload(
+    jobId: string,
+    payload: DraftPayloadWire,
+    attachments: DraftAttachmentDto[],
+  ): void {
+    const entry = this.entries.get(jobId);
+    if (!entry) return;
+    entry.state = {
+      ...entry.state,
+      text: payload.text,
+      stagedAnswers: payload.stagedAnswers,
+      comments: payload.comments,
+      attachments: attachments.map((a) => ({
+        id: a.id,
+        name: a.name,
+        kind: a.kind,
+        size: a.size,
+      })),
+    };
+    this.notify(jobId);
+    this.persistNow(jobId, entry.state); // keep the sessionStorage fallback buffer in sync
+  }
+
+  /** The full `JobRef` for an open job (the realtime row carries only jobId/orgId). */
+  getRef(jobId: string): JobRef | null {
+    return this.entries.get(jobId)?.state.ref ?? null;
+  }
+
+  private onReconnect(): void {
+    for (const [jobId, entry] of this.entries) {
+      if (!jobId) continue;
+      if (entry.dirty) this.pushDraft(jobId);
+      this.fetchAndReconcile(entry.state.ref);
+    }
   }
 
   private schedulePersist(jobId: string): void {
@@ -399,6 +579,7 @@ class ComposerStore {
           text: q.text,
           comments: q.comments,
           createdAt: q.createdAt,
+          hasAttachments: q.hasAttachments,
         })),
       };
       window.sessionStorage.setItem(
@@ -487,7 +668,7 @@ export function useComposerDraft(ref: JobRef): ComposerDraft {
  * re-render. This keeps the transcript pane (via `useAttachments`) and the review-comments provider off the
  * per-keystroke render path — only the Composer's own text subscription re-renders while typing.
  */
-export function useComposerAttachments(ref: JobRef): PendingAttachment[] {
+export function useComposerAttachments(ref: JobRef): DraftAttachment[] {
   composerStore.ensure(ref);
   const subscribe = useCallback(
     (cb: () => void) => composerStore.subscribe(ref.jobId, cb),

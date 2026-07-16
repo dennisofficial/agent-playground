@@ -484,7 +484,11 @@ export function CreateThread({ onDone }: { onDone?: () => void }) {
           />
         </div>
         <AttachmentTray
-          attachments={attachments}
+          attachments={attachments.map((a) => ({
+            name: a.file.name,
+            kind: a.kind,
+            url: a.url,
+          }))}
           onRemove={removeAttachment}
           className="mt-2"
         />

@@ -24,6 +24,9 @@ export const qk = {
   /** One thread's durable message log. */
   threadMessages: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["thread-messages", ref.orgId, ref.repoId, ref.jobId] as const,
+  /** The caller's own composer draft for one job (`GET .../jobs/:jobId/draft`). Keyed by `jobId` alone — a
+   *  uuid is globally unique, and the drafts realtime row carries no repoId to rebuild a fuller key from. */
+  draft: (jobId: string) => ["draft", jobId] as const,
   /** One thread's pipeline (job + sections). */
   threadPipeline: (ref: { orgId: string; repoId: string; jobId: string }) =>
     ["thread-pipeline", ref.orgId, ref.repoId, ref.jobId] as const,

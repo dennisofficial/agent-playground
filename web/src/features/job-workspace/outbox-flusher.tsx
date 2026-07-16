@@ -56,12 +56,10 @@ export function OutboxFlusher(): null {
               })),
               message: msg.text || undefined,
             });
-          } else if (msg.attachments.length > 0) {
-            await postMessage(
-              ref,
-              [{ type: "user", text: msg.text }],
-              msg.attachments.map((a) => a.file),
-            );
+          } else if (msg.hasAttachments) {
+            // No `files` part — the attachments already live on the server draft (uploaded on-add); the
+            // server promotes whatever is still staged onto this message.
+            await postMessage(ref, [{ type: "user", text: msg.text }]);
           } else if (msg.text) {
             await postMessage(ref, [{ type: "user", text: msg.text }]);
           } else {
