@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
+import type { JitInjection, JitInjectionRule } from '@shared/engine';
 
 /**
  * One assembled block of an in-flight turn — the SAME shape the web client renders (so a snapshot maps
@@ -36,6 +37,9 @@ export interface LiveTurnBlock {
    * a reconnect snapshot carries it (raw `bg_task` frames are not replayed).
    */
   bgSettled?: boolean;
+  /** JIT PostToolUse `additionalContext` injections tagged onto this tool call (svc-nudge /
+   *  install-awareness / github-fetch-guard), joined by `toolId` == the SDK `tool_use_id`. */
+  jitContext?: JitInjection[];
 }
 
 /** The cumulative state of one in-flight turn (a `(jobId, lane)` pair) — the RESUMABLE snapshot. */
@@ -457,6 +461,24 @@ export class LiveTurnStore {
             if (ev['structuredPatch'] !== undefined)
               b.structuredPatch = ev['structuredPatch'];
             b.done = true;
+            return b.emittedAt;
+          }
+        }
+        break;
+      }
+      case 'jit_injection': {
+        const id = typeof ev['id'] === 'string' ? (ev['id'] as string) : '';
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const b = blocks[i];
+          if (b.kind === 'tool' && b.toolId === id) {
+            const prior = b.jitContext ?? [];
+            b.jitContext = [
+              ...prior,
+              {
+                rule: ev['rule'] as JitInjectionRule,
+                text: String(ev['text'] ?? ''),
+              },
+            ];
             return b.emittedAt;
           }
         }

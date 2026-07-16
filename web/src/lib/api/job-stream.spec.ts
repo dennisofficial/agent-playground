@@ -43,3 +43,57 @@ describe("job-stream turn_start clears stale blocks", () => {
     expect(turn?.startedAt).toBe(456);
   });
 });
+
+describe("job-stream jit_injection joins by tool_use_id", () => {
+  it("attaches the injection to the matching open tool block, appending across multiple hooks", () => {
+    const jobId = "job-jit-injection";
+
+    applyStreamFrame(jobId, MAIN_LANE, 1, {
+      kind: "tool_use",
+      id: "tool-1",
+      name: "Bash",
+      input: { command: "npm install left-pad" },
+    });
+    let turn = peekLiveTurn(jobId);
+    expect(turn?.blocks[0]).toMatchObject({ kind: "tool", toolId: "tool-1" });
+    expect((turn?.blocks[0] as { jitContext?: unknown }).jitContext).toBeUndefined();
+
+    // A single Bash call can trigger more than one hook (e.g. install-awareness's async
+    // profile-fetch resolving after svc-nudge's synchronous check) — both must accumulate.
+    applyStreamFrame(jobId, MAIN_LANE, 2, {
+      kind: "jit_injection",
+      id: "tool-1",
+      rule: "svc-nudge",
+      text: "A service is already running on this port.",
+    });
+    applyStreamFrame(jobId, MAIN_LANE, 3, {
+      kind: "jit_injection",
+      id: "tool-1",
+      rule: "install-awareness",
+      text: "left-pad is already a project dependency.",
+    });
+
+    turn = peekLiveTurn(jobId);
+    expect(turn?.blocks).toHaveLength(1);
+    expect(turn?.blocks[0]).toMatchObject({
+      kind: "tool",
+      toolId: "tool-1",
+      jitContext: [
+        { rule: "svc-nudge", text: "A service is already running on this port." },
+        {
+          rule: "install-awareness",
+          text: "left-pad is already a project dependency.",
+        },
+      ],
+    });
+
+    // A jit_injection for an id with no matching block is a no-op (never throws).
+    applyStreamFrame(jobId, MAIN_LANE, 4, {
+      kind: "jit_injection",
+      id: "no-such-tool",
+      rule: "github-fetch-guard",
+      text: "ignored",
+    });
+    expect(peekLiveTurn(jobId)?.blocks).toHaveLength(1);
+  });
+});

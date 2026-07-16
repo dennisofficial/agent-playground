@@ -211,7 +211,7 @@ import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
 import type { EngineHomeKey } from '@shared/engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
 import type { ThreadRole } from '../thread-kind';
-import { BrainStoreService } from './brain-store.service';
+import { BrainStoreService, type CreateJobAutoMode } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
   ApprovalResolution,
@@ -2483,10 +2483,14 @@ export class AgentSessionManager
     // This is HARNESS narration, not an Atlas reply — appendSystemEvent renders it as a quiet pill (same
     // treatment as "Codex is reviewing the plan…"), never faking Atlas's voice for operational setup text.
     if (!alreadyProvisioned) {
-      await this.store.appendSystemEvent(
-        stimulus.jobId,
-        'Setting up an isolated workspace for this thread — one moment…',
-      );
+      await this.store
+        .appendSystemEvent(
+          stimulus.jobId,
+          'Setting up an isolated workspace for this thread — one moment…',
+        )
+        .catch((err) =>
+          this.logger.debug(`appendSystemEvent failed: ${err}`),
+        );
     }
     const onMilestone = this.sandboxMilestoneNotifier(stimulus);
     try {
@@ -4713,6 +4717,11 @@ export class AgentSessionManager
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
+        // Always forwarded (even when the caller omitted it, as `{}`) so an agent-spawned follow-up
+        // resolves the org's default_auto_approve_mode/default_auto_merge instead of hard-defaulting to
+        // off/false — onboarding's own createFollowUpJob call sites never pass this key and stay untouched.
+        const autoMode =
+          (args['autoMode'] as CreateJobAutoMode | undefined) ?? {};
         const newJobId = await this.store.createFollowUpJob({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
@@ -4720,6 +4729,7 @@ export class AgentSessionManager
           baseBranch: current.baseBranch,
           createdByJobId: stimulus.jobId,
           createdByTitle: current.title,
+          autoMode,
         });
 
         let anyBlocked = false;

@@ -18,6 +18,7 @@ import {
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
   DESIGN_DISCIPLINE_NOTE,
+  DIAGRAM_FORMAT_NOTE,
   DOC_VERSION_VERIFY_NOTE,
   MINIMAL_CODE_NOTE,
   RUNNABLE_WORKSPACE_NOTE,
@@ -31,6 +32,15 @@ export class BehavioralGroup {
   @Fragment({ usedBy: ENGINEERING_STAGES, order: 7990 })
   candor(): string {
     return CANDOR_NOTE;
+  }
+
+  /** DIAGRAMS ARE MERMAID, NEVER ASCII ART — a universal OUTPUT rule for every brain stage and jobKind
+   *  (ungated, like `candor`): a review or onboarding brain draws diagrams too, and the conversation surface
+   *  renders ```mermaid live. Pairs with planning.group's DIAGRAMS (diagram TYPE + leaning on them in
+   *  plans); this one governs the medium in replies as well as specs. */
+  @Fragment({ usedBy: ENGINEERING_STAGES, order: 7991 })
+  diagramFormat(): string {
+    return DIAGRAM_FORMAT_NOTE;
   }
 
   @Fragment({ usedBy: ENGINEERING_STAGES, order: 8000, condition: notReview })

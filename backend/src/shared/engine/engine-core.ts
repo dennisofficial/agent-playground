@@ -690,6 +690,8 @@ export class EngineCore {
         capturedPlan = plan;
       },
       getContextTokens: () => contextTokens,
+      onJitInjection: (inj) =>
+        onEvent?.({ kind: 'jit_injection', id: inj.toolUseId, rule: inj.rule, text: inj.text }),
     });
 
     let result = '';
