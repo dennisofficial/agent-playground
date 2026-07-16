@@ -378,6 +378,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         resolveForTurn: async () => [],
         resolveReviewSkillsForThread: async () => [],
       } as never,
+      { select: async () => [] } as never,
       {
         ensureContainer: async () => ({
           sandbox: {

@@ -62,6 +62,16 @@ const ORDINAL_GAP = 10;
 export type DriverThread = Thread & { orgId: string };
 
 /**
+ * The build thread GROUP's persisted skill-nudge selection (`thread_groups.config.skillNudge`) — the skills
+ * the Haiku selector picked for the group's build turn, plus when it was decided. Shared by all rotation legs
+ * of one logical build.
+ */
+export type SkillNudge = {
+  skills: { name: string; reason: string }[];
+  at: string;
+};
+
+/**
  * A builder's review CHILD thread (a `review_lens` or `post_review` row) as the driver's child-thread
  * orchestration works with it — the kind + config + status + the full findings a lens produced. Distinct
  * from `DriverThread` (a top-level build lane); children carry `config`/`reviewFindings`, not a plan/handoff.
@@ -816,6 +826,41 @@ export class DriverStoreService {
     };
     if (Object.keys(patch).length === 0) return;
     await this.threads.update({ id: anchorStepId }, patch);
+  }
+
+  /**
+   * Read the build thread GROUP's persisted skill-nudge selection. The grain is the group, not the thread
+   * row: a rotation leg is a fresh `threads` row that does NOT inherit config, so per-thread persistence would
+   * re-run the Haiku selector every leg. A PRESENT key (even `{skills:[]}`) means "already decided" — the
+   * caller reuses it and skips selection. Returns null when the group has no selection yet.
+   */
+  async readGroupSkillNudge(threadGroupId: string): Promise<SkillNudge | null> {
+    const g = await this.threadGroups.findOne({
+      where: { id: threadGroupId },
+      select: { id: true, config: true },
+    });
+    const v = isRecord(g?.config) ? g!.config.skillNudge : undefined;
+    return isSkillNudge(v) ? v : null;
+  }
+
+  /**
+   * Persist the skill-nudge selection on the build thread GROUP's config (read-merge-write, mirroring
+   * `foldContextPeak`). Written once per group on the first build leg — including an empty `{skills:[]}` so a
+   * group with no relevant skill is not re-selected on every subsequent leg.
+   */
+  async persistGroupSkillNudge(
+    threadGroupId: string,
+    nudge: SkillNudge,
+  ): Promise<void> {
+    const g = await this.threadGroups.findOne({
+      where: { id: threadGroupId },
+      select: { id: true, config: true },
+    });
+    const config = isRecord(g?.config) ? g!.config : {};
+    await this.threadGroups.update(
+      { id: threadGroupId },
+      { config: { ...config, skillNudge: nudge } },
+    );
   }
 
   /**
@@ -2042,6 +2087,7 @@ function toThread(row: ThreadEntity): DriverThread {
     status: row.status as ThreadStatus,
     condition: (row.condition as ThreadCondition) ?? 'none',
     kind: row.role,
+    threadGroupId: row.thread_group_id,
     type: coerceThreadType(row.type),
     parentThreadId: row.parent_thread_id ?? null,
     startSha: row.start_sha ?? null,
@@ -2050,6 +2096,15 @@ function toThread(row: ThreadEntity): DriverThread {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSkillNudge(value: unknown): value is SkillNudge {
+  if (!isRecord(value) || !Array.isArray(value.skills)) return false;
+  if (typeof value.at !== 'string') return false;
+  return value.skills.every(
+    (s) =>
+      isRecord(s) && typeof s.name === 'string' && typeof s.reason === 'string',
+  );
 }
 
 function toReviewChild(row: ThreadEntity): ReviewChildThread {
