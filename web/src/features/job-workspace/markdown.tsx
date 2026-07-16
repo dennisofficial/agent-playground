@@ -280,10 +280,24 @@ function parseSvg(raw: string): { svg: string; w: number; h: number } {
   };
 }
 
-/** Rendered SVGs by TRIMMED diagram source — mermaid render is pure in source + theme (theme is fixed at
- *  module init), so a diagram already seen elsewhere in the transcript can reuse its parsed result instead
- *  of replaying the async render and the placeholder→SVG size jump it causes. */
-const mermaidCache = new Map<string, { svg: string; w: number; h: number }>();
+/** Rendered SVGs by TRIMMED diagram source, tagged with the theme key they were rendered under. A diagram
+ *  already seen elsewhere in the transcript (in the SAME live theme) can reuse its parsed result instead of
+ *  replaying the async render and the placeholder→SVG size jump it causes. The theme tag matters because a
+ *  theme flip mid-flight (e.g. `warmMermaidDiagrams` still looping when the operator switches theme) can
+ *  otherwise write a stale-palette SVG back into a freshly-cleared cache with nothing to invalidate it
+ *  afterward — see {@link getCachedMermaid}. */
+const mermaidCache = new Map<
+  string,
+  { theme: string; svg: string; w: number; h: number }
+>();
+
+/** Cache lookup that also validates the entry was rendered under the CURRENTLY live theme — a hit tagged
+ *  with a stale theme (see above) is treated as a miss so callers re-render instead of showing the wrong
+ *  palette. */
+function getCachedMermaid(chart: string) {
+  const entry = mermaidCache.get(chart);
+  return entry && entry.theme === currentThemeKey() ? entry : undefined;
+}
 
 /** Extract trimmed ```mermaid fence sources from raw markdown text. */
 export function extractMermaidSources(text: string): string[] {
@@ -300,21 +314,25 @@ let warmId = 0;
  *  not an aspect-ratio box, so they need no warm). Renders sequentially to bound main-thread cost. */
 export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
   const todo = [...new Set(sources.map((s) => s.trim()))].filter(
-    (s) => s.length > 0 && !mermaidCache.has(s),
+    (s) => s.length > 0 && !getCachedMermaid(s),
   );
   if (todo.length === 0) return;
-  let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
-  try {
-    mermaid = await ensureMermaid();
-  } catch {
-    return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
-  }
+  // ensureMermaid (and the theme key) are re-checked EVERY iteration, not once before the loop — a theme
+  // flip mid-flight re-applies the palette and is reflected in the tag each entry is written with, so a
+  // fast switch can no longer poison the cache with wrong-palette, theme-untagged SVGs (see mermaidCache).
   for (const src of todo) {
-    if (mermaidCache.has(src)) continue;
+    if (getCachedMermaid(src)) continue;
+    let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
+    try {
+      mermaid = await ensureMermaid();
+    } catch {
+      return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
+    }
+    const key = currentThemeKey();
     try {
       await mermaid.parse(src);
       const { svg } = await mermaid.render(`mmd-warm-${warmId++}`, src);
-      mermaidCache.set(src, parseSvg(svg));
+      mermaidCache.set(src, { theme: key, ...parseSvg(svg) });
     } catch {
       /* leave uncached — the error frame reserves the same mermaidReservePx height as the loading
          placeholder (see Mermaid's error branch below), so it needs no warming to avoid a shift */
@@ -414,7 +432,7 @@ function Mermaid({ chart }: { chart: string }) {
     svg: string;
     w: number;
     h: number;
-  } | null>(() => mermaidCache.get(chart.trim()) ?? null);
+  } | null>(() => getCachedMermaid(chart.trim()) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [sent, setSent] = useState(false);
@@ -430,7 +448,9 @@ function Mermaid({ chart }: { chart: string }) {
     // Mermaid render is pure in its source + theme, so a previously-rendered diagram (in the CURRENT
     // theme) can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
     // makes a diagram seen once elsewhere in the transcript mount at its FINAL size immediately.
-    const cached = mermaidCache.get(chart.trim());
+    // getCachedMermaid rejects a hit tagged with a stale theme (see mermaidCache), so a wrong-palette
+    // entry left behind by an in-flight warm during a fast theme switch is treated as a miss and re-rendered.
+    const cached = getCachedMermaid(chart.trim());
     if (cached) {
       setResult(cached);
       setError(null);
@@ -442,16 +462,20 @@ function Mermaid({ chart }: { chart: string }) {
     setError(null);
     ensureMermaid()
       .then(async (mermaid) => {
+        // Capture the theme key ensureMermaid just applied (not whatever is live when the render settles)
+        // so the cache entry is tagged with the palette actually baked into this SVG.
+        const key = currentThemeKey();
         // Validate BEFORE rendering: parse() throws on bad syntax but injects nothing, so mermaid's
         // default "bomb" error SVG never lands in the DOM — independent of whether suppressErrorRendering
         // took effect at init time (initialize runs once via a module singleton).
         await mermaid.parse(chart);
-        return mermaid.render(renderId, chart);
+        const { svg } = await mermaid.render(renderId, chart);
+        return { svg, key };
       })
-      .then(({ svg }) => {
+      .then(({ svg, key }) => {
         if (!cancelled) {
           const parsed = parseSvg(svg);
-          mermaidCache.set(chart.trim(), parsed);
+          mermaidCache.set(chart.trim(), { theme: key, ...parsed });
           setResult(parsed);
         }
       })
