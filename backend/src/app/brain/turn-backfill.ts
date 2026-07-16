@@ -1,5 +1,5 @@
 import type { Repository } from 'typeorm';
-import type { MessageEntity } from '../persistence/entities';
+import type { TranscriptMessageEntity } from '../persistence/entities';
 import type { RecoveredBlock, TurnSlice } from './session-transcript';
 
 /** How many trailing chars of a turn's final reply we match against `messages` to decide "already
@@ -26,7 +26,7 @@ const FINAL_REPLY_FINGERPRINT_LEN = 160;
  * provisioning notice and a later operator prompt). Returns the number of blocks inserted.
  */
 export async function backfillThreadFromTurns(
-  messages: Repository<MessageEntity>,
+  messages: Repository<TranscriptMessageEntity>,
   jobId: string,
   threadId: string,
   turns: TurnSlice[],
@@ -91,7 +91,7 @@ function isFresh(
 
 /** Write one recovered block as an Atlas-authored durable row (byte-compatible with `MessageBlockSink`). */
 async function appendBlock(
-  messages: Repository<MessageEntity>,
+  messages: Repository<TranscriptMessageEntity>,
   jobId: string,
   threadId: string,
   block: RecoveredBlock,
@@ -114,7 +114,7 @@ async function appendBlock(
 
 /** Whether a turn's final reply is already a durable Atlas message (the "already persisted" guard). */
 async function finalReplyPersisted(
-  messages: Repository<MessageEntity>,
+  messages: Repository<TranscriptMessageEntity>,
   jobId: string,
   finalReply: string,
 ): Promise<boolean> {
@@ -131,7 +131,7 @@ async function finalReplyPersisted(
 
 /** The set of SDK `uuid`s already represented in this thread's durable messages — recovery-re-run guard. */
 async function persistedSdkUuids(
-  messages: Repository<MessageEntity>,
+  messages: Repository<TranscriptMessageEntity>,
   jobId: string,
 ): Promise<Set<string>> {
   const rows: Array<{ u: string | null }> = await messages
@@ -148,7 +148,7 @@ async function persistedSdkUuids(
 /** The set of SDK tool_use ids (`meta.id`) already persisted for this thread — dedup vs a normal turn's
  *  tool blocks (the live turn-harness path stamps `meta.id` = the SDK tool_use id). */
 async function persistedToolIds(
-  messages: Repository<MessageEntity>,
+  messages: Repository<TranscriptMessageEntity>,
   jobId: string,
 ): Promise<Set<string>> {
   const rows: Array<{ id: string | null }> = await messages

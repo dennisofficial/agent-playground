@@ -8,7 +8,7 @@ import {
 } from 'typeorm';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import { ThreadEntity } from './thread.entity';
-import { MessageEntity } from './message.entity';
+import { TranscriptMessageEntity } from './transcript-message.entity';
 import { numberColumn } from './numeric.transformer';
 
 /**
@@ -41,9 +41,9 @@ export class SubagentEntity extends TimestampedEntity {
   @Column({ type: 'uuid' })
   parent_message_id!: string;
 
-  @ManyToOne(() => MessageEntity, { onDelete: 'CASCADE' })
+  @ManyToOne(() => TranscriptMessageEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'parent_message_id' })
-  parentMessage?: MessageEntity;
+  parentMessage?: TranscriptMessageEntity;
 
   /** The SDK's `tool_use_id` for the launching `Task` block — the stream-time join key (mirrors the old
    *  `meta.id` on the launching block / `meta.parentToolUseId` on its children). */

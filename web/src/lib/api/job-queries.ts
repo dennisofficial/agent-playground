@@ -12,9 +12,8 @@ import { useOrgs } from "./me";
 import { composerStore } from "./composer-store";
 import {
   addJobDependency,
-  answerQuestion,
+  postMessage,
   provideSecret,
-  provideFile,
   approveMcpProposal,
   approveSkillProposal,
   approveThread,
@@ -40,16 +39,11 @@ import {
   setAutoMerge,
   retryJob,
   retryTurn,
-  sayMessage,
-  sayMessageWithFiles,
   shipWithoutReview,
   spinUpPreview,
   stopJob,
-  submitAnswerBatch,
-  type AnswerBatchItem,
-  type AnswerQuestionBody,
+  type MessageInput,
   type ProvideSecretBody,
-  type ProvideFileBody,
   type ApproveBody,
   type CreateThreadBody,
   type JobMessage,
@@ -233,54 +227,6 @@ interface SayContext {
   prev?: JobMessage[];
 }
 
-/**
- * Post a message into the thread. Optimistically appends a local user bubble so the composer feels
- * instant; the authoritative list is refetched on settle (and again when the SSE signal fires), which
- * reconciles the optimistic row with the durable one.
- *
- * Steering is now server-side: a message sent WHILE a turn is live is injected into the running turn by the
- * backend (the model reacts mid-turn) instead of queuing — so there's no client-side queue. The optimistic
- * bubble renders inline at its natural position and reconciles to the durable row (ordered by `created_at`,
- * stamped ≈ send time), landing in the right chronological spot.
- */
-export function useSay(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation<
-    { ts: string },
-    Error,
-    { text: string; lane?: string; threadId?: string },
-    SayContext
-  >({
-    mutationFn: ({ text, lane }) => sayMessage(ref, text, lane),
-    onMutate: async ({ text, threadId }) => {
-      const key = qk.threadMessages(ref);
-      await qc.cancelQueries({ queryKey: key });
-      const prev = qc.getQueryData<JobMessage[]>(key);
-      const optimistic: JobMessage = {
-        ts: `local-${Date.now()}`,
-        threadId: threadId ?? ref.jobId,
-        subagentId: null,
-        author: "user",
-        authorId: "me",
-        authorName: "You",
-        text,
-        kind: "chat",
-        source: "operator",
-        postedAt: new Date().toISOString(),
-        local: true,
-      };
-      qc.setQueryData<JobMessage[]>(key, [...(prev ?? []), optimistic]);
-      return { prev };
-    },
-    onError: (_e, _input, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
-    },
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
-}
-
 /** One pending composer attachment: the `File` to upload + its local blob preview URL + image/file kind. */
 export interface PendingAttachment {
   file: File;
@@ -289,48 +235,63 @@ export interface PendingAttachment {
   kind: "image" | "file";
 }
 
-interface SayWithAttachmentsInput {
-  text: string;
-  attachments: PendingAttachment[];
-  lane?: string;
+/** `useMessage`'s mutation input — a typed batch, its optional attachments (ties to the batch's `user`
+ *  item for optimistic local-blob thumbnails), and the lane/thread the optimistic row belongs to. */
+export interface MessageSendInput {
+  messages: MessageInput[];
+  attachments?: PendingAttachment[];
   threadId?: string;
 }
 
 /**
- * Send a message WITH attachments (multipart). Mirrors `useSay`'s optimistic-append, but the optimistic row
- * carries an `attachments_card` whose items use the LOCAL blob URLs (`localUrl`) so thumbnails render
- * instantly; on settle the durable row (server `path`, served via the streaming raw endpoint) reconciles in.
+ * Post a typed message batch into the thread — the ONE send path (`POST …/message`) that replaces the old
+ * `say`/`answer-question`/`provide-file`/`answer-batch` endpoints. When the batch carries a `user` item,
+ * optimistically appends a local user bubble (with an `attachments_card` of LOCAL blob URLs when
+ * `attachments` are present) so the composer feels instant; the authoritative list is refetched on settle
+ * (and again when the SSE signal fires), which reconciles the optimistic row with the durable one. A
+ * card-only batch (staged answers with no `user` item) has no optimistic row — the tray just clears on
+ * success and the thread refetches, same as the old `answer-batch`.
+ *
+ * Steering is server-side: a message sent WHILE a turn is live is injected into the running turn by the
+ * backend (the model reacts mid-turn) instead of queuing — so there's no client-side queue. The optimistic
+ * bubble renders inline at its natural position and reconciles to the durable row (ordered by `created_at`,
+ * stamped ≈ send time), landing in the right chronological spot.
  */
-export function useSayWithAttachments(ref: JobRef) {
+export function useMessage(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation<
-    { ts: string },
+    { ok: boolean; ts: string; results: Array<{ id: string; status: string }> },
     Error,
-    SayWithAttachmentsInput,
+    MessageSendInput,
     SayContext
   >({
     mutationFn: (input) =>
-      sayMessageWithFiles(
+      postMessage(
         ref,
-        input.text,
-        input.attachments.map((a) => a.file),
-        input.lane,
+        input.messages,
+        input.attachments?.map((a) => a.file),
       ),
     onMutate: async (input) => {
+      const userItem = input.messages.find(
+        (m): m is Extract<MessageInput, { type: "user" }> => m.type === "user",
+      );
+      if (!userItem) return {};
       const key = qk.threadMessages(ref);
       await qc.cancelQueries({ queryKey: key });
       const prev = qc.getQueryData<JobMessage[]>(key);
-      const card: WebAttachmentsCard = {
-        type: "attachments_card",
-        items: input.attachments.map((a) => ({
-          name: a.file.name,
-          path: "",
-          kind: a.kind,
-          size: a.file.size,
-          localUrl: a.url,
-        })),
-        ...(input.text ? { message: input.text } : {}),
-      };
+      const card: WebAttachmentsCard | undefined = input.attachments?.length
+        ? {
+            type: "attachments_card",
+            items: input.attachments.map((a) => ({
+              name: a.file.name,
+              path: "",
+              kind: a.kind,
+              size: a.file.size,
+              localUrl: a.url,
+            })),
+            ...(userItem.text ? { message: userItem.text } : {}),
+          }
+        : undefined;
       const optimistic: JobMessage = {
         ts: `local-${Date.now()}`,
         threadId: input.threadId ?? ref.jobId,
@@ -338,10 +299,10 @@ export function useSayWithAttachments(ref: JobRef) {
         author: "user",
         authorId: "me",
         authorName: "You",
-        text: input.text,
+        text: userItem.text,
         kind: "chat",
         source: "operator",
-        card,
+        ...(card ? { card } : {}),
         postedAt: new Date().toISOString(),
         local: true,
       };
@@ -351,16 +312,27 @@ export function useSayWithAttachments(ref: JobRef) {
     onError: (_e, _input, ctx) => {
       if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
     },
+    onSuccess: (data) => {
+      // Only drop the staged items the backend actually applied — a per-item `stale`/`withdrawn`/`noop`/
+      // `notfound` result means that answer never landed, so keep it staged rather than silently discarding it.
+      const appliedIds = new Set(
+        data.results.filter((r) => r.status === "applied").map((r) => r.id),
+      );
+      composerStore.setStagedAnswers(ref, (prev) =>
+        prev.filter((a) => !appliedIds.has(a.cardId)),
+      );
+    },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
   });
 }
 
 /**
  * Gracefully stop the thread brain's in-flight turn — the composer's Stop button (shown when a turn is
- * active AND the textarea is empty). Mirrors `useSay`'s shape; no optimistic row (the turn's own `turn_end`
- * clears the live indicator). Refreshes the message log so any partial output the stop persisted settles.
+ * active AND the textarea is empty). No optimistic row (the turn's own `turn_end` clears the live
+ * indicator). Refreshes the message log so any partial output the stop persisted settles.
  */
 export function useStop(ref: JobRef) {
   const qc = useQueryClient();
@@ -379,9 +351,9 @@ interface ReviewCommentsSendInput {
 }
 
 /**
- * Send a batch of inline highlight-and-comments — mirrors `useSay`'s optimistic-append, but the optimistic
- * row carries the `review_comments_card` so it renders as the styled card immediately (not a plain bubble)
- * while the durable echo settles. Like `say`, a send mid-turn steers server-side (no client queue).
+ * Send a batch of inline highlight-and-comments — mirrors `useMessage`'s optimistic-append, but the
+ * optimistic row carries the `review_comments_card` so it renders as the styled card immediately (not a
+ * plain bubble) while the durable echo settles. A send mid-turn steers server-side (no client queue).
  */
 export function useSendReviewComments(ref: JobRef) {
   const qc = useQueryClient();
@@ -423,38 +395,6 @@ export function useSendReviewComments(ref: JobRef) {
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
-}
-
-/**
- * Submit every staged card answer (question/file/durable-secret) + an optional operator note as ONE
- * combined request — the Composer's staging-tray Send. Unlike `useSendReviewComments`, there's no
- * optimistic transcript row (a batch answer doesn't render as its own bubble the way a comments card
- * does) — the tray just clears and the thread refetches on success.
- */
-export function useSubmitStagedAnswers(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { items: AnswerBatchItem[]; message?: string }) =>
-      submitAnswerBatch(ref, body),
-    onSuccess: (data) => {
-      // Only drop the items the backend actually applied — a per-item `stale`/`withdrawn`/`noop`/`notfound`
-      // result means that answer never landed, so keep it staged rather than silently discarding it. The
-      // `threadMessages` invalidate below re-fetches, which drives `pruneStagedAnswers` to drop it once its
-      // card is confirmed resolved (or leaves it for the operator to see/retry if it's genuinely still open).
-      const appliedIds = new Set(
-        data.results.filter((r) => r.status === "applied").map((r) => r.id),
-      );
-      composerStore.setStagedAnswers(ref, (prev) =>
-        prev.filter((a) => !appliedIds.has(a.cardId)),
-      );
-      // Clear only the note text this request actually sent — NOT `clearDraft`, which also wipes queued
-      // review comments / attachments that never went out (the staged-answers Send branch returns early
-      // without sending them; see `Composer.send()`).
-      composerStore.setText(ref, "");
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
     },
   });
 }
@@ -570,18 +510,6 @@ export function useUnblockJob(ref: JobRef, blockedBy: JobBlocker[]) {
   });
 }
 
-/** Answer a formal `ask_question` card. Refreshes the conversation (the card flips to answered + the
- *  brain's next turn lands). */
-export function useAnswerQuestion(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: AnswerQuestionBody) => answerQuestion(ref, body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
-    },
-  });
-}
-
 /** "Spin up preview" at the ship gate — POSTs the dedicated seeder endpoint (not the generic `say` path),
  *  which injects the full preview procedure server-side and stamps the ship card `previewRequestedAt`.
  *  Refreshes the conversation + pipeline so the stamped card or an off-gate no-op hides stale buttons. */
@@ -630,18 +558,6 @@ export function useApproveSkillProposal(ref: JobRef) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
       void qc.invalidateQueries({ queryKey: qk.orgSkills(ref.orgId) });
-    },
-  });
-}
-
-/** Upload a file for a `request_file` card (repo onboarding). The contents go straight to the encrypted
- *  store; the card flips to "uploaded" and the brain continues. */
-export function useProvideFile(ref: JobRef) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: ProvideFileBody) => provideFile(ref, body),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
     },
   });
 }

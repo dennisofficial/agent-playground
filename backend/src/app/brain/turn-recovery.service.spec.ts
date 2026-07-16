@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { MessageEntity, JobSandboxEntity } from '../persistence/entities';
+import type { TranscriptMessageEntity, JobSandboxEntity } from '../persistence/entities';
 import type { SandboxProvider } from '../sandbox/sandbox-provider.port';
 import { TurnRecoveryService } from './turn-recovery.service';
 
@@ -104,7 +104,7 @@ function seedTranscript(content = TRANSCRIPT): string {
   return join(root, 'brain_x', 'claude', 'projects');
 }
 
-type Row = Partial<MessageEntity>;
+type Row = Partial<TranscriptMessageEntity>;
 
 /** A stateful messages-repo mock: `save` accumulates rows; `getCount` answers the final-reply-present
  *  query (does any Atlas message contain the needle?); `getRawMany` answers persistedSdkUuids. */
@@ -141,7 +141,7 @@ function makeMessages(seed: Row[]) {
           .map((r) => ({ u: (r.meta as { sdkUuid: string }).sdkUuid }));
       return qb;
     },
-  } as unknown as Repository<MessageEntity>;
+  } as unknown as Repository<TranscriptMessageEntity>;
   return { repo, saved };
 }
 

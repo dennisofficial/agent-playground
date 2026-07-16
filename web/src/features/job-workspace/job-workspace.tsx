@@ -20,7 +20,7 @@ import {
   useRenameJob,
   useSetAutoApprove,
   useSetAutoMerge,
-  useSay,
+  useMessage,
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
 import { MAIN_LANE } from "@/lib/api/job-stream";
@@ -72,10 +72,13 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
   // detail-pane spec viewer) — that's why a broken mermaid diagram's "send to Atlas" button appears in
   // both. `mutate` is referentially stable, so the context value doesn't churn.
-  const sayMutate = useSay(ref).mutate;
+  const sendMessage = useMessage(ref).mutate;
   const markdownActions = useMemo(
-    () => ({ sendToThread: (text: string) => sayMutate({ text }) }),
-    [sayMutate],
+    () => ({
+      sendToThread: (text: string) =>
+        sendMessage({ messages: [{ type: "user", text }] }),
+    }),
+    [sendMessage],
   );
 
   // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build

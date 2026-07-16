@@ -14,7 +14,7 @@ import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
 import { SANDBOX_PROVIDER } from '../sandbox';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
   JobEntity,
   OrganizationEntity,
@@ -256,11 +256,11 @@ export class E2eHarness {
       () => undefined,
     );
     await q(
-      `DELETE FROM messages WHERE job_id IN (
+      `DELETE FROM transcript_messages WHERE job_id IN (
          SELECT id FROM jobs WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
-    await q(`DELETE FROM stimuli WHERE org_id = $1`, [TEAM_ID]).catch(
+    await q(`DELETE FROM inbound_messages WHERE org_id = $1`, [TEAM_ID]).catch(
       () => undefined,
     );
     await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(
@@ -475,7 +475,7 @@ export class E2eHarness {
       // (the EVENT bubble). This is what the operator + Atlas both see — the harness-message model.
       const jobId = first.json?.jobId as string | undefined;
       const eventMsg = jobId
-        ? await this.repo(MessageEntity).findOne({ where: { job_id: jobId } })
+        ? await this.repo(TranscriptMessageEntity).findOne({ where: { job_id: jobId } })
         : null;
       const hasEventMsg =
         !!eventMsg &&
@@ -556,7 +556,7 @@ export class E2eHarness {
       // sees it (the brain delivery wraps it in the untrusted markers). The seeded row holds the clean
       // text and is tagged `system_event`, NOT executed as an instruction.
       const eventMsg = jobId
-        ? await this.repo(MessageEntity).findOne({ where: { job_id: jobId } })
+        ? await this.repo(TranscriptMessageEntity).findOne({ where: { job_id: jobId } })
         : null;
       const storedAsData =
         !!eventMsg &&

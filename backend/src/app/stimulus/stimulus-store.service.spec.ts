@@ -3,8 +3,8 @@ import { QueryFailedError } from 'typeorm';
 import type { DataSource, Repository } from 'typeorm';
 import type { SeedRow } from '../domain';
 import {
-  MessageEntity,
-  StimulusEntity,
+  TranscriptMessageEntity,
+  InboundMessageEntity,
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
@@ -89,8 +89,8 @@ function fakeDataSource(
 describe('StimulusStoreService — notification-seeds-a-thread', () => {
   it('seedEventThread opens a thread (origin event), persists message + event stimulus', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource(() => []);
     const store = new StimulusStoreService(
       threads.repo,
@@ -106,6 +106,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'run:1',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed',
       title: '[github] CI failed',
     });
@@ -135,8 +136,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
   it('rolls back the thread + message and throws DuplicateStimulusError on a unique violation', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     // The stimulus insert hits the partial-unique index.
     const uniqueErr = new QueryFailedError(
       'insert',
@@ -165,6 +166,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'run:1',
         severity: 'info',
+        eventKind: 'ci_failure',
         body: 'dup',
         title: 't',
       }),
@@ -177,10 +179,10 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
   it('attachEventToJob persists the system_event card + event stimulus atomically on an existing job', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource((Entity) =>
-      Entity === MessageEntity ? messages.rows : stimuli.rows,
+      Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
     );
     const store = new StimulusStoreService(
       threads.repo,
@@ -197,6 +199,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'ci:abc',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed',
     });
 
@@ -210,6 +213,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'system_event',
         eventSource: 'github',
         severity: 'critical',
+        eventKind: 'ci_failure',
       },
     });
     expect(stimuli.rows[0]).toMatchObject({
@@ -229,10 +233,10 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
   it('attachEventToJob routes to the ci thread group thread once one exists (§CI-routing)', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource((Entity) =>
-      Entity === MessageEntity ? messages.rows : stimuli.rows,
+      Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
     );
     const bootstrap = {
       planningThreadId: vi.fn(async () => 'thread-planning'),
@@ -254,6 +258,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'ci:abc',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed again',
     });
 
@@ -270,11 +275,11 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     // The invariant: a visible EVENT card must never outlive a missing stimulus row (which the at-least-once
     // sweep, keyed on stimuli.delivered_at, could never recover — the card would render with no brain reaction).
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource(
-      (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
-      { failOn: StimulusEntity },
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
+      { failOn: InboundMessageEntity },
     );
     const store = new StimulusStoreService(
       threads.repo,
@@ -292,6 +297,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'ci:abc',
         severity: 'critical',
+        eventKind: 'ci_failure',
         body: 'CI failed',
       }),
     ).rejects.toThrow('stimulus write failed');
@@ -303,8 +309,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
   it('attachEventToJob throws DuplicateStimulusError on a unique violation, committing neither row', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     // The stimulus INSERT (second write in the tx) hits the (org, repo, source, dedupe_key) unique index.
     const uniqueErr = new QueryFailedError(
       'insert',
@@ -313,8 +319,8 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     ) as QueryFailedError & { code?: string };
     uniqueErr.code = '23505';
     const ds = fakeDataSource(
-      (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
-      { failOn: StimulusEntity, failWith: uniqueErr },
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
+      { failOn: InboundMessageEntity, failWith: uniqueErr },
     );
     const store = new StimulusStoreService(
       threads.repo,
@@ -332,6 +338,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'ci:abc',
         severity: 'info',
+        eventKind: 'ci_failure',
         body: 'dup',
       }),
     ).rejects.toBeInstanceOf(DuplicateStimulusError);
@@ -344,10 +351,10 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
   it('recordChatStimulus persists a chat message + chat stimulus (no thread, no dedupe)', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     const ds = fakeDataSource((Entity) =>
-      Entity === MessageEntity ? messages.rows : stimuli.rows,
+      Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows,
     );
     const store = new StimulusStoreService(
       threads.repo,
@@ -391,12 +398,12 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
     // The exact torn-write bug: a crash/failure between the message save and the stimulus save must not
     // leave a transcript bubble with no stimulus behind it (which renders but never drives a brain turn).
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
     // The stimulus save (the SECOND write in the transaction) fails.
     const ds = fakeDataSource(
-      (Entity) => (Entity === MessageEntity ? messages.rows : stimuli.rows),
-      { failOn: StimulusEntity },
+      (Entity) => (Entity === TranscriptMessageEntity ? messages.rows : stimuli.rows),
+      { failOn: InboundMessageEntity },
     );
     const store = new StimulusStoreService(
       threads.repo,
@@ -425,20 +432,20 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
 
 describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/gate pump)', () => {
   /**
-   * A `MessageEntity` repo fake faithful enough to drive `writeSystemChunk`'s real dedup-by-`chunkKey`
+   * A `TranscriptMessageEntity` repo fake faithful enough to drive `writeSystemChunk`'s real dedup-by-`chunkKey`
    * query (`createQueryBuilder('m').where('m.job_id = :jobId', …).andWhere("m.meta @> :key::jsonb", …)
    * .getCount()`) against an in-memory `rows` array — so calling `recordChatStimulus` twice with the SAME
    * `systemChunk.chunkKey` proves the pill is written only once, using the SAME writer production uses.
    */
-  function fakeMessageRepoWithQueryBuilder(rows: MessageEntity[]) {
+  function fakeMessageRepoWithQueryBuilder(rows: TranscriptMessageEntity[]) {
     return {
-      create: (data: Partial<MessageEntity>) => ({ ...data }) as MessageEntity,
-      save: vi.fn(async (e: MessageEntity) => {
+      create: (data: Partial<TranscriptMessageEntity>) => ({ ...data }) as TranscriptMessageEntity,
+      save: vi.fn(async (e: TranscriptMessageEntity) => {
         const saved = {
           ...e,
           id: `msg-${rows.length + 1}`,
           created_at: new Date(),
-        } as MessageEntity;
+        } as TranscriptMessageEntity;
         rows.push(saved);
         return saved;
       }),
@@ -467,13 +474,13 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
         };
         return qb;
       },
-    } as unknown as Repository<MessageEntity>;
+    } as unknown as Repository<TranscriptMessageEntity>;
   }
 
-  /** A `DataSource.transaction` fake whose manager exposes `getRepository(MessageEntity)` (for
-   *  `writeSystemChunk`) alongside the plain `create`/`save` the direct StimulusEntity write uses. */
+  /** A `DataSource.transaction` fake whose manager exposes `getRepository(TranscriptMessageEntity)` (for
+   *  `writeSystemChunk`) alongside the plain `create`/`save` the direct InboundMessageEntity write uses. */
   function fakeDataSourceWithMessageRepo(
-    messageRepo: Repository<MessageEntity>,
+    messageRepo: Repository<TranscriptMessageEntity>,
   ) {
     let seq = 0;
     const transaction = vi.fn(async (cb: (m: unknown) => Promise<unknown>) => {
@@ -487,7 +494,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
           return { ...rest, id: `tx-${++seq}`, created_at: new Date() };
         },
         getRepository: (Entity: unknown) => {
-          if (Entity === MessageEntity) return messageRepo;
+          if (Entity === TranscriptMessageEntity) return messageRepo;
           throw new Error(
             `fakeDataSourceWithMessageRepo: unexpected getRepository(${String(Entity)})`,
           );
@@ -500,8 +507,8 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
   it('with a systemChunk: writes the durable stimuli row + ONE curated pill via writeSystemChunk — NO raw operator bubble', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
-    const messageRows: MessageEntity[] = [];
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
+    const messageRows: TranscriptMessageEntity[] = [];
     const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
     const ds = fakeDataSourceWithMessageRepo(messagesRepo);
     const store = new StimulusStoreService(
@@ -553,8 +560,8 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
   it('the curated pill is DEDUPED on chunkKey — a second seed with the same key writes NO additional message row', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const stimuli = fakeRepo<StimulusEntity>('stim');
-    const messageRows: MessageEntity[] = [];
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
+    const messageRows: TranscriptMessageEntity[] = [];
     const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
     const ds = fakeDataSourceWithMessageRepo(messagesRepo);
     const store = new StimulusStoreService(
@@ -592,7 +599,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
   it('rowToChatStimulus (via findChatStimulusById) round-trips seedQuestionId/seedSecretId/seedFileId/seed through reply_route', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const row = {
       id: 'stim-42',
       org_id: 'T1',
@@ -611,10 +618,10 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
         seedFileId: 'f1',
       },
       created_at: new Date(),
-    } as unknown as StimulusEntity;
+    } as unknown as InboundMessageEntity;
     const stimuliRepo = {
       findOne: vi.fn().mockResolvedValue(row),
-    } as unknown as Repository<StimulusEntity>;
+    } as unknown as Repository<InboundMessageEntity>;
     const store = new StimulusStoreService(
       threads.repo,
       messages.repo,
@@ -637,7 +644,7 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
   it('rowToChatStimulus: an operator row (author_id != U-SYSTEM) round-trips NO seed metadata and seed:undefined', async () => {
     const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<MessageEntity>('msg');
+    const messages = fakeRepo<TranscriptMessageEntity>('msg');
     const row = {
       id: 'stim-43',
       org_id: 'T1',
@@ -650,10 +657,10 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
       author_name: 'Dennis',
       reply_route: { surfaceId: 'web', jobRef: 'thread-9' },
       created_at: new Date(),
-    } as unknown as StimulusEntity;
+    } as unknown as InboundMessageEntity;
     const stimuliRepo = {
       findOne: vi.fn().mockResolvedValue(row),
-    } as unknown as Repository<StimulusEntity>;
+    } as unknown as Repository<InboundMessageEntity>;
     const store = new StimulusStoreService(
       threads.repo,
       messages.repo,

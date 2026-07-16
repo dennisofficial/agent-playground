@@ -66,9 +66,9 @@ import { EnvService } from '@core/config/env/env.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobSandboxEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
 } from '../persistence/entities';
 import { ProdDiagnosticsService } from '../prod-mcp/prod-diagnostics.service';
@@ -385,8 +385,8 @@ export class AgentSessionManager
     @InjectRepository(JobSandboxEntity, DB_CONNECTION)
     private readonly sandboxRows: Repository<JobSandboxEntity>,
     // Event stimuli — the at-least-once boot sweep re-delivers any seeded-but-undelivered event.
-    @InjectRepository(StimulusEntity, DB_CONNECTION)
-    private readonly stimulusRows: Repository<StimulusEntity>,
+    @InjectRepository(InboundMessageEntity, DB_CONNECTION)
+    private readonly stimulusRows: Repository<InboundMessageEntity>,
     // The chat-inbox delivery queries (eligible/lease/mark-delivered/undelivered/reset) — the pump
     // delegates to these so the query logic is testable without this manager's full constructor.
     private readonly stimulusStore: StimulusStoreService,
@@ -6833,7 +6833,7 @@ export class AgentSessionManager
             { job_id: jobId, org_id: orgId },
             { session_id: null, pending_compaction_seed: seed },
           );
-          await mgr.insert(MessageEntity, {
+          await mgr.insert(TranscriptMessageEntity, {
             job_id: jobId,
             thread_id: threadId,
             author: 'Atlas',

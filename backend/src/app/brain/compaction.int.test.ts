@@ -170,7 +170,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       kind: string;
       meta: { compactionSummary?: string } | null;
     }> = await dataSource.query(
-      `SELECT text, kind, meta FROM messages
+      `SELECT text, kind, meta FROM transcript_messages
            WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
       [jobId],
     );
@@ -216,7 +216,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     expect(row.session_id).toBe('fat-empty-xyz');
     expect(row.compacting_session_id).toBeNull();
     const [{ n }]: Array<{ n: string }> = await dataSource.query(
-      `SELECT count(*)::text AS n FROM messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
+      `SELECT count(*)::text AS n FROM transcript_messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
       [jobId],
     );
     expect(n).toBe('0'); // no pill for a no-op compaction
@@ -248,7 +248,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 
     const pills: Array<{ meta: { compactionSummary?: string } }> =
       await dataSource.query(
-        `SELECT meta FROM messages WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
+        `SELECT meta FROM transcript_messages WHERE job_id = $1 AND kind = 'build_event' AND meta ? 'compactionSummary'`,
         [jobId],
       );
     expect(pills).toHaveLength(1);
@@ -277,7 +277,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       };
       const threadId = await bootstrap.planningThreadId(jobId);
       await dataSource.query(
-        `INSERT INTO messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, meta)
+        `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, meta)
            VALUES ($1, $2, 'Atlas', 'atlas', 'atlas', '', 'turn_meta', $3::jsonb)`,
         [jobId, threadId, JSON.stringify(meta)],
       );
@@ -336,7 +336,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       );
     expect(row.pending_compaction_seed).toBeNull();
     const msgs: Array<{ n: string }> = await dataSource.query(
-      `SELECT count(*)::text AS n FROM messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
+      `SELECT count(*)::text AS n FROM transcript_messages WHERE job_id = $1 AND meta ? 'compactionSummary'`,
       [jobId],
     );
     expect(msgs[0].n).toBe('0');
@@ -346,7 +346,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
 async function purge(ds: DataSource): Promise<void> {
   const q = (sql: string) => ds.query(sql, [TEAM_ID]).catch(() => undefined);
   await q(
-    `DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
+    `DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
   );
   await q(`DELETE FROM job_sandboxes WHERE org_id = $1`);
   await q(`DELETE FROM jobs WHERE org_id = $1`);

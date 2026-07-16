@@ -2,7 +2,11 @@ import 'reflect-metadata';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { AppDataSource } from './data-source';
-import { MessageEntity, ThreadGroupEntity, ThreadEntity } from '../src/app/persistence/entities';
+import {
+  ThreadGroupEntity,
+  ThreadEntity,
+  TranscriptMessageEntity,
+} from '../src/app/persistence/entities';
 import { atlasAgentHomeBase } from '../src/app/engine/engine-home';
 import { parseSessionTranscriptTurns } from '../src/app/brain/session-transcript';
 import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
@@ -18,7 +22,10 @@ import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
  * With no explicit path, it locates the thread's newest session JSONL under the agent-home sandbox bind.
  */
 function projectsDirForThread(jobId: string): string | null {
-  const sandboxesRoot = join(atlasAgentHomeBase(process.env.AGENT_HOME_ROOT), 'sandboxes');
+  const sandboxesRoot = join(
+    atlasAgentHomeBase(process.env.AGENT_HOME_ROOT),
+    'sandboxes',
+  );
   let dirs: string[];
   try {
     dirs = readdirSync(sandboxesRoot);
@@ -78,22 +85,30 @@ async function main(): Promise<void> {
       return dir ? newestJsonl(dir) : null;
     })();
   if (!jsonlPath || !existsSync(jsonlPath)) {
-    console.error(`recover-turn: no session JSONL found for thread ${jobId} (pass an explicit path as arg 2)`);
+    console.error(
+      `recover-turn: no session JSONL found for thread ${jobId} (pass an explicit path as arg 2)`,
+    );
     process.exit(1);
   }
 
-  const { turns } = parseSessionTranscriptTurns(readFileSync(jsonlPath, 'utf8'));
+  const { turns } = parseSessionTranscriptTurns(
+    readFileSync(jsonlPath, 'utf8'),
+  );
   // Mirror the boot backstop: back-fill superseded/earlier turns always; include the LAST turn only when it
   // reached end_turn (a not-yet-clean tail may still be generating). Unpaired tool calls are dropped inside.
-  const recoverable = turns.filter((t, i) => t.endedClean || i < turns.length - 1);
+  const recoverable = turns.filter(
+    (t, i) => t.endedClean || i < turns.length - 1,
+  );
   console.log(
     `recover-turn: ${jsonlPath}\n  ${turns.length} turn(s) parsed, ${recoverable.length} recoverable → thread ${jobId} (db ${process.env.POSTGRES_DB})`,
   );
 
   await AppDataSource.initialize();
   try {
-    const messages = AppDataSource.getRepository(MessageEntity);
-    const threadGroup = await AppDataSource.getRepository(ThreadGroupEntity).findOne({
+    const messages = AppDataSource.getRepository(TranscriptMessageEntity);
+    const threadGroup = await AppDataSource.getRepository(
+      ThreadGroupEntity,
+    ).findOne({
       where: { job_id: jobId, kind: 'planning' },
       order: { ordinal: 'ASC' },
     });
@@ -104,11 +119,20 @@ async function main(): Promise<void> {
         })
       : null;
     if (!planningThread) {
-      console.error(`recover-turn: job ${jobId} has no planning thread group thread to anchor recovered messages`);
+      console.error(
+        `recover-turn: job ${jobId} has no planning thread group thread to anchor recovered messages`,
+      );
       process.exit(1);
     }
-    const inserted = await backfillThreadFromTurns(messages, jobId, planningThread.id, recoverable);
-    console.log(`recover-turn: back-filled ${inserted} block(s) into messages`);
+    const inserted = await backfillThreadFromTurns(
+      messages,
+      jobId,
+      planningThread.id,
+      recoverable,
+    );
+    console.log(
+      `recover-turn: back-filled ${inserted} block(s) into transcript_messages`,
+    );
   } finally {
     await AppDataSource.destroy();
   }

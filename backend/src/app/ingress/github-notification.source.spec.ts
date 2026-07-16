@@ -155,6 +155,7 @@ describe('GithubNotificationSource.handle', () => {
       repoId: 'web',
       source: 'github',
       severity: 'critical',
+      eventKind: 'ci_failure',
       dedupeKey: 'workflow_run:99',
     });
     expect(res.event.body).toContain('CI');
@@ -343,6 +344,7 @@ describe('GithubNotificationSource.handle', () => {
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
     expect(res.event).toMatchObject({
       severity: 'critical',
+      eventKind: 'review_changes_requested',
       dedupeKey: 'pull_request_review:900',
     });
     expect(res.event.correlation).toEqual({
@@ -369,6 +371,34 @@ describe('GithubNotificationSource.handle', () => {
     );
     if (res.outcome !== 'accepted') throw new Error('expected accepted');
     expect(res.event.correlation).toEqual({ prNumber: 8 });
+    expect(res.event.eventKind).toBe('review_comment');
+  });
+
+  it('routes a pull_request_review APPROVED with a body → accepted (review_approved)', async () => {
+    const src = new GithubNotificationSource(fakeEnv(), fakeRouting(ROUTE));
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'Acme/Web' },
+      pull_request: { number: 5, head: { ref: 'feat/a1b2c3d4' } },
+      review: {
+        id: 902,
+        state: 'approved',
+        body: 'looks great, shipping',
+        user: { login: 'dennis' },
+      },
+    };
+    const json = JSON.stringify(payload);
+    const res = await src.handle(
+      raw(payload, {
+        'x-hub-signature-256': sign(json),
+        'x-github-event': 'pull_request_review',
+      }),
+    );
+    if (res.outcome !== 'accepted') throw new Error('expected accepted');
+    expect(res.event).toMatchObject({
+      severity: 'warning',
+      eventKind: 'review_approved',
+    });
   });
 
   it('ignores an issue_comment on a plain issue (not a PR)', async () => {

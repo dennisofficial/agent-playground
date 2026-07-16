@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatStimulus, EventStimulus } from '../domain';
+import type {
+  ChatStimulus,
+  EventStimulus,
+  SeedMessage,
+  UserMessage,
+} from '../domain';
 import type { EventFilterService, FilterVerdict } from './event-filter.service';
 import type { BrainSink } from './stimulus-consumer';
 import {
@@ -55,6 +60,7 @@ const EVENT = {
   source: 'github',
   dedupeKey: 'run:1',
   severity: 'critical' as const,
+  eventKind: 'ci_failure' as const,
   body: 'CI failed on main',
 };
 
@@ -211,8 +217,14 @@ describe('StimulusIntake.intakeEvent (route-only — d6)', () => {
 });
 
 describe('StimulusIntake.intakeChat', () => {
-  it('persists + hands a chat stimulus to the brain (no filter, bypass)', async () => {
-    const recorded: ChatStimulus = {
+  const TRANSPORT = {
+    author: { id: 'U1', displayName: 'Dennis' },
+    replyRoute: { surfaceId: 'slack', jobRef: '100.1' },
+  };
+
+  /** The ChatStimulus the store returns for a persisted row (what flows on to the brain pump). */
+  function recordedStimulus(over: Partial<ChatStimulus> = {}): ChatStimulus {
+    return {
       id: 'chat-1',
       orgId: 'T1',
       repoId: 'web',
@@ -223,8 +235,23 @@ describe('StimulusIntake.intakeChat', () => {
       author: { id: 'U1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'slack', jobRef: '100.1' },
       receivedAt: new Date(),
-      priority: 'queue',
+      ...over,
     };
+  }
+
+  it('persists + hands a chat stimulus to the brain (no filter, bypass)', async () => {
+    const message: UserMessage = {
+      type: 'user',
+      trust: 'trusted',
+      id: '',
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'thread-9',
+      receivedAt: new Date().toISOString(),
+      body: 'hey atlas',
+      author: { id: 'U1', displayName: 'Dennis' },
+    };
+    const recorded = recordedStimulus();
     const store = {
       recordChatStimulus: vi.fn(async () => recorded),
     } as unknown as StimulusStoreService;
@@ -232,10 +259,10 @@ describe('StimulusIntake.intakeChat', () => {
     const { sink, chats, handleChatCalls, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(filter, store, sink);
 
-    await intake.intakeChat(recorded);
+    await intake.intakeChat(message, TRANSPORT);
     expect(store.recordChatStimulus).toHaveBeenCalledOnce();
     expect(store.recordChatStimulus).toHaveBeenCalledWith(
-      expect.objectContaining({ priority: 'queue' }),
+      expect.objectContaining({ type: 'user', body: 'hey atlas' }),
     );
     expect(filter.admit).not.toHaveBeenCalled(); // chat bypasses the filter
     expect(chats[0]).toMatchObject({ kind: 'chat', id: 'chat-1' });
@@ -249,36 +276,42 @@ describe('StimulusIntake.intakeChat', () => {
   });
 
   it('SYSTEM SEED: persists a durable stimulus row and routes through the chat pump', async () => {
-    const seed: ChatStimulus = {
+    const seedRow = {
+      label: 'Question answered',
+      chunkKey: 'seed:q:thread-9:q1',
+    };
+    const message: SeedMessage = {
+      type: 'seed',
+      trust: 'system',
       id: '',
       orgId: 'T1',
       repoId: 'web',
-      kind: 'chat',
-      trust: 'trusted',
-      body: '<system_notice>The operator answered your question "X": A</system_notice>',
       jobId: 'thread-9',
-      author: {
-        id: SYSTEM_SEED_AUTHOR.id,
-        displayName: SYSTEM_SEED_AUTHOR.name,
-      },
-      replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },
-      receivedAt: new Date(),
-      seed: true,
-      seedQuestionId: 'q1',
-      seedRow: { label: 'Question answered', chunkKey: 'seed:q:thread-9:q1' },
+      receivedAt: new Date().toISOString(),
+      body: '<system_notice>The operator answered your question "X": A</system_notice>',
+      seedRow,
+      deliveredQuestionIds: ['q1'],
     };
-    const recorded: ChatStimulus = { ...seed, id: 'chat-seed-1' };
+    const recorded = recordedStimulus({
+      id: 'chat-seed-1',
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      seed: true,
+      seedQuestionIds: ['q1'],
+    });
     const store = {
       recordChatStimulus: vi.fn(async () => recorded),
     } as unknown as StimulusStoreService;
     const { sink, chats, handleChatCalls, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
 
-    await intake.intakeChat(seed);
+    await intake.intakeChat(message, TRANSPORT);
+    // The seed's curated pill rides `systemChunk`; its answered-card id is threaded as the PLURAL
+    // `seedQuestionIds` (the bridge wraps a singular id into a one-element array).
     expect(store.recordChatStimulus).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemChunk: seed.seedRow,
-        seedQuestionId: 'q1',
+        systemChunk: seedRow,
+        seedQuestionIds: ['q1'],
+        type: 'seed',
       }),
     );
     expect(chats[0]).toMatchObject({
@@ -288,38 +321,29 @@ describe('StimulusIntake.intakeChat', () => {
     });
     // Design B: seeds are durable and ride the SAME delivery pump as operator chat, never the old direct branch.
     expect(enqueueChatCalls).toHaveLength(1);
-    expect(enqueueChatCalls[0]).toMatchObject({
-      id: 'chat-seed-1',
-      seedQuestionId: 'q1',
-    });
+    expect(enqueueChatCalls[0]).toMatchObject({ id: 'chat-seed-1' });
     expect(handleChatCalls).toHaveLength(0);
   });
 
   it('SYSTEM SEED without a seedRow gets the generic visible system pill, not a raw chat bubble', async () => {
-    const seed: ChatStimulus = {
+    const message: SeedMessage = {
+      type: 'seed',
+      trust: 'system',
       id: '',
       orgId: 'T1',
       repoId: 'web',
-      kind: 'chat',
-      trust: 'trusted',
-      body: '<system_notice>Retry the interrupted turn.</system_notice>',
       jobId: 'thread-9',
-      author: {
-        id: SYSTEM_SEED_AUTHOR.id,
-        displayName: SYSTEM_SEED_AUTHOR.name,
-      },
-      replyRoute: { surfaceId: 'web', jobRef: 'thread-9' },
-      receivedAt: new Date(),
-      seed: true,
+      receivedAt: new Date().toISOString(),
+      body: '<system_notice>Retry the interrupted turn.</system_notice>',
     };
-    const recorded: ChatStimulus = { ...seed, id: 'chat-seed-2' };
+    const recorded = recordedStimulus({ id: 'chat-seed-2', seed: true });
     const store = {
       recordChatStimulus: vi.fn(async () => recorded),
     } as unknown as StimulusStoreService;
     const { sink, enqueueChatCalls } = collectSink();
     const intake = new StimulusIntake(fakeFilter({ pass: true }), store, sink);
 
-    await intake.intakeChat(seed);
+    await intake.intakeChat(message, TRANSPORT);
 
     expect(store.recordChatStimulus).toHaveBeenCalledWith(
       expect.objectContaining({

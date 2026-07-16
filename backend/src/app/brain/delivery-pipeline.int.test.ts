@@ -113,7 +113,7 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   // Several pump paths end their turn by firing a fire-and-forget re-pump (`runChatTurn`'s `finally`) that

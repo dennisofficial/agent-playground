@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import type { AutoMergeMethod } from '@workspace/shared';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { JobEntity, MessageEntity, RepoEntity } from '../persistence/entities';
+import { JobEntity, TranscriptMessageEntity, RepoEntity } from '../persistence/entities';
 import { GithubPrService, parseGithubRepoUrl } from '../git/github-pr.service';
 import { CredentialResolver } from '../onboarding';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -62,8 +62,8 @@ export class AutoMergeService {
     private readonly jobs: Repository<JobEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     private readonly pr: GithubPrService,
     private readonly creds: CredentialResolver,
     // forwardRef for the same file-cycle reason as `driverStore` below: job-lifecycle.service.ts imports

@@ -12,6 +12,7 @@
  * trivially extensible drop-ins.
  */
 
+import type { EventKind } from './message';
 import type { EventStimulus } from './stimulus';
 
 /**
@@ -32,12 +33,13 @@ export interface RawNotification {
  * What verification + parsing yields BEFORE the intake mints the stimulus id / persists rows. The
  * adapter has already done routing (`orgId`/`repoId`), dedupe-key derivation, and severity
  * mapping; the intake seam adds the id, `receivedAt`, `jobId` (the seeded thread), and the
- * `kind`/`trust`/`source` invariants.
+ * `kind`/`trust`/`source` invariants. `eventKind` is the render-time discriminant threaded from
+ * ingress into the transcript row's `meta` — never persisted on the event row itself.
  */
 export type ParsedEvent = Omit<
   EventStimulus,
   'id' | 'receivedAt' | 'kind' | 'trust' | 'jobId'
->;
+> & { eventKind: EventKind };
 
 /** Why an adapter rejected a request — surfaced as the HTTP status the controller returns. */
 export type IngressRejectionReason =

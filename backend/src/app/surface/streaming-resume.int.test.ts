@@ -173,7 +173,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // turn end). If it were persisted mid-turn, a reconnecting client would see it twice — once from
     // `/messages` and once from the live snapshot.
     const midRows = await ds.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND text LIKE '%Hello world%'`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND text LIKE '%Hello world%'`,
       [jobId],
     );
     expect(midRows[0].n).toBe(0);
@@ -202,7 +202,7 @@ describe('Streaming resume (full AppModule, live Postgres, faked boundaries)', (
     // (3) DURABLE — the assembled transcript lands in `messages`; the live buffer clears.
     await waitFor(async () => {
       const rows = await ds.query(
-        `SELECT text, kind FROM messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
+        `SELECT text, kind FROM transcript_messages WHERE job_id = $1 AND author_bot_id IS NOT NULL`,
         [jobId],
       );
       return rows.some(
