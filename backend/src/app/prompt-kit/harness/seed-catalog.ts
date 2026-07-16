@@ -94,37 +94,6 @@ export const COMPACTION_INSTRUCTION: AgentMessage = agentMessage(
   ].join('\n'),
 );
 
-// ── Continuation (compaction reseed) ────────────────────────────────────────────────────────────────────
-
-/**
- * Prepended to the compaction summary when it seeds the FRESH session (folded into the next turn by
- * `runChatTurnInner`). Frames the summary as recovered context and tells the session to keep going.
- */
-export const CONTINUATION_PREAMBLE: AgentMessage = agentMessage(
-  [
-    '<session_compacted>',
-    'Your previous session was compacted to keep the context lean while the build runs. It is summarized below.',
-    'Treat it as your own recovered memory. Re-read the durable artifacts it points to (`/context/specs`,',
-    '`get_pipeline_state`) as needed, and continue from where you left off — do not restart',
-    'planning and do not re-ask the operator anything already settled.',
-    '</session_compacted>',
-  ].join('\n'),
-);
-
-/**
- * Fold a stashed compaction seed ({@link CONTINUATION_PREAMBLE} + the lean summary) into the next turn's task,
- * so the fresh session (its `session_id` was nulled by the reseed) opens with the summary as recovered memory in
- * the primacy slot. The hub owns the mint; the seed is read back from the durable sandbox row — brand-erased on
- * that round-trip — so the caller re-crosses the seam with `fromExternal`. Byte-identical to the former inline
- * `${seed}\n\n---\n\n${task}`.
- */
-export function foldCompactionSeed(
-  seed: AgentMessage,
-  task: AgentMessage,
-): AgentMessage {
-  return agentMessage(`${seed}\n\n---\n\n${task}`);
-}
-
 // ── Work-owed review nudge ──────────────────────────────────────────────────────────────────────────────
 
 /**

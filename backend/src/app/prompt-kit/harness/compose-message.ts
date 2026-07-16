@@ -87,9 +87,10 @@ export function composeMessageBody(
         ),
       };
     case 'compaction':
-      // Compaction is not a single rendered notice: it triggers a summarization turn the brain drives with
-      // COMPACTION_SYSTEM/foldCompactionSeed. That brain-side special-casing is wired in a later slice; this
-      // arm exists so the switch stays exhaustive and carries the instruction body.
+      // VESTIGIAL: the job-level compaction-continuation fold was removed (every thread now starts from a
+      // fresh JIT seed, never a compacted continuation), so nothing enqueues a `compaction` message anymore.
+      // The arm remains only to keep the exhaustive switch total until the `compaction` variant is retired
+      // from the shared `Message` union.
       return { body: COMPACTION_INSTRUCTION };
     case 'ship_open_pr':
       return {

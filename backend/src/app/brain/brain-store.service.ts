@@ -298,32 +298,6 @@ export class BrainStoreService {
   }
 
   /**
-   * Append a COMPACTION-SUMMARY pill (kind='build_event', like {@link appendSystemEvent}) that ALSO carries
-   * the full handoff summary in `meta.compactionSummary`. Renders as the same calm pill, but the web makes it
-   * EXPANDABLE so the operator can inspect exactly what context was kept when the session was compacted. The
-   * summary lives on this durable `messages` row (never cleared, unlike `job_sandboxes.pending_compaction_seed`
-   * which is consumed by the next fresh turn), so it stays auditable for the life of the job.
-   */
-  async appendCompactionSummary(
-    jobId: string,
-    text: string,
-    summary: string,
-  ): Promise<void> {
-    await this.messages.save(
-      this.messages.create({
-        job_id: jobId,
-        thread_id: await this.planningThreadId(jobId),
-        author: 'Atlas',
-        author_id: 'atlas',
-        author_bot_id: 'atlas',
-        text,
-        kind: 'build_event',
-        meta: { compactionSummary: summary },
-      }),
-    );
-  }
-
-  /**
    * Persist a harness-injected chunk (a `system_notice`, `system_reminder`, or `untrusted` from the chunk-vocabulary) as a
    * VISIBLE transcript row — so a sandbox-reset notice, a pipeline-awareness or open-questions reminder, etc.
    * that the brain reads inline is also legible in the web (the classifier keys on `meta.source`). The row's
@@ -1687,8 +1661,8 @@ export class BrainStoreService {
 
   /**
    * Stamp the durable "the direct build has STARTED" marker (`jobs.direct_build_started_at`) at the instant
-   * `dispatch_build` fires `runDirectBuild`. This is what closes the pre-start base-check window for the
-   * DIRECT path in {@link buildNotStarted} — it flips at the START of the implement turn. Idempotent: a
+   * `dispatch_build` appends the direct-build Section. This is what closes the pre-start base-check window
+   * for the DIRECT path in {@link buildNotStarted} — it flips at the START of the build. Idempotent: a
    * re-fired `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
    */
   async markDirectBuildStarted(jobId: string): Promise<void> {
@@ -2109,10 +2083,9 @@ export class BrainStoreService {
    * delivered on the normal brain-turn path, which sets `activity='turn'` for the duration of the turn, so
    * by the time Atlas calls a tool the activity is already `'turn'`, never `'base_check'`.
    *
-   * DIRECT path: gated on {@link JobEntity.direct_build_started_at}, stamped when `dispatch_build` fires
-   * `runDirectBuild`. NOT on `direct_build_verification` — that is written only at the `finalize_build` gate
-   * (the END of the implement turn), so it would keep this predicate `true` for the entire minutes-long
-   * implementation, letting `hold_build` reopen planning underneath a live turn.
+   * DIRECT path: gated on {@link JobEntity.direct_build_started_at}, stamped when `dispatch_build` appends
+   * the direct-build Section — so this flips `false` the instant the build is dispatched, closing the
+   * base-check window before the driver's builder Section runs.
    */
   async buildNotStarted(jobId: string): Promise<boolean> {
     const row = await this.jobs.findOne({ where: { id: jobId } });

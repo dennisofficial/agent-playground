@@ -89,8 +89,6 @@ import {
   chunkKey,
   composeMessageBody,
   RESET_VERIFY_TEXT,
-  COMPACTION_SYSTEM,
-  COMPACTION_INSTRUCTION,
   renderEventDelivery,
   renderFollowUpJobSeed,
   renderBornBlockedUnblockPrefix,
@@ -102,10 +100,6 @@ import {
   wakeForAmendApprovedBody,
   retryResumeNudge,
 } from '../prompt-kit/harness';
-// Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
-// (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
-// agent-session-manager.spec) keep resolving after the content catalog moved into the prompt-kit hub.
-export { CONTINUATION_PREAMBLE } from '../prompt-kit/harness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
@@ -1941,10 +1935,6 @@ export class AgentSessionManager
   > {
     return {
       brain: { run: (row) => this.reattachOne(row), awaitCompletion: false },
-      compaction: {
-        run: (row) => this.reattachCompactionOne(row),
-        awaitCompletion: true,
-      },
     };
   }
 
@@ -2470,7 +2460,7 @@ export class AgentSessionManager
 
     // Resolve the current session_id to resume across turns. A SESSION RE-HOME turn (open-PR / post_build)
     // resumes THIS thread's own session; every other turn resumes the job sandbox's. `sandboxRow` is still
-    // fetched either way — later code (setup_error reporting, compaction) reads its job-level fields.
+    // fetched either way — later code (setup_error reporting) reads its job-level fields.
     const sandboxRow = await this.sandboxRows.findOne({
       where: { job_id: stimulus.jobId, org_id: stimulus.orgId },
     });
@@ -2478,20 +2468,6 @@ export class AgentSessionManager
       ? ((await this.driverStore.threadSessionId(stimulus.resumeThreadId)) ??
         undefined)
       : (sandboxRow?.session_id ?? undefined);
-
-    // COMPACTION turn: summarize the fat session into a lean handoff, null the session id (abandon the heavy
-    // transcript), and stash the summary as the next turn's seed. Runs a summarization engine turn and
-    // returns early — NOT a normal conversational turn. Serialized on this per-job queue, so it never races
-    // the turn it compacts, and the build (separate driver sessions) is unaffected.
-    if (stimulus.message.type === 'compaction') {
-      await this.runCompaction(
-        stimulus,
-        sandbox,
-        sandboxRow ?? null,
-        sessionId,
-      );
-      return;
-    }
 
     // Assemble THIS turn as an ordered envelope of framed chunks (chunk-vocabulary): system notices and
     // reminders wrap the body; `renderTurn` orders them canonically (notices → reminders → `<user>` last).
@@ -4080,7 +4056,7 @@ export class AgentSessionManager
         // GATED tool — only starts an already-approved (status=running) job, AFTER the base-check judged the
         // plan still valid. Resolve the job by id (NOT openJobOnThread, which is planning-only) and let the
         // running-status check gate it; idempotent (a re-fire lands on the same 'running' job harmlessly, and
-        // the dispatcher/runDirectBuild it calls are themselves the SOLE start of the build).
+        // the dispatcher it calls is the SOLE start of the build).
         const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
         if (!job) {
           return {
@@ -4094,9 +4070,10 @@ export class AgentSessionManager
             reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
           };
         }
-        // Branch on the committed build path (d16 — ONE tool, not a separate "proceed to implement" for
-        // direct builds): 'direct' runs the in-session implement turn (fire-and-forget — it streams in this
-        // same brain session, so it must not be awaited here); 'plan' dispatches the full build pipeline.
+        // Both build paths dispatch to the SAME scheduler (d6 — direct build is a real builder Section, not an
+        // inline turn). 'plan' already has its Sections + master_review persisted by `persistPlan`; 'direct'
+        // has none yet, so append ONE builder Section here (no review children, no master_review — the driver
+        // skips those for `build_path='direct'`) and let the scheduler drive it straight through to post-build.
         if (job.buildPath === 'direct') {
           if (!(await this.store.buildNotStarted(job.id))) {
             return {
@@ -4105,21 +4082,18 @@ export class AgentSessionManager
               message: 'Build already started.',
             };
           }
-          // Stamp the durable "direct build started" marker BEFORE firing the (fire-and-forget) implement
-          // turn, so `buildNotStarted()` closes the pre-start base-check window the instant the build begins
-          // — otherwise `hold_build` would stay callable throughout the whole implementation turn and could
-          // reopen planning underneath it. Awaited so the marker is durable before the turn streams.
+          // Stamp the durable "direct build started" marker BEFORE appending the Section, so `buildNotStarted()`
+          // closes the pre-start base-check window the instant the build begins — otherwise `hold_build` could
+          // reopen planning underneath a live build. Awaited so the marker is durable before the Section exists.
           await this.store.markDirectBuildStarted(job.id);
-          void this.runDirectBuild(stimulus, job);
-        } else {
-          await this.dispatcher.dispatch(job);
+          await this.driverStore.appendDirectBuildSection({
+            jobId: job.id,
+            orgId: stimulus.orgId,
+            decisionRecordId: job.decisionRecordId ?? null,
+            title: job.title ?? 'Direct build',
+          });
         }
-        // MILESTONE COMPACTION: the plan is now durable and the build runs on its own (either the driver's
-        // own sessions, or this session's in-flight direct implement) — the heavy planning transcript is
-        // redundant. Compact the brain session while the build proceeds so follow-ups start lean.
-        // Fire-and-forget onto the serialized queue — it runs AFTER this turn drains (never awaited here,
-        // which would deadlock on the queue).
-        void this.enqueueCompaction(stimulus);
+        await this.dispatcher.dispatch(job);
         return { ok: true, jobId: job.id, message: 'Build started.' };
       },
 
@@ -5001,310 +4975,6 @@ export class AgentSessionManager
     return true;
   }
 
-  // ── Compaction ───────────────────────────────────────────────────────────────────────────────────
-
-  /**
-   * COMPACT the brain session: run a summarization engine turn against the CURRENT (fat) session, then null
-   * the session id (abandon the heavy transcript) and stash the lean summary as the next turn's seed. Invoked
-   * from `runChatTurnInner` when `stimulus.compact` is set — so it is SERIALIZED on the per-job turn queue and
-   * never races the turn it compacts. The container is already attached (ensured by the caller). The summary
-   * turn is READ-ONLY (mode `review`, no tool bridge, no restart-survival registry) and is NOT streamed to the
-   * operator — only a small system pill marks it. On any failure the fat session is left intact (we simply
-   * don't compact this time). The build itself runs in SEPARATE driver sessions and is unaffected either way.
-   */
-  private async runCompaction(
-    stimulus: TurnEnvelope,
-    sandbox: { worktreePath: string; containerId?: string | null },
-    sandboxRow: { session_id: string | null } | null,
-    sessionId: string | undefined,
-  ): Promise<void> {
-    // Nothing to compact — the session was never created (or already compacted). No-op.
-    if (!sessionId || !sandboxRow) {
-      this.logger.log(
-        `compaction: no live session for job=${stimulus.jobId} — nothing to compact`,
-      );
-      return;
-    }
-
-    const sandboxKey: EngineHomeKey = {
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      jobId: stimulus.jobId,
-      type: 'brain',
-    };
-    const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
-
-    const channel = stimulus.replyRoute?.jobRef ?? stimulus.jobId;
-    let summary = '';
-    try {
-      const runArgs: RunEngineArgs = {
-        engine: 'claude',
-        task: COMPACTION_INSTRUCTION,
-        cwd: sandbox.worktreePath,
-        systemPrompt: COMPACTION_SYSTEM,
-        sandboxKey,
-        ...(auth ? { auth } : {}),
-        // Read-only worker turn: no writes, default permission (no plan ceremony), no tool bridge, no
-        // steering, no rich stream (internal — not surfaced in the operator transcript).
-        mode: 'review',
-        model: AgentSessionManager.BRAIN_MODEL,
-        sessionId,
-        // Track this detached exec like every other turn: an `active_turns` row (kind:'compaction') lets a
-        // restart mid-summary RE-ATTACH the SAME exec (see `reattachOwnedTurns`) instead of orphaning it and
-        // double-running. The compaction handler (`reattachCompactionOne`) reseeds — never persists as chat.
-        turnMeta: {
-          jobId: stimulus.jobId,
-          orgId: stimulus.orgId,
-          channel,
-          lane: 'main',
-          kind: 'compaction',
-          ctx: { repoId: stimulus.repoId, sessionId },
-        },
-        ...(sandbox.containerId
-          ? {
-              target: {
-                containerId: sandbox.containerId,
-                worktreeHost: sandbox.worktreePath,
-              },
-            }
-          : {}),
-      };
-      const result = await this.engineRunner.run(runArgs);
-      void this.usageProjector?.record(
-        {
-          jobId: stimulus.jobId,
-          orgId: stimulus.orgId,
-          lane: 'main',
-          kind: 'compaction',
-          engine: 'claude',
-          credentialId: result.credentialId ?? null,
-        },
-        result.usage,
-      );
-      summary = (result.result ?? '').trim();
-    } catch (err) {
-      // A non-clean summary turn never reaches `end_turn`, so recovery would not surface it — give up this
-      // cycle (best-effort; no boot retry-loop) with the session left intact.
-      this.logger.error(
-        `compaction: summary turn failed for job=${stimulus.jobId} — leaving session intact: ${err}`,
-      );
-      return;
-    }
-
-    if (!summary) {
-      this.logger.warn(
-        `compaction: empty summary for job=${stimulus.jobId} — leaving session intact`,
-      );
-      return;
-    }
-
-    try {
-      await this.completeCompaction(stimulus.jobId, stimulus.orgId, summary);
-    } catch (err) {
-      // The summary is durable in the SDK JSONL, so the reset is best-effort — keep the in-memory row
-      // coherent (session NOT reset yet) and give up this cycle.
-      this.logger.error(
-        `compaction: completion failed for job=${stimulus.jobId} (will re-drive on boot): ${err}`,
-      );
-      return;
-    }
-    // Keep the in-memory row coherent for the rest of this call.
-    sandboxRow.session_id = null;
-    this.logger.log(
-      `compaction: job=${stimulus.jobId} compacted (${summary.length} chars) — session reseeded`,
-    );
-  }
-
-  /**
-   * ATOMIC compaction completion — the session reset (null `session_id`) and the inspectable `build_event`
-   * pill land in ONE transaction, so a crash can never leave the session reset without its audit pill (Codex
-   * review). The summary is durable on the `build_event` message row. Bounded in-process retry rides out a
-   * transient DB blip; on exhaustion it throws and the caller leaves the session intact. Shared by the fresh
-   * run and {@link reattachCompactionOne}.
-   */
-  private async completeCompaction(
-    jobId: string,
-    orgId: string,
-    summary: string,
-  ): Promise<void> {
-    const pillText =
-      '🗜️ Compacted the planning conversation into a lean handoff — the build is running and future turns start fresh.';
-    const threadId = await this.planningThreadId(jobId);
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        await this.sandboxRows.manager.transaction(async (mgr) => {
-          await mgr.update(
-            JobSandboxEntity,
-            { job_id: jobId, org_id: orgId },
-            { session_id: null },
-          );
-          await mgr.insert(TranscriptMessageEntity, {
-            job_id: jobId,
-            thread_id: threadId,
-            author: 'Atlas',
-            author_id: 'atlas',
-            author_bot_id: 'atlas',
-            text: pillText,
-            kind: 'build_event',
-            meta: { compactionSummary: summary },
-          });
-        });
-        return;
-      } catch (err) {
-        lastErr = err;
-        this.logger.warn(
-          `compaction: completion txn attempt ${attempt}/3 failed for job=${jobId}: ${err}`,
-        );
-      }
-    }
-    throw lastErr;
-  }
-
-  /**
-   * Re-attach ONE in-flight compaction turn → complete the reseed, or drop the marker if it yielded nothing.
-   * The compaction handler for {@link reattachOwnedTurns} (registered with `awaitCompletion:true`, so its
-   * reseed lands before `reconcileStrandedCompactions` runs — closing the "reattach finalized the turn row
-   * but the reseed hasn't committed" race). The detached summary exec survives a restart; re-attaching the
-   * SAME exec (replaying its durable Redis log to the final frame) and completing via {@link completeCompaction}
-   * never kicks a second exec against the live session.
-   */
-  private async reattachCompactionOne(row: ActiveTurnEntity): Promise<void> {
-    if (this.engineRunner.isAttached?.(row.turn_id)) return;
-    if (!row.container_id) {
-      // Can't re-tail without a container — leave the row for the watchdog to finalize; once it's gone and
-      // the exec is confirmed dead, `reconcileStrandedCompactions` re-drives a fresh compaction.
-      this.logger.warn(
-        `compaction re-attach ${row.turn_id}: no container — deferring to reconciler`,
-      );
-      return;
-    }
-    let result: EngineRunResult;
-    try {
-      const ctx = (row.ctx ?? {}) as { credentialId?: string };
-      result = await this.engineRunner.reattach!(
-        row.turn_id,
-        row.container_id,
-        {
-          onEvent: () => {
-            /* internal turn — not surfaced in the operator transcript */
-          },
-          // Re-stamp rate_limit events with the dispatch-time credential (parity with a fresh dispatch).
-          ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
-        },
-      );
-    } catch (err) {
-      // Lost the tail (detached again) — the row survives; the next boot re-attempts. Best-effort.
-      this.logger.warn(
-        `compaction re-attach ${row.turn_id}: reattach failed: ${err}`,
-      );
-      return;
-    }
-    const summary = (result.result ?? '').trim();
-    if (!summary) {
-      // The exec concluded with no usable summary — leave the session intact (a fresh compaction can be
-      // re-driven later). The turn row was finalized by reattach's own path.
-      return;
-    }
-    await this.completeCompaction(row.job_id, row.org_id, summary);
-    this.logger.log(
-      `Leader: completed re-attached compaction for job=${row.job_id}`,
-    );
-  }
-
-  /**
-   * True when the brain session is too LEAN to be worth compacting — below the {@link COMPACTION_MIN_OCCUPANCY_FRAC}
-   * floor of the model window. Positive-signal only: returns false (⇒ compact) when occupancy is unknown, so a
-   * fat-but-unreported session is never silently left uncompacted. Reads the brain's last recorded occupancy.
-   */
-  private async shouldSkipCompaction(jobId: string): Promise<boolean> {
-    const occ = await this.store.latestBrainOccupancy(jobId).catch(() => null);
-    return !!(
-      occ &&
-      occ.contextTokens != null &&
-      occ.contextLimit != null &&
-      occ.contextTokens < COMPACTION_MIN_OCCUPANCY_FRAC * occ.contextLimit
-    );
-  }
-
-  /**
-   * Enqueue a COMPACTION turn for this job (fire-and-forget onto the serialized turn queue). Called after a
-   * milestone that makes the heavy planning transcript redundant with durable state (operator approval →
-   * dispatch; the `dispatch_build` tool). Gated by {@link shouldSkipCompaction} — a quick plan leaves a lean
-   * session not worth a summary turn. MUST NOT be awaited from inside a live turn (it would deadlock on the
-   * queue); it runs after the current turn drains, while the build proceeds in its own sessions.
-   */
-  private async enqueueCompaction(stimulus: TurnEnvelope): Promise<void> {
-    if (await this.shouldSkipCompaction(stimulus.jobId)) {
-      this.logger.log(
-        `compaction: job=${stimulus.jobId} skipped — session lean (below ${COMPACTION_MIN_OCCUPANCY_FRAC} of the window)`,
-      );
-      return;
-    }
-    // A summarization turn (message.type `compaction` drives `runChatTurnInner`'s early branch) — built clean
-    // rather than spread from `stimulus`, so a source turn's delivered-card ids never ride onto it.
-    const compaction = internalEnvelope({
-      jobId: stimulus.jobId,
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      author: { id: 'atlas', displayName: 'Atlas' },
-      type: 'compaction',
-      body: '',
-    });
-    void this.handleChatTurn(compaction).catch((err) =>
-      this.logger.error(
-        `compaction turn failed to run for job=${stimulus.jobId}: ${err}`,
-      ),
-    );
-  }
-
-  // ── Direct-build (fast path) ─────────────────────────────────────────────────────────────────────
-
-  /**
-   * Run the AUTONOMOUS implementation turn for an approved direct build. The brain wrote the change's
-   * spec to `/context` during the sitting; now (post-approval, no operator present) it implements it
-   * ITSELF in the worktree and calls `finalize_build` to ship. Reuses the normal in-sandbox turn path
-   * via a synthetic, Atlas-authored stimulus (the same pattern `startFollowUpJob` uses) so the work
-   * streams to the thread and the session keeps full context. Fire-and-forget — errors are surfaced by
-   * the turn itself.
-   */
-  private async runDirectBuild(
-    stimulus: TurnEnvelope,
-    job: Job,
-  ): Promise<void> {
-    const instruction =
-      'The direct-build plan was APPROVED. Implement the change now, directly, in the repo ' +
-      '(`/workspace`) — follow the spec/notes you wrote under `/context`. When the change is complete, ' +
-      "run `mcp__atlas-lsp-ts__diagnostics` on the files you changed and the repo's own typecheck, and fix " +
-      'anything they find. Then — if your change touched a runtime surface (an HTTP endpoint/route, a UI ' +
-      'page/component, a CLI entry point, or a background job) — ACTUALLY EXERCISE IT LIVE: boot the process ' +
-      'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
-      'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), instead boot ' +
-      'the process and capture a log line proving the changed value was passed at runtime. Typecheck, build, ' +
-      'lint, and the test suite are NOT live verification on their own. ' +
-      'Then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
-      'start_direct_build again.';
-    const synthetic = internalEnvelope({
-      jobId: stimulus.jobId,
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      author: { id: 'atlas', displayName: 'Atlas' },
-      type: 'user',
-      body: instruction,
-    });
-    try {
-      await this.handleChatTurn(synthetic);
-    } catch (err) {
-      this.logger.error(
-        `direct build implementation turn failed for thread=${job.id}: ${err}`,
-      );
-      await this.say(
-        stimulus,
-        `The direct build hit an error — ${String(err).slice(0, 200)}`,
-      );
-    }
-  }
-
   // ── create_job: start the follow-up's brain ──────────────────────────────────────────────────
 
   /**
@@ -6036,16 +5706,6 @@ function isSeedCardDelivery(s: TurnEnvelope): boolean {
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */
 const RESET_LOOP_CAP = 3;
-
-/**
- * Compaction FLOOR — skip compaction when the brain session's context occupancy is below this fraction of
- * the model's window. A quick plan leaves a lean session; compacting it would burn a full-context summary
- * turn AND reset the prompt cache for no benefit. Only compact when the transcript is heavy enough that
- * carrying it into follow-ups actually hurts. Tunable. (The brain is pinned to Opus, whose window is ~1M,
- * so 0.3 ≈ 300k tokens.) The gate is POSITIVE-signal only: an unknown occupancy compacts (never silently
- * leaves a fat-but-unreported session uncompacted).
- */
-const COMPACTION_MIN_OCCUPANCY_FRAC = 0.3;
 
 /**
  * Build the documented-partial `Message` a SYNTHETIC or reattached {@link TurnEnvelope} carries — only its

@@ -266,6 +266,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getTerminalRecord: vi.fn(),
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     threadsForJob: vi.fn().mockResolvedValue([]),
+    appendDirectBuildSection: vi.fn().mockResolvedValue({
+      threadGroupId: 'tg-direct',
+      threadId: 'thread-direct',
+    }),
   } as unknown as DriverStoreService;
 
   const mockAutoMerge = {
@@ -2467,14 +2471,16 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
   });
 
-  it('(d1) dispatch_build starts a direct build once and stamps the durable start marker first', async () => {
+  it('(d1) dispatch_build starts a direct build once — appends a Section (marker first) and dispatches', async () => {
     const directJob = {
       id: THREAD_ID,
       orgId: TEAM_ID,
       repoId: PROJECT_ID,
-      status: 'running',
+      status: 'building',
       halt: null,
       buildPath: 'direct',
+      decisionRecordId: FAKE_RECORD_ID,
+      title: 'a small fix',
     };
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(
       directJob,
@@ -2482,20 +2488,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(
       true,
     );
-    const runDirect = vi
-      .spyOn(
-        manager as unknown as {
-          runDirectBuild(s: unknown, j: unknown): Promise<void>;
-        },
-        'runDirectBuild',
-      )
-      .mockResolvedValue(undefined);
-    const compact = vi
-      .spyOn(
-        manager as unknown as { enqueueCompaction(s: unknown): Promise<void> },
-        'enqueueCompaction',
-      )
-      .mockResolvedValue(undefined);
 
     const result = await manager.buildTools(fakeStimulus)['dispatch_build']({});
 
@@ -2506,16 +2498,24 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     });
     expect(mockStore.buildNotStarted).toHaveBeenCalledWith(THREAD_ID);
     expect(mockStore.markDirectBuildStarted).toHaveBeenCalledWith(THREAD_ID);
-    expect(runDirect).toHaveBeenCalledWith(fakeStimulus, directJob);
-    expect(
-      mockDispatcher.dispatch as ReturnType<typeof vi.fn>,
-    ).not.toHaveBeenCalled();
-    expect(compact).toHaveBeenCalledWith(fakeStimulus);
+    expect(mockDriverStore.appendDirectBuildSection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: THREAD_ID,
+        decisionRecordId: FAKE_RECORD_ID,
+      }),
+    );
+    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
+      directJob,
+    );
+    // The durable start marker is stamped BEFORE the Section is appended (closes the pre-start base-check
+    // window the instant the build begins).
     const markOrder = (
       mockStore.markDirectBuildStarted as ReturnType<typeof vi.fn>
     ).mock.invocationCallOrder[0];
-    const runOrder = runDirect.mock.invocationCallOrder[0];
-    expect(markOrder).toBeLessThan(runOrder);
+    const appendOrder = (
+      mockDriverStore.appendDirectBuildSection as ReturnType<typeof vi.fn>
+    ).mock.invocationCallOrder[0];
+    expect(markOrder).toBeLessThan(appendOrder);
   });
 
   it('(d1b) dispatch_build is idempotent for direct builds after the start marker is stamped', async () => {
@@ -2523,9 +2523,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       id: THREAD_ID,
       orgId: TEAM_ID,
       repoId: PROJECT_ID,
-      status: 'running',
+      status: 'building',
       halt: null,
       buildPath: 'direct',
+      decisionRecordId: FAKE_RECORD_ID,
+      title: 'a small fix',
     };
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue(
       directJob,
@@ -2533,20 +2535,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.buildNotStarted as ReturnType<typeof vi.fn>).mockResolvedValue(
       false,
     );
-    const runDirect = vi
-      .spyOn(
-        manager as unknown as {
-          runDirectBuild(s: unknown, j: unknown): Promise<void>;
-        },
-        'runDirectBuild',
-      )
-      .mockResolvedValue(undefined);
-    const compact = vi
-      .spyOn(
-        manager as unknown as { enqueueCompaction(s: unknown): Promise<void> },
-        'enqueueCompaction',
-      )
-      .mockResolvedValue(undefined);
 
     const result = await manager.buildTools(fakeStimulus)['dispatch_build']({});
 
@@ -2556,11 +2544,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       message: 'Build already started.',
     });
     expect(mockStore.markDirectBuildStarted).not.toHaveBeenCalled();
-    expect(runDirect).not.toHaveBeenCalled();
+    expect(mockDriverStore.appendDirectBuildSection).not.toHaveBeenCalled();
     expect(
       mockDispatcher.dispatch as ReturnType<typeof vi.fn>,
     ).not.toHaveBeenCalled();
-    expect(compact).not.toHaveBeenCalled();
   });
 
   it('(d2) resolveApprovalDurably: restart-safe approve (no live handle) fires the plan-approved JIT rule from durable state, NOT an immediate dispatch', async () => {
@@ -2750,16 +2737,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         ...awaitingJob,
         status: 'running',
       });
-      vi.spyOn(
-        manager as unknown as { enqueueCompaction(s: unknown): Promise<void> },
-        'enqueueCompaction',
-      ).mockResolvedValue(undefined);
-      vi.spyOn(
-        manager as unknown as {
-          runDirectBuild(s: unknown, j: unknown): Promise<void>;
-        },
-        'runDirectBuild',
-      ).mockResolvedValue(undefined);
     };
 
     it('plan-approve → "Approved — checking the base branch before starting…" (System notice, not Atlas); fires plan-approved, not dispatch', async () => {
@@ -2781,7 +2758,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       );
     });
 
-    it('direct-approve → same "Approved — checking the base branch before starting…" notice (System notice, not Atlas); fires plan-approved, not runDirectBuild', async () => {
+    it('direct-approve → same "Approved — checking the base branch before starting…" notice (System notice, not Atlas); fires plan-approved, not dispatch', async () => {
       setup([]); // empty threadTitles ⇒ direct build
       await manager.resolveApprovalDurably(FAKE_JOB_ID, 'approve', 'U-OP');
       expect(mockStore.appendSystemNotice).toHaveBeenCalledWith(
@@ -2790,8 +2767,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       );
       expect(mockStore.appendAtlasMessage).not.toHaveBeenCalled();
       expect(
-        (manager as unknown as { runDirectBuild: ReturnType<typeof vi.fn> })
-          .runDirectBuild,
+        mockDispatcher.dispatch as ReturnType<typeof vi.fn>,
       ).not.toHaveBeenCalled();
       expect(
         mockJit.fireLifecycle as ReturnType<typeof vi.fn>,

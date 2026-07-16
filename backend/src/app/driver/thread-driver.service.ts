@@ -1221,11 +1221,10 @@ export class ThreadDriver implements JobDispatcher {
     const executableThreadGroups = currentThreadGroups.filter((s) =>
       threadGroupKindSpec(s.kind).roles.some((r) => isDriverExecutableKind(r.role)),
     );
-    // DIRECT-BUILD / NON-DRIVER GUARD (unchanged intent): a job with NO executable thread groups is
-    // brain-owned — a pure planning/chat job or the old brain-inline direct build (only render-only thread
-    // groups). The driver must not fall through to the ship gate and spuriously PARK it at
-    // `awaiting_ship_review` (or re-ship it past the gate). Every dispatched driver build carries >=1
-    // build thread group + a master_review thread group.
+    // NON-DRIVER GUARD: a job with NO executable thread groups is brain-owned — a pure planning/chat job
+    // (only render-only thread groups). The driver must not fall through to the ship gate and spuriously
+    // PARK it at `awaiting_ship_review` (or re-ship it past the gate). A driver build carries >=1 builder
+    // Section; a PLANNED build also appends a master_review group, a DIRECT build (d6) just the one Section.
     if (executableThreadGroups.length === 0) {
       this.logger.log(
         `job=${jobId} has no driver-executable thread groups (brain-owned/direct build) — driver yielding, nothing to build or ship`,
@@ -1417,8 +1416,10 @@ export class ThreadDriver implements JobDispatcher {
     // over the thread group's CUMULATIVE diff (the FIRST leg's `start_sha`..HEAD — HEAD already carries
     // every leg's commits on the shared feature branch). Tree-parent the review children off the LAST
     // builder (materialize stamps the thread_group_id regardless), and route agent selection off the THREAD
-    // GROUP's `type` (d7). `direct_build` skips review entirely via the registry's `hasReview:false`.
-    if (threadGroupKindSpec(threadGroup.kind).hasReview) {
+    // GROUP's `type` (d7). A DIRECT build (d6) runs a real builder Section but with reviews OFF: it uses the
+    // same `section` kind (`hasReview:true`), so the review skip is gated on the JOB's `build_path`, not the
+    // kind — direct builds have no review children and no `master_review` group.
+    if (job.buildPath !== 'direct' && threadGroupKindSpec(threadGroup.kind).hasReview) {
       const builders = (
         await this.store.driverThreadsForThreadGroup(threadGroup.id)
       ).filter((t) => t.kind === 'builder');

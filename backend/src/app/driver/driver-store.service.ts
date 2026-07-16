@@ -1748,6 +1748,42 @@ export class DriverStoreService {
   }
 
   /**
+   * Append the ONE builder Section for a DIRECT build (d6), at dispatch time. Unlike a planned build — whose
+   * Sections + `master_review` are materialized up front by `persistPlan` — a direct build carries no thread
+   * groups until it is dispatched. This appends a single `section` thread group holding ONE builder thread,
+   * with NO review children and NO `master_review` group (the driver skips review for `build_path='direct'`),
+   * so the scheduler drives it exactly like a planned build's Section and flows straight into post-build. The
+   * builder's fresh seed reads the spec/notes the brain wrote under `/context` during the sitting. The root
+   * builder ordinal is job-GLOBAL (the top-level UNIQUE(job_id, parent_thread_id, ordinal) index), mirroring
+   * `persistPlan`/`ensurePostBuildThread`.
+   */
+  async appendDirectBuildSection(input: {
+    jobId: string;
+    orgId: string;
+    decisionRecordId: string | null;
+    title: string;
+  }): Promise<{ threadGroupId: string; threadId: string }> {
+    const group = await this.appendThreadGroup({
+      jobId: input.jobId,
+      orgId: input.orgId,
+      kind: 'section',
+      title: input.title,
+      type: 'general',
+      decisionRecordId: input.decisionRecordId,
+    });
+    const thread = await this.createThreadInThreadGroup({
+      threadGroupId: group.id,
+      jobId: input.jobId,
+      orgId: input.orgId,
+      role: 'builder',
+      brief: input.title,
+      type: 'general',
+      ordinal: await this.nextRootThreadOrdinal(input.jobId),
+    });
+    return { threadGroupId: group.id, threadId: thread.id };
+  }
+
+  /**
    * Find (or lazily create) the job's `post_build` thread group — the isolated, fresh ship-gate session that
    * summarizes the build, proposes preview, and owns amend work off the planning brain's session. Idempotent/reusable:
    * a matching thread group is re-looked-up rather than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM`
