@@ -267,11 +267,20 @@ export class DriverStoreService {
    *  realtime projection carries it live. A build/direct_build thread group is "done" when it has >=1
    *  builder thread and all its builder threads have finished building — status 'done' or 'auto_fixing'
    *  (the review-window affordance). Review is NOT required, and 'auto_fixing' prevents the count
-   *  regressing while a just-finished builder is being reviewed. */
+   *  regressing while a just-finished builder is being reviewed. Scoped to the job's ACTIVE plan
+   *  revision (`jobs.decision_record_id`), same as {@link threadsForJob} — a mid-build re-plan keeps the
+   *  prior revision's build thread groups around as immutable history, and without this filter they'd
+   *  keep being counted alongside the new plan's groups forever. */
   async recomputeBuildStageProgress(jobId: string): Promise<void> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
+    const activeRecordId = job?.decision_record_id ?? null;
     const groups = await this.threadGroups.find({ where: { job_id: jobId } });
     const buildGroups = groups.filter(
-      (g) => g.kind === 'build' || g.kind === 'direct_build',
+      (g) =>
+        (g.kind === 'build' || g.kind === 'direct_build') &&
+        (activeRecordId
+          ? g.decision_record_id === activeRecordId
+          : g.decision_record_id == null),
     );
     const total = buildGroups.length;
     const builderFinished = (s: string) => s === 'done' || s === 'auto_fixing';
