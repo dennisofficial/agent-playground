@@ -282,6 +282,15 @@ function makeStore(state: StoreState): {
         brief: 'Ship — open the PR',
       }),
     ),
+    postBuildThreadId: vi.fn(async (jobId: string) => {
+      const existing = state.threads.find(
+        (thread) =>
+          thread.jobId === jobId &&
+          thread.parentThreadId == null &&
+          thread.kind === 'post_build',
+      );
+      return existing?.id ?? null;
+    }),
     ensureCiThread: vi.fn(async () =>
       ensureSingletonThread({
         kind: 'ci',
@@ -1289,9 +1298,13 @@ function assemble(
   // brain through. Records each seeded `openPrAtShip` turn + the driver's Phase-3 `notifyThreadHalted`
   // wakes (the seeded/wake turns themselves are exercised in the brain specs — here the host latches by
   // branch discovery, and the fake mirrors the brain stamping `halt_waked_at`).
+  const gateSeeds: Array<{ jobId: string; threadId: string }> = [];
   const brainGateway = {
     openPrAtShip: async (input: { jobId: string; branch: string }) => {
       shipSeeds.push({ jobId: input.jobId, branch: input.branch });
+    },
+    seedPostBuildGate: async (input: { jobId: string; threadId: string }) => {
+      gateSeeds.push({ jobId: input.jobId, threadId: input.threadId });
     },
     notifyThreadHalted: async (
       jobId: string,

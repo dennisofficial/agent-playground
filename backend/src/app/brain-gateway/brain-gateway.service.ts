@@ -7,6 +7,7 @@ import { Injectable, Logger } from '@nestjs/common';
  * All calls carry plain data and return `Promise<void>`:
  *  - `openPrAtShip` — ENQUEUES the open-PR seed onto the ci lane and returns; the PR is latched by the reconciler.
  *  - `seedPreviewOnPostBuild` — ENQUEUES the "Spin up preview" seed onto the post_build lane and returns.
+ *  - `seedPostBuildGate` — ENQUEUES the ship-review-gate initial message onto the post_build lane and returns.
  *  - `wakeUnblockedJob` — fire-and-forget notification the driver awaits only to log per-attempt failures;
  *    at-least-once retry is driven by the JobUnblockSweep.
  */
@@ -28,6 +29,14 @@ export interface BrainGatewayHandler {
     orgId: string;
     repoId: string;
     previewInstructions: string | null;
+  }): Promise<void>;
+  /** SEEDS the ship-review-gate initial message onto the job's already-spawned `post_build` thread. Called
+   *  once, right after the gate-park DB transition, from `ThreadDriver.parkForShipReview`. */
+  seedPostBuildGate(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    threadId: string;
   }): Promise<void>;
   wakeUnblockedJob(
     jobId: string,
@@ -86,6 +95,12 @@ export class BrainGateway implements BrainGatewayHandler {
     input: Parameters<BrainGatewayHandler['seedPreviewOnPostBuild']>[0],
   ): Promise<void> {
     return this.require().seedPreviewOnPostBuild(input);
+  }
+
+  seedPostBuildGate(
+    input: Parameters<BrainGatewayHandler['seedPostBuildGate']>[0],
+  ): Promise<void> {
+    return this.require().seedPostBuildGate(input);
   }
 
   wakeUnblockedJob(

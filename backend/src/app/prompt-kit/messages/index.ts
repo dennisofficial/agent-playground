@@ -5,6 +5,7 @@
  */
 export * from './turn';
 export * from './ship-open-pr';
+export * from './post-build-gate';
 export * from './build-handoff';
 export * from './render-plan';
 export * from './batch-task';

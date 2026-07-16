@@ -54,6 +54,11 @@ function preview(jobId: string): string {
   return `seed:preview:${jobId}`;
 }
 
+/** The single post_build ship-review-gate seed for a job. */
+function gate(jobId: string): string {
+  return `seed:gate:${jobId}`;
+}
+
 /** The once-per-approval plan-approved base-check seed, keyed by decision record id. */
 function planApproved(decisionRecordId: string): string {
   return `seed:plan-approved:${decisionRecordId}`;
@@ -118,6 +123,7 @@ export const chunkKey = {
   batch,
   retry,
   preview,
+  gate,
   planApproved,
   mcpApprove,
   mcpRemove,

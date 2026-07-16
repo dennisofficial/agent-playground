@@ -14,8 +14,6 @@ import {
   ROTATION_REMINDER_NUDGE,
   ROTATION_SOFT_NUDGE,
 } from '../messages/build-handoff';
-import { composePreviewPrepSeed } from '../system/fragments';
-import { chunkKey } from '../harness/chunk-keys';
 import { detectLongRunningCommand, renderSvcNudge } from './svc-nudge';
 import {
   detectGithubHtmlUrl,
@@ -126,25 +124,6 @@ export const bgTaskCapRule: JitRule = {
 };
 
 /**
- * Preview flagship (d7) — the exemplar lifecycle rule. When the operator taps "Spin up preview" at the ship
- * gate, seed the full demo-ready preview procedure as a host system-notice turn. The payload + gating already
- * shipped upstream (removed from the always-on prompt); this rule is the migration that routes it through the
- * registry. Byte-identical to the hand-rolled `spinUpPreview` seed — same body, same label + chunkKey.
- */
-export const previewPrepRule: JitRule = {
-  id: 'preview-prep',
-  enabled: true,
-  trigger: { kind: 'lifecycle', event: 'preview-requested' },
-  delivery: 'host-seed-notice',
-  render: (ctx) =>
-    agentMessage(composePreviewPrepSeed(ctx.previewInstructions ?? null)),
-  seed: {
-    label: 'Spin up preview requested',
-    chunkKey: (ctx) => chunkKey.preview(ctx.jobId ?? ''),
-  },
-};
-
-/**
  * Memory turn-prefix rail (d18) — the exemplar `operator-message` rule. While the host composes an operator turn,
  * this rule may prepend a `system_reminder source="memory"` chunk BEFORE the `<user>` bubble. It is the general
  * prepend RAIL this job ships; its payload comes from `ctx.prependText`, which is EMPTY until the dependent
@@ -168,7 +147,6 @@ export const JIT_RULES: JitRule[] = [
   installAwarenessRule,
   legRotationRule,
   bgTaskCapRule,
-  previewPrepRule,
   planApprovedRule,
   memoryPrependRule,
 ];
@@ -181,10 +159,12 @@ assertEnforcementSeamConfigured();
 
 /**
  * Find the single enabled rule whose lifecycle trigger matches `event`, or undefined. The host-side executor's
- * lookup; kept here so the catalog stays the one place rules are enumerated.
+ * lookup; kept here so the catalog stays the one place rules are enumerated. `plan-approved` is the only
+ * lifecycle event left (Thread 4 retired the `preview-requested` firing path — post_build's preview now seeds
+ * directly via `composePreviewPrepSeed`, see `AgentSessionManager.seedPreviewOnPostBuild`).
  */
 export function findLifecycleRule(
-  event: 'preview-requested' | 'plan-approved',
+  event: 'plan-approved',
 ): JitRule | undefined {
   return JIT_RULES.find(
     (r) =>

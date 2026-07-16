@@ -1902,6 +1902,22 @@ export class ThreadDriver implements JobDispatcher {
     this.logger.log(
       `job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`,
     );
+    // The DB-layer park above already ensured the post_build thread exists (DriverStoreService.
+    // parkForShipReview → ensurePostBuildThread); deliver its opening gate turn now. Best-effort: a seed
+    // failure must not fail the (already-committed) park itself.
+    const postBuildThreadId = await this.store.postBuildThreadId(job.id);
+    if (postBuildThreadId) {
+      await this.brainGateway
+        .seedPostBuildGate({
+          jobId: job.id,
+          orgId: job.orgId,
+          repoId: job.repoId,
+          threadId: postBuildThreadId,
+        })
+        .catch((err) =>
+          this.logger.warn(`post_build gate seed failed (continuing): ${err}`),
+        );
+    }
     await this.post(
       route,
       `:mag: Build reviewed — ready to ship *${title}*. Review the diff, then click *Ship it* to open the PR.`,

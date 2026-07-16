@@ -88,7 +88,11 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
-import { shipOpenPrBody, composePreviewPrepSeed } from '../prompt-kit';
+import {
+  shipOpenPrBody,
+  composePreviewPrepSeed,
+  postBuildGateSeed,
+} from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
 import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
@@ -1058,6 +1062,37 @@ export class AgentSessionManager
       systemChunk: {
         label: 'Spin up preview requested',
         chunkKey: chunkKey.preview(input.jobId),
+      },
+    });
+    await this.enqueueChat(recorded);
+  }
+
+  /**
+   * SEED the ship-review-gate initial message onto the job's `post_build` stage-thread session. Called once,
+   * right after the driver's gate-park transition (`ThreadDriver.parkForShipReview`), which by then has
+   * already ensured the post_build thread exists — this only delivers its opening turn. Durable + idempotent
+   * per job via the `gate` chunkKey, so a re-drive of the park can't re-seed it twice.
+   */
+  async seedPostBuildGate(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    threadId: string;
+  }): Promise<void> {
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: postBuildGateSeed(),
+      lane: `thread:${input.threadId}`,
+      systemChunk: {
+        label: 'Build ready — review at the ship gate',
+        chunkKey: chunkKey.gate(input.jobId),
       },
     });
     await this.enqueueChat(recorded);
@@ -2693,13 +2728,19 @@ export class AgentSessionManager
         .catch((err) => this.logger.debug(`clear setup_error failed: ${err}`));
     }
 
+    // Which stage this turn runs as — gates the host-side prefixes below (d8: post_build/ci don't grill and
+    // aren't the ones tracking build-progress awareness; the amend return-path lives on post_build now).
+    // Resolved once here and reused at the tool-surface call below so both never drift apart.
+    const stageRole = await this.resolveStageKind(stimulus);
+
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
     // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
     // delta into a clearly-passive reminder so the brain knows where the build stands. SYNTHETIC
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
-    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
-    if (isOperatorAuthored(stimulus)) {
+    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn. PLANNING-only:
+    // post_build/ci ARE the post-build stage, so build-milestone awareness is noise there.
+    if (isOperatorAuthored(stimulus) && stageRole === 'planning') {
       const awarenessPrefix = await this.buildAwarenessPrefix(
         stimulus.jobId,
         stimulus.orgId,
@@ -2717,16 +2758,19 @@ export class AgentSessionManager
     // engine session — a fresh turn (a new operator message, an event delivery, or a restart-rebuilt session
     // whose context was compacted) has no in-context memory of what it already asked, so without this the
     // brain re-asks the same question over and over. Advisory reminder listing each open card's id + gist, so
-    // it waits (or `withdraw_question`s) instead of re-posting. Applies to every turn; best-effort.
-    const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
-      stimulus.jobId,
-    );
-    if (openQuestionsPrefix) {
-      reminderChunks.push({
-        kind: 'system_reminder',
-        body: openQuestionsPrefix,
-        attrs: { reminderKind: 'open_questions' },
-      });
+    // it waits (or `withdraw_question`s) instead of re-posting. PLANNING-only: post_build/ci have no
+    // `ask_question` tool (Thread 2), so there is nothing to remind them about.
+    if (stageRole === 'planning') {
+      const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
+        stimulus.jobId,
+      );
+      if (openQuestionsPrefix) {
+        reminderChunks.push({
+          kind: 'system_reminder',
+          body: openQuestionsPrefix,
+          attrs: { reminderKind: 'open_questions' },
+        });
+      }
     }
 
     // Same idea for still-open file-upload requests (posted, not yet uploaded/withdrawn): a compacted or
@@ -2763,8 +2807,12 @@ export class AgentSessionManager
     // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
     // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
     // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
-    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
-    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`. POST_BUILD-only: the amend loop
+    // now runs on the post_build session (d3), not planning — stop rendering it there.
+    const amendingPrefix =
+      stageRole === 'post_build'
+        ? await this.buildAmendingPrefix(stimulus.jobId)
+        : null;
     if (amendingPrefix) {
       reminderChunks.push({
         kind: 'system_reminder',
@@ -2835,12 +2883,11 @@ export class AgentSessionManager
     // get build-free subsets — see buildTools). The repo SLUG (not the UUID) gates the atlas-prod toolset,
     // resolved once here and reused for the jobContext.isAtlasRepo prompt flag below.
     const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
-    const stageKind = await this.resolveStageKind(stimulus);
     const tools = this.buildTools(
       stimulus,
       brainJob?.kind ?? null,
       repoSlug,
-      stageKind,
+      stageRole,
     );
 
     // All turns run inside the Docker sandbox container.
@@ -2968,7 +3015,7 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
-    const promptAgent = threadKindSpec(stageKind).agent;
+    const promptAgent = threadKindSpec(stageRole).agent;
 
     const runArgs: RunEngineArgs = {
       engine: 'claude',
@@ -2998,8 +3045,8 @@ export class AgentSessionManager
         : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
-      ...(threadKindSpec(stageKind).reasoningEffort
-        ? { modelReasoningEffort: threadKindSpec(stageKind).reasoningEffort }
+      ...(threadKindSpec(stageRole).reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec(stageRole).reasoningEffort }
         : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
@@ -7746,7 +7793,8 @@ export class AgentSessionManager
    * prefix to prepend to this OPERATOR turn (null when there's nothing to convey). Atomic drain (a single
    * locked transaction in the store) so a milestone the driver appends mid-turn isn't read-cleared and
    * lost. Best-effort: any failure returns null so the turn proceeds — `get_pipeline_state` remains the
-   * authoritative pull.
+   * authoritative pull. Gated by the call site to PLANNING only — post_build/ci ARE the post-build stage, so
+   * build-milestone awareness would be noise there.
    */
   private async buildAwarenessPrefix(
     jobId: string,
@@ -7778,7 +7826,8 @@ export class AgentSessionManager
    * withdrawn) so a fresh turn doesn't re-ask them — the fix for the "brain keeps asking the same question"
    * loop, whose root cause is that question cards live OUTSIDE the engine session and are never otherwise
    * re-surfaced once the session's in-context memory is lost (a new turn, an event, a restart/compaction).
-   * Null when nothing is open. Best-effort — a failure here never blocks the turn.
+   * Null when nothing is open. Best-effort — a failure here never blocks the turn. Gated by the call site to
+   * PLANNING only — post_build/ci carry no `ask_question` tool, so they never have anything open to remind.
    */
   private async buildOpenQuestionsPrefix(
     jobId: string,
@@ -7812,7 +7861,8 @@ export class AgentSessionManager
    * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
    * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
    * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
-   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort. Gated by the call
+   * site to the POST_BUILD session only (d3: the amend loop runs there now, not on planning).
    */
   private async buildAmendingPrefix(jobId: string): Promise<string | null> {
     try {
