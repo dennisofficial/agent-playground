@@ -239,6 +239,11 @@ export class ComposerDraftService {
       where: { org_id: orgId, job_id: jobId, user_id: userId },
     });
     if (existing) {
+      // TypeORM diffs the loaded entity against the values being saved and skips issuing the UPDATE
+      // (and the `@UpdateDateColumn` bump) entirely when nothing differs — so re-saving `existing`
+      // unchanged is a silent no-op and never produces the WAL row the other device is waiting on.
+      // Mutating `updated_at` first forces TypeORM to see a real diff and actually emit the UPDATE.
+      existing.updated_at = new Date();
       await repo.save(existing);
       return;
     }
