@@ -47,6 +47,8 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
   cancelled: { label: "Cancelled", color: "var(--faint)", pulse: false },
   // Transient: the job is being torn down and will vanish from the list momentarily.
   deleting: { label: "Deleting…", color: "var(--faint)", pulse: true },
+  // Terminal, read-only: the job has left the active list for the archive.
+  archived: { label: "Archived", color: "var(--faint)", pulse: false },
 };
 
 export interface KindMeta {
@@ -86,6 +88,8 @@ export function toJobStatus(status: WireJobStatus): JobStatus {
       return "cancelled";
     case "deleting":
       return "deleting";
+    case "archived":
+      return "archived";
     default:
       return "planning";
   }

@@ -11,7 +11,8 @@ export type JobSection =
   | "ready_to_ship"
   | "done"
   | "pr_open"
-  | "merged";
+  | "merged"
+  | "archived";
 
 export const SECTION_ORDER: JobSection[] = [
   "blocked",
@@ -25,6 +26,7 @@ export const SECTION_ORDER: JobSection[] = [
   "done",
   "pr_open",
   "merged",
+  "archived",
 ];
 
 export const SECTION_LABEL: Record<JobSection, string> = {
@@ -39,6 +41,7 @@ export const SECTION_LABEL: Record<JobSection, string> = {
   done: "Done",
   pr_open: "PR Open",
   merged: "Merged",
+  archived: "Archived",
 };
 
 /** d1: build phase wins; PR state only decides once done. Returns null → not shown. */
@@ -74,6 +77,8 @@ export function sectionOf(t: InboxThread): JobSection | null {
       if (t.pr?.state === "open") return "pr_open";
       if (t.pr?.state === "merged") return "merged";
       return "done"; // no PR or closed PR
+    case "archived":
+      return "archived";
     default:
       return null; // cancelled, deleting → hidden
   }

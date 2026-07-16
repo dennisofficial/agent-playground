@@ -153,6 +153,12 @@ describe("sectionOf", () => {
     expect(sectionOf(makeThread({ status: "cancelled" }))).toBeNull();
     expect(sectionOf(makeThread({ status: "deleting" }))).toBeNull();
   });
+
+  it("maps archived to its own archived section", () => {
+    expect(sectionOf(makeThread({ status: "archived" as JobStatus }))).toBe(
+      "archived",
+    );
+  });
 });
 
 describe("groupThreadsBySection", () => {

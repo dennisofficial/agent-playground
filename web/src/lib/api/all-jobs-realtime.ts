@@ -206,8 +206,30 @@ export function useAllJobsRealtime(): void {
         handle.closePermanently();
         return;
       }
-      if (delta.kind === "update") patchUpdate(delta.row);
-      else invalidate(); // snapshot / add / remove → refetch the enriched list
+      if (delta.kind === "update") {
+        patchUpdate(delta.row);
+      } else if (delta.kind === "remove") {
+        // Archiving is a status UPDATE on the row, but the row-level realtime guard filters
+        // `status != 'archived'`, so an archived row leaves the live result set as a plain `remove` — never
+        // an `update`. A `remove` delta carries only the row's pk, not its org/repo, so look those up from
+        // the CURRENT cache to build the `JobRef` this job's own pipeline query is keyed on. Without this,
+        // an operator with that job's page open would see the sidebar drop it while the open workspace
+        // page's `status` stayed stale (composer still enabled) until some unrelated refetch happened.
+        const prev = qc.getQueryData<InboxThread[]>(qk.allJobs());
+        const row = prev?.find((t) => t.id === delta.pk);
+        if (row) {
+          void qc.invalidateQueries({
+            queryKey: qk.threadPipeline({
+              orgId: row.org.id,
+              repoId: row.repo.id,
+              jobId: row.id,
+            }),
+          });
+        }
+        invalidate();
+      } else {
+        invalidate(); // snapshot / add → refetch the enriched list
+      }
     };
 
     return subscribeSse(`${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/realtime`, {
