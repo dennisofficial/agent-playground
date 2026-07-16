@@ -53,11 +53,6 @@ function pctOf(tokens: number, maxTokens: number): string {
   return maxTokens > 0 ? ((tokens / maxTokens) * 100).toFixed(1) : "0.0";
 }
 
-function basename(path: string): string {
-  const parts = path.split("/");
-  return parts[parts.length - 1] || path;
-}
-
 function Chevron({ open, hasDetail }: { open: boolean; hasDetail: boolean }) {
   if (!hasDetail) return <span className="w-2 shrink-0 text-[8px] invisible">▸</span>;
   return (
@@ -86,23 +81,30 @@ function SubRow({ name, tokens }: { name: string; tokens: number }) {
 function detailFor(
   row: Row,
   breakdown: ContextBreakdown,
-): { key: string; subRows: { name: string; tokens: number }[] } | null {
+): { key: string; subRows: { id: string; name: string; tokens: number }[] } | null {
   if (row.name === "Memory files" && breakdown.memoryFiles?.length) {
     return {
       key: "memoryFiles",
-      subRows: breakdown.memoryFiles.map((f) => ({ name: basename(f.path), tokens: f.tokens })),
+      // Keyed on the full path (not just the basename) — this repo alone has three same-named
+      // `CLAUDE.md` files at different directories, which would otherwise collide.
+      subRows: breakdown.memoryFiles.map((f) => ({ id: f.path, name: f.path, tokens: f.tokens })),
     };
   }
   if (row.name === "MCP tools" && breakdown.mcpTools?.length) {
     return {
       key: "mcpTools",
-      subRows: breakdown.mcpTools.map((t) => ({ name: t.name, tokens: t.tokens })),
+      // Keyed/labeled with the server name — two servers can expose a same-named tool.
+      subRows: breakdown.mcpTools.map((t) => ({
+        id: `${t.serverName}/${t.name}`,
+        name: `${t.name} (${t.serverName})`,
+        tokens: t.tokens,
+      })),
     };
   }
   if (row.name === "Custom agents" && breakdown.agents?.length) {
     return {
       key: "agents",
-      subRows: breakdown.agents.map((a) => ({ name: a.agentType, tokens: a.tokens })),
+      subRows: breakdown.agents.map((a) => ({ id: a.agentType, name: a.agentType, tokens: a.tokens })),
     };
   }
   return null;
@@ -170,7 +172,7 @@ function CategoryRow({
       {clickable && expanded ? (
         <div className="flex flex-col gap-px py-0.5 pl-[22px]">
           {detail.subRows.map((s) => (
-            <SubRow key={s.name} name={s.name} tokens={s.tokens} />
+            <SubRow key={s.id} name={s.name} tokens={s.tokens} />
           ))}
         </div>
       ) : null}
@@ -199,7 +201,7 @@ export function ContextBreakdownPanel({
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const rows = buildRows(breakdown);
-  const pct = Math.round(breakdown.percentage);
+  const pct = pctOf(tokens, limit);
   const headerModel = model ?? breakdown.model;
 
   return (
