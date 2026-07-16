@@ -127,7 +127,7 @@ export class BrainStoreService {
 
   /**
    * Resolve the thread an EVENT stimulus seeded (the intake seam opened it but the in-memory
-   * `EventStimulus` doesn't carry the id). Reads the `stimuli` row's `job_id`. Null if the
+   * an `EventMessage` doesn’t carry the delivery id). Reads the `stimuli` row's `job_id`. Null if the
    * stimulus isn't persisted (shouldn't happen — intake persists before consuming).
    */
   async eventThreadId(stimulusId: string): Promise<string | null> {
@@ -351,6 +351,9 @@ export class BrainStoreService {
      *  separately from `text` so the web can render it as its own trusted block. */
     framing?: string;
     createdAt?: Date;
+    /** The internal-seed `Message` type behind this row (`meta.seedType`) — the frontend's per-seed-type
+     *  pill discriminant (mirrors `meta.eventKind`). */
+    seedType?: string;
   }): Promise<void> {
     return writeSystemChunk(this.messages, {
       ...input,

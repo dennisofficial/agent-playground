@@ -18,7 +18,7 @@ import {
 import { JobTitler } from '../titling';
 import { JobBootstrapService } from '../job-bootstrap';
 import { AgentSessionManager } from './agent-session-manager.service';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 
 /**
  * MECHANISM validation for brain-session compaction (see the `atlas-brain-compaction` design). Boots the
@@ -113,10 +113,16 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     return { jobId, repoId };
   }
 
-  const stim = (jobId: string, repoId: string): ChatStimulus => ({
+  const stim = (jobId: string, repoId: string): TurnEnvelope => ({
+    message: {
+      id: 'compaction-it-stimulus',
+      orgId: TEAM_ID,
+      repoId,
+      jobId,
+      receivedAt: new Date().toISOString(),
+      type: 'compaction',
+    } as unknown as Message,
     id: 'compaction-it-stimulus',
-    kind: 'chat',
-    trust: 'trusted',
     orgId: TEAM_ID,
     repoId,
     jobId,
@@ -124,7 +130,6 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     author: { id: 'atlas', displayName: 'Atlas' },
     replyRoute: { surfaceId: 'agent', jobRef: 'C-IT' },
     receivedAt: new Date(),
-    compact: true,
   });
 
   it('reseeds the session and stores an inspectable summary', async () => {
@@ -134,7 +139,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     await (
       mgr as unknown as {
         runCompaction: (
-          s: ChatStimulus,
+          s: TurnEnvelope,
           sandbox: { worktreePath: string; containerId?: string | null },
           row: { session_id: string | null } | null,
           sessionId: string | undefined,
@@ -189,7 +194,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
       await (
         mgr as unknown as {
           runCompaction: (
-            s: ChatStimulus,
+            s: TurnEnvelope,
             sandbox: { worktreePath: string; containerId?: string | null },
             row: { session_id: string | null } | null,
             sessionId: string | undefined,
@@ -315,7 +320,7 @@ describe('brain-session compaction (live Postgres, stubbed engine)', () => {
     await (
       mgr as unknown as {
         runCompaction: (
-          s: ChatStimulus,
+          s: TurnEnvelope,
           sandbox: { worktreePath: string; containerId?: string | null },
           row: { session_id: string | null } | null,
           sessionId: string | undefined,

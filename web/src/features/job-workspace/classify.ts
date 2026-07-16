@@ -26,6 +26,28 @@ export type EventKind =
   | "review_approved"
   | "review_comment";
 
+/** The internal-seed `Message` type behind a `system_notice` row (`meta.seedType`), stamped server-side
+ *  from the typed `InternalSeedMessage` discriminant (`domain/message.ts`). Drives {@link SystemNoticeRow}'s
+ *  per-type icon/label pill, mirroring {@link EventKind}. */
+export type SeedType =
+  | "reset_verify"
+  | "compaction"
+  | "work_owed_nudge"
+  | "amend_approved_wake"
+  | "ship_open_pr"
+  | "request_changes"
+  | "unblocked_job_wake"
+  | "follow_up_job_seed"
+  | "retry_resume_nudge"
+  | "session_limit_reset_nudge"
+  | "mcp_approved"
+  | "mcp_removed"
+  | "convention_attached"
+  | "convention_edited"
+  | "skill_approved"
+  | "skill_edit_approved"
+  | "skill_edit_gone";
+
 export type ClassifiedMessage =
   | { kind: "user"; message: JobMessage }
   | { kind: "claude"; message: JobMessage }

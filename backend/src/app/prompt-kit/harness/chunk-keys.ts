@@ -49,6 +49,36 @@ function retry(jobId: string, ts: number): string {
   return `seed:retry:${jobId}:${ts}`;
 }
 
+/** The auto-resume seed after a session-limit reset, keyed by wall-clock so repeated resets don't collide. */
+function sessionLimit(jobId: string, ts: number): string {
+  return `seed:sessionlimit:${jobId}:${ts}`;
+}
+
+/** The ship-time open-PR seed for a job. */
+function ship(jobId: string): string {
+  return `seed:ship:${jobId}`;
+}
+
+/** A work-owed review-resume nudge, keyed by the interrupted review. */
+function workOwed(reviewId: string): string {
+  return `seed:work-owed:${reviewId}`;
+}
+
+/** The amend-approved wake for a job. */
+function amendApproved(jobId: string): string {
+  return `seed:amend-approved:${jobId}`;
+}
+
+/** A request-changes delivery, keyed by the decision record it revises. */
+function requestChanges(decisionRecordId: string): string {
+  return `seed:request-changes:${decisionRecordId}`;
+}
+
+/** The unblocked-job wake for a job. */
+function unblock(jobId: string): string {
+  return `seed:unblock:${jobId}`;
+}
+
 /** The single live-preview seed for a job. */
 function preview(jobId: string): string {
   return `seed:preview:${jobId}`;
@@ -122,6 +152,12 @@ export const chunkKey = {
   qa,
   batch,
   retry,
+  sessionLimit,
+  ship,
+  workOwed,
+  amendApproved,
+  requestChanges,
+  unblock,
   preview,
   gate,
   planApproved,

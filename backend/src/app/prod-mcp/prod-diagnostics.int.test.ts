@@ -47,7 +47,7 @@ import {
   ThreadEntity,
 } from '../persistence/entities';
 import { CHAT_SURFACE } from '../surface/chat-surface.port';
-import type { ChatStimulus } from '../domain/stimulus';
+import type { Message, TurnEnvelope } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 
@@ -205,11 +205,17 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     return { jobId: job.id, threadId: thread.id };
   }
 
-  function stimulusFor(jobId: string): ChatStimulus {
+  function stimulusFor(jobId: string): TurnEnvelope {
     return {
+      message: {
+        id: 'sess-propose-1',
+        orgId: ORG_ID,
+        repoId,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        type: 'user',
+      } as unknown as Message,
       id: 'sess-propose-1',
-      kind: 'chat',
-      trust: 'trusted',
       orgId: ORG_ID,
       repoId,
       jobId,
@@ -217,7 +223,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
       receivedAt: new Date(),
       author: { id: 'atlas', displayName: 'Atlas' },
       replyRoute: { surfaceId: 'web', jobRef: jobId },
-    } as ChatStimulus;
+    };
   }
 
   it('propose → pending ledger row + durable card, target row UNCHANGED (writer untouched pre-approval)', async () => {

@@ -139,9 +139,16 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
     } as unknown as GithubPrService;
     const store = baseStore();
     const { openPrAtShip, brainGateway } = makeBrain();
+    const notify = vi.fn();
 
     const svc = new BuildShipService(git, pr, store, brainGateway);
-    const result = await svc.ship({ job, record: null, repo, sandbox });
+    const result = await svc.ship({
+      job,
+      record: null,
+      repo,
+      sandbox,
+      notify,
+    });
 
     expect(openPrAtShip).toHaveBeenCalled();
     expect(findOpenPullByHead).toHaveBeenCalledWith('ptok-xyz', {
@@ -167,6 +174,9 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
         .invocationCallOrder[0],
     );
     expect(store.setJobStatus).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(
+      ':tada: PR ready: https://github.com/acme/widget/pull/7',
+    );
     expect(result).toEqual({
       opened: true,
       prConfirmed: true,

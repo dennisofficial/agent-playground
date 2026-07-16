@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
-import type { EventMessage, Message } from '../domain';
+import type { UserMessage } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
@@ -21,9 +21,10 @@ import {
 import { StimulusIntake } from './stimulus-intake.service';
 
 /**
- * The CHAT EDGE → `ChatStimulus` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each
- * inbound human message into a `ChatStimulus` that CONTINUES a thread, then hands it to the intake seam.
- * Counterpart to the `NotificationSource` adapters that OPEN a thread; both converge on `StimulusIntake`.
+ * The CHAT EDGE → `UserMessage` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each
+ * inbound human message into a typed `Message` that CONTINUES a thread, then hands it to the intake seam
+ * (which persists it and hands the brain a `TurnEnvelope`). Counterpart to the `NotificationSource`
+ * adapters that route an event to a thread; both converge on `StimulusIntake`.
  *
  * Addressing: the web surface addresses by the REAL thread id (`msg.threadTs` carries `threads.id`)
  * and the repo coordinate (`msg.channel` carries `repo_id`). A message referencing an existing thread
@@ -91,43 +92,49 @@ export class ChatStimulusBridge
       return;
     }
 
-    // `id: ''` is minted by the store on persist; `receivedAt` is an ISO string on the union (`msg.ts` is
-    // a Date). Any seed-flavored inbound (answered question, uploaded file, provided secret, or a generic
-    // system seed) maps to the transitional `SeedMessage` — the narrower answer/file/secret variants are
-    // reserved for the future `/message` endpoint, which has the real question/answer text on hand and no
-    // curated `seedRow` to preserve.
-    const message: Exclude<Message, EventMessage> = msg.seed
-      ? {
-          type: 'seed',
-          trust: 'system',
-          id: '',
+    // A seed-flavored inbound (answered question, uploaded file, provided secret, or a generic system
+    // seed) is a brain-side direct caller with an already-rendered body + `seedRow` on hand, not one of
+    // the 17 typed internal-seed variants — it goes through the legacy generic-seed path, which keeps
+    // `recordChatStimulus`'s own `'seed'`-fallback mechanism live for these callers (see
+    // `StimulusIntake.intakeLegacySeed`'s doc comment).
+    if (msg.seed) {
+      await this.intake.intakeLegacySeed(
+        {
           orgId: thread.org_id,
           repoId: thread.repo_id,
           jobId: thread.id,
-          receivedAt: msg.ts.toISOString(),
           body: msg.text,
           seedRow: msg.seedRow,
+          seedQuestionId: msg.seedQuestionId,
+          seedFileId: msg.seedFileId,
+          seedSecretId: msg.seedSecretId,
+          seedQuestionIds: msg.seedQuestionIds,
+          seedFileIds: msg.seedFileIds,
+          seedSecretIds: msg.seedSecretIds,
           priority: msg.priority,
           card: msg.card,
-          deliveredQuestionIds: msg.seedQuestionId
-            ? [msg.seedQuestionId]
-            : msg.seedQuestionIds,
-          deliveredFileIds: msg.seedFileId ? [msg.seedFileId] : msg.seedFileIds,
-          deliveredSecretIds: msg.seedSecretId
-            ? [msg.seedSecretId]
-            : msg.seedSecretIds,
-        }
-      : {
-          type: 'user',
-          trust: 'trusted',
-          id: '',
-          orgId: thread.org_id,
-          repoId: thread.repo_id,
-          jobId: thread.id,
-          receivedAt: msg.ts.toISOString(),
-          body: msg.text,
+        },
+        {
           author: { id: msg.authorId, displayName: msg.authorName },
-        };
+          replyRoute: { surfaceId: this.surface.name, jobRef: thread.id },
+        },
+      );
+      return;
+    }
+
+    // `id: ''` is minted by the store on persist; `receivedAt` is an ISO string on the union (`msg.ts` is
+    // a Date).
+    const message: UserMessage = {
+      type: 'user',
+      trust: 'trusted',
+      id: '',
+      orgId: thread.org_id,
+      repoId: thread.repo_id,
+      jobId: thread.id,
+      receivedAt: msg.ts.toISOString(),
+      body: msg.text,
+      author: { id: msg.authorId, displayName: msg.authorName },
+    };
 
     await this.intake.intakeChat(message, {
       author: { id: msg.authorId, displayName: msg.authorName },

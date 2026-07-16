@@ -25,7 +25,7 @@ import { SurfaceOrchestration } from './surface-orchestration.service';
  *    'app' connection).
  *  - `ProjectRoutingService` — gateway identifier (`owner/repo`) → a connected `repos` row (exported so
  *    each `NotificationSource` adapter routes through it).
- *  - `ChatStimulusBridge` — subscribes the bound `CHAT_SURFACE.inbound$`, maps chat → `ChatStimulus`,
+ *  - `ChatStimulusBridge` — subscribes the bound `CHAT_SURFACE.inbound$`, maps chat → a typed `Message`,
  *    feeds intake (and connects the surface on boot).
  *
  * The `BRAIN_SINK` the intake injects is bound by the @Global `BrainModule` (the thread brain: chat →

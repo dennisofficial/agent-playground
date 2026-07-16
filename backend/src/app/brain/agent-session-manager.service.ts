@@ -17,12 +17,14 @@ import type { Subscription } from 'rxjs';
 import { modeApprovesPlan } from '@workspace/shared';
 import { LeaderElectionService } from '../cluster';
 import type {
-  ChatStimulus,
-  EventStimulus,
+  EventMessage,
   Job,
   JobKind,
   JobStatus,
+  Message,
+  MessageType,
   SeedRow,
+  TurnEnvelope,
 } from '../domain';
 import { MemoryStore } from '../memory';
 import {
@@ -95,40 +97,30 @@ import {
   postBuildGateSeed,
 } from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
-import { agentMessage, fromExternal } from '../prompt-kit/message';
+import { fromExternal } from '../prompt-kit/message';
 import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
 import {
   chunkKey,
+  composeMessageBody,
   RESET_VERIFY_TEXT,
   COMPACTION_SYSTEM,
   COMPACTION_INSTRUCTION,
   CONTINUATION_PREAMBLE,
   foldCompactionSeed,
-  renderWorkOwedNudge,
-  renderRequestChangesDelivery,
   renderEventDelivery,
   renderFollowUpJobSeed,
-  renderDoneDelivery,
-  doneRecordBody,
   frameAnswer,
   composeTurn,
   composeSeedTurn,
   maskedSecretNotice,
   maskedFileNotice,
-  wakeUnblockedJobBody,
   wakeForAmendApprovedBody,
   retryResumeNudge,
-  resetContinuationNotice,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
 // agent-session-manager.spec) keep resolving after the content catalog moved into the prompt-kit hub.
-export {
-  CONTINUATION_PREAMBLE,
-  haltTriageGuidance,
-  renderDoneDelivery,
-  doneRecordBody,
-} from '../prompt-kit/harness';
+export { CONTINUATION_PREAMBLE } from '../prompt-kit/harness';
 import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import {
   pipelineStateSignature,
@@ -721,6 +713,7 @@ export class AgentSessionManager
               label: `The operator answered your question ${JSON.stringify(q.question)}: ${q.answer}`,
               chunkKey: chunkKey.qa(q.jobId, q.questionId),
             },
+            type: 'answer_question',
             seedQuestionId: q.questionId,
           }).catch((err) =>
             this.logger.warn(
@@ -770,6 +763,7 @@ export class AgentSessionManager
               label: notice,
               chunkKey: chunkKey.secret(s.jobId, s.name),
             },
+            type: 'secret_provided',
             seedSecretId: s.requestId,
           }).catch((err) =>
             this.logger.warn(
@@ -803,6 +797,7 @@ export class AgentSessionManager
               label: notice,
               chunkKey: chunkKey.file(f.jobId, f.path),
             },
+            type: 'file_answered',
             seedFileId: f.requestId,
           }).catch((err) =>
             this.logger.warn(
@@ -947,7 +942,7 @@ export class AgentSessionManager
   ): Promise<void> {
     const leftovers = await this.stimulusStore
       .undeliveredChatForLane(jobId, laneFor('builder', threadId))
-      .catch(() => [] as ChatStimulus[]);
+      .catch(() => [] as TurnEnvelope[]);
     for (const s of leftovers) {
       const labeled = `Undelivered host seed from build thread ${threadId}: ${s.body}`;
       await this.stimulusStore
@@ -980,15 +975,10 @@ export class AgentSessionManager
       await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
       return;
     }
-    const stimulus = harnessDeliveryStimulus({
-      jobId,
-      orgId,
-      repoId,
-      body: wakeUnblockedJobBody(input.note),
-      seedRow: {
-        label: 'Unblocked — a blocking job resolved.',
-        chunkKey: `seed:unblock:${jobId}`,
-      },
+    const stimulus = seedEnvelope({
+      ...seedBase({ jobId, orgId, repoId }),
+      type: 'unblocked_job_wake',
+      note: input.note,
     });
     await this.handleChatTurn(stimulus);
   }
@@ -1114,7 +1104,7 @@ export class AgentSessionManager
    * after — never two concurrent engine turns resuming the same session id. Runs an in-sandbox engine
    * turn with the 6 host-side tools; the session is resumed across turns.
    */
-  async handleChatTurn(stimulus: ChatStimulus): Promise<void> {
+  async handleChatTurn(stimulus: TurnEnvelope): Promise<void> {
     // Drain gate: once this instance is draining (SIGTERM), accept NO new turns. Operator turns are
     // already rejected with 503 at the surface; this catches internal/boot re-delivery callers so the
     // in-flight set can actually quiesce. A no-op (not a throw) — internal callers are fire-and-forget.
@@ -1145,8 +1135,7 @@ export class AgentSessionManager
     // run its own (guarded) turn so its fresh-container cold-attach semantics are unchanged. The DB-level
     // single-brain-turn guard (`register` → `BrainTurnAlreadyRunningError`) backstops the check→queue race.
     if (
-      !stimulus.seedResetVerify &&
-      !stimulus.compact &&
+      !isStandaloneSeed(stimulus.message.type) &&
       (await this.steerIntoLiveBrainTurn(stimulus).catch((err) => {
         this.logger.warn(
           `steer-into-live pre-check failed for job=${stimulus.jobId}: ${err}`,
@@ -1191,7 +1180,7 @@ export class AgentSessionManager
    * Seeds / synthetic Atlas turns already carry framed bodies (`<system_notice>`, event/halt framing) —
    * pass through untouched.
    */
-  private engineBody(stimulus: ChatStimulus): string {
+  private engineBody(stimulus: TurnEnvelope): string {
     if (!isOperatorAuthored(stimulus)) return stimulus.body;
     if (stimulus.chunks?.length) return renderTurn(stimulus.chunks);
     return renderTurn([userChunkFor(stimulus)]);
@@ -1214,9 +1203,9 @@ export class AgentSessionManager
    * fallback keys on a body hash), so live delivery + the boot re-delivery sweep collapse to ONE row.
    * Fail-soft — best-effort like {@link persistChunkRows}.
    */
-  private persistSeedRow(stimulus: ChatStimulus): void {
+  private persistSeedRow(stimulus: TurnEnvelope): void {
     if (stimulus.author.id !== SYSTEM_SEED_AUTHOR.id) return; // harness seeds only
-    if (stimulus.seedResetVerify) return; // reset already rides a notice chunk row
+    if (stimulus.message.type === 'reset_verify') return; // reset already rides a notice chunk row
     const desc = stimulus.seedRow;
     if (desc === 'skip') return; // content already has a durable row elsewhere
     const row: Exclude<SeedRow, 'skip'> = desc ?? {
@@ -1243,6 +1232,11 @@ export class AgentSessionManager
         ...(row.severity ? { severity: row.severity } : {}),
         ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
         ...(row.framing ? { framing: row.framing } : {}),
+        // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); skip the type-less legacy
+        // `'seed'`/operator `'user'` values, which carry no per-type presentation.
+        ...(stimulus.message.type !== 'user'
+          ? { seedType: stimulus.message.type }
+          : {}),
       })
       ?.catch((err: unknown) =>
         this.logger.debug(`persistSeedRow failed (best-effort): ${err}`),
@@ -1250,7 +1244,7 @@ export class AgentSessionManager
   }
 
   private persistChunkRows(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     notices: TurnChunk[],
     reminders: TurnChunk[],
   ): void {
@@ -1277,7 +1271,7 @@ export class AgentSessionManager
   }
 
   private async steerIntoLiveBrainTurn(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
   ): Promise<boolean> {
     if (typeof this.engineRunner.steer !== 'function') return false;
     const live = await this.turnRegistry
@@ -1333,27 +1327,30 @@ export class AgentSessionManager
    * an answered/provided, not-yet-delivered card is stamped. A plain chat message or bare nudge (no card id)
    * is a no-op.
    */
-  private async stampLegacySeedCard(stimulus: ChatStimulus): Promise<void> {
-    if (stimulus.seedQuestionId) {
+  private async stampLegacySeedCard(stimulus: TurnEnvelope): Promise<void> {
+    // The delivered-id arrays hold one id (a solo card delivery) or many (a combined `answer-batch`). Loop
+    // each with the same per-kind guarded logic — per-id best-effort (`.catch` + continue), so a transient
+    // failure on one card leaves it owed for the sweep without stranding the rest of the batch.
+    for (const questionId of stimulus.deliveredQuestionIds ?? []) {
       const card = await this.store
-        .getQuestionCard(stimulus.jobId, stimulus.seedQuestionId)
+        .getQuestionCard(stimulus.jobId, questionId)
         .catch(() => null);
       if (card?.answer != null && card.deliveredAt == null) {
         await this.store
-          .markQuestionDelivered(stimulus.jobId, stimulus.seedQuestionId)
+          .markQuestionDelivered(stimulus.jobId, questionId)
           .catch((err) =>
             this.logger.warn(`markQuestionDelivered (steer) failed: ${err}`),
           );
       }
     }
-    if (stimulus.seedSecretId) {
+    for (const secretId of stimulus.deliveredSecretIds ?? []) {
       const card = await this.store
-        .getSecretCard(stimulus.jobId, stimulus.seedSecretId)
+        .getSecretCard(stimulus.jobId, secretId)
         .catch(() => null);
       if (card?.provided_at != null) {
         if (card.delivered_at == null) {
           await this.store
-            .markSecretDelivered(stimulus.jobId, stimulus.seedSecretId)
+            .markSecretDelivered(stimulus.jobId, secretId)
             .catch((err) =>
               this.logger.warn(
                 `markSecretDelivered (legacy seed) failed: ${err}`,
@@ -1366,7 +1363,7 @@ export class AgentSessionManager
         // pointer still equals this requestId — which also heals a pre-deploy legacy durable/mcp request that
         // left the pointer set before per-card secrets existed.
         await this.store
-          .clearAwaitingSecret(stimulus.jobId, stimulus.seedSecretId)
+          .clearAwaitingSecret(stimulus.jobId, secretId)
           .catch((err) =>
             this.logger.warn(
               `clearAwaitingSecret (legacy seed) failed: ${err}`,
@@ -1374,61 +1371,7 @@ export class AgentSessionManager
           );
       }
     }
-    if (stimulus.seedFileId) {
-      const card = await this.store
-        .getFileCard(stimulus.jobId, stimulus.seedFileId)
-        .catch(() => null);
-      if (card?.provided_at != null && card.delivered_at == null) {
-        await this.store
-          .markFileDelivered(stimulus.jobId, stimulus.seedFileId)
-          .catch((err) =>
-            this.logger.warn(`markFileDelivered (steer) failed: ${err}`),
-          );
-      }
-    }
-    // BATCH seed: a single combined `answer-batch` seed carries arrays of ids. Loop each with the SAME
-    // per-kind guarded logic as the singular blocks above — per-id best-effort (`.catch` + continue), so a
-    // transient failure on one card leaves it owed for the sweep without stranding the rest of the batch.
-    for (const questionId of stimulus.seedQuestionIds ?? []) {
-      const card = await this.store
-        .getQuestionCard(stimulus.jobId, questionId)
-        .catch(() => null);
-      if (card?.answer != null && card.deliveredAt == null) {
-        await this.store
-          .markQuestionDelivered(stimulus.jobId, questionId)
-          .catch((err) =>
-            this.logger.warn(
-              `markQuestionDelivered (batch steer) failed: ${err}`,
-            ),
-          );
-      }
-    }
-    for (const secretId of stimulus.seedSecretIds ?? []) {
-      const card = await this.store
-        .getSecretCard(stimulus.jobId, secretId)
-        .catch(() => null);
-      if (card?.provided_at != null) {
-        if (card.delivered_at == null) {
-          await this.store
-            .markSecretDelivered(stimulus.jobId, secretId)
-            .catch((err) =>
-              this.logger.warn(
-                `markSecretDelivered (batch legacy seed) failed: ${err}`,
-              ),
-            );
-        }
-        // Unconditional compare-and-clear — a no-op for durable/mcp per-card secrets (no pointer), same as
-        // the singular block above.
-        await this.store
-          .clearAwaitingSecret(stimulus.jobId, secretId)
-          .catch((err) =>
-            this.logger.warn(
-              `clearAwaitingSecret (batch legacy seed) failed: ${err}`,
-            ),
-          );
-      }
-    }
-    for (const fileId of stimulus.seedFileIds ?? []) {
+    for (const fileId of stimulus.deliveredFileIds ?? []) {
       const card = await this.store
         .getFileCard(stimulus.jobId, fileId)
         .catch(() => null);
@@ -1436,7 +1379,7 @@ export class AgentSessionManager
         await this.store
           .markFileDelivered(stimulus.jobId, fileId)
           .catch((err) =>
-            this.logger.warn(`markFileDelivered (batch steer) failed: ${err}`),
+            this.logger.warn(`markFileDelivered (steer) failed: ${err}`),
           );
       }
     }
@@ -1456,32 +1399,25 @@ export class AgentSessionManager
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
     if (!stimulus) return false;
-    const {
-      jobId,
-      seedQuestionId,
-      seedSecretId,
-      seedFileId,
-      seedQuestionIds,
-      seedSecretIds,
-      seedFileIds,
-    } = stimulus;
+    const { jobId, deliveredQuestionIds, deliveredSecretIds, deliveredFileIds } =
+      stimulus;
 
-    if (seedQuestionId) {
-      // No .catch here: getQuestionCard returns null for a genuinely-absent card, and a THROWN error is
-      // transient — it must PROPAGATE so the caller skips the trailing markChatDelivered and the sweep re-drives
-      // (never stamping the row delivered while its card stays stranded, per this function's stated invariant).
-      const card = await this.store.getQuestionCard(jobId, seedQuestionId);
+    // Loop the delivered-id arrays (one id for a solo card delivery, many for a combined `answer-batch`).
+    // NO `.catch` here (unlike `stampLegacySeedCard`): this function's invariant is that a transient error
+    // PROPAGATES so the caller skips the trailing `markChatDelivered` and the sweep re-drives the whole
+    // idempotent sequence — a card is never left stranded behind a delivered row. `getQuestionCard` returns
+    // null for a genuinely-absent card; only a THROWN (transient) error propagates.
+    for (const questionId of deliveredQuestionIds ?? []) {
+      const card = await this.store.getQuestionCard(jobId, questionId);
       if (card?.answer != null && card.deliveredAt == null) {
-        await this.store.markQuestionDelivered(jobId, seedQuestionId);
+        await this.store.markQuestionDelivered(jobId, questionId);
       }
     }
-
-    if (seedSecretId) {
-      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
-      const card = await this.store.getSecretCard(jobId, seedSecretId);
+    for (const secretId of deliveredSecretIds ?? []) {
+      const card = await this.store.getSecretCard(jobId, secretId);
       if (card?.provided_at != null) {
         if (card.delivered_at == null) {
-          await this.store.markSecretDelivered(jobId, seedSecretId);
+          await this.store.markSecretDelivered(jobId, secretId);
         }
         // Only the EPHEMERAL lane uses the single-slot `awaiting_secret_id` pointer (durable/mcp is per-card,
         // like the file lane) — but this is called unconditionally regardless of `card.ephemeral`:
@@ -1489,38 +1425,10 @@ export class AgentSessionManager
         // requestId, which also heals a pre-deploy legacy durable/mcp request that left the pointer set before
         // per-card secrets existed. Clear even if the card was already marked delivered by a prior partial
         // tail: the row must not be delivered until both stamps have succeeded.
-        await this.store.clearAwaitingSecret(jobId, seedSecretId);
-      }
-    }
-
-    if (seedFileId) {
-      // No .catch: a null is a genuinely-absent card; a thrown error is transient and must propagate (see above).
-      const card = await this.store.getFileCard(jobId, seedFileId);
-      if (card?.provided_at != null && card.delivered_at == null) {
-        await this.store.markFileDelivered(jobId, seedFileId);
-      }
-    }
-
-    // BATCH seed: loop the id arrays a combined `answer-batch` seed carries. NO `.catch` here (unlike
-    // `stampLegacySeedCard`): this function's invariant is that a transient error PROPAGATES so the caller
-    // skips the trailing `markChatDelivered` and the sweep re-drives the whole idempotent sequence — a card
-    // is never left stranded behind a delivered row.
-    for (const questionId of seedQuestionIds ?? []) {
-      const card = await this.store.getQuestionCard(jobId, questionId);
-      if (card?.answer != null && card.deliveredAt == null) {
-        await this.store.markQuestionDelivered(jobId, questionId);
-      }
-    }
-    for (const secretId of seedSecretIds ?? []) {
-      const card = await this.store.getSecretCard(jobId, secretId);
-      if (card?.provided_at != null) {
-        if (card.delivered_at == null) {
-          await this.store.markSecretDelivered(jobId, secretId);
-        }
         await this.store.clearAwaitingSecret(jobId, secretId);
       }
     }
-    for (const fileId of seedFileIds ?? []) {
+    for (const fileId of deliveredFileIds ?? []) {
       const card = await this.store.getFileCard(jobId, fileId);
       if (card?.provided_at != null && card.delivered_at == null) {
         await this.store.markFileDelivered(jobId, fileId);
@@ -1533,7 +1441,7 @@ export class AgentSessionManager
    * SUCCESS-TAIL seed stamp: mark the durable stimulus row delivered AND stamp its question/secret/file card,
    * together, so a seed's `stimuli.delivered_at` and its card `deliveredAt` commit as one on consumption (never
    * on steer-dispatch/registration). Keyed on the durable `stimuli.id` passed EXPLICITLY — on the reattach path
-   * the reconstructed `ChatStimulus.id` is the engine turn id, not the row. Best-effort: a failed stamp leaves
+   * the reconstructed `TurnEnvelope.id` is the engine turn id, not the row. Best-effort: a failed stamp leaves
    * BOTH owed for the sweep (at-least-once).
    */
   private async stampSeedCardSuccessTails(
@@ -1564,7 +1472,7 @@ export class AgentSessionManager
    * also stops the edit-6 boot backfill from recreating the row); operator chat keeps the `onRegistered` path.
    */
   private async markTerminallyDelivered(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     if (isSeedCardDelivery(stimulus)) {
@@ -1588,6 +1496,13 @@ export class AgentSessionManager
     repoId: string;
     body: string;
     seedRow: SeedRow;
+    /** The typed card-confirmation variant this re-delivery reproduces — persisted on the durable row's
+     *  `type` + stamped as `meta.seedType` so the boot re-drive renders the SAME per-type pill as the live
+     *  path. The body is already framed by the caller, so no re-render through `composeMessageBody`. */
+    type: Extract<
+      MessageType,
+      'answer_question' | 'secret_provided' | 'file_answered'
+    >;
     seedQuestionId?: string;
     seedSecretId?: string;
     seedFileId?: string;
@@ -1612,6 +1527,7 @@ export class AgentSessionManager
       replyRoute: { surfaceId: 'web', jobRef: input.jobId },
       body: input.body,
       systemChunk: input.seedRow,
+      type: input.type,
       ...target,
     });
     await this.enqueueChat(recorded);
@@ -1626,7 +1542,7 @@ export class AgentSessionManager
   // self-heals instead of silently losing the message (see the durable-delivery redesign).
 
   /** BrainSink.enqueueChat — a persisted operator message is ready; ensure the brain takes it. */
-  async enqueueChat(stimulus: ChatStimulus): Promise<void> {
+  async enqueueChat(stimulus: TurnEnvelope): Promise<void> {
     await this.pumpThread(
       stimulus.jobId,
       stimulus.orgId,
@@ -1730,7 +1646,7 @@ export class AgentSessionManager
         const ids = collected.ids;
         // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
         // message); the brain reads them together as this turn's task. Base fields come from the oldest.
-        const combined: ChatStimulus = {
+        const combined: TurnEnvelope = {
           ...collected.pending[0],
           body: collected.pending.map((p) => p.body).join('\n\n'),
           // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
@@ -1787,11 +1703,11 @@ export class AgentSessionManager
         this.logger.warn(
           `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
         );
-        return [] as ChatStimulus[];
+        return [] as TurnEnvelope[];
       });
     if (pending.length === 0) return null;
     const operatorHead = isOperatorAuthored(pending[0]);
-    const batch: ChatStimulus[] = [];
+    const batch: TurnEnvelope[] = [];
     for (const p of pending) {
       if (isOperatorAuthored(p) !== operatorHead) break;
       batch.push(p);
@@ -1948,22 +1864,21 @@ export class AgentSessionManager
         review.job_id,
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
       )
-      .catch(() => [] as ChatStimulus[]);
+      .catch(() => [] as TurnEnvelope[]);
     if (pendingChat.some(isWakeEligible)) return; // the chat sweep will re-drive this job (later-only never wakes on its own)
 
     this.workOwedNudgedAt.set(review.job_id, Date.now());
     this.logger.log(
       `work-owed review: re-driving job=${review.job_id} (review stranded 'running' for ${Math.round(ageMs / 1000)}s)`,
     );
-    const stimulus = harnessDeliveryStimulus({
-      jobId: review.job_id,
-      orgId: review.org_id,
-      repoId: job.repoId,
-      body: renderWorkOwedNudge(),
-      seedRow: {
-        label: 'Resuming a stranded Codex review that was left running.',
-        chunkKey: `seed:work-owed:${review.id}`,
-      },
+    const stimulus = seedEnvelope({
+      ...seedBase({
+        jobId: review.job_id,
+        orgId: review.org_id,
+        repoId: job.repoId,
+      }),
+      type: 'work_owed_nudge',
+      reviewId: review.id,
     });
     await this.handleChatTurn(stimulus);
   }
@@ -2158,18 +2073,17 @@ export class AgentSessionManager
         repoId?: string;
         author?: { id: string; displayName: string };
         body?: string;
-        seed?: boolean;
-        seedQuestionId?: string;
-        seedSecretId?: string;
-        seedFileId?: string;
-        seedQuestionIds?: string[];
-        seedSecretIds?: string[];
-        seedFileIds?: string[];
+        // The `Message` type this turn ran (supersedes the retired `seed*` booleans) — drives the guard
+        // switches on the rebuilt envelope's `message.type`.
+        type?: MessageType;
+        deliveredQuestionIds?: string[];
+        deliveredSecretIds?: string[];
+        deliveredFileIds?: string[];
         // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
-        // the RIGHT row (the reconstructed `ChatStimulus.id` below is `row.turn_id`, the engine turn, not the row).
+        // the RIGHT row (the reconstructed `TurnEnvelope.id` below is `row.turn_id`, the engine turn, not the row).
         deliveryStimulusId?: string;
         // SESSION RE-HOME: this turn persists its session onto `threads.session_id` for this thread, not the
-        // job sandbox (see {@link ChatStimulus.resumeThreadId}) — carried so a reattach persists the same target.
+        // job sandbox (see {@link TurnEnvelope.resumeThreadId}) — carried so a reattach persists the same target.
         resumeThreadId?: string;
         // Dispatch-time credential the turn ran on — re-stamped onto rate_limit events so the reattach path
         // feeds the credential-scoped usage snapshot exactly like a fresh dispatch (else it tags `undefined`).
@@ -2189,11 +2103,20 @@ export class AgentSessionManager
         );
         return;
       }
-      // Rebuild the ChatStimulus buildTools closes over (orgId/repoId/jobId/author/body).
-      const stimulus: ChatStimulus = {
+      // Rebuild the TurnEnvelope buildTools closes over (orgId/repoId/jobId/author/body). `message` is a
+      // documented partial (only `.type` + identity real — {@link syntheticMessage}): the already-rendered
+      // `body` is carried on the envelope, so no re-render, and the variant args are never read post-render.
+      const type: MessageType = ctx.type ?? 'user';
+      const stimulus: TurnEnvelope = {
+        message: syntheticMessage({
+          id: row.turn_id,
+          orgId: row.org_id,
+          repoId: ctx.repoId,
+          jobId: row.job_id,
+          receivedAt: new Date(),
+          type,
+        }),
         id: row.turn_id,
-        kind: 'chat',
-        trust: 'trusted',
         orgId: row.org_id,
         repoId: ctx.repoId,
         jobId: row.job_id,
@@ -2201,17 +2124,15 @@ export class AgentSessionManager
         author: ctx.author,
         replyRoute: { surfaceId: 'web', jobRef: row.job_id },
         receivedAt: new Date(),
-        ...(ctx.seed ? { seed: true } : {}),
-        ...(ctx.seedQuestionId ? { seedQuestionId: ctx.seedQuestionId } : {}),
-        ...(ctx.seedSecretId ? { seedSecretId: ctx.seedSecretId } : {}),
-        ...(ctx.seedFileId ? { seedFileId: ctx.seedFileId } : {}),
-        ...(ctx.seedQuestionIds?.length
-          ? { seedQuestionIds: ctx.seedQuestionIds }
+        ...(ctx.deliveredQuestionIds?.length
+          ? { deliveredQuestionIds: ctx.deliveredQuestionIds }
           : {}),
-        ...(ctx.seedSecretIds?.length
-          ? { seedSecretIds: ctx.seedSecretIds }
+        ...(ctx.deliveredSecretIds?.length
+          ? { deliveredSecretIds: ctx.deliveredSecretIds }
           : {}),
-        ...(ctx.seedFileIds?.length ? { seedFileIds: ctx.seedFileIds } : {}),
+        ...(ctx.deliveredFileIds?.length
+          ? { deliveredFileIds: ctx.deliveredFileIds }
+          : {}),
         // Preserve the session re-home target so a reattached open-PR turn persists onto the thread, not the
         // job sandbox (else the fresh session would leak back onto `job_sandboxes.session_id`).
         ...(ctx.resumeThreadId ? { resumeThreadId: ctx.resumeThreadId } : {}),
@@ -2346,7 +2267,7 @@ export class AgentSessionManager
    * writes never block the turn. Delegates the actual turn to `runChatTurnInner`.
    */
   private async runChatTurn(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     await this.store.setActivity(stimulus.jobId, 'turn').catch(() => undefined);
@@ -2383,7 +2304,7 @@ export class AgentSessionManager
    * latch MISS leaves the job `running` for that same reconciler backstop.
    */
   private async latchDirectBuildAtTurnEnd(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
   ): Promise<void> {
     if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
     const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
@@ -2410,7 +2331,7 @@ export class AgentSessionManager
    *  jobKind conditions. A missing/unreadable thread row falls back to 'planning' rather than failing the
    *  turn. Single source for both the prompt persona (`resolvePromptAgent`) and any other per-stage lookup
    *  (e.g. `threadKindSpec(...).reasoningEffort`) so they never drift apart. */
-  private async resolveStageKind(stimulus: ChatStimulus): Promise<ThreadRole> {
+  private async resolveStageKind(stimulus: TurnEnvelope): Promise<ThreadRole> {
     const stageRole = stimulus.resumeThreadId
       ? await this.driverStore
           .threadRole(stimulus.resumeThreadId)
@@ -2420,7 +2341,7 @@ export class AgentSessionManager
   }
 
   /** Which stage persona this turn runs as (see `resolveStageKind`). */
-  private async resolvePromptAgent(stimulus: ChatStimulus): Promise<Agent> {
+  private async resolvePromptAgent(stimulus: TurnEnvelope): Promise<Agent> {
     return threadKindSpec(await this.resolveStageKind(stimulus)).agent;
   }
 
@@ -2429,7 +2350,7 @@ export class AgentSessionManager
    *  (the delivery pump's fresh-turn path) fires when the turn becomes restart-survivable, so the pump can
    *  stamp the operator message(s) `delivered_at` at hand-off rather than at completion. */
   private async runChatTurnInner(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
     const resetKey = `${stimulus.orgId}:${stimulus.jobId}`;
@@ -2448,7 +2369,10 @@ export class AgentSessionManager
     // Reset-verify continuation no-op: the verify instruction rides the reset-notice, consumed by whichever
     // turn cold-attaches FIRST. If an earlier turn (e.g. a queued operator message) already consumed it,
     // this synthetic wake has nothing to do — drop it rather than run a redundant turn on the warm box.
-    if (stimulus.seedResetVerify && !this.pendingResetVerify.has(resetKey))
+    if (
+      stimulus.message.type === 'reset_verify' &&
+      !this.pendingResetVerify.has(resetKey)
+    )
       return;
 
     // The job may have become blocked after this turn was queued. Do not mark chat delivered here; it should
@@ -2575,7 +2499,7 @@ export class AgentSessionManager
     // transcript), and stash the summary as the next turn's seed. Runs a summarization engine turn and
     // returns early — NOT a normal conversational turn. Serialized on this per-job queue, so it never races
     // the turn it compacts, and the build (separate driver sessions) is unaffected.
-    if (stimulus.compact) {
+    if (stimulus.message.type === 'compaction') {
       await this.runCompaction(
         stimulus,
         sandbox,
@@ -2974,32 +2898,25 @@ export class AgentSessionManager
         channel,
         lane: this.laneForStimulus(stimulus),
         kind: 'brain',
-        // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachOne).
-        // `seed`/`seedQuestionId` are persisted so a re-attached DELIVERY turn can still stamp its card
-        // `deliveredAt` on success — otherwise the boot sweep would re-seed that card on every restart forever.
+        // Enough to rebuild the TurnEnvelope + buildTools closure on a boot re-attach (see reattachOne).
+        // `type` + the delivered-id arrays are persisted so a re-attached DELIVERY turn can still stamp its
+        // card `deliveredAt` on success — otherwise the boot sweep would re-seed that card on every restart.
         ctx: {
           repoId: stimulus.repoId,
           sandboxKey,
           author: stimulus.author,
           body: stimulus.body,
-          ...(stimulus.seed ? { seed: true } : {}),
-          ...(stimulus.seedQuestionId
-            ? { seedQuestionId: stimulus.seedQuestionId }
+          type: stimulus.message.type,
+          // The delivered-card ids (one per solo card, many per combined batch) — persisted so a re-attached
+          // delivery turn stamps every card on success (else the boot sweep re-seeds each card on every restart).
+          ...(stimulus.deliveredQuestionIds?.length
+            ? { deliveredQuestionIds: stimulus.deliveredQuestionIds }
             : {}),
-          ...(stimulus.seedSecretId
-            ? { seedSecretId: stimulus.seedSecretId }
+          ...(stimulus.deliveredFileIds?.length
+            ? { deliveredFileIds: stimulus.deliveredFileIds }
             : {}),
-          ...(stimulus.seedFileId ? { seedFileId: stimulus.seedFileId } : {}),
-          // BATCH seed: persist the id arrays so a re-attached combined-batch delivery turn still stamps
-          // every card on success (else the boot sweep would re-seed each card on every restart forever).
-          ...(stimulus.seedQuestionIds?.length
-            ? { seedQuestionIds: stimulus.seedQuestionIds }
-            : {}),
-          ...(stimulus.seedFileIds?.length
-            ? { seedFileIds: stimulus.seedFileIds }
-            : {}),
-          ...(stimulus.seedSecretIds?.length
-            ? { seedSecretIds: stimulus.seedSecretIds }
+          ...(stimulus.deliveredSecretIds?.length
+            ? { deliveredSecretIds: stimulus.deliveredSecretIds }
             : {}),
           // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
           // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
@@ -3520,7 +3437,7 @@ export class AgentSessionManager
    * on whichever turn cold-attaches first; this continuation only guarantees a turn happens when nothing
    * else is queued. Fire-and-forget: awaiting `handleChatTurn` here would deadlock on the per-thread queue.
    */
-  private async maybeHonorSandboxReset(stimulus: ChatStimulus): Promise<void> {
+  private async maybeHonorSandboxReset(stimulus: TurnEnvelope): Promise<void> {
     const key = `${stimulus.orgId}:${stimulus.jobId}`;
     const req = this.resetRequests.get(key);
     if (!req) return;
@@ -3565,10 +3482,13 @@ export class AgentSessionManager
     this.pendingResetVerify.add(key);
 
     void this.handleChatTurn(
-      resetContinuationStimulus({
-        jobId: stimulus.jobId,
-        orgId: stimulus.orgId,
-        repoId: stimulus.repoId,
+      seedEnvelope({
+        ...seedBase({
+          jobId: stimulus.jobId,
+          orgId: stimulus.orgId,
+          repoId: stimulus.repoId,
+        }),
+        type: 'reset_verify',
       }),
     ).catch((err) =>
       this.logger.warn(
@@ -3601,7 +3521,7 @@ export class AgentSessionManager
    * registers names present in the returned map), so a gated-out tool is un-callable, not just discouraged.
    */
   buildTools(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     kind: string | null = null,
     repoSlug: string | null = null,
     role: ThreadRole | null = null,
@@ -4951,7 +4871,7 @@ export class AgentSessionManager
    * dispatched through `SelfSufficiencyToolsService` so the brain and headless build threads run the SAME
    * handler bodies. org/repo/job/author come from the stimulus's closure (never tool args) — tenant safety.
    */
-  private selfSufficiencyTools(stimulus: ChatStimulus) {
+  private selfSufficiencyTools(stimulus: TurnEnvelope) {
     return this.selfSufficiency.buildTools({
       jobId: stimulus.jobId,
       orgId: stimulus.orgId,
@@ -4968,7 +4888,7 @@ export class AgentSessionManager
    * A withdrawn card greys out (no file picker) and a racing upload for it becomes a no-op. org/repo/job
    * come from the closure (never tool args) — tenant safety.
    */
-  private buildWithdrawFileRequestTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWithdrawFileRequestTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const requestId = String(args['requestId'] ?? '').trim();
       if (!requestId) return { ok: false, reason: 'requestId is required' };
@@ -5003,7 +4923,7 @@ export class AgentSessionManager
    * per-card durable/mcp lane — the ephemeral (`deliver_to`) lane is single-slot and not withdrawable here.
    * org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildWithdrawSecretRequestTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWithdrawSecretRequestTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const requestId = String(args['requestId'] ?? '').trim();
       if (!requestId) return { ok: false, reason: 'requestId is required' };
@@ -5042,7 +4962,7 @@ export class AgentSessionManager
    * only when you are deliberately replacing it. Posts a quiet system-event pill for operator visibility
    * (name/path only, never the value — same rule as every other secret path).
    */
-  private buildDeriveSecretTool(stimulus: ChatStimulus): ToolImpl {
+  private buildDeriveSecretTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const path = String(args['path'] ?? '').trim();
@@ -5117,7 +5037,7 @@ export class AgentSessionManager
    * OTHER in-flight job's very next hydration instantly — no PR, no wait. Secrets are NEVER written here
    * (they live as encrypted grants); a `secrets` field is rejected. Validated before write.
    */
-  private buildWriteWorkspaceConfigTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWriteWorkspaceConfigTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       if (args['secrets'] !== undefined) {
         return {
@@ -5189,7 +5109,7 @@ export class AgentSessionManager
    * from the closure (never tool args) — tenant safety. Writes to the same store as `write_workspace_config`.
    * The right way to test it is `reset_sandbox`, which recreates the container so the script runs cold.
    */
-  private buildWriteSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWriteSetupScriptTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const script = String(args['script'] ?? '').trim()
         ? String(args['script'])
@@ -5237,7 +5157,7 @@ export class AgentSessionManager
    * system event. org/repo come from the closure (never tool args) — tenant safety. Reuses the same store
    * (`WorkspaceConfigStore.getSetupScript`) that resolves the script on cold attach.
    */
-  private buildReadSetupScriptTool(stimulus: ChatStimulus): ToolImpl {
+  private buildReadSetupScriptTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       try {
         const script = await this.configStore.getSetupScript(
@@ -5254,7 +5174,7 @@ export class AgentSessionManager
     };
   }
 
-  private buildWritePreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+  private buildWritePreviewInstructionsTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const instructions = String(args['instructions'] ?? '').trim()
         ? String(args['instructions'])
@@ -5281,7 +5201,7 @@ export class AgentSessionManager
     };
   }
 
-  private buildReadPreviewInstructionsTool(stimulus: ChatStimulus): ToolImpl {
+  private buildReadPreviewInstructionsTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       try {
         const instructions = await this.configStore.getPreviewInstructions(
@@ -5332,7 +5252,7 @@ export class AgentSessionManager
    * via `request_secret` (with an `mcp` target) — no secret value ever passes through this tool. Reserved
    * system names are rejected. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeMcpServersTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeMcpServersTool(stimulus: TurnEnvelope): ToolImpl {
     const NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
     const VALID_SURFACES = new Set<McpSurface>(['brain', 'build', 'review']);
     // A secret entry carries NO value (the operator supplies it later via request_secret — invariant). A
@@ -5539,7 +5459,7 @@ export class AgentSessionManager
    * the onboarding brain can compare the stack it just mapped against each profile's `detect_hint` and pick
    * the best match (or decide none fits). Read-only; org comes from the closure (never a tool arg).
    */
-  private buildListConventionProfilesTool(stimulus: ChatStimulus): ToolImpl {
+  private buildListConventionProfilesTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       if (!this.conventions)
         return {
@@ -5573,7 +5493,7 @@ export class AgentSessionManager
    * `slug:'none'` (or empty) posts NO card — a repo that follows no house style just stays unset (the safe
    * default), and the tool acknowledges. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeConventionProfileTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeConventionProfileTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const slug = String(args['slug'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
@@ -5646,7 +5566,7 @@ export class AgentSessionManager
    * shows the prior body); a new `slug` is a CREATE. org/repo/job come from the closure (never tool args).
    */
   private buildProposeConventionProfileChangeTool(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
   ): ToolImpl {
     const SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     return async (args) => {
@@ -5736,7 +5656,7 @@ export class AgentSessionManager
    * NEVER returns a secret value (secret header/env slots surface as `secretKeys` names only). org comes
    * from the closure (never tool args) — tenant safety.
    */
-  private buildListMcpServersTool(stimulus: ChatStimulus): ToolImpl {
+  private buildListMcpServersTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       if (!this.mcpStore)
         return {
@@ -5786,7 +5706,7 @@ export class AgentSessionManager
    * ungated (like `list_convention_profiles`) — the brain reads it before proposing a new/edited one so it
    * doesn't duplicate an existing skill. org comes from the closure (never tool args) — tenant safety.
    */
-  private buildListSkillsTool(stimulus: ChatStimulus): ToolImpl {
+  private buildListSkillsTool(stimulus: TurnEnvelope): ToolImpl {
     return async () => {
       if (!this.skillStore)
         return {
@@ -5834,7 +5754,7 @@ export class AgentSessionManager
    * the skill — on-demand description-match already gates loading, so there is no per-lane knob. org/repo/job
    * come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeSkillTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeSkillTool(stimulus: TurnEnvelope): ToolImpl {
     const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const ALL_SURFACES: McpSurface[] = ['brain', 'build', 'review'];
     return async (args) => {
@@ -5960,7 +5880,7 @@ export class AgentSessionManager
    * OWNER's approval routes to `SkillInstallerService.install` (`provenance:'git'`, auto-updating). `scope` is
    * `'repo'` (default) or `'org'`. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeSkillInstallTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeSkillInstallTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const sourceUrl = String(args['sourceUrl'] ?? '').trim();
       const ref = String(args['ref'] ?? '').trim() || undefined;
@@ -6062,7 +5982,7 @@ export class AgentSessionManager
    * (`grantSkillEditAccess` → `RunEngineArgs.grantedSkills`). PER-CARD (like `request_file`) — several may
    * be open at once. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildRequestSkillEditAccessTool(stimulus: ChatStimulus): ToolImpl {
+  private buildRequestSkillEditAccessTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const name = String(args['skill'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
@@ -6150,7 +6070,7 @@ export class AgentSessionManager
    * approve endpoint deletes it via `WorkspaceSkillStore`. `scope` is `'repo'` (default) or `'org'` — it must
    * match the tier the skill lives on. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeSkillRemovalTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeSkillRemovalTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
@@ -6227,7 +6147,7 @@ export class AgentSessionManager
    * endpoint deletes it via `McpServerStore`. `scope` is `'repo'` (default) or `'org'` — the tier the server
    * lives on. org/repo/job come from the closure (never tool args) — tenant safety.
    */
-  private buildProposeMcpRemovalTool(stimulus: ChatStimulus): ToolImpl {
+  private buildProposeMcpRemovalTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const rationale = String(args['rationale'] ?? '').trim();
@@ -6311,7 +6231,7 @@ export class AgentSessionManager
    * the reset, and the turn tail (`maybeHonorSandboxReset`) tears down + kicks a fresh verify turn once Atlas
    * stops. A soft loop guard refuses a 4th consecutive unattended reset so a broken setup can't spin forever.
    */
-  private buildResetSandboxTool(stimulus: ChatStimulus): ToolImpl {
+  private buildResetSandboxTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const key = `${stimulus.orgId}:${stimulus.jobId}`;
       const reason = String(args['reason'] ?? '').trim() || 'no reason given';
@@ -6411,7 +6331,7 @@ export class AgentSessionManager
    * code changes are a normal part of onboarding, not just config), that diff still needs to reach the
    * repo, so it's shipped as its own PR for the operator to merge.
    */
-  private buildFinishOnboardingTool(stimulus: ChatStimulus): ToolImpl {
+  private buildFinishOnboardingTool(stimulus: TurnEnvelope): ToolImpl {
     return async (args) => {
       const summary = String(args['summary'] ?? '').trim();
       // Green-gate: onboarding may only conclude once Atlas has actually brought the stack up and checked
@@ -6531,11 +6451,11 @@ export class AgentSessionManager
   /**
    * Resolve which ANSWERED `ask_question` card a decision should attach, with multiple questions possibly
    * open: an explicit `questionId` (the brain named one) wins, else the card THIS turn delivered
-   * (`stimulus.seedQuestionId`), else the most-recently-answered not-yet-logged card. Returns the card +
+   * (`stimulus.deliveredQuestionIds`), else the most-recently-answered not-yet-logged card. Returns the card +
    * its id, or null when none is answered. There is no single-slot pointer to read.
    */
   private async resolveAnsweredCard(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     explicitQuestionId?: string,
   ): Promise<{ id: string; card: WebQuestionCard } | null> {
     const byId = async (id?: string) => {
@@ -6545,7 +6465,9 @@ export class AgentSessionManager
     };
     const explicit = await byId(explicitQuestionId);
     if (explicit) return explicit;
-    const seeded = await byId(stimulus.seedQuestionId);
+    // A card-answer delivery carries exactly one delivered question id (the batch send never resolves a
+    // decision through this path), so the head of the array is the card THIS turn delivered.
+    const seeded = await byId(stimulus.deliveredQuestionIds?.[0]);
     if (seeded) return seeded;
     const row = await this.store.latestAnsweredQuestionCard(stimulus.jobId);
     const card = row?.card as WebQuestionCard | undefined;
@@ -6663,7 +6585,7 @@ export class AgentSessionManager
    * flow but without blocking the session turn on it.
    */
   async requestApprovalAndAct(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     job: Job,
     decisionRecordId: string,
     card: DecisionApprovalCard,
@@ -6736,7 +6658,7 @@ export class AgentSessionManager
    * planning; `deny` → cancel.
    */
   private async actOnApprovalVerdict(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     job: Job,
     decisionRecordId: string,
     isDirect: boolean,
@@ -6799,15 +6721,15 @@ export class AgentSessionManager
       // actionable to deliver, so keep the ack and wait for the operator's next turn.
       if (resolution.note) {
         await this.handleChatTurn(
-          harnessDeliveryStimulus({
-            jobId: job.id,
-            orgId: job.orgId,
-            repoId: job.repoId,
-            body: renderRequestChangesDelivery(resolution.note),
-            seedRow: {
-              label: 'Operator requested changes — revising the plan.',
-              chunkKey: `seed:request-changes:${decisionRecordId}`,
-            },
+          seedEnvelope({
+            ...seedBase({
+              jobId: job.id,
+              orgId: job.orgId,
+              repoId: job.repoId,
+            }),
+            type: 'request_changes',
+            note: resolution.note,
+            decisionRecordId,
           }),
         );
         return;
@@ -6850,12 +6772,14 @@ export class AgentSessionManager
       return false;
     const rec = await this.store.loadDecisionRecord(job.decisionRecordId);
     if (!rec) return false;
-    const stimulus = harnessDeliveryStimulus({
+    const stimulus = internalEnvelope({
       jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
-      body: agentMessage(''),
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
       // Empty body — a pure mechanism to drive `actOnApprovalVerdict`; the verdict itself is visible.
+      type: 'user',
+      body: '',
       seedRow: 'skip',
     });
     const isDirect = (rec.threadTitles?.length ?? 0) === 0;
@@ -6890,7 +6814,7 @@ export class AgentSessionManager
    * don't compact this time). The build itself runs in SEPARATE driver sessions and is unaffected either way.
    */
   private async runCompaction(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     sandbox: { worktreePath: string; containerId?: string | null },
     sandboxRow: { session_id: string | null } | null,
     sessionId: string | undefined,
@@ -7164,19 +7088,15 @@ export class AgentSessionManager
     jobId: string,
     orgId: string,
     repoId: string,
-  ): ChatStimulus {
-    return {
-      id: randomUUID(),
-      kind: 'chat',
-      trust: 'trusted',
+  ): TurnEnvelope {
+    return internalEnvelope({
+      jobId,
       orgId,
       repoId,
-      jobId,
-      body: '',
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', jobRef: jobId },
-      receivedAt: new Date(),
-    };
+      type: 'user',
+      body: '',
+    });
   }
 
   /**
@@ -7201,21 +7121,23 @@ export class AgentSessionManager
    * session not worth a summary turn. MUST NOT be awaited from inside a live turn (it would deadlock on the
    * queue); it runs after the current turn drains, while the build proceeds in its own sessions.
    */
-  private async enqueueCompaction(stimulus: ChatStimulus): Promise<void> {
+  private async enqueueCompaction(stimulus: TurnEnvelope): Promise<void> {
     if (await this.shouldSkipCompaction(stimulus.jobId)) {
       this.logger.log(
         `compaction: job=${stimulus.jobId} skipped — session lean (below ${COMPACTION_MIN_OCCUPANCY_FRAC} of the window)`,
       );
       return;
     }
-    const compaction: ChatStimulus = {
-      ...stimulus,
-      id: randomUUID(),
-      body: '',
-      receivedAt: new Date(),
+    // A summarization turn (message.type `compaction` drives `runChatTurnInner`'s early branch) — built clean
+    // rather than spread from `stimulus`, so a source turn's delivered-card ids never ride onto it.
+    const compaction = internalEnvelope({
+      jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      compact: true,
-    };
+      type: 'compaction',
+      body: '',
+    });
     void this.handleChatTurn(compaction).catch((err) =>
       this.logger.error(
         `compaction turn failed to run for job=${stimulus.jobId}: ${err}`,
@@ -7234,7 +7156,7 @@ export class AgentSessionManager
    * the turn itself.
    */
   private async runDirectBuild(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     job: Job,
   ): Promise<void> {
     const instruction =
@@ -7252,13 +7174,14 @@ export class AgentSessionManager
       'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
       'Only then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
       'start_direct_build again.';
-    const synthetic: ChatStimulus = {
-      ...stimulus,
-      id: randomUUID(),
-      body: instruction,
-      receivedAt: new Date(),
+    const synthetic = internalEnvelope({
+      jobId: stimulus.jobId,
+      orgId: stimulus.orgId,
+      repoId: stimulus.repoId,
       author: { id: 'atlas', displayName: 'Atlas' },
-    };
+      type: 'user',
+      body: instruction,
+    });
     try {
       await this.handleChatTurn(synthetic);
     } catch (err) {
@@ -7296,18 +7219,14 @@ export class AgentSessionManager
       firstMessage,
       parent: job?.createdBy ?? null,
     });
-    const stimulus: ChatStimulus = {
-      id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
+    const stimulus = internalEnvelope({
+      jobId,
       orgId,
       repoId,
-      body: seed,
-      receivedAt: new Date(),
-      kind: 'chat',
-      trust: 'trusted',
-      jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', jobRef: jobId },
-    };
+      type: 'user',
+      body: seed,
+    });
     await this.handleChatTurn(stimulus);
   }
 
@@ -7341,18 +7260,14 @@ export class AgentSessionManager
       'propose_mcp_servers, match the repo against the org house-style profiles (list_convention_profiles → ' +
       'propose_convention_profile with the best-matching slug, or "none" if it follows none), then call ' +
       'finish_onboarding.';
-    const stimulus: ChatStimulus = {
-      id: randomUUID(),
+    const stimulus = internalEnvelope({
+      jobId,
       orgId,
       repoId,
-      body,
-      receivedAt: new Date(),
-      kind: 'chat',
-      trust: 'trusted',
-      jobId,
       author: { id: 'atlas', displayName: 'Atlas' },
-      replyRoute: { surfaceId: 'web', jobRef: jobId },
-    };
+      type: 'user',
+      body,
+    });
     await this.handleChatTurn(stimulus);
   }
 
@@ -7366,7 +7281,7 @@ export class AgentSessionManager
   // (the engine leaves such a steer un-acked) and the sweep re-drives it — closing the swallowed-steer race.
 
   /** BrainSink.deliverEvent — a routed event is ready; ensure the owning job's brain consumes it. */
-  async deliverEvent(stimulus: EventStimulus): Promise<void> {
+  async deliverEvent(stimulus: EventMessage): Promise<void> {
     await this.pumpEvent(stimulus);
   }
 
@@ -7379,13 +7294,14 @@ export class AgentSessionManager
    * seed steer fast-path (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the
    * swallowed-steer race.
    */
-  async pumpEvent(stimulus: EventStimulus): Promise<void> {
+  async pumpEvent(stimulus: EventMessage): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
     // Already delivered (an intake / sweep / boot race) → no-op. Cheap guard before paying a turn.
     const row = await this.stimulusRows.findOne({ where: { id: stimulus.id } });
     if (row?.delivered_at) return;
 
+    // The event is already an `EventMessage` (carrying its own `body`) — `renderEventDelivery` reads it directly.
     const body = renderEventDelivery(stimulus);
     const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
@@ -7435,7 +7351,7 @@ export class AgentSessionManager
 
   /** Run ONE fresh turn that consumes a single event, stamping delivery at the registration hand-off. */
   private async deliverEventViaFreshTurn(
-    stimulus: EventStimulus,
+    stimulus: EventMessage,
     body: AgentMessage,
   ): Promise<void> {
     // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
@@ -7459,14 +7375,13 @@ export class AgentSessionManager
     // Lease BEFORE dispatch (like the chat fresh path) so a concurrent sweep can't re-drive a duplicate
     // while this potentially-long turn runs.
     await this.stimulusStore.leaseChatStimuli([stimulus.id]);
-    const delivery = eventDeliveryStimulus({
+    const delivery = seedEnvelope(stimulus, {
       id: stimulus.id, // the DURABLE event-row id — so `onRegistered` stamps THIS row (not a synthetic uuid)
-      jobId: stimulus.jobId,
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      body,
+      body, // already framed + fenced by renderEventDelivery — rides straight through, no re-render
       seedRow: 'skip', // the untrusted event body already has a durable `system_event` row from intake
-      resumeThreadId: stimulus.resumeThreadId, // §CI-routing: routed to the `ci` thread when it exists
+      ...(stimulus.resumeThreadId
+        ? { resumeThreadId: stimulus.resumeThreadId } // §CI-routing: routed to the `ci` thread when it exists
+        : {}),
     });
     await this.runChatTurn(delivery, {
       // Restart-survivable hand-off: stamp delivered the instant the turn is registered + kicked (a later
@@ -7486,7 +7401,7 @@ export class AgentSessionManager
   /** LEADER periodic + boot re-drive of any routed event still undelivered (the event at-least-once sweep). */
   private async sweepUndeliveredEvents(): Promise<void> {
     if (this.election.getState() !== 'leader') return;
-    let events: EventStimulus[];
+    let events: EventMessage[];
     try {
       events = await this.stimulusStore.eligiblePendingEvents(
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
@@ -7635,7 +7550,7 @@ export class AgentSessionManager
   }
 
   private async buildMemoryRecallPrefix(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     sessionId?: string,
   ): Promise<string | null> {
     if (this.env?.get('MEMORY_AUTORECALL_DISABLED') === 'on') return null;
@@ -7738,7 +7653,7 @@ export class AgentSessionManager
    * Fire-and-forget with a debug-logged catch, matching this file's other best-effort append style.
    */
   private sandboxMilestoneNotifier(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
   ): (stage: SandboxMilestoneStage) => void {
     return (stage) => {
       const text =
@@ -7769,7 +7684,7 @@ export class AgentSessionManager
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────
 
   /** Post a reply in-thread AND append it to the durable transcript. */
-  private async say(stimulus: ChatStimulus, text: string): Promise<void> {
+  private async say(stimulus: TurnEnvelope, text: string): Promise<void> {
     let channel = stimulus.replyRoute.jobRef;
     let threadTs = stimulus.replyRoute.jobRef;
     try {
@@ -7802,7 +7717,7 @@ export class AgentSessionManager
    *  row. Mirrors {@link say} but is NOT in Atlas's voice — a benign harness ack the resumed brain
    *  session never authored, with no error/Resume semantics (contrast {@link saySystemOperator}). */
   private async saySystemNotice(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     text: string,
   ): Promise<void> {
     const route = await this.store.route({
@@ -7853,7 +7768,7 @@ export class AgentSessionManager
   }
 
   private async saySystemOperator(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     text: string,
     opts: {
       retryable?: boolean;
@@ -7932,7 +7847,7 @@ export class AgentSessionManager
   }
 
   private async scheduleHostRetry(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     reason: string,
   ): Promise<void> {
     const resumeAt = new Date(Date.now() + HOST_RETRY_BACKOFF_MS).toISOString();
@@ -7973,7 +7888,7 @@ export class AgentSessionManager
 
   /** Find the open scoping job on this thread, or open a fresh one. */
   private async ensureJob(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     title: string,
     kind: JobKind,
   ): Promise<string> {
@@ -8021,25 +7936,37 @@ const ATLAS_AUTHOR_ID = 'atlas';
 /** True when a turn was authored by the operator — NOT a synthetic Atlas turn and NOT a host-originated
  *  system seed. Both background kinds must skip the passive-awareness drain so a real operator turn still
  *  gets the buffered milestones. */
-function isOperatorAuthored(stimulus: ChatStimulus): boolean {
+function isOperatorAuthored(stimulus: TurnEnvelope): boolean {
   return (
     stimulus.author.id !== ATLAS_AUTHOR_ID &&
     stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
   );
 }
 
-/** A durable system seed that stamps a card (question/secret/file). Its stimulus row + card must be stamped
- *  TOGETHER on the consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or
- *  registration — so a register-then-fail turn re-drives instead of stranding a card behind a delivered row. */
-function isSeedCardDelivery(s: ChatStimulus): boolean {
+/** A seed that must run its OWN (guarded) turn rather than steering into a live one: `reset_verify` (its
+ *  fresh-container cold-attach semantics depend on a dedicated turn) and `compaction` (a summarization turn
+ *  that branches early in `runChatTurnInner`). Everything else steers into a live turn when one exists. */
+function isStandaloneSeed(type: MessageType): boolean {
+  return type === 'reset_verify' || type === 'compaction';
+}
+
+/** A turn that stamps a card (question/secret/file). Its stimulus row + card must be stamped TOGETHER on the
+ *  consumption tail (fresh-turn success / steer ack / reattach), never on steer-dispatch or registration — so
+ *  a register-then-fail turn re-drives instead of stranding a card behind a delivered row. Two shapes qualify:
+ *  a card-bearing internal-seed variant (`answer_question`/`file_answered`/`secret_provided`), or the composed
+ *  multi-item operator send (`type:'user'`) that carries the union of answered-card ids it delivered. */
+function isSeedCardDelivery(s: TurnEnvelope): boolean {
+  const t = s.message.type;
+  if (
+    t === 'answer_question' ||
+    t === 'file_answered' ||
+    t === 'secret_provided'
+  )
+    return true;
   return (
-    !!s.seed &&
-    (!!s.seedQuestionId ||
-      !!s.seedSecretId ||
-      !!s.seedFileId ||
-      (s.seedQuestionIds?.length ?? 0) > 0 ||
-      (s.seedFileIds?.length ?? 0) > 0 ||
-      (s.seedSecretIds?.length ?? 0) > 0)
+    (s.deliveredQuestionIds?.length ?? 0) > 0 ||
+    (s.deliveredFileIds?.length ?? 0) > 0 ||
+    (s.deliveredSecretIds?.length ?? 0) > 0
   );
 }
 
@@ -8057,103 +7984,136 @@ const RESET_LOOP_CAP = 3;
 const COMPACTION_MIN_OCCUPANCY_FRAC = 0.3;
 
 /**
- * Build the synthetic SEED stimulus that wakes the brain after a `reset_sandbox` teardown. Its only job is
- * to guarantee a turn happens (so Atlas verifies on the fresh container) — the actual verify instruction
- * rides the reset-notice ({@link RESET_VERIFY_TEXT}), consumed by whichever turn cold-attaches first. Marked
- * `seedResetVerify` so it no-ops if an earlier turn already consumed that notice (see `runChatTurnInner`).
+ * Build the documented-partial `Message` a SYNTHETIC or reattached {@link TurnEnvelope} carries — only its
+ * `.type` + `MessageBase` identity are real; the variant args were consumed by `composeMessageBody` at
+ * construction and the rendered body rides `envelope.body`, so nothing downstream of render reads them
+ * (mirrors the store's `reconstructMessage` + `pumpEvent`'s stopgap). Used for the internal Atlas-authored
+ * turns (compaction/direct-build/onboarding) and the reattach ctx rebuild, which have no typed variant on
+ * hand. `type` is any `MessageType` that must NOT be mistaken for a card/reset/compaction turn unless it IS
+ * one (the four guards read `.type`).
  */
-function resetContinuationStimulus(input: {
-  jobId: string;
+function syntheticMessage(input: {
+  id: string;
   orgId: string;
   repoId: string;
-}): ChatStimulus {
+  jobId: string;
+  receivedAt: Date;
+  type: MessageType;
+}): Message {
+  return {
+    id: input.id,
+    orgId: input.orgId,
+    repoId: input.repoId,
+    jobId: input.jobId,
+    receivedAt: input.receivedAt.toISOString(),
+    type: input.type,
+  } as unknown as Message;
+}
+
+/** `MessageBase` scaffolding for a synthetic host-seed `Message` built at a brain call site. Its `id`/
+ *  `receivedAt` are inert (the brain path never persists the inbound row and `seedEnvelope` mints the envelope
+ *  id + `Date` itself) — only the variant's `type` + args carry meaning. */
+function seedBase(input: { jobId: string; orgId: string; repoId: string }): {
+  id: string;
+  orgId: string;
+  repoId: string;
+  jobId: string;
+  receivedAt: string;
+  trust: 'system';
+} {
   return {
     id: randomUUID(),
     orgId: input.orgId,
     repoId: input.repoId,
-    body: wrapSystemNotification(resetContinuationNotice()),
-    receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
     jobId: input.jobId,
-    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
-    seed: true,
-    seedResetVerify: true,
+    receivedAt: new Date().toISOString(),
+    trust: 'system',
   };
 }
 
 /**
- * Build the synthetic SYSTEM-SEED stimulus that delivers a completed Codex review's findings to the brain
- * straight through `handleChatTurn`. Reuses the canonical host-seed convention (SYSTEM_SEED_AUTHOR + `seed`
- * + `<system_notification>` envelope, same as the `/answer-question` delivery) so it skips the operator-only
- * paths (passive-awareness drain + typed-answer linkage). The wrapped body is what the brain reads; the
- * operator sees the same findings as the durable, idempotent "Codex review" message.
+ * Wrap a typed internal-seed `Message` into a host-seed {@link TurnEnvelope} (SYSTEM_SEED_AUTHOR, no operator
+ * bubble), rendering its body + `SeedRow` through the ONE `composeMessageBody` switch. The single builder the
+ * synthetic (non-durable, brain-path) seed factories share: `reset_verify`, the work-owed/unblock/
+ * request-changes wakes, and event delivery all flow through here so a variant's body + chunkKey stay
+ * byte-identical to the durable-intake path.
  */
-function harnessDeliveryStimulus(input: {
-  jobId: string;
-  orgId: string;
-  repoId: string;
-  body: AgentMessage;
-  /** File-gate delivery: the `request_file` card id this seed confirms, so the tail stamps it delivered. */
-  seedFileId?: string;
-  /** How this seed renders as a visible transcript row (see {@link SeedRow}). */
-  seedRow?: SeedRow;
-  /** SESSION RE-HOME: run this turn on the thread's own session (see {@link ChatStimulus.resumeThreadId}). */
-  resumeThreadId?: string;
-}): ChatStimulus {
+function seedEnvelope(
+  message: Exclude<Message, { type: 'user' }>,
+  opts?: {
+    /** Override the minted id — event delivery passes the DURABLE event-row id so bookkeeping stamps it. */
+    id?: string;
+    /** A pre-rendered body/seedRow the caller already framed (event delivery: `renderEventDelivery`'s output
+     *  rides straight through — no re-render — since `composeMessageBody`'s `event` arm reads `message.body`). */
+    body?: AgentMessage;
+    seedRow?: SeedRow;
+    /** SESSION RE-HOME: run this turn on the thread's own session (see {@link TurnEnvelope.resumeThreadId}). */
+    resumeThreadId?: string;
+    /** File-gate delivery: the `request_file` card id this seed confirms, so the tail stamps it delivered. */
+    deliveredFileIds?: string[];
+  },
+): TurnEnvelope {
+  // Skip the compose switch entirely when the caller already framed both body + seedRow (event delivery:
+  // `renderEventDelivery`'s output rides straight through — no re-render, per the envelope's body-carry rule).
+  const composed =
+    opts?.body === undefined || opts?.seedRow === undefined
+      ? composeMessageBody(message)
+      : undefined;
+  const body = opts?.body ?? composed!.body;
+  const seedRow = opts?.seedRow ?? composed?.seedRow;
   return {
-    id: randomUUID(), // synthetic — the brain path doesn't persist the stimulus row
-    orgId: input.orgId,
-    repoId: input.repoId,
-    body: wrapSystemNotification(input.body),
+    message,
+    id: opts?.id ?? randomUUID(), // synthetic — the brain path doesn't persist the inbound row
+    orgId: message.orgId,
+    repoId: message.repoId,
+    jobId: message.jobId,
     receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
-    jobId: input.jobId,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
-    replyRoute: { surfaceId: 'web', jobRef: input.jobId },
-    seed: true,
-    ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
-    ...(input.seedRow ? { seedRow: input.seedRow } : {}),
-    ...(input.resumeThreadId ? { resumeThreadId: input.resumeThreadId } : {}),
+    replyRoute: { surfaceId: 'web', jobRef: message.jobId },
+    body,
+    ...(seedRow ? { seedRow } : {}),
+    ...(opts?.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
+    ...(opts?.deliveredFileIds ? { deliveredFileIds: opts.deliveredFileIds } : {}),
   };
 }
 
 /**
- * Build the synthetic harness stimulus that delivers an EVENT to the brain through `handleChatTurn`. Same
- * trusted seed convention as {@link harnessDeliveryStimulus} (SYSTEM_SEED_AUTHOR + `seed`, no operator
- * bubble), but the body is NOT `wrapSystemNotification`-wrapped — `renderEventDelivery` already framed it
- * and fenced the untrusted event. The untrusted boundary lives in that fence + the system-prompt clause,
- * so this stays a `trust: 'trusted'` harness turn carrying clearly-fenced untrusted data.
+ * Build a {@link TurnEnvelope} for an INTERNAL Atlas-authored turn with no durable inbound row and no typed
+ * seed variant — a compaction / direct-build / onboarding instruction, or the approval-mechanism carrier.
+ * `message` is a documented partial (only `.type` + identity real — {@link syntheticMessage}); the brain
+ * guards read `.type`, so pass the type reflecting what the turn IS: `compaction` for a summarization turn,
+ * otherwise `'user'` (a plain instruction turn — its author, `atlas` or a seed scope, decides framing). The
+ * body is supplied pre-formed (these turns don't render through `composeMessageBody`).
  */
-function eventDeliveryStimulus(input: {
-  /** The DURABLE event-row id — pass it so a steer's `input_ack` and the fresh turn's `onRegistered` both
-   *  stamp the same `stimuli` row. Omitted only by callers that don't drive delivery bookkeeping. */
-  id?: string;
+function internalEnvelope(input: {
   jobId: string;
   orgId: string;
   repoId: string;
-  body: AgentMessage;
+  body: string;
+  author: { id: string; displayName: string };
+  type: MessageType;
   seedRow?: SeedRow;
-  /** SESSION RE-HOME (§CI-routing): resume the `ci` thread group's own session instead of planning — see
-   *  {@link ChatStimulus.resumeThreadId} / {@link EventStimulus.resumeThreadId}. */
-  resumeThreadId?: string;
-}): ChatStimulus {
+}): TurnEnvelope {
+  const id = randomUUID();
+  const receivedAt = new Date();
   return {
-    id: input.id ?? randomUUID(),
+    message: syntheticMessage({
+      id,
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      receivedAt,
+      type: input.type,
+    }),
+    id,
     orgId: input.orgId,
     repoId: input.repoId,
-    body: input.body, // already framed + fenced by renderEventDelivery
-    receivedAt: new Date(),
-    kind: 'chat',
-    trust: 'trusted',
     jobId: input.jobId,
-    author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+    receivedAt,
+    author: input.author,
     replyRoute: { surfaceId: 'web', jobRef: input.jobId },
-    seed: true,
+    body: input.body,
     ...(input.seedRow ? { seedRow: input.seedRow } : {}),
-    ...(input.resumeThreadId ? { resumeThreadId: input.resumeThreadId } : {}),
   };
 }
 

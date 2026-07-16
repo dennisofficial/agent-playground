@@ -307,9 +307,13 @@ the same seam the Codex plan-review delivery uses). The brain reads a trusted fr
 notification about this job — no human sent it…") wrapped around the `wrapUntrusted`-fenced body, then
 triages it **in-session**. There is **no** unified `Stimulus` union, no `StimulusRouter`, and no second
 event-only brain — those were deleted; the intake sink is the typed `BRAIN_SINK` port (`handleChat` /
-`deliverEvent`), and each inbound request reaches the system as one of two in-memory shapes,
-`ChatStimulus` (duplex, continues a thread) or `EventStimulus` (inbound-only, seeds or attaches to a thread) —
-kept deliberately separate from any unifying discriminated type (`domain/stimulus.ts`).
+`deliverEvent`). The retired `ChatStimulus`/`EventStimulus` in-memory shapes are gone: every inbound thing
+is now a variant of the discriminated **`Message`** union (`domain/message.ts` — the four client variants,
+the 17 typed internal-seed variants, and `EventMessage`), and the brain's sole turn currency is the thin
+**`TurnEnvelope`** wrapping a `Message` with its transport/routing fields. `composeMessageBody` (one
+exhaustive switch) renders each non-user variant into its engine body + `SeedRow`; a chat/seed turn round-trips
+as an `inbound_messages` row (`type` discriminant + `meta.seedType` on the transcript pill), an event as a
+`kind='event'` row (`meta.eventKind`).
 
 - **Async + at-least-once.** Intake does NOT await the engine turn (the webhook 202 stays fast); it schedules
   `deliverEvent` and returns. Durability = `stimuli.delivered_at` (stamped only after the turn) + a leader

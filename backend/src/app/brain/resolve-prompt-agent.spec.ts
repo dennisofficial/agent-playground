@@ -2,17 +2,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { Agent } from '../prompt-kit';
 import type { ThreadRole } from '../thread-kind';
 import { AgentSessionManager } from './agent-session-manager.service';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 
 const JOB_ID = 'th-agent-001';
 
-function stimulusStub(fields: Partial<ChatStimulus>): ChatStimulus {
+function stimulusStub(fields: Partial<TurnEnvelope>): TurnEnvelope {
   return {
+    message: {
+      id: 'st1',
+      orgId: 'T-AGENT',
+      repoId: 'repo-agent',
+      jobId: JOB_ID,
+      receivedAt: '2026-07-15T12:00:00.000Z',
+      type: 'user',
+    } as unknown as Message,
     id: 'st1',
     orgId: 'T-AGENT',
     repoId: 'repo-agent',
-    kind: 'chat',
-    trust: 'trusted',
     jobId: JOB_ID,
     body: 'body',
     author: { id: 'U1', displayName: 'Dennis' },
@@ -66,11 +72,11 @@ function makeManager(threadRole: ReturnType<typeof vi.fn>) {
 
 function callResolvePromptAgent(
   manager: AgentSessionManager,
-  stimulus: ChatStimulus,
+  stimulus: TurnEnvelope,
 ): Promise<Agent> {
   return (
     manager as unknown as {
-      resolvePromptAgent: (s: ChatStimulus) => Promise<Agent>;
+      resolvePromptAgent: (s: TurnEnvelope) => Promise<Agent>;
     }
   ).resolvePromptAgent(stimulus);
 }

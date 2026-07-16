@@ -1,24 +1,48 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 import type { EngineEvent } from '../engine/engine.types';
 import { AgentSessionManager } from './agent-session-manager.service';
 
 const JOB_ID = 'th-ack-001';
 
-/** Minimal `findChatStimulusById` resolution — only the fields `markCardDeliveredForStimulus` reads. */
-function stimulusStub(fields: Partial<ChatStimulus>): ChatStimulus {
+/** Minimal `findChatStimulusById` resolution — only the fields `markCardDeliveredForStimulus` reads. Maps
+ *  the terse legacy `seed*Id` fixture keys onto the envelope's collapsed `delivered*Ids` arrays. */
+function stimulusStub(fields: {
+  seedQuestionId?: string;
+  seedSecretId?: string;
+  seedFileId?: string;
+}): TurnEnvelope {
+  const type: Message['type'] = fields.seedQuestionId
+    ? 'answer_question'
+    : fields.seedSecretId
+      ? 'secret_provided'
+      : fields.seedFileId
+        ? 'file_answered'
+        : 'user';
   return {
+    message: {
+      id: 'st1',
+      orgId: 'T-ACK',
+      repoId: 'repo-ack',
+      jobId: JOB_ID,
+      receivedAt: '2026-07-02T12:00:00.000Z',
+      type,
+    } as unknown as Message,
     id: 'st1',
     orgId: 'T-ACK',
     repoId: 'repo-ack',
-    kind: 'chat',
-    trust: 'trusted',
     jobId: JOB_ID,
     body: 'body',
     author: { id: 'U1', displayName: 'Dennis' },
     replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
     receivedAt: new Date('2026-07-02T12:00:00Z'),
-    ...fields,
+    ...(fields.seedQuestionId
+      ? { deliveredQuestionIds: [fields.seedQuestionId] }
+      : {}),
+    ...(fields.seedSecretId
+      ? { deliveredSecretIds: [fields.seedSecretId] }
+      : {}),
+    ...(fields.seedFileId ? { deliveredFileIds: [fields.seedFileId] } : {}),
   };
 }
 
