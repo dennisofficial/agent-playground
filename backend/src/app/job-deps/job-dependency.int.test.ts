@@ -93,6 +93,8 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
   // addDependency queues the block/unblock CONTEXT as durable undelivered `main`-lane seed rows.
   let noteCalls: UnblockNoteCall[];
   let pumpCalls: PumpCall[];
+  let pauseUnblockNote: Promise<void> | null;
+  let signalUnblockNoteEntered: (() => void) | null;
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
@@ -117,6 +119,13 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
               input: { blockers: UnblockBlockerInfo[] },
             ) => {
               noteCalls.push({ jobId, orgId, repoId, blockers: input.blockers });
+              signalUnblockNoteEntered?.();
+              signalUnblockNoteEntered = null;
+              if (pauseUnblockNote) {
+                const wait = pauseUnblockNote;
+                pauseUnblockNote = null;
+                await wait;
+              }
             },
             pumpUnblockedJob: async (
               jobId: string,
@@ -164,6 +173,8 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     await ds.query('TRUNCATE job_dependencies, jobs RESTART IDENTITY CASCADE');
     noteCalls = [];
     pumpCalls = [];
+    pauseUnblockNote = null;
+    signalUnblockNoteEntered = null;
   });
 
   /** The durable undelivered `main`-lane seed rows a job carries (born-blocked provenance+brief, or the
@@ -292,6 +303,30 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(await seedRows(dependent.id)).toHaveLength(2);
   });
 
+  it('(b) adding another live blocker to an already born-blocked job does NOT add a mid-flight block note', async () => {
+    const blocker = await makeJob({ status: 'running' });
+    const other = await makeJob({ status: 'running' });
+    const dependent = await makeJob();
+
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+      seed: 'build the follow-up',
+    });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: other.id,
+    });
+
+    const rows = await seedRows(dependent.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.reply_route?.blockNote)).toBe(false);
+  });
+
   it('(b) a mid-flight block (no seed) queues one "blocked" note', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob({ status: 'planning' });
@@ -395,6 +430,51 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       'merged',
       'merged',
     ]); // both merged cleanly
+  });
+
+  it('serializes concurrent unblock attempts so only the winner records and pumps', async () => {
+    const a = await makeJob({ status: 'running', title: 'blocker A' });
+    const b = await makeJob({ status: 'running', title: 'blocker B' });
+    const dependent = await makeJob();
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: a.id,
+    });
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: b.id,
+    });
+    await jobs.update({ id: a.id }, { pr_state: 'merged', status: 'done' });
+    await jobs.update({ id: b.id }, { pr_state: 'merged', status: 'done' });
+
+    let releaseFirstNote!: () => void;
+    const firstNoteEntered = new Promise<void>((resolve) => {
+      signalUnblockNoteEntered = resolve;
+    });
+    pauseUnblockNote = new Promise<void>((resolve) => {
+      releaseFirstNote = resolve;
+    });
+
+    const first = service.onBlockerResolved(a.id, 'merged');
+    await firstNoteEntered;
+    const second = service.onBlockerResolved(b.id, 'merged');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(noteCalls).toHaveLength(1);
+    expect(pumpCalls).toHaveLength(0);
+
+    releaseFirstNote();
+    await Promise.all([first, second]);
+
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
+    expect(noteCalls).toHaveLength(1);
+    expect(pumpCalls.map((p) => p.jobId)).toEqual([dependent.id]);
   });
 
   // ── (e) non-merge resolutions are reported in the blocker roster ───────────────────────────────
