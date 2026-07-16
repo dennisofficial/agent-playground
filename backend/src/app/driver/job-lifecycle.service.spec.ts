@@ -191,10 +191,7 @@ function makeServiceWithMocks(
  * Build a service whose sandbox repo + teardown provider + activity registry are controllable, for
  * `resetContainer` tests (which tear the container down but keep the worktree/session).
  */
-function makeServiceForReset(
-  row: JobSandboxEntity | null,
-  jobActivity: JobEntity['activity'] = 'idle',
-) {
+function makeServiceForReset(row: JobSandboxEntity | null) {
   const sandboxes = {
     find: vi.fn().mockResolvedValue(row ? [row] : []),
     findOne: vi.fn().mockResolvedValue(row),
@@ -210,7 +207,6 @@ function makeServiceForReset(
         id: 'thread-1',
         feature_branch: null,
         base_branch: 'main',
-        activity: jobActivity,
       }),
     } as unknown as Repository<JobEntity>,
     sandboxes,
@@ -427,17 +423,6 @@ describe('JobLifecycleService.resetContainer', () => {
 });
 
 describe('JobLifecycleService.reapIdle', () => {
-  it('does not reap a sandbox while the durable job activity is non-idle', async () => {
-    const row = makeRow({
-      container_id: 'c-review',
-      last_active_at: new Date(0),
-    });
-    const { svc, teardown } = makeServiceForReset(row, 'plan_review');
-
-    expect(await svc.reapIdle()).toBe(0);
-    expect(teardown).not.toHaveBeenCalled();
-    expect(row.lifecycle).toBe('attached');
-  });
 
   it('reaps an old attached sandbox once the durable job activity is idle', async () => {
     const row = makeRow({

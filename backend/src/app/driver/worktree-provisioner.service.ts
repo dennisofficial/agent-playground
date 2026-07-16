@@ -7,7 +7,6 @@ import {
   type SandboxMilestoneStage,
   type SandboxProvider,
 } from '../sandbox';
-import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 
 export interface ProvisionAndAttachInput {
@@ -49,7 +48,6 @@ export class WorktreeProvisioner {
 
   constructor(
     private readonly hydrator: WorktreeHydrator,
-    private readonly awareness: PipelineAwarenessStore,
     private readonly config: WorkspaceConfigStore,
     private readonly mcp: McpResolver,
     @Inject(SANDBOX_PROVIDER) private readonly sandboxProvider: SandboxProvider,
@@ -99,27 +97,11 @@ export class WorktreeProvisioner {
       repoDbId,
     );
     if (input.forceHydrate || hydrationSig !== input.knownSig) {
-      const { notices } = await this.hydrator.hydrateFiles({
+      await this.hydrator.hydrateFiles({
         worktreePath,
         orgId,
         repoDbId,
       });
-      // Surface a bad/incomplete workspace config to the OPERATOR (it never errors the build). The
-      // passive-awareness marker is drained into the next operator turn so the brain can relay it — no
-      // wake, no spam (this only fires on a (re)hydration, i.e. at thread creation or a config change).
-      if (notices.length) {
-        await this.awareness
-          .appendMarker(jobId, {
-            id: 'worktree-hydration-issues',
-            text: `⚠ workspace config — ${notices.length} issue(s): ${notices.join('; ')}`,
-            at: new Date().toISOString(),
-          })
-          .catch((err) =>
-            this.logger.debug(
-              `worktree notice append failed (continuing): ${err}`,
-            ),
-          );
-      }
     }
 
     const attached = await this.sandboxProvider.attach({

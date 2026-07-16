@@ -197,7 +197,7 @@ function makeStore(state: StoreState): {
       orientation: null,
       handoffIn: null,
       handoffOut: null,
-      status: 'pending',
+      status: 'idle',
       condition: 'none',
       kind: input.kind,
       threadGroupId,
@@ -251,24 +251,14 @@ function makeStore(state: StoreState): {
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
-      state.job.status === 'running' && state.job.halt == null
+      state.job.status === 'building' && state.job.halt == null
         ? [{ ...state.job }]
         : [],
     ),
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
-    setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
-      state.job.activity = activity;
-    }),
     recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
-    setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
-      state.job.halt = halt;
-      state.job.activity = 'idle';
-    }),
-    clearJobHalt: vi.fn(async (_id: string) => {
-      state.job.halt = null;
-    }),
     hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
       return (state.systemNotices ?? []).includes(text);
     }),
@@ -279,20 +269,18 @@ function makeStore(state: StoreState): {
     }),
     setPrReady: vi.fn(async (_id: string, prUrl: string) => {
       state.job.prUrl = prUrl;
-      state.job.status = 'done';
-      state.job.activity = 'idle';
+      state.job.status = 'pr_open';
     }),
     // ── ship-review gate fakes ───────────────────────────────────────────────────────────────────────
     parkForShipReview: vi.fn(async (_id: string) => {
-      if (state.job.status !== 'running') return false;
-      state.job.status = 'awaiting_ship_review';
-      state.job.activity = 'idle';
+      if (state.job.status !== 'building') return false;
+      state.job.status = 'ready';
       return true;
     }),
     approveShip: vi.fn(async (_id: string) => {
-      if (state.job.status !== 'awaiting_ship_review') return false;
+      if (state.job.status !== 'ready') return false;
       state.job.shipReviewApprovedAt = new Date();
-      state.job.status = 'running';
+      state.job.status = 'building';
       return true;
     }),
     clearShipApproval: vi.fn(async (_id: string) => {
@@ -389,7 +377,7 @@ function makeStore(state: StoreState): {
           brief: c.brief,
           ordinal: (i + 1) * 10,
           config: c.config,
-          status: 'pending',
+          status: 'idle',
           condition: 'none',
           reviewFindings: null as unknown[] | null,
         }));
@@ -680,9 +668,7 @@ function makeGit(): {
     push: vi.fn(async (sandbox: FeatureSandbox) => {
       pushed.push(sandbox.branch);
     }),
-    // Empty by default (ADR 0005's pre-filter treats an empty changed-file list as non-runtime, so the
-    // live-verification judge is never called for the pre-existing tests below unless a test overrides
-    // this to simulate a real runtime-touching diff).
+    // Empty by default; a test can override this to simulate a real runtime-touching diff.
     changedFileNames: vi.fn(async () => [] as string[]),
     // Pre-ship leak-scan gate (BuildShipService) — clean by default so ship proceeds to open the PR.
     scanBranchForForbidden: vi.fn(async () => [] as string[]),
@@ -928,8 +914,7 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     baseBranch: null,
     kind: 'feature',
     buildPath: 'plan',
-    status: 'running',
-    activity: 'build',
+    status: 'building',
     halt: null,
     decisionRecordId: 'dr-1',
     featureBranch: null,
@@ -971,7 +956,7 @@ function thread(
   id: string,
   ordinal: number,
   brief: string,
-  status: ThreadStatus = 'pending',
+  status: ThreadStatus = 'idle',
   isMasterReview = false,
   condition: ThreadCondition = 'none',
   type: Thread['type'] = 'general',
@@ -1289,11 +1274,6 @@ function assemble(
     (opts.autoMerge ?? {
       mergeNow: async () => false,
     }) as unknown as import('./auto-merge.service').AutoMergeService,
-    // PipelineAwarenessStore: append is a best-effort no-op (passive milestones not asserted here).
-    {
-      appendMarker: async () => undefined,
-      drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
-    } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
     // LeaderElectionService: reads the flippable `electionState.draining` so the shutdown-guard test can
     // assert that a drain-induced abort leaves the job `running` instead of `failed`.
     {
@@ -1329,8 +1309,8 @@ function assemble(
   if (opts.autoShipApprove !== false) {
     (store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
       async (jobId: string) => {
-        if (state.job.status !== 'running') return false;
-        state.job.status = 'awaiting_ship_review';
+        if (state.job.status !== 'building') return false;
+        state.job.status = 'ready';
         // Fire the "Ship it" on a MACROtask to preserve the historical operator-after-park shape for most
         // tests. A dedicated regression below covers the tighter click-while-parking race.
         setTimeout(() => {
@@ -1382,7 +1362,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // No more build-time plan turns — each thread locks ONE step and runs as ONE orchestrator execute
     // turn: 2 threads ⇒ 2 execute turns, zero plan turns.
@@ -1417,7 +1397,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // in-sandbox as part of the ship turn, which ran).
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('a failed review lens posts a self-describing notice on its lane and marks the child failed (never a silent blank)', async () => {
@@ -1440,7 +1420,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // A notice went onto a LENS lane ({ lensId }) carrying the folded-in error reason (shortReason).
     const lensNotices = h.autofix.emitReviewNotice.mock.calls.filter(
@@ -1460,7 +1440,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
     expect(lensKids.length).toBeGreaterThan(0);
     expect(lensKids.every((c) => c.condition === 'failed')).toBe(true);
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('post-review with no actionable findings posts a "nothing to fix" notice and marks the child done', async () => {
@@ -1477,7 +1457,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const fixNotices = h.autofix.emitReviewNotice.mock.calls.filter(
       (c) =>
@@ -1536,7 +1516,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // Only the FIRST thread executed + reviewed; the already-done 2nd thread was fast-forwarded.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
@@ -1547,14 +1527,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     ).mock.calls;
     expect(materialized.some((c) => c[0].id === staleId)).toBe(false);
     // The build still completes to a PR.
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('resumes an auto_fixing builder as finished — no re-execute, review resumes, and handoff advances', async () => {
     // A restart can catch a builder after it completed and while its review children are running:
     // `runReviewChildren` has flipped the builder to `auto_fixing`, but the builder's own work and
     // handoff are already durable. The build loop must resume review/advance, not re-run that builder.
-    const backend = thread('sec-be', 10, 'Backend', 'auto_fixing');
+    const backend = thread('sec-be', 10, 'Backend', 'idle');
     backend.handoffOut = 'Backend handoff from completed builder';
     backend.startSha = 'sha-before-backend';
     const frontend = thread('sec-fe', 20, 'Frontend');
@@ -1569,7 +1549,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const executeStepIds = h.calls
       .filter((c) => c.mode === 'execute')
@@ -1635,7 +1615,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       'sec-review',
       30,
       'Master review — whole-diff review & fix',
-      'pending',
+      'idle',
       true,
     );
     const state: StoreState = {
@@ -1649,7 +1629,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The feature thread runs Claude; the master-review thread runs Codex at xhigh.
     const execs = runs.filter((r) => r.mode === 'execute');
@@ -1724,7 +1704,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const builderRuns = runs.filter((r) => !r.isCommitNudge);
     const nudgeRuns = runs.filter((r) => r.isCommitNudge);
@@ -1823,7 +1803,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       vi.fn(async () => dirty);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(reattach).toHaveBeenCalledTimes(1);
     expect(reattach.mock.calls[0][0]).toMatchObject({
@@ -1896,7 +1876,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state, { turn });
     liveRef = h.liveTurns;
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // Every EXECUTE (build) turn requested richStream.
     const exec = seen.filter((c) => c.mode === 'execute');
@@ -1972,7 +1952,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const prompts = h.sunk
       .filter((s) => s.block.kind === 'build_anchor')
@@ -2006,7 +1986,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const hBase = assemble(baseline);
     await hBase.driver.dispatch(baseline.job);
-    await flushUntil(() => baseline.job.status === 'done');
+    await flushUntil(() => baseline.job.status === 'pr_open');
     const basePrompt = String(
       hBase.sunk.find(
         (s) =>
@@ -2036,7 +2016,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       skillNudgeSelector: { select } as unknown as SkillNudgeSelector,
     });
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
     const prompt = String(
       h.sunk.find(
         (s) =>
@@ -2086,7 +2066,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // A decided group short-circuits before Haiku — the selector is never consulted again…
     expect(select).not.toHaveBeenCalled();
@@ -2134,7 +2114,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(select).toHaveBeenCalledTimes(1);
     expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
@@ -2225,7 +2205,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     const h = assemble(state, { turn, turnRegistry: { listRunning } as never });
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // Re-attached the live turn (with the ORIGINAL turn id + container) — never re-ran the execute batch.
     expect(reattach).toHaveBeenCalledTimes(1);
@@ -2255,7 +2235,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // All threads build on the thread's single durable sandbox, so the job adopts that one branch and
     // never cuts a per-feature worktree of its own.
@@ -2278,7 +2258,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const steps = state.steps.filter((p) => p.threadId === 'sec-be');
     expect(steps).toHaveLength(1); // one locked step per thread now (the orchestrate anchor)
@@ -2324,7 +2304,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
 
     await h.driver.resume();
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The done Backend thread was NOT re-executed (no exec turn for it). Only the Frontend thread ran
     // (1 execute turn, no plan turn — there is no more build-time planning).
@@ -2332,7 +2312,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
     // The ship turn ran (Atlas opens the PR in-sandbox, the host never does).
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('orchestrate resume: a batch whose anchor already has a commit_sha FAST-FORWARDS (no re-run) (issue #6)', async () => {
@@ -2341,7 +2321,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const state: StoreState = {
       job: makeJob({ featureBranch: 'atlas/feature-job-abcd' }),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing')],
+      threads: [thread('sec-be', 10, 'Backend', 'idle')],
       steps: [
         {
           id: 'sec-be-ph0',
@@ -2364,13 +2344,13 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
 
     await h.driver.resume();
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The committed batch fast-forwarded: NO execute turn, NO new commit, the step marked done.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
     expect(h.commits.filter((m) => m.startsWith('Backend —'))).toHaveLength(0);
     expect(state.steps.every((p) => p.status === 'done')).toBe(true);
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('posts in-thread progress as the build advances (issue #2)', async () => {
@@ -2384,7 +2364,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     };
     const h = assemble(state);
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(h.posts.some((p) => p.includes('Starting the build'))).toBe(true);
     expect(
@@ -2446,7 +2426,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     await flushUntil(() => state.job.halt?.kind === 'incomplete');
 
     // The STEP stays at `executing`; the halt is carried on the orthogonal condition overlay.
-    expect(state.threads[0].status).toBe('executing'); // halted, NOT silently done
+    expect(state.threads[0].status).toBe('idle'); // halted, NOT silently done
     expect(state.threads[0].condition).toBe('incomplete');
     expect(state.job.halt?.kind).toBe('incomplete'); // needs-you, recoverable — NOT done, NOT failed
     expect(h.opened).toHaveLength(0); // nothing shipped
@@ -2518,7 +2498,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       const h = assemble(state, { contextDirHost: ctxDir });
 
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.status === 'done');
+      await flushUntil(() => state.job.status === 'pr_open');
 
       // `evidenceDirForThread` lazily mkdirs `<contextDirHost>/evidence/<ordinal>-<slug>` on the execute
       // turn — here `010-backend` (ordinal 10, brief "Backend").
@@ -2543,10 +2523,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.status === 'done');
+      await flushUntil(() => state.job.status === 'pr_open');
     });
 
-    expect(state.job.status).toBe('done'); // recovered
+    expect(state.job.status).toBe('pr_open'); // recovered
     expect(
       calls.filter((c) => c.mode === 'execute').length,
     ).toBeGreaterThanOrEqual(2); // retried
@@ -2581,10 +2561,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.status === 'done');
+      await flushUntil(() => state.job.status === 'pr_open');
     });
 
-    expect(state.job.status).toBe('done'); // the lane self-healed on a fresh turn
+    expect(state.job.status).toBe('pr_open'); // the lane self-healed on a fresh turn
     expect(
       calls.filter((c) => c.mode === 'execute').length,
     ).toBeGreaterThanOrEqual(2); // re-drove after the storm throw
@@ -2611,10 +2591,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.status === 'done');
+      await flushUntil(() => state.job.status === 'pr_open');
     });
 
-    expect(state.job.status).toBe('done'); // recovered on the LAST retry within budget
+    expect(state.job.status).toBe('pr_open'); // recovered on the LAST retry within budget
     expect(
       calls.filter((c) => c.mode === 'execute').length,
     ).toBeGreaterThanOrEqual(MAX_HOST_RETRIES + 1);
@@ -2676,7 +2656,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
     await flushUntil(() => false, 20);
 
-    expect(state.job.status).toBe('running'); // LEFT running — boot-resume continues it
+    expect(state.job.status).toBe('building'); // LEFT running — boot-resume continues it
     expect(
       (h.store.setJobStatus as ReturnType<typeof vi.fn>).mock.calls.some(
         (c) => c[1] === 'failed',
@@ -2716,10 +2696,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.threads[1].status).not.toBe('done');
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(1);
     expect(h.opened).toHaveLength(0);
-    expect(state.job.status).toBe('running');
-    expect(
-      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls,
-    ).toHaveLength(0); // a cooperative yield is NOT a failure — no halt recorded
+    expect(state.job.status).toBe('building');
   });
 
   it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
@@ -2783,109 +2760,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(
       h.posts.some(
         (p) => p.includes('Off-spec') && p.includes('README nobody asked for'),
       ),
     ).toBe(true);
-    expect(state.job.status).toBe('done'); // a deviation is surfaced, not a failure
-  });
-
-  it('PAUSES the job (not failed) on an EngineAuthError and relays a pause notice (resume feature)', async () => {
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        // Raw SDK/CLI string — must never leak to the operator. Deterministic-fatal (not a transient
-        // rotation-race blip), so it surfaces immediately rather than entering the host auto-retry backstop.
-        throw new EngineAuthError(
-          'Not logged in · Please run /login',
-          'sess-401',
-          undefined,
-          true,
-        );
-      },
-    );
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
-
-    expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT failed
-    // The stored halt reason is clean, actionable copy — never the raw SDK/CLI string.
-    expect(state.job.halt?.reason).toBe(
-      'Your Claude login needs to be reconnected — reconnect the account in Settings, then resume.',
-    );
-    expect(state.job.halt?.reason).not.toMatch(/not logged in|\/login/i);
-    // The relayed pause notice carries the same clean copy and leaks no raw SDK text.
-    const pausePost = h.posts.find((p) => /paused/i.test(p));
-    expect(pausePost).toBeDefined();
-    expect(pausePost).toContain('Your Claude login needs to be reconnected');
-    expect(pausePost).not.toMatch(/not logged in|\/login/i);
-    expect(h.opened).toHaveLength(0);
-  });
-
-  it('parks a build lane on a Claude session limit with one durable resume notice', async () => {
-    const resetAt = '2026-07-09T22:00:00.000Z';
-    const state: StoreState = {
-      job: makeJob(),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1', orgId: 'T1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state);
-    (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
-      async () => {
-        throw new EngineSessionLimitError(
-          `Claude session limit (five_hour); resets ${resetAt}`,
-          resetAt,
-          'five_hour',
-          'sess-limit',
-        );
-      },
-    );
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'session_limit');
-
-    expect(state.job.halt).toMatchObject({
-      kind: 'session_limit',
-      resumeAt: resetAt,
-    });
-    expect(h.store.setSessionResume).toHaveBeenCalledWith(
-      state.job.id,
-      resetAt,
-      expect.objectContaining({ lane: 'build', resetSource: 'usage_api' }),
-    );
-    expect(
-      h.sunk.filter((s) => s.block.meta?.sessionLimit === true),
-    ).toHaveLength(1);
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
-
-    await h.driver.retry(state.job.id);
-    await flushUntil(
-      () =>
-        (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.length >= 2,
-    );
-
-    expect(
-      h.sunk.filter((s) => s.block.meta?.sessionLimit === true),
-    ).toHaveLength(1);
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
+    expect(state.job.status).toBe('pr_open'); // a deviation is surfaced, not a failure
   });
 
   it('a text-fallback session limit uncorroborated by the usage window quiet-retries instead of parking', async () => {
@@ -2923,11 +2805,6 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       expect.any(String),
       expect.objectContaining({ lane: 'build', kind: 'retry' }),
     );
-    expect(
-      (h.store.setJobHalt as ReturnType<typeof vi.fn>).mock.calls.some(
-        (args) => (args[1] as { kind?: string })?.kind === 'session_limit',
-      ),
-    ).toBe(false);
     expect(
       h.posts.filter((p) => p.includes("You've hit your session limit")),
     ).toHaveLength(0);
@@ -3015,43 +2892,6 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     ).toBeUndefined();
   });
 
-  it('resumePaused re-drives a paused job to completion; no-ops if the job is not paused', async () => {
-    // no-op path: a non-paused job is left alone.
-    const running: StoreState = {
-      job: makeJob({ status: 'done' }),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'done')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const noop = assemble(running);
-    await noop.driver.resumePaused(running.job.id);
-    expect(noop.opened).toHaveLength(0); // never re-driven
-
-    // resume path: a credential-halted job (phase preserved) is cleared + driven to a PR.
-    const state: StoreState = {
-      job: makeJob({
-        status: 'running',
-        halt: {
-          kind: 'blocked_credentials',
-          reason: '401',
-          at: new Date().toISOString(),
-        },
-      }),
-      record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend')],
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state);
-    await h.driver.resumePaused(state.job.id);
-    await flushUntil(() => state.job.status === 'done');
-    expect(state.job.status).toBe('done');
-    expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
-  });
-
   it("request_operator_input pauses the thread and resumes on the operator's answer", async () => {
     const state: StoreState = {
       job: makeJob(),
@@ -3112,7 +2952,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The tool was consulted (a card was opened) and resolved to the answer.
     expect(h.store.openOperatorInputCard).toHaveBeenCalledTimes(1);
@@ -3130,7 +2970,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(conditionCalls.slice(pausedIdx + 1)).toContain('none');
 
     // The build proceeded to completion carrying the answer in its report.
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 });
 
@@ -3152,7 +2992,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
           'sec-data',
           10,
           'Data migration',
-          'pending',
+          'idle',
           false,
           'none',
           'data',
@@ -3165,7 +3005,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(lensIdsMaterialized(state).sort()).toEqual(
       ['correctness', 'holistic', 'data_safety'].sort(),
@@ -3177,7 +3017,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
       job: makeJob(),
       record: makeRecord(),
       threads: [
-        thread('sec-docs', 10, 'Docs pass', 'pending', false, 'none', 'docs'),
+        thread('sec-docs', 10, 'Docs pass', 'idle', false, 'none', 'docs'),
       ],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
@@ -3186,7 +3026,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     const h = assemble(state);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const lensIds = lensIdsMaterialized(state);
     expect(lensIds).not.toContain('correctness');
@@ -3201,7 +3041,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
       job: makeJob(),
       record: makeRecord(),
       threads: [
-        thread('sec-be', 10, 'Backend', 'pending', false, 'none', 'general'),
+        thread('sec-be', 10, 'Backend', 'idle', false, 'none', 'general'),
       ],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
@@ -3219,7 +3059,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
     });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(peak).toBe(2);
     // Every read-only finder turn runs on Sonnet, not the default Opus worker (the token-savings change).
@@ -3256,7 +3096,7 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The pre-build HEAD ('sha0') was persisted set-once as this thread's review base.
     const ensure = h.store.ensureThreadStartSha as ReturnType<typeof vi.fn>;
@@ -3280,7 +3120,7 @@ describe('ThreadDriver — start_sha is captured once and RESUME-safe (the per-t
     stubChangedFileNames(h.git, async () => ['src/routes/health.ts']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // The persisted base is reused verbatim — the set-once persist is never re-invoked, never overwritten.
     const ensure = h.store.ensureThreadStartSha as ReturnType<typeof vi.fn>;
@@ -3394,19 +3234,19 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
       'sec-be',
       'the key is granted now — retry the build',
     );
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(state.threads[0].orientation).toBe(
       'the key is granted now — retry the build',
     ); // guidance populated the dead orientation hook
-    expect(state.job.status).toBe('done'); // shipped after the fix
+    expect(state.job.status).toBe('pr_open'); // shipped after the fix
   });
 
   it('redriveThread clears a stale condition before the asynchronous drive observes the row', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
+      threads: [thread('sec-be', 10, 'Backend', 'idle', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3424,7 +3264,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     );
 
     expect(result.ok).toBe(true);
-    expect(state.threads[0].status).toBe('executing');
+    expect(state.threads[0].status).toBe('idle');
     expect(state.threads[0].condition).toBe('none');
     expect(h.store.setThreadCondition).toHaveBeenCalledWith('sec-be', 'none');
   });
@@ -3483,7 +3323,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     stubChangedFileNames(h.git, async () => ['README.md']); // non-runtime → the done-gates short-circuit
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // Latched on the FIRST call (not bounced); the open items came back only as an advisory NOTE.
     expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
@@ -3491,7 +3331,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
       state.threads[0] as { terminal_record?: ThreadTerminalRecord | null }
     ).terminal_record;
     expect(term?.status).toBe('done');
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
     // The host force-closes the unreconciled leftovers to `dropped` on the done transition.
     expect(h.store.dropOpenThreadTasks).toHaveBeenCalledWith('sec-be');
     const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
@@ -3557,7 +3397,7 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     stubChangedFileNames(h.git, async () => ['README.md']);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(String(returns[0]?.['warning'] ?? '')).toContain('open item');
     expect(returns[1]?.['warning']).toBeUndefined();
@@ -3569,14 +3409,14 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     // Both stragglers flipped to `dropped` — the host never claims they were completed.
     const tasks = (state.threads[0] as { tasks?: TaskItem[] }).tasks ?? [];
     expect(tasks.map((t) => t.status)).toEqual(['dropped', 'dropped']);
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('redriveThread REFUSES a threadId belonging to another job (Codex High-1) — no budget, no mutation, no drive', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('sec-be', 10, 'Backend', 'executing', false, 'paused')],
+      threads: [thread('sec-be', 10, 'Backend', 'idle', false, 'paused')],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -3703,9 +3543,9 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     const h = assemble(state, { autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flushUntil(() => state.job.status === 'ready');
 
-    expect(state.job.status).toBe('awaiting_ship_review');
+    expect(state.job.status).toBe('ready');
     expect(h.store.parkForShipReview).toHaveBeenCalled();
     // The build fully ran (all threads done) but NOTHING shipped — no PR seed, job not done.
     expect(state.threads.every((s) => s.status === 'done')).toBe(true);
@@ -3718,14 +3558,14 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     const h = assemble(state, { autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flushUntil(() => state.job.status === 'ready');
 
     const acted = await h.driver.resolveShipApprovalDurably(
       state.job.id,
       'dennis',
     );
     expect(acted).toBe(true);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
     expect(h.shipSeeds).toEqual([
@@ -3742,15 +3582,15 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
 
     (h.store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
       async (jobId: string) => {
-        if (state.job.status !== 'running') return false;
-        state.job.status = 'awaiting_ship_review';
+        if (state.job.status !== 'building') return false;
+        state.job.status = 'ready';
         await h.driver.resolveShipApprovalDurably(jobId, 'dennis');
         return true;
       },
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
     expect(h.shipSeeds).toEqual([
@@ -3763,9 +3603,9 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     const h = assemble(state, { autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flushUntil(() => state.job.status === 'ready');
     await h.driver.resolveShipApprovalDurably(state.job.id, 'dennis');
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     const again = await h.driver.resolveShipApprovalDurably(
       state.job.id,
@@ -3781,7 +3621,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     const h = assemble(state, { autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(h.store.parkForShipReview).not.toHaveBeenCalled();
     expect(h.shipSeeds).toHaveLength(1);
@@ -3804,7 +3644,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
       orientation: null,
       handoffIn: null,
       handoffOut: null,
-      status: 'pending',
+      status: 'idle',
       condition: 'none',
       kind: 'main',
       threadGroupId: 'thread-group-main-1',
@@ -3821,7 +3661,7 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
 
     expect(h.store.parkForShipReview).not.toHaveBeenCalled();
     expect(h.shipSeeds).toHaveLength(0);
-    expect(state.job.status).toBe('running');
+    expect(state.job.status).toBe('building');
     expect(state.job.prUrl).toBeNull();
   });
 });
@@ -3859,7 +3699,7 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
 
       await h.driver.dispatch(state.job);
       // The gate auto-resolves and the SAME drive falls through to ship — no re-drive, no manual click.
-      await flushUntil(() => state.job.status === 'done');
+      await flushUntil(() => state.job.status === 'pr_open');
 
       expect(h.store.parkForShipReview).toHaveBeenCalled(); // card posted for audit
       expect(h.store.approveShip).toHaveBeenCalledWith(job.id); // marker stamped inline
@@ -3889,7 +3729,7 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(ownerSpy).toHaveBeenCalled();
     expect(h.shipSeeds).toHaveLength(1);
@@ -3908,12 +3748,12 @@ describe('ThreadDriver — ship-review gate auto-approve (per-job opt-in)', () =
       const h = assemble(state, { autoShipApprove: false });
 
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.status === 'awaiting_ship_review');
+      await flushUntil(() => state.job.status === 'ready');
       await flush();
 
       expect(h.store.approveShip).not.toHaveBeenCalled();
       expect(h.shipSeeds).toHaveLength(0);
-      expect(state.job.status).toBe('awaiting_ship_review');
+      expect(state.job.status).toBe('ready');
     },
   );
 });
@@ -3989,9 +3829,9 @@ describe('ThreadDriver — 401 auth recovery', () => {
 
     // PING → resume the SAME session → drive to completion (one PR).
     await h.driver.resumePaused(state.job.id);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -4047,56 +3887,12 @@ describe('ThreadDriver — 401 auth recovery', () => {
     ).toHaveLength(MAX_HOST_RETRIES);
   });
 
-  it('a Codex no-credential halt does not touch Claude credential recovery state', async () => {
-    // A BUILDER thread (not master_review) — the codex_review_unavailable scope guard only engages while
-    // master_review is in flight (see the "ThreadDriver — master_review Codex-outage hold" describe block),
-    // so this stays on the ordinary blocked_credentials path being asserted here.
-    const state = freshState();
-    const getSelectedRefreshMeta = vi.fn(async () => ({
-      id: 'claude-cred',
-      lastRefreshedAt: new Date(),
-    }));
-    const markNeedsReauth = vi.fn(async () => undefined);
-    const turn = {
-      runTurn: vi.fn(async () => {
-        throw new EngineAuthError(
-          `${NO_ENGINE_CREDENTIAL_MARKER}: no codex subscription secret`,
-          undefined,
-          'codex',
-        );
-      }),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, {
-      turn,
-      claudeCreds: { getSelectedRefreshMeta, markNeedsReauth },
-    });
-
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
-
-    expect(state.job.halt?.reason).toBe(
-      'No Codex account is connected for this org — connect one in Settings, then resume.',
-    );
-    expect(getSelectedRefreshMeta).not.toHaveBeenCalled();
-    expect(markNeedsReauth).not.toHaveBeenCalled();
-    expect(h.store.setSessionResume).not.toHaveBeenCalled();
-    const pausePost = h.posts.find((p) => /paused/i.test(p));
-    expect(pausePost).toContain('No Codex account is connected');
-    // A NO_ENGINE_CREDENTIAL marker is deterministic-fatal — surfaced on the FIRST classification, never
-    // routed through the host auto-retry backstop (one runTurn call, no retry notice/indicator).
-    expect((turn.runTurn as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(
-      1,
-    );
-    expect(h.liveTurns.retry).not.toHaveBeenCalled();
-  });
-
   it('resumePaused is a no-op when the job is not paused', async () => {
     const state = freshState();
-    state.job.status = 'running';
+    state.job.status = 'building';
     const h = assemble(state);
     await h.driver.resumePaused(state.job.id);
-    expect(state.job.status).toBe('running'); // the ping itself does not flip a non-paused job
+    expect(state.job.status).toBe('building'); // the ping itself does not flip a non-paused job
   });
 });
 
@@ -4107,46 +3903,12 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     return {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('mr', 10, 'Master review', 'pending', true)],
+      threads: [thread('mr', 10, 'Master review', 'idle', true)],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
     };
   }
-
-  it('a fatal Codex EngineAuthError during master_review HOLDS (codex_review_unavailable), not blocked_credentials', async () => {
-    const state = masterReviewState();
-    const turn = {
-      runTurn: vi.fn(async () => {
-        throw new EngineAuthError(
-          'Codex is unreachable',
-          'sess',
-          'codex',
-          true,
-        );
-      }),
-      canReattach: () => false,
-    } as unknown as TurnRunnerService;
-    const h = assemble(state, { turn });
-
-    const before = Date.now();
-    await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'codex_review_unavailable');
-
-    expect(state.job.halt?.kind).toBe('codex_review_unavailable');
-    const resumeAt = state.job.halt?.resumeAt;
-    expect(resumeAt).toBeDefined();
-    const resumeMs = new Date(resumeAt as string).getTime();
-    expect(resumeMs).toBeGreaterThanOrEqual(
-      before + CODEX_REVIEW_OUTAGE_RETRY_MS - 5_000,
-    );
-    expect(resumeMs).toBeLessThanOrEqual(
-      before + CODEX_REVIEW_OUTAGE_RETRY_MS + 5_000,
-    );
-    // master_review is left non-done so a re-drive re-runs it.
-    expect(state.threads[0].status).not.toBe('done');
-    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith('mr', 'done');
-  });
 
   it('a transient/network error exhausting the host-retry budget during master_review HOLDS (codex_review_unavailable), not failed', async () => {
     const state = masterReviewState();
@@ -4192,75 +3954,15 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     expect(state.job.halt?.kind).toBe('blocked_credentials');
   });
 
-  it('resumePaused re-drives a codex_review_unavailable hold to completion', async () => {
-    const state = masterReviewState();
-    state.job = makeJob({
-      status: 'running',
-      halt: {
-        kind: 'codex_review_unavailable',
-        reason: 'Master review is paused — Codex is unreachable.',
-        at: new Date().toISOString(),
-        resumeAt: new Date(
-          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
-        ).toISOString(),
-      },
-    });
-    const h = assemble(state);
-
-    await h.driver.resumePaused(state.job.id);
-    await flushUntil(() => state.job.status === 'done');
-
-    expect(state.job.status).toBe('done');
-    expect(state.job.halt).toBeNull();
-    expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('operatorShipWithoutReview marks master_review done and reaches the ship-review gate (no PR yet)', async () => {
-    const state = masterReviewState();
-    state.job = makeJob({
-      status: 'running',
-      halt: {
-        kind: 'codex_review_unavailable',
-        reason: 'Master review is paused — Codex is unreachable.',
-        at: new Date().toISOString(),
-        resumeAt: new Date(
-          Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
-        ).toISOString(),
-      },
-    });
-    const h = assemble(state, { autoShipApprove: false });
-
-    const r = await h.driver.operatorShipWithoutReview(state.job.id);
-
-    expect(r.ok).toBe(true);
-    expect(h.store.recordThreadTermination).toHaveBeenCalledWith(
-      'mr',
-      expect.objectContaining({ status: 'done' }),
-    );
-    expect(h.store.setThreadStatus).toHaveBeenCalledWith('mr', 'done');
-    expect(h.store.clearJobHalt).toHaveBeenCalledWith(state.job.id);
-    expect(h.store.setSessionResume).toHaveBeenCalledWith(
-      state.job.id,
-      null,
-      null,
-    );
-    expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'running');
-
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
-    expect(state.job.status).toBe('awaiting_ship_review'); // ship gate reached — human diff review still runs
-    expect(state.job.prUrl).toBeNull();
-    expect(h.opened).toHaveLength(0);
-  });
-
   it('surfaces a not-done master_review as advisory on the ship-review card', async () => {
     const state = masterReviewState();
     const { turn } = makeTurn({ completeThread: false });
     const h = assemble(state, { turn, autoShipApprove: false });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'awaiting_ship_review');
+    await flushUntil(() => state.job.status === 'ready');
 
-    expect(state.job.status).toBe('awaiting_ship_review');
+    expect(state.job.status).toBe('ready');
     expect(state.threads[0].condition).toBe('incomplete');
     const card = (
       h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>
@@ -4291,11 +3993,7 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     expect(r.ok).toBe(false);
     expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
 
-    state.job.halt = {
-      kind: 'blocked_credentials',
-      reason: '401',
-      at: new Date().toISOString(),
-    };
+    state.job.halt = { kind: 'blocked_credentials' };
     const r2 = await h.driver.operatorShipWithoutReview(state.job.id);
     expect(r2.ok).toBe(false);
     expect(h.store.recordThreadTermination).not.toHaveBeenCalled();
@@ -4336,7 +4034,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     return {
       job: makeJob(),
       record: makeRecord(),
-      threads: [thread('mr', 90, 'Master review', 'executing', true)],
+      threads: [thread('mr', 90, 'Master review', 'idle', true)],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
       operatorInputCards: [],
@@ -4379,7 +4077,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
   it('exposes the task_* tool set for EVERY thread (builder + master-review) — Claude native is disabled', () => {
     const h = assemble(baseState());
     for (const t of [
-      thread('mr', 90, 'Master review', 'executing', true),
+      thread('mr', 90, 'Master review', 'idle', true),
       thread('be', 10, 'Backend'),
     ]) {
       const tools = bridgeFor(h, t).tools;
@@ -4400,7 +4098,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const h = assemble(baseState());
     const masterReviewTools = bridgeFor(
       h,
-      thread('mr', 90, 'Master review', 'executing', true),
+      thread('mr', 90, 'Master review', 'idle', true),
     ).tools;
     const builderTools = bridgeFor(h, thread('be', 10, 'Backend')).tools;
     for (const tools of [masterReviewTools, builderTools]) {
@@ -4418,7 +4116,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
-      thread('mr', 90, 'Master review', 'executing', true),
+      thread('mr', 90, 'Master review', 'idle', true),
     ).tools;
 
     const r1 = await tools.task_create({
@@ -4451,7 +4149,7 @@ describe('ThreadDriver — master-review bridged task list', () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
       h,
-      thread('mr', 90, 'Master review', 'executing', true),
+      thread('mr', 90, 'Master review', 'idle', true),
     ).tools;
     expect(await tools.task_create({})).toMatchObject({ ok: false });
     expect(await tools.task_update({})).toMatchObject({ ok: false });
@@ -4510,7 +4208,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           ...current,
           id: `${rootId}-leg-${toLeg}`,
           ordinal: maxOrdinal + 10,
-          status: 'pending',
+          status: 'idle',
           condition: 'none',
           parentThreadId: rootId,
           handoffIn: inp.handoff,
@@ -4610,7 +4308,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     const rot = wireRotationStore(h);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // Exactly one rotation happened, and TWO build Legs ran (Leg 1 handed off, Leg 2 finished).
     expect(rot.rotations()).toBe(1);
@@ -4631,7 +4329,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     expect(iBaseTask).toBeLessThan(iResume);
     // The thread + job finished cleanly on the fresh Leg.
     expect(state.threads[0].status).toBe('done');
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('NO FORCED ROTATION: a fat Leg that is nudged but never self-hands-off finishes WITHOUT rotating (and the nudge is a visible row)', async () => {
@@ -4680,7 +4378,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     const rot = wireRotationStore(h);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     // No read-only fallback turn exists anymore, no rotation happened, and only ONE build Leg ran.
     expect(modes).not.toContain('review');
@@ -4695,7 +4393,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         phaseId: expect.any(String),
       }),
     );
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('does NOT rotate a normal Leg that never crosses the threshold (single turn, no fallback)', async () => {
@@ -4711,11 +4409,11 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     const rot = wireRotationStore(h);
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
 
     expect(rot.rotations()).toBe(0);
     expect(h.store.completeLegRotation).not.toHaveBeenCalled();
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 
   it('arms steerable on the CAPPED final Leg too (rotation null) — every Claude builder Leg is host-steerable', async () => {
@@ -4773,13 +4471,13 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
     const h = assemble(state, { turn });
     wireRotationStore(h);
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
     // The capped final Leg ran with rotation disarmed but was STILL steerable.
     expect(cappedLegSteerable).toBe(true);
     // Every Claude builder Leg (armed AND capped) forwarded steerable:true.
     expect(steerableFlags.every((f) => f === true)).toBe(true);
     expect(buildLeg).toBe(9); // 8 rotating Legs + the capped final Leg
-    expect(state.job.status).toBe('done');
+    expect(state.job.status).toBe('pr_open');
   });
 });
 
@@ -4790,7 +4488,7 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
 
   it("DEFERS a non-running job (runJob's chokepoint) without driving", async () => {
     const state: StoreState = {
-      job: makeJob({ status: 'done' }),
+      job: makeJob({ status: 'pr_open' }),
       record: makeRecord(),
       threads: makeSections(),
       steps: [],
@@ -4803,29 +4501,6 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
       'deferred',
     );
     // No drive was kicked — a non-drivable job keeps its existing recovery path.
-    expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
-  });
-
-  it('DEFERS a halted job (the halt invariant) without driving', async () => {
-    const state: StoreState = {
-      job: makeJob({
-        halt: {
-          kind: 'blocked_credentials',
-          reason: '401',
-          at: new Date().toISOString(),
-        },
-      }),
-      record: makeRecord(),
-      threads: makeSections(),
-      steps: [],
-      route: { channel: 'C1', threadTs: 't1' },
-      operatorInputCards: [],
-    };
-    const h = assemble(state);
-
-    await expect(h.driver.reattachTurnRow(stepRow(state.job.id))).resolves.toBe(
-      'deferred',
-    );
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(0);
   });
 
@@ -4864,7 +4539,7 @@ describe('ThreadDriver.reattachTurnRow — watchdog-triggered build reattach', (
       'attached',
     );
     // The wake kicked a real drive: it fast-forwards/executes and walks the build to done.
-    await flushUntil(() => state.job.status === 'done');
+    await flushUntil(() => state.job.status === 'pr_open');
     expect(h.calls.filter((c) => c.mode === 'execute').length).toBeGreaterThan(
       0,
     );

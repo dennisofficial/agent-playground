@@ -84,8 +84,6 @@ import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { BuildShipService } from '../driver/build-ship.service';
 import type { DriverRepoResolver } from '../driver/repo-resolver';
-import type { LiveVerificationJudge } from '../driver/live-verification-judge';
-import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
 import type { ThreadRole } from '../thread-kind';
@@ -248,8 +246,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     markAwaitingApproval: vi.fn().mockResolvedValue(undefined),
     loadDecisionRecord: vi.fn(),
     appendReviewFindingsMessage: vi.fn().mockResolvedValue(true),
-    // ADR-0005 direct-build live-verification verdict (persisted on both pass + refusal paths).
-    recordDirectBuildVerification: vi.fn().mockResolvedValue(undefined),
     // The "needs you" activity axis is best-effort; the manager brackets every chat turn with it.
     setActivity: vi.fn().mockResolvedValue(undefined),
     endTurnActivity: vi.fn().mockResolvedValue(undefined),
@@ -316,17 +312,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     currentBranch: vi.fn().mockResolvedValue(null),
     // Hard-reset safety guard: a clean, pushed tree is safe to re-cut by default.
     worktreeSafeToRecut: vi.fn().mockResolvedValue(true),
-    // ADR-0005 direct-build gate reads the changed files (vs origin/<default>) to decide runtime-touch.
-    // Default: empty → the pre-filter passes without consulting the judge (keeps all existing ship tests green).
-    changedFileNames: vi.fn().mockResolvedValue([]),
   } as unknown as LocalGitService;
-
-  // ADR-0005 live-verification judge — a mutable stub so gate tests set the verdict per case. Default
-  // (undefined) never matters for non-gate tests: their empty changed-file set short-circuits the pre-filter
-  // before the judge is consulted.
-  const mockJudge = {
-    judge: vi.fn().mockResolvedValue(undefined),
-  } as unknown as LiveVerificationJudge & { judge: ReturnType<typeof vi.fn> };
 
   const mockDockerRunner = {} as unknown as EngineRunnerPort;
 
@@ -357,14 +343,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       token: 't',
     }),
   } as unknown as DriverRepoResolver;
-
-  // Passive pipeline-awareness buffer — append is a no-op; drain conveys nothing in these unit tests.
-  const mockAwareness = {
-    appendMarker: vi.fn().mockResolvedValue(undefined),
-    drainAndAdvance: vi
-      .fn()
-      .mockResolvedValue({ markers: [], stateChanged: false }),
-  } as unknown as PipelineAwarenessStore;
 
   /**
    * The synchronous PlanReviewService. `review` returns a clean outcome by default; `reviewForCurrentSpecs`
@@ -446,17 +424,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (
       mockDriverStore.threadsForJob as ReturnType<typeof vi.fn>
     ).mockResolvedValue([]);
-
-    // Passive-awareness defaults (resetAllMocks wiped the resolved values) — append is a no-op promise.
-    (mockAwareness.appendMarker as ReturnType<typeof vi.fn>).mockResolvedValue(
-      undefined,
-    );
-    (
-      mockAwareness.drainAndAdvance as ReturnType<typeof vi.fn>
-    ).mockResolvedValue({
-      markers: [],
-      stateChanged: false,
-    });
 
     // Secret-store defaults (resetAllMocks wiped the resolved values) — no existing value by default.
     (mockSecretStore.write as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -569,16 +536,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.appendSystemEvent as ReturnType<typeof vi.fn>).mockResolvedValue(
       undefined,
     );
-    // ADR-0005 direct-build gate defaults (resetAllMocks wiped the declared resolves): an empty changed-file
-    // set → pre-filter passes without the judge; persistence is a resolved no-op; the judge returns undefined
-    // unless a gate test overrides it.
-    (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue(
-      [],
-    );
-    (
-      mockStore.recordDirectBuildVerification as ReturnType<typeof vi.fn>
-    ).mockResolvedValue(undefined);
-    (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockPlanReview.review as ReturnType<typeof vi.fn>).mockResolvedValue({
       status: 'complete',
       findings: [],
@@ -662,7 +619,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockClassifier,
       mockShip,
       mockRepos,
-      mockAwareness,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -685,7 +641,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       mockGit,
       { generate: () => 'SYSTEM PROMPT' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      mockJudge, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
       new SelfSufficiencyToolsService(mockStore, mockMemory), // selfSufficiency
       ...optionalTail({ jit: mockJit }),
@@ -1151,8 +1106,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       ok: true,
     });
 
-    // ADR 0004 rider 3 — finalize_build refuses to ship until the turn has self-reported a clean verification.
-    await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
     expect(mockShip.preShip).toHaveBeenCalledOnce();
@@ -1193,7 +1146,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       leaked: ['.env.keys'],
     });
 
-    await tools['report_verification']({ passed: true });
     const result = await tools['finalize_build']({});
 
     expect(mockShip.preShip).toHaveBeenCalledOnce();
@@ -1215,177 +1167,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(result).toMatchObject({ ok: false });
     expect((result as { reason: string }).reason).toContain("'planning'");
     expect(mockShip.preShip).not.toHaveBeenCalled();
-  });
-
-  // ADR-0005 live-verification gate on the DIRECT-BUILD ship path — the brain-owned analog of the driver's
-  // `complete_thread` gate (`thread-driver.service.spec.ts`). `finalize_build` runs the SAME judge port over
-  // the changed files + the structured evidence reported via `report_verification`, and REFUSES the tool
-  // (mid-turn, no halt machinery) on a touched-but-inadequate verdict. Always-on, fail-closed, no dial.
-  describe('(c) finalize_build — ADR-0005 live-verification gate', () => {
-    // Stand up an APPROVED (running) direct build ready to ship, with a sandbox + resolved repo + a
-    // reported verification pass. Tests vary the changed files + the judge verdict.
-    const armReadyToFinalize = () => {
-      (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: FAKE_JOB_ID,
-        status: 'running',
-        title: 'Add a /health endpoint',
-        repoId: PROJECT_ID,
-        orgId: TEAM_ID,
-      });
-      (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue(
-        {
-          id: 'sbx-1',
-          worktreePath: '/w/feat',
-          branch: 'atlas/health',
-        },
-      );
-      (
-        mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>
-      ).mockResolvedValue({
-        overview: 'Add a health endpoint',
-        decisions: [],
-      });
-      (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
-        owner: 'o',
-        repo: 'r',
-        defaultBranch: 'main',
-        token: 't',
-      });
-      (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
-        ok: true,
-      });
-    };
-
-    it('touched + adequate → ships (judge consulted with the changed files, preShip runs, verdict persisted)', async () => {
-      const tools = manager.buildTools(fakeStimulus);
-      armReadyToFinalize();
-      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
-        'src/app/api/health.controller.ts',
-      ]);
-      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
-        runtimeSurfaceTouched: true,
-        liveVerificationAdequate: true,
-        reason: 'curl /health → 200',
-      });
-
-      await tools['report_verification']({
-        passed: true,
-        verification: [
-          {
-            kind: 'curl',
-            command: 'curl localhost:3000/health',
-            exitCode: 0,
-            outputTail: '200 OK',
-          },
-        ],
-      });
-      const result = await tools['finalize_build']({});
-
-      // The judge saw exactly what git reported as changed (the diff-fed regression).
-      expect(mockJudge.judge).toHaveBeenCalledOnce();
-      expect(
-        (mockJudge.judge as ReturnType<typeof vi.fn>).mock.calls[0][0],
-      ).toMatchObject({
-        changedFiles: ['src/app/api/health.controller.ts'],
-      });
-      // Adequate → falls through to preShip and hands the open-PR instructions back.
-      expect(mockShip.preShip).toHaveBeenCalledOnce();
-      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-      expect((result as { message: string }).message).toContain('gh pr create');
-      // Verdict persisted on the PASS path too (the observability hook).
-      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        expect.objectContaining({
-          verdict: expect.objectContaining({
-            runtimeSurfaceTouched: true,
-            liveVerificationAdequate: true,
-          }),
-        }),
-      );
-    });
-
-    it('touched + INADEQUATE → REFUSES the tool (no preShip), names the missing checks, persists the verdict', async () => {
-      const tools = manager.buildTools(fakeStimulus);
-      armReadyToFinalize();
-      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
-        'src/app/api/health.controller.ts',
-      ]);
-      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue({
-        runtimeSurfaceTouched: true,
-        liveVerificationAdequate: false,
-        reason: 'only typechecked',
-        missingChecks: 'curl the /health endpoint against a running server',
-      });
-
-      // The brain claims passed but never actually exercised the endpoint.
-      await tools['report_verification']({ passed: true });
-      const result = await tools['finalize_build']({});
-
-      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
-      expect((result as { reason: string }).reason).toContain(
-        'Live validation inadequate',
-      );
-      expect((result as { reason: string }).reason).toContain(
-        'curl the /health endpoint',
-      );
-      // Refusal is BEFORE the host ship gate — no preShip, no PR.
-      expect(mockShip.preShip).not.toHaveBeenCalled();
-      // Verdict persisted on the REFUSE path (the whole point of the audit hook) + a quiet pill.
-      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        expect.objectContaining({
-          verdict: expect.objectContaining({ liveVerificationAdequate: false }),
-        }),
-      );
-      expect(mockStore.appendSystemEvent).toHaveBeenCalled();
-    });
-
-    it('docs-only diff → pre-filter SKIPS the judge entirely and ships', async () => {
-      const tools = manager.buildTools(fakeStimulus);
-      armReadyToFinalize();
-      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
-        'docs/health.md',
-        'README.md',
-      ]);
-
-      await tools['report_verification']({ passed: true });
-      const result = await tools['finalize_build']({});
-
-      expect(mockJudge.judge).not.toHaveBeenCalled();
-      expect(mockShip.preShip).toHaveBeenCalledOnce();
-      expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-      // Pre-filter verdict is a non-runtime pass.
-      expect(mockStore.recordDirectBuildVerification).toHaveBeenCalledWith(
-        FAKE_JOB_ID,
-        expect.objectContaining({
-          verdict: expect.objectContaining({
-            runtimeSurfaceTouched: false,
-            liveVerificationAdequate: true,
-          }),
-        }),
-      );
-    });
-
-    it('judge UNAVAILABLE (undefined) on a runtime diff → conservative refusal, never a silent ship', async () => {
-      const tools = manager.buildTools(fakeStimulus);
-      armReadyToFinalize();
-      (mockGit.changedFileNames as ReturnType<typeof vi.fn>).mockResolvedValue([
-        'src/app/api/health.controller.ts',
-      ]);
-      (mockJudge.judge as ReturnType<typeof vi.fn>).mockResolvedValue(
-        undefined,
-      ); // no key / malformed
-
-      await tools['report_verification']({ passed: true });
-      const result = await tools['finalize_build']({});
-
-      expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
-      // The mocked CredentialResolver reports no anthropic key → the refusal calls that out.
-      expect((result as { reason: string }).reason).toContain(
-        'no Anthropic API key',
-      );
-      expect(mockShip.preShip).not.toHaveBeenCalled();
-    });
   });
 
   it('write_workspace_config UPSERTS mounts straight to the DB — no sandbox needed, instant for every job on the repo', async () => {
@@ -1723,7 +1504,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   // tool for them, so they never pass through TOOL_SHAPES and are exempt from this guard.
   it('every buildTools()-registered tool (all kinds/roles) has a TOOL_SHAPES entry', () => {
     for (const kind of [null, 'review', 'onboarding']) {
-      for (const role of [null, 'post_build', 'ci'] as const) {
+      for (const role of [null, 'post_build', 'ship'] as const) {
         const tools = manager.buildTools(fakeStimulus, kind, null, role);
         for (const name of Object.keys(tools)) {
           if (name.startsWith('__')) continue;
@@ -1745,7 +1526,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
-      for (const role of [undefined, 'post_build', 'ci'] as const) {
+      for (const role of [undefined, 'post_build', 'ship'] as const) {
         for (const name of Object.keys(
           manager.buildTools(fakeStimulus, kind, null, role),
         )) {
@@ -1779,12 +1560,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       null,
       'post_build',
     );
-    const ci = manager.buildTools(fakeStimulus, 'feature', null, 'ci');
+    const ci = manager.buildTools(fakeStimulus, 'feature', null, 'ship');
     for (const name of [
       'get_pipeline_state',
       'recall',
       'remember',
-      'report_verification',
       'create_job',
       'list_jobs',
       'link_job_dependency',
@@ -2685,11 +2465,6 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       baseBranch: 'main',
       decisionRecordId: FAKE_RECORD_ID,
     });
-    const markerIds = (
-      mockAwareness.appendMarker as ReturnType<typeof vi.fn>
-    ).mock.calls.map((c) => (c[1] as { id: string }).id);
-    expect(markerIds).toContain(`approved:${FAKE_RECORD_ID}`);
-    expect(markerIds).not.toContain(`dispatched:${FAKE_RECORD_ID}`);
   });
 
   it('(d1) dispatch_build starts a direct build once and stamps the durable start marker first', async () => {
@@ -3453,7 +3228,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     findSandbox?: unknown;
     ensureProvisioned?: ReturnType<typeof vi.fn>;
     run?: ReturnType<typeof vi.fn>;
-    drainAndAdvance?: ReturnType<typeof vi.fn>;
     pendingCard?: unknown;
     wasReset?: boolean;
     sessionId?: string | null;
@@ -3619,12 +3393,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       threadSessionId: vi.fn().mockResolvedValue(undefined),
       setThreadSessionId: vi.fn().mockResolvedValue(undefined),
     } as unknown as DriverStoreService;
-    const awareness = {
-      appendMarker: vi.fn().mockResolvedValue(undefined),
-      drainAndAdvance:
-        opts.drainAndAdvance ??
-        vi.fn().mockResolvedValue({ markers: [], stateChanged: false }),
-    } as unknown as PipelineAwarenessStore;
     const stimulusStore = {
       eligiblePendingChat: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
@@ -3666,7 +3434,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
-      awareness,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -3695,7 +3462,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       git,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       usageService, // usage (OauthUsageService)
       new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail({ liveTurns }),
@@ -3710,7 +3476,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       dockerRunner,
       liveTurns,
       blockSink,
-      awareness,
       turnHarness,
       stimulusStore,
       usageService,
@@ -3955,32 +3720,20 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   describe('per-stage host-side turn-prefix gating (d8)', () => {
-    // Distinctive substrings from the three gated prefixes — see `buildAwarenessPrefix` /
-    // `buildOpenQuestionsPrefix` / `buildAmendingPrefix` in agent-session-manager.service.ts.
-    const AWARENESS_MARK = 'Pipeline updates since your last message';
+    // Distinctive substrings from the gated prefixes — see `buildOpenQuestionsPrefix` /
+    // `buildAmendingPrefix` in agent-session-manager.service.ts.
     const OPEN_QUESTIONS_MARK = 'still awaiting an';
     const AMENDING_MARK = 'This build is AMENDING';
 
-    /** Wires every gated prefix's trigger condition ON (markers pending, an open question, job amending) so
-     *  each test only has to assert which subset of the three actually reached the engine's task. */
+    /** Wires every gated prefix's trigger condition ON (an open question, job amending) so each test only has
+     *  to assert which subset actually reached the engine's task. */
     function makeManagerWithAllPrefixesTriggered(opts: {
       resumeThreadId?: string;
       threadRole?: ThreadRole | null;
     }) {
       const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's1' });
-      const drainAndAdvance = vi.fn().mockResolvedValue({
-        markers: [
-          {
-            id: 'm1',
-            text: 'a builder finished a leg',
-            at: '2026-07-16T00:00:00Z',
-          },
-        ],
-        stateChanged: false,
-      });
       const built = makeManager({
         run,
-        drainAndAdvance,
         threadRole: opts.threadRole,
       });
       (
@@ -4004,19 +3757,18 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         .task as string;
     }
 
-    it('PLANNING (no resumeThreadId) renders the awareness + open-questions prefixes, never amending', async () => {
+    it('PLANNING (no resumeThreadId) renders the open-questions prefix, never amending', async () => {
       const { manager, dockerRunner, turnStimulus } =
         makeManagerWithAllPrefixesTriggered({});
 
       await manager.handleChatTurn(turnStimulus);
 
       const task = composedTask(dockerRunner);
-      expect(task).toContain(AWARENESS_MARK);
       expect(task).toContain(OPEN_QUESTIONS_MARK);
       expect(task).not.toContain(AMENDING_MARK);
     });
 
-    it('POST_BUILD (resumeThreadId → post_build) renders the amending prefix, never awareness/open-questions', async () => {
+    it('POST_BUILD (resumeThreadId → post_build) renders the amending prefix, never open-questions', async () => {
       const { manager, dockerRunner, turnStimulus } =
         makeManagerWithAllPrefixesTriggered({
           resumeThreadId: 'thr-pb-1',
@@ -4027,21 +3779,19 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
       const task = composedTask(dockerRunner);
       expect(task).toContain(AMENDING_MARK);
-      expect(task).not.toContain(AWARENESS_MARK);
       expect(task).not.toContain(OPEN_QUESTIONS_MARK);
     });
 
-    it('CI (resumeThreadId → ci) renders none of the three gated prefixes', async () => {
+    it('CI (resumeThreadId → ci) renders none of the gated prefixes', async () => {
       const { manager, dockerRunner, turnStimulus } =
         makeManagerWithAllPrefixesTriggered({
           resumeThreadId: 'thr-ci-1',
-          threadRole: 'ci',
+          threadRole: 'ship',
         });
 
       await manager.handleChatTurn(turnStimulus);
 
       const task = composedTask(dockerRunner);
-      expect(task).not.toContain(AWARENESS_MARK);
       expect(task).not.toContain(OPEN_QUESTIONS_MARK);
       expect(task).not.toContain(AMENDING_MARK);
     });
@@ -4595,84 +4345,6 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     ).mock.calls.filter((c) => String(c[1]).includes('This thread is closed'));
     expect(closedPosts).toHaveLength(1); // posted once, not spammed
     expect(onRegistered).toHaveBeenCalledTimes(1); // marked delivered → the sweep can't re-drive it
-  });
-
-  it('PASSIVE awareness: an OPERATOR turn drains the buffer and PREPENDS the passive summary to the turn input', async () => {
-    const drainAndAdvance = vi.fn().mockResolvedValue({
-      markers: [
-        {
-          id: 'approved:dr-1',
-          text: 'Your plan was approved by the operator.',
-          at: '2026-06-26T00:00:00.000Z',
-        },
-      ],
-      stateChanged: false,
-    });
-    const { manager, dockerRunner, awareness } = makeManager({
-      drainAndAdvance,
-    });
-
-    await manager.handleChatTurn(stimulus); // stimulus.author.id = 'U-OP' → operator
-
-    expect(
-      (awareness.drainAndAdvance as ReturnType<typeof vi.fn>).mock.calls[0][0],
-    ).toBe(THREAD_ID);
-    const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as RunEngineArgs;
-    expect(runArgs.task).toContain(
-      'informational, no action needed unless asked',
-    );
-    expect(runArgs.task).toContain('Your plan was approved by the operator.');
-    // The operator's actual message is preserved AFTER the passive prefix.
-    expect(runArgs.task).toContain('Explain the build step');
-  });
-
-  it('PASSIVE awareness: a SYNTHETIC (Atlas-authored) turn does NOT drain the buffer', async () => {
-    const drainAndAdvance = vi
-      .fn()
-      .mockResolvedValue({ markers: [], stateChanged: false });
-    const { manager, dockerRunner, awareness } = makeManager({
-      drainAndAdvance,
-    });
-
-    // runDirectBuild / startFollowUpJob stamp author.id = 'atlas' — these must not consume the buffer.
-    const synthetic: TurnEnvelope = mkEnvelope({
-      ...stimulus,
-      author: { id: 'atlas', displayName: 'Atlas' },
-    });
-    await manager.handleChatTurn(synthetic);
-
-    expect(
-      awareness.drainAndAdvance as ReturnType<typeof vi.fn>,
-    ).not.toHaveBeenCalled();
-    const runArgs = (dockerRunner.run as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as RunEngineArgs;
-    expect(runArgs.task).toBe('Explain the build step'); // no prefix injected
-  });
-
-  it('PASSIVE awareness: a turn that fails the provisioning guard never drains the buffer', async () => {
-    const drainAndAdvance = vi
-      .fn()
-      .mockResolvedValue({ markers: [], stateChanged: false });
-    const ensureProvisioned = vi
-      .fn()
-      .mockRejectedValue(
-        new ProvisioningNotReadyError(
-          'finish connecting this repo in settings',
-        ),
-      );
-    const { manager, dockerRunner, awareness } = makeManager({
-      findSandbox: { worktreePath: '/wt' },
-      ensureProvisioned,
-      drainAndAdvance,
-    });
-
-    await manager.handleChatTurn(stimulus);
-
-    expect(dockerRunner.run).not.toHaveBeenCalled();
-    expect(
-      awareness.drainAndAdvance as ReturnType<typeof vi.fn>,
-    ).not.toHaveBeenCalled();
   });
 
   it('a composer message NEVER answers an open question card — even one shown BEFORE the message arrived', async () => {
@@ -5265,12 +4937,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
-      {
-        appendMarker: vi.fn().mockResolvedValue(undefined),
-        drainAndAdvance: vi
-          .fn()
-          .mockResolvedValue({ markers: [], stateChanged: false }),
-      } as unknown as PipelineAwarenessStore,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -5303,7 +4969,6 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
       new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail(),
@@ -5488,12 +5153,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       {} as unknown as DecisionClassifier,
       ship,
       repos,
-      {
-        appendMarker: vi.fn().mockResolvedValue(undefined),
-        drainAndAdvance: vi
-          .fn()
-          .mockResolvedValue({ markers: [], stateChanged: false }),
-      } as unknown as PipelineAwarenessStore,
       {} as unknown as JobDependencyService,
       {
         engineAuth: async () => undefined,
@@ -5526,7 +5185,6 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       } as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
       new SelfSufficiencyToolsService(store, {} as unknown as MemoryStore), // selfSufficiency
       ...optionalTail(),
@@ -5667,17 +5325,15 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
       inert,
       inert,
       inert,
-      inert,
-      inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
+      inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
       inert,
       inert,
       inert,
       inert, // turnRecovery, secretStore, configStore, git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (29, ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (30, LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31, OauthUsageService)
       inert, // selfSufficiency (32)
       ...optionalTail(),
@@ -5990,17 +5646,15 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       inert,
       inert,
       inert,
-      inert,
-      inert, // turnHarness…creds (21)
-      inert, // mcp (McpResolver, 22)
-      election, // election (23)
+      inert, // turnHarness…creds (20)
+      inert, // mcp (McpResolver, 21)
+      election, // election (22)
       inert,
       inert,
       inert,
       inert, // turnRecovery…git (27)
       { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      { judge: async () => undefined }, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
       { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (OauthUsageService)
       inert, // selfSufficiency
       ...optionalTail(),
@@ -6318,18 +5972,16 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         inert,
         inert,
         inert,
-        inert,
-        inert, // turnHarness…creds (21)
-        inert, // mcp (McpResolver, 22)
-        election, // election (23)
+        inert, // turnHarness…creds (20)
+        inert, // mcp (McpResolver, 21)
+        election, // election (22)
         inert,
         inert,
         inert,
         inert, // turnRecovery…git (27)
         { generate: () => 'SYSTEM' } as never, // prompts (28)
         { register: () => undefined } as never, // threadInput (29)
-        { judge: async () => undefined }, // liveVerificationJudge (30)
-        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (31)
+        { getResetAt: () => undefined } as unknown as OauthUsageService, // usage (30)
         inert, // selfSufficiency (32)
         ...optionalTail(),
       );
@@ -6492,7 +6144,6 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       {} as unknown as DecisionClassifier,
       {} as unknown as BuildShipService,
       {} as unknown as DriverRepoResolver,
-      {} as unknown as PipelineAwarenessStore,
       {} as unknown as JobDependencyService,
       {} as unknown as CredentialResolver,
       { resolveForTurn: async () => [] } as never, // mcp (McpResolver)
@@ -6510,7 +6161,6 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
       {} as unknown as LocalGitService,
       { generate: () => 'SYSTEM' } as never, // prompts (PromptService)
       { register: () => undefined } as never, // threadInput (ThreadInputService)
-      {} as unknown as LiveVerificationJudge,
       { getResetAt: () => undefined } as unknown as OauthUsageService,
       {} as unknown as SelfSufficiencyToolsService, // selfSufficiency
       ...optionalTail({ env }),

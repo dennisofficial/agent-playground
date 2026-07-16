@@ -9,7 +9,7 @@ import {
   type ObjectLiteral,
   Repository,
 } from 'typeorm';
-import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
+import type { Decision, Job, JobKind, JobStatus } from '@shared/domain';
 import { nextDecisionId } from '@shared/domain';
 import type {
   WebConventionEditProposalCard,
@@ -1591,59 +1591,14 @@ export class BrainStoreService {
     return { removed: true, all };
   }
 
-  /**
-   * Set the job's `activity` axis (see {@link JobActivity} / `deriveNeedsYou`). Best-effort — a write
-   * failure here must never break the turn itself (the caller swallows errors).
-   */
-  async setActivity(jobId: string, activity: JobActivity): Promise<void> {
-    await this.jobs.update({ id: jobId }, { activity });
-  }
+  // The job-level `activity` and `halted` axes were dropped from the schema (a job's phase is carried by
+  // `status` alone now, and `deriveNeedsYou` no longer reads them). These three writers are retained as
+  // no-ops so their brain call sites keep compiling until they are removed in a later slice; nothing to set.
+  async setActivity(_jobId: string, _activity: string): Promise<void> {}
 
-  /**
-   * A conversational turn is ending: settle `activity` to `idle` UNLESS a Codex plan review is still
-   * running for this job (a `review_plan` review can OUTLIVE the turn it nested inside — the durable
-   * `plan_review` thread is the source of truth, its `config.status` folded off the retired `codex_reviews`
-   * row), in which case it stays `plan_review` so the dot stays suppressed until the review itself
-   * finalizes. Best-effort — the caller swallows errors.
-   */
-  async endTurnActivity(jobId: string): Promise<void> {
-    const reviewing = await this.threads
-      .createQueryBuilder('t')
-      .where('t.job_id = :jobId', { jobId })
-      .andWhere("t.role = 'plan_review'")
-      .andWhere("t.config ->> 'status' = 'running'")
-      .getExists();
-    // A pending host-backstop retry park keeps the indicator alive: settling to `idle` here would flip
-    // `deriveNeedsYou` true and hide the live "Reconnecting…" countdown during the 10s backoff wait. Settle
-    // to `retrying` instead so the dot stays mounted until the re-drive sets `activity:'turn'` (or the budget
-    // is spent and `setHalted` surfaces the box). A running plan review still wins (its own carve-out).
-    const job = reviewing
-      ? null
-      : await this.jobs.findOne({
-          where: { id: jobId },
-          select: { id: true, session_resume: true },
-        });
-    const retrying = job?.session_resume?.kind === 'retry';
-    await this.jobs.update(
-      { id: jobId },
-      { activity: reviewing ? 'plan_review' : retrying ? 'retrying' : 'idle' },
-    );
-  }
+  async endTurnActivity(_jobId: string): Promise<void> {}
 
-  /**
-   * Mark whether an unresolved turn-failure operator box is outstanding for this thread — the durable
-   * `halted` axis of the "needs you" signal (see `deriveNeedsYou`). Set when `saySystemOperator` posts a
-   * turn-failure box, cleared when the next turn starts. A halt means the system STOPPED, so setting it
-   * also clears `activity` to `idle` (a stale `turn`/`build` must not mask the halt); clearing it (a fresh
-   * turn is starting) leaves `activity` untouched — the caller sets it to `turn`. Best-effort — a write
-   * failure must never break the turn (the caller swallows errors). NOT reset on boot (unlike `activity`).
-   */
-  async setHalted(jobId: string, halted: boolean): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      halted ? { halted: true, activity: 'idle' } : { halted: false },
-    );
-  }
+  async setHalted(_jobId: string, _halted: boolean): Promise<void> {}
 
   /**
    * Set (or clear) the durable auto-resume clock the Main lane parks on when it hits a Claude session/usage
@@ -1653,30 +1608,21 @@ export class BrainStoreService {
   async setSessionResume(
     jobId: string,
     resumeAt: string | null,
-    meta: JobEntity['session_resume'],
+    _meta?: unknown,
   ): Promise<void> {
     await this.jobs.update(
       { id: jobId },
-      {
-        session_resume_at: resumeAt ? new Date(resumeAt) : null,
-        session_resume: meta,
-      },
+      { session_resume_at: resumeAt ? new Date(resumeAt) : null },
     );
   }
 
-  /** Clear only a host-backstop retry park for this lane; leave session-limit parks untouched. */
+  /** Clear this job's park clock ahead of a re-drive (the retry/session-limit distinction lived on the
+   *  dropped `session_resume` jsonb, so the clear is now unconditional). */
   async clearRetrySessionResume(
     jobId: string,
-    lane: 'main' | 'build',
+    _lane: 'main' | 'build',
   ): Promise<void> {
-    await this.jobs
-      .createQueryBuilder()
-      .update(JobEntity)
-      .set({ session_resume_at: null, session_resume: null })
-      .where('id = :jobId', { jobId })
-      .andWhere("session_resume->>'kind' = 'retry'")
-      .andWhere("session_resume->>'lane' = :lane", { lane })
-      .execute();
+    await this.jobs.update({ id: jobId }, { session_resume_at: null });
   }
 
   /** CAS-claim one benign-abort auto-resume attempt: atomically increment `benign_abort_redrives` iff still
@@ -1740,28 +1686,10 @@ export class BrainStoreService {
   }
 
   /**
-   * Persist the ADR-0005 live-verification verdict for this job's DIRECT-BUILD ship (the brain's
-   * `finalize_build` gate). Written on BOTH the pass and the refusal path so direct-build verdicts are
-   * queryable (`jobs.direct_build_verification`) — the observability hook the prod audit needs. Overwrites
-   * on retry (the last `finalize_build` attempt wins). Best-effort — a write failure must never break the
-   * ship turn (the caller decides how to handle it).
-   */
-  async recordDirectBuildVerification(
-    jobId: string,
-    payload: JobEntity['direct_build_verification'],
-  ): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { direct_build_verification: payload },
-    );
-  }
-
-  /**
    * Stamp the durable "the direct build has STARTED" marker (`jobs.direct_build_started_at`) at the instant
    * `dispatch_build` fires `runDirectBuild`. This is what closes the pre-start base-check window for the
-   * DIRECT path in {@link buildNotStarted} — it flips at the START of the implement turn, unlike
-   * `direct_build_verification` which is only written at the END (`finalize_build`). Idempotent: a re-fired
-   * `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
+   * DIRECT path in {@link buildNotStarted} — it flips at the START of the implement turn. Idempotent: a
+   * re-fired `dispatch_build` re-stamps harmlessly. Best-effort — the caller owns error handling.
    */
   async markDirectBuildStarted(jobId: string): Promise<void> {
     await this.jobs.update(
@@ -1771,30 +1699,12 @@ export class BrainStoreService {
   }
 
   /**
-   * The threads whose `activity` is still `turn` — i.e. a conversational turn was streaming when the
-   * process died. Captured on boot BEFORE {@link resetAllActivity} clears the flags, so crash recovery
-   * knows which threads have a possibly-orphaned engine still finishing in the container (to watch them to
-   * completion). Returns thread ids.
-   */
-  async threadsWithActiveTurn(): Promise<string[]> {
-    const rows = await this.jobs.find({
-      where: { activity: 'turn' },
-      select: { id: true },
-    });
-    return rows.map((r) => r.id);
-  }
-
-  /**
-   * Boot reconciliation: no in-flight system work can survive a process restart, so reset any non-`idle`
-   * `activity` left set by a crash — otherwise the thread would read as "working" forever and never show
-   * the "needs you" dot. Returns the number of rows reset.
+   * Boot reconciliation of the former job-level `activity` axis. That column was dropped (a job's phase is
+   * carried by `status` alone now), so there is nothing to reset — retained as a no-op returning 0 so the
+   * boot sweep's call site stays intact until it is removed in a later slice.
    */
   async resetAllActivity(): Promise<number> {
-    const res = await this.jobs.update(
-      { activity: Not('idle') },
-      { activity: 'idle' },
-    );
-    return res.affected ?? 0;
+    return 0;
   }
 
   /** Resolve where to post into a thread: the repo coordinate + the real thread id. The web/agent
@@ -2134,18 +2044,16 @@ export class BrainStoreService {
   ): Promise<Job | null> {
     return this.dataSource.transaction(async (m) => {
       const now = new Date();
-      // A freshly approved plan is an explicit operator action that supersedes any stale halt, so the
-      // dispatch that follows isn't refused by the halt-invariant guard (halt is cleared here, at the
-      // operator transition, never inside dispatch()). `build_path` is committed in the SAME update so a
-      // requested-but-unapproved direct build (still `awaiting_approval`, convertible to a plan) never
-      // carries a committed path — only an approval stamps it.
+      // `build_path` is committed in the SAME update as the status flip so a requested-but-unapproved direct
+      // build (still `awaiting_approval`, convertible to a plan) never carries a committed path — only an
+      // approval stamps it.
       const jobRes = await m.getRepository(JobEntity).update(
         {
           id: jobId,
           status: 'awaiting_approval',
           decision_record_id: clickedDecisionRecordId,
         },
-        { status: 'running', halt: null, build_path: buildPath },
+        { status: 'building', build_path: buildPath },
       );
       if ((jobRes.affected ?? 0) !== 1) return null;
       await m
@@ -2298,8 +2206,7 @@ function toThread(row: JobEntity): Job {
     kind: row.kind as JobKind | null,
     buildPath: row.build_path,
     status: row.status as Job['status'],
-    activity: row.activity,
-    halt: row.halt ?? null,
+    halt: null,
     decisionRecordId: row.decision_record_id,
     featureBranch: row.feature_branch,
     currentBranch: row.current_branch,

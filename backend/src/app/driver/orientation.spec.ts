@@ -70,7 +70,7 @@ describe('renderBatchTask orientation injection', () => {
     orientation: null,
     handoffIn: null,
     handoffOut: null,
-    status: 'executing',
+    status: 'idle',
     condition: 'none',
     kind: 'builder',
     threadGroupId: 'tg-1',

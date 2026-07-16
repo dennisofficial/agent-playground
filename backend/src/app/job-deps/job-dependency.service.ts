@@ -17,9 +17,9 @@ import { TurnRegistry } from '../sandbox/turn-registry.service';
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
 // the next blocker to an already-blocked job just adds an edge and it stays blocked).
 const BLOCKABLE_STATUSES = new Set([
-  'open',
+  'scoping',
   'planning',
-  'plan_review',
+  'plan_reviewing',
   'awaiting_approval',
   'blocked',
 ]);
@@ -66,7 +66,6 @@ export type JobListRow = {
   title: string | null;
   status: string;
   prState: string | null;
-  activity: string;
   kind: string | null;
   buildPath: 'direct' | 'plan' | null;
   prNumber: number | null;
@@ -168,7 +167,6 @@ export class JobDependencyService {
       title: j.title,
       status: j.status,
       prState: j.pr_state,
-      activity: j.activity,
       kind: j.kind,
       buildPath: j.build_path,
       prNumber: j.pr_number,
@@ -230,12 +228,6 @@ export class JobDependencyService {
       );
     }
 
-    if (dependent.activity === 'turn') {
-      throw new BadRequestException(
-        "can't block a job while its brain is currently running; wait for it to stop before blocking it",
-      );
-    }
-
     const liveTurn = await this.turnRegistry
       ?.runningBrainTurn(jobId)
       .catch(() => null);
@@ -267,11 +259,15 @@ export class JobDependencyService {
       return { blocked: dependent.status === 'blocked' };
     }
 
-    const patch: Partial<JobEntity> = { status: 'blocked' };
     // Born-blocked seed: a manual/link block of an already-running job passes no seed, so it resumes
     // its existing session on wake instead of replaying a first message that was never its own.
-    if (args.seed != null) patch.blocked_seed_message = args.seed;
-    await this.jobs.update({ id: jobId }, patch);
+    await this.jobs.update(
+      { id: jobId },
+      {
+        status: 'blocked',
+        ...(args.seed != null ? { blocked_seed_message: args.seed } : {}),
+      },
+    );
     return { blocked: true };
   }
 
@@ -419,7 +415,7 @@ export class JobDependencyService {
     const upd = await this.jobs
       .createQueryBuilder()
       .update()
-      .set({ status: 'open' })
+      .set({ status: 'scoping' })
       .where('id = :id AND status = :blocked', {
         id: dependent.id,
         blocked: 'blocked',
@@ -449,13 +445,13 @@ export class JobDependencyService {
         { blocked_seed_message: null },
       );
     } catch (err) {
-      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it. Guarded on `open`
+      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it. Guarded on `scoping`
       // so we never clobber a status the just-started wake already advanced past.
       this.logger.warn(
         `wakeUnblockedJob failed for job=${dependent.id}; re-parking for sweep: ${err}`,
       );
       await this.jobs.update(
-        { id: dependent.id, status: 'open' },
+        { id: dependent.id, status: 'scoping' },
         { status: 'blocked' },
       );
     }
@@ -513,7 +509,7 @@ export class JobDependencyService {
     const upd = await this.jobs
       .createQueryBuilder()
       .update()
-      .set({ status: 'open' })
+      .set({ status: 'scoping' })
       .where('id = :id AND status = :blocked', {
         id: jobId,
         blocked: 'blocked',
@@ -533,13 +529,13 @@ export class JobDependencyService {
       return true;
     } catch (err) {
       // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it, and report
-      // "not unblocked" so the sweep keeps this job eligible. Guarded on `open` to avoid clobbering a
+      // "not unblocked" so the sweep keeps this job eligible. Guarded on `scoping` to avoid clobbering a
       // status the just-started wake already advanced past.
       this.logger.warn(
         `wakeUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`,
       );
       await this.jobs.update(
-        { id: jobId, status: 'open' },
+        { id: jobId, status: 'scoping' },
         { status: 'blocked' },
       );
       return false;

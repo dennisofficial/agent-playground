@@ -200,10 +200,9 @@ export class PlanningGroup {
       'operator is NOT a request to amend: answer it, and only propose amending if that is genuinely warranted.',
       'Frame your reason as your own recommendation — never attribute it to the operator ("Operator wants…").',
       'RETURNING FROM AMENDING TO READY-TO-SHIP: once an amend is approved the job sits in `amending` — do the',
-      'follow-up work, verify it (typecheck/build/tests + a live run of any runtime surface you touched), then',
-      'call `report_verification({ passed: true })` with your live evidence. That re-parks the job DIRECTLY at',
-      'the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card. Do not',
-      're-propose amending unless something material changed.',
+      'follow-up work and verify it (typecheck/build/tests + a live run of any runtime surface you touched).',
+      'When it is done the job is re-parked DIRECTLY at the ship-review gate (amending → ready-to-ship, no',
+      'rebuild) and the "Ship it" card is re-posted. Do not re-propose amending unless something material changed.',
     ].join('\n');
   }
 

@@ -17,18 +17,19 @@
 // The thread lifecycle status is the WIRE CONTRACT with the web console, so it is single-sourced in
 // `@workspace/shared` (see its doc comment for the per-value meanings). Imported for local use below
 // and re-exported as the domain's `JobStatus` so the brain/driver keep importing it from `../domain`.
-import type {
-  JobStatus,
-  JobHalt,
-  JobActivity,
-  AutoApproveMode,
-} from '@workspace/shared';
-import { JOB_ACTIVITIES } from '@workspace/shared';
+import type { JobStatus, AutoApproveMode } from '@workspace/shared';
 // Type-only: `thread-types.ts` imports nothing, so this is cycle-free even though `thread-kind`'s
 // registry imports from `autofix`, which imports domain types.
 import type { ThreadType } from '../thread-kind/thread-types';
-export { JOB_ACTIVITIES };
-export type { JobStatus, JobHalt, JobActivity };
+export type { JobStatus };
+
+/**
+ * VESTIGIAL job-level halt marker. The job-level halt/activity axes were removed from the schema (a thread
+ * halting never halts the JOB row; `status` alone carries phase, and per-thread display state now lives on
+ * `thread.halt_reason`). This minimal shape is retained ALWAYS-NULL so the driver/brain's transitional
+ * halt-guard reads keep compiling until those paths are collapsed in a later slice. Nothing ever writes it.
+ */
+export type JobHalt = { kind: string };
 
 /** Why a thread exists — a human-started chat, a notification-seeded thread, or an operator control action. */
 export type ThreadOrigin = 'chat' | 'event' | 'control';
@@ -37,14 +38,12 @@ export type ThreadOrigin = 'chat' | 'event' | 'control';
 export type JobProvenance = { jobId: string; title: string | null };
 
 // Phases the job is DEAD in — never a needs-you state (it is going away or already finished).
-const TERMINAL_STATUSES = new Set(['done', 'cancelled', 'deleting']);
+const TERMINAL_STATUSES = new Set(['merged', 'cancelled', 'deleting']);
 // Phases whose next step is the OPERATOR's: an idle job sitting here is waiting on the human.
-// ('blocked' is deliberately NOT here — it's system-owned, like plan_review.)
+// ('blocked' is deliberately NOT here — it's a dependency park the system owns, not a human ask.)
 const OPERATOR_OWNED_STATUSES = new Set([
-  'open',
-  'planning',
   'awaiting_approval',
-  'awaiting_ship_review',
+  'ready',
   'amending',
 ]);
 
@@ -53,31 +52,21 @@ const OPERATOR_OWNED_STATUSES = new Set([
  * Derived, never stored, so there is exactly ONE rule, consumed by both the REST thread-list and the
  * realtime row mapper (they must never diverge).
  *
- * Three orthogonal axes decide it:
- *  - `status` — the pure build PHASE. Terminal phases never light the dot; a handful of phases are
- *    OPERATOR-owned (the human is the next actor), the rest are system-owned.
- *  - `activity` — what the SYSTEM is doing right now (turn / plan_review / build / master_review). Any
- *    non-`idle` value means the system owns the next step, so the dot is suppressed. This is the axis that
- *    tells "grilling, mid-turn" from "grilling, waiting on an answer" (both `status='planning'`).
- *  - the GATES — `halted` (a HARD gate: a stopped/failed job), `openQuestion` and `awaitingSecret` (SOFT
- *    gates: durable human-input requests).
- *
- * The `halted` HARD gate is checked BEFORE the activity suppressor on purpose: a halt means the system
- * stopped, so it must light the dot even if a build/turn left `activity` non-idle (the halt writers also
- * clear activity, so this is defense in depth). The soft gates apply only once the system is idle.
+ * The job `status` alone carries the phase (the old `activity`/`halt` axes are gone). Terminal phases
+ * never light the dot; the OPERATOR-owned phases (the human is the next actor) always do; `blocked` is a
+ * dependency park the system owns, so it never lights it. For every other (system-owned) phase the dot
+ * lights only when a durable human-input gate is open — an unanswered `ask_question` (`openQuestion`) or
+ * an outstanding secret request (`awaitingSecret`).
  */
 export function deriveNeedsYou(i: {
   status: string;
-  activity: JobActivity;
   openQuestion: boolean;
   awaitingSecret: boolean;
-  halted: boolean; // halted === true OR halt != null
 }): boolean {
   if (TERMINAL_STATUSES.has(i.status)) return false;
-  if (i.halted) return true;
-  if (i.activity !== 'idle') return false;
-  if (i.openQuestion || i.awaitingSecret) return true;
-  return OPERATOR_OWNED_STATUSES.has(i.status);
+  if (i.status === 'blocked') return false;
+  if (OPERATOR_OWNED_STATUSES.has(i.status)) return true;
+  return i.openQuestion || i.awaitingSecret;
 }
 
 /**
@@ -112,12 +101,8 @@ export interface Job {
   /** The committed build path ('direct' | 'plan'); null until an approval commits it (see `approve`). */
   buildPath: 'direct' | 'plan' | null;
   status: JobStatus;
-  /** What the SYSTEM is doing right now — the ephemeral "working" axis, orthogonal to {@link status} (the
-   *  phase) and {@link halt} (the failure gate). Any non-`idle` value suppresses the needs-you dot; reset
-   *  to `idle` on boot. See {@link JobActivity} and {@link deriveNeedsYou}. */
-  activity: JobActivity;
-  /** The phase-preserving HALT (failure / credential-or-budget block / incomplete), or null when healthy.
-   *  Orthogonal to {@link status} (the pure build phase). See {@link JobHalt}. */
+  /** Vestigial always-null job-level halt marker (see {@link JobHalt}) — nothing writes it; retained only
+   *  so the driver/brain's transitional halt-guard reads keep compiling. */
   halt: JobHalt | null;
   /** The locked decision record's id (null until the upfront grill produces one). */
   decisionRecordId: string | null;
@@ -169,15 +154,10 @@ export interface TranscriptMessage {
 /** How long a master_review Codex-outage hold waits before the resume sweep re-attempts the Codex review. */
 export const CODEX_REVIEW_OUTAGE_RETRY_MS = 5 * 60_000;
 
-/** A thread's PURE LINEAR STEP — explicit, resumable. The driver `await`s each transition. Pause/failure/
- *  skip are NOT steps; they live on the orthogonal {@link ThreadCondition} overlay. */
-export type ThreadStatus =
-  | 'pending' // not started
-  | 'planning' // the thread's single step is being locked
-  | 'reviewing' // Codex plan-review loop
-  | 'executing' // the orchestrator turn is running
-  | 'auto_fixing' // per-thread auto-fix stage (a builder while its review children run)
-  | 'done';
+/** A thread's collapsed lifecycle cursor. `idle` is the dormant/resumable resting state (subsumes the old
+ *  pending/planning/reviewing/executing/auto_fixing steps); `done` means the thread's `terminal_record` is
+ *  present. Mirrors {@link ThreadEntity.status}. */
+export type ThreadStatus = 'idle' | 'done';
 
 /** A lightweight denormalized overlay tag on a thread (like job-level `halt.kind`), ORTHOGONAL to the
  *  linear {@link ThreadStatus} step: it records the pause/terminal CONDITION without moving the step.

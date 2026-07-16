@@ -30,19 +30,6 @@ export interface PipelineMarker {
 }
 
 /**
- * The PASSIVE pipeline-milestone awareness buffer (see `driver/pipeline-awareness.*`). NOT a turn
- * trigger — milestones append here while the brain is idle and are drained + prepended to the next
- * OPERATOR turn so the brain passively knows where the build stands.
- *  - `markerQueue` — transient named milestones not yet conveyed (deduped by `id`, drained atomically).
- *  - `conveyedStateSig` — signature of the last net-current-state summary already conveyed, so the
- *    state diff only re-states on a real change (null until the first state is conveyed).
- */
-export interface ThreadPipelineAwareness {
-  markerQueue: PipelineMarker[];
-  conveyedStateSig: string | null;
-}
-
-/**
  * A THREAD — the unit of work. One intent (a feature or a bugfix) = one sandbox = one worktree = one
  * feature branch = ONE PR. A thread may stay a plain conversation (`status='open'`) or enter the build
  * lifecycle; when it builds, the `threads`/`steps` rows hang directly off it (the former `jobs` layer

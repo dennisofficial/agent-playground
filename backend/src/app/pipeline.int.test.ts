@@ -401,10 +401,6 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         mergeNow: async () => false,
       } as unknown as import('./driver/auto-merge.service').AutoMergeService,
       {
-        appendMarker: async () => undefined,
-        drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
-      } as unknown as import('./driver/pipeline-awareness.store').PipelineAwarenessStore,
-      {
         isDraining: () => electionState.draining,
         isLeader: () => electionState.leader && !electionState.draining,
       } as unknown as LeaderElectionService,
@@ -455,8 +451,7 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         title: 'Pipeline int fixture',
         kind: 'feature',
         build_path: 'plan',
-        status: 'running',
-        activity: 'idle',
+        status: 'building',
         base_branch: 'main',
         auto_approve_mode: 'both',
         auto_approve_by: AUTO_APPROVER,

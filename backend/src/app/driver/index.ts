@@ -25,7 +25,6 @@ export {
   type ShipInput,
   type ShipOutcome,
 } from './build-ship.service';
-export { PipelineAwarenessStore } from './pipeline-awareness.store';
 export {
   pipelineStateSignature,
   renderPipelineStateSummary,
@@ -44,25 +43,8 @@ export {
 } from '../prompt-kit/messages/render-plan';
 export { JOB_TEARDOWN, type JobTeardownPort } from './job-teardown.port';
 export {
-  LIVE_VERIFICATION_JUDGE,
-  AnthropicLiveVerificationJudge,
-  JudgeLiveVerificationChain,
-  type LiveVerificationJudge,
-  type LiveVerificationVerdict,
-} from './live-verification-judge';
-export { LiveVerificationModule } from './live-verification.module';
-export {
   LANE_SEEDER,
   BuildLaneDeliveryService,
   type LaneSeeder,
   type LaneSeedTarget,
 } from './build-lane-delivery.service';
-export {
-  clampEvidenceOutput,
-  BUILD_RELEVANT_FILE_RE,
-  NON_RUNTIME_FILE_RE,
-  renderLockedDecisionsSummary,
-  renderTerminalRecordSummary,
-  type TerminalRecordSummaryInput,
-  type VerificationEvidence,
-} from './live-verification-support';

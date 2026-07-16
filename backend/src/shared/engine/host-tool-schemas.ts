@@ -69,6 +69,19 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   record_deviation: {
     note: z.string(),
   },
+  // review_agent structured findings — item shape mirrors `ReviewFinding` (autofix.types.ts) verbatim so
+  // review_fix's dedupe/fix plumbing consumes them unchanged. Appends incrementally to threads.review_findings.
+  report_findings: {
+    findings: z.array(
+      z.object({
+        lens: z.string().optional(),
+        severity: z.string().optional(),
+        file: z.string().nullable().optional(),
+        title: z.string(),
+        detail: z.string(),
+      }),
+    ),
+  },
   task_create: {
     subject: z.string(),
     description: z.string().optional(),
@@ -95,12 +108,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_list: {},
   task_get: { taskId: z.string() },
-  // Superset serving BOTH the driver gate and the brain — all fields optional.
-  report_verification: {
-    passed: z.boolean().optional(),
-    verification: verificationField.optional(),
-    remaining: z.array(z.string()).optional(),
-  },
 
   // ── Brain tools (buildTools) ──────────────────────────────────────────────────────────────────
   get_pipeline_state: {},
@@ -402,6 +409,10 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Record a handoff note for the next leg of this thread before you stop.',
   record_deviation:
     'Log a one-line off-spec change you made so it surfaces to the operator.',
+  report_findings:
+    'Report review findings as you discover them (call repeatedly across the review — findings accumulate). ' +
+    'Each finding is { lens, severity (low|medium|high), file (repo-relative or null), title (one line), detail }. ' +
+    'Call complete_thread when the review is done.',
   task_create:
     'Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it ' +
     'up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.',
@@ -412,17 +423,6 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'List your current live task list (every task in this thread, with its status and any blockers).',
   task_get:
     'Get the full detail (description, activeForm, blockedBy) of one task in your live list by its id.',
-  report_verification:
-    'Report the verification you ran for a DIRECT BUILD before shipping. Pass passed:true only once ' +
-    'diagnostics + the repo typecheck are clean AND — if you touched a runtime surface (HTTP endpoint, UI ' +
-    'page/component, CLI entry point, or background job) — you have ACTUALLY EXERCISED IT LIVE (booted the ' +
-    'process and curled the endpoint / drove the UI / ran the CLI for real). Include that live evidence in ' +
-    '`verification` (the real command, its exit code, a tail of its output). Before passing passed:true, ' +
-    'actually LOOK at the evidence you captured — a screenshot showing an error / "connection lost" / blank ' +
-    'page (or a log full of failures) means the check FAILED, not passed; do not report it as green. ' +
-    'finalize_build runs a ' +
-    'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
-    'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
 
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state:

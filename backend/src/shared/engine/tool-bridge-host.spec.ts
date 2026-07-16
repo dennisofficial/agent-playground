@@ -7,7 +7,7 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
     ({
       t: 'tool_request',
       id: 'x',
-      name: 'report_verification',
+      name: 'complete_thread',
       args,
     }) as unknown as ToolRequestFrame;
 
@@ -15,7 +15,7 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
     const impl = vi.fn(async () => ({ ok: true }));
     const bridge: ToolBridgeOptions = {
       jobId: 'j1',
-      tools: { report_verification: impl },
+      tools: { complete_thread: impl },
     };
     const reply = await dispatchToolRequest(bridge, frame({ passed: true }));
     expect(impl).toHaveBeenCalledWith({ passed: true });
@@ -26,7 +26,7 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
     const impl = vi.fn(async () => ({ ok: true }));
     const bridge: ToolBridgeOptions = {
       jobId: 'j1',
-      tools: { report_verification: impl },
+      tools: { complete_thread: impl },
     };
     await dispatchToolRequest(bridge, frame(undefined));
     expect(impl).toHaveBeenCalledWith({});
@@ -36,7 +36,7 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
     const impl = vi.fn(async () => ({ ok: true }));
     const bridge: ToolBridgeOptions = {
       jobId: 'j1',
-      tools: { report_verification: impl },
+      tools: { complete_thread: impl },
     };
     const reply = await dispatchToolRequest(
       bridge,

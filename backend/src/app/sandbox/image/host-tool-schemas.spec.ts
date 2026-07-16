@@ -86,11 +86,6 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   },
   task_list: {},
   task_get: { taskId: 't1' },
-  report_verification: {
-    passed: true,
-    verification: verificationPayload,
-    remaining: ['Flaky test'],
-  },
 
   // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
   get_pipeline_state: {},

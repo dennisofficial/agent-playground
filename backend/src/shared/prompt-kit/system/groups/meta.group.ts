@@ -1,9 +1,8 @@
 /**
  * prompt-kit / groups / meta — the Codex plan-review turn's system prompt (`META_PLAN_REVIEW`). A single,
  * self-contained (raw) prompt that frames Codex as a READINESS JUDGE; its per-run task (operator intent +
- * the structured plan) is `plan-review.service.renderPlanForReview`. (The decision-class classifier, the
- * thread-titler, and the live-verification judge are host-side LangChain chains — their prompts live WITH
- * those chains, not here.)
+ * the structured plan) is `plan-review.service.renderPlanForReview`. (The decision-class classifier and the
+ * thread-titler are host-side LangChain chains — their prompts live WITH those chains, not here.)
  */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';

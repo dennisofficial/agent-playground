@@ -208,25 +208,6 @@ describe('AutoMergeService.brainSettled (private, cast to any)', () => {
     await expect((svc as any).brainSettled(job)).resolves.toBe(true);
   });
 
-  it('is false when activity is not idle', async () => {
-    const { svc, job } = make({ job: makeJobEntity({ activity: 'build' }) });
-    await expect((svc as any).brainSettled(job)).resolves.toBe(false);
-  });
-
-  it('is false when halted', async () => {
-    const { svc, job } = make({ job: makeJobEntity({ halted: true }) });
-    await expect((svc as any).brainSettled(job)).resolves.toBe(false);
-  });
-
-  it('is false when halt is non-null', async () => {
-    const { svc, job } = make({
-      job: makeJobEntity({
-        halt: { kind: 'failed', reason: 'x', at: new Date().toISOString() },
-      }),
-    });
-    await expect((svc as any).brainSettled(job)).resolves.toBe(false);
-  });
-
   it('is false when open_question_count > 0', async () => {
     const { svc, job } = make({
       job: makeJobEntity({ open_question_count: 1 }),

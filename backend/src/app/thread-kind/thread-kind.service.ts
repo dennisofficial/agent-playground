@@ -10,7 +10,7 @@ import type { ThreadKindSpec } from './spec';
 @Injectable()
 export class ThreadKindRegistry implements OnModuleInit {
   onModuleInit(): void {
-    validateThreadKinds(); // boot-loud validation (unknown Agent/laneKind, bad child ref, throwing prompt)
+    validateThreadKinds(); // boot-loud validation (unknown Agent, bad child ref, throwing prompt)
   }
 
   /** Resolve a kind's spec, or throw (an unknown kind is a bug). */

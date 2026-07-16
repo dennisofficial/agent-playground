@@ -279,8 +279,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           title: 'Host retry backstop',
           kind: 'feature',
           build_path: 'plan',
-          status: 'running',
-          activity: 'idle',
+          status: 'building',
           base_branch: 'main',
         }),
       );
@@ -465,10 +464,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           mergeNow: async () => false,
         } as unknown as import('./auto-merge.service').AutoMergeService,
         {
-          appendMarker: async () => undefined,
-          drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
-        } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
-        {
           isDraining: () => electionState.draining,
           isLeader: () => electionState.leader && !electionState.draining,
         } as unknown as LeaderElectionService,
@@ -496,10 +491,6 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
-      // Spy on the REAL store's setJobHalt (call-through, real Postgres write still goes through) so we can
-      // assert a `failed` halt was NEVER stamped during the drive.
-      const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
-
       // ── drive it, with ONLY the fixed host-retry backoff collapsed to 0ms ───────────────────────────────
       const domainJob = await store.loadJob(job.id);
       const clamp = clampHostRetryBackoff();
@@ -514,8 +505,8 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         while (Date.now() < deadline) {
           const row = await jobs.findOneOrFail({ where: { id: job.id } });
           finalStatus = row.status;
-          if (row.status === 'done' || row.status === 'failed') break;
-          if (row.status === 'awaiting_ship_review' && !shipApproved) {
+          if (row.status === 'pr_open') break;
+          if (row.status === 'ready' && !shipApproved) {
             shipApproved = true;
             await driver.resolveShipApprovalDurably(job.id, 'auto-test');
           }
@@ -527,18 +518,13 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
       liveTurnsSub.unsubscribe();
 
       // ── assertions — the lane SELF-HEALED, read back from live Postgres + the live store ───────────────
-      expect(finalStatus).toBe('done');
+      expect(finalStatus).toBe('pr_open');
 
       const execCalls = calls.filter((c) => c.mode === 'execute');
       expect(execCalls.length).toBeGreaterThanOrEqual(4); // 3 transient throws + 1 fresh completing turn
 
-      expect(
-        setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
-      ).toBe(false);
-
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });
-      expect(finalRow.status).toBe('done');
-      expect(finalRow.halt).toBeNull();
+      expect(finalRow.status).toBe('pr_open');
       expect(finalRow.pr_url).toBeTruthy();
 
       const threadRow = await threads.findOneOrFail({

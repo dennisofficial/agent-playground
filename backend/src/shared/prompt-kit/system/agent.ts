@@ -46,8 +46,8 @@ export enum Agent {
   /** The Codex plan-review turn's system prompt (its per-run task is `plan-review.service.renderPlanForReview`). */
   META_PLAN_REVIEW = 'meta_plan_review',
   // NOTE: the in-sandbox open-PR turn (`ship-open-pr`) is NOT an agent — it is a
-  // `prompt-kit/messages/` message. The decision-class classifier, thread-titler, and live-verification judge
-  // are host-side LangChain chains — their prompts live WITH those chains, not in prompt-kit at all.
+  // `prompt-kit/messages/` message. The decision-class classifier and thread-titler are host-side LangChain
+  // chains — their prompts live WITH those chains, not in prompt-kit at all.
 }
 
 /** Every agent — for a fragment that belongs in every assembled prompt. */

@@ -609,7 +609,6 @@ export class PlanReviewService {
     await this.threads.update({ id: threadId }, {
       config: { ...(thread.config ?? {}), ...next },
     } as any);
-    await this.syncReviewActivity(input.jobId, status);
     return toReviewRow(
       await this.threads.findOneOrFail({ where: { id: threadId } }),
     );
@@ -629,27 +628,6 @@ export class PlanReviewService {
     if (extraWhere) qb.andWhere(extraWhere);
     const row = await qb.getRawOne<{ max: number | null }>();
     return row?.max ?? 0;
-  }
-
-  /**
-   * Reflect the review row's status onto the job's `activity` axis: `plan_review` while running, `idle`
-   * when it finalizes (`complete`/`failed`). `persistRow` is the single choke point for every
-   * `codex_reviews` status transition, so `activity` can never drift from the review. `deriveNeedsYou`
-   * reads it to suppress the "needs you" dot while a review is in flight — critically, the live sidebar's
-   * single-table WAL realtime mapper can only see the `jobs` row, so writing it here is what makes the live
-   * dot correct. Setting `idle` on complete is SAFE: if the enclosing brain turn is still live it re-asserts
-   * `turn` (see the `review_plan` handler); if the turn already ended, `idle` is correct. The shutdown-drain
-   * abort path deliberately does NOT call `persistRow`, leaving the row `running` (and `activity`
-   * untouched) so the backstop re-drives an interrupted review.
-   */
-  private async syncReviewActivity(
-    jobId: string,
-    status: 'running' | 'complete' | 'failed',
-  ): Promise<void> {
-    await this.jobs.update(
-      { id: jobId },
-      { activity: status === 'running' ? 'plan_review' : 'idle' },
-    );
   }
 
   /**

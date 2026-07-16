@@ -63,7 +63,6 @@ function makeManager(threadRole: ReturnType<typeof vi.fn>) {
     inert, // turnRecovery…git
     inert, // prompts (PromptService)
     inert, // threadInput (ThreadInputService)
-    inert, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     inert, // usage (OauthUsageService)
     inert, // selfSufficiency (SelfSufficiencyToolsService, added by #268)
   );
@@ -109,7 +108,7 @@ describe('AgentSessionManager.resolvePromptAgent — the turn-seam stage-persona
   });
 
   it('a resumeThreadId pointing at a ci thread resolves to CI', async () => {
-    const threadRole = vi.fn().mockResolvedValue('ci' satisfies ThreadRole);
+    const threadRole = vi.fn().mockResolvedValue('ship' satisfies ThreadRole);
     const manager = makeManager(threadRole);
 
     const agent = await callResolvePromptAgent(
@@ -122,7 +121,7 @@ describe('AgentSessionManager.resolvePromptAgent — the turn-seam stage-persona
   });
 
   it('a resumeThreadId pointing at a planning thread still resolves to PLANNING', async () => {
-    const threadRole = vi.fn().mockResolvedValue('planning' satisfies ThreadRole);
+    const threadRole = vi.fn().mockResolvedValue('planner' satisfies ThreadRole);
     const manager = makeManager(threadRole);
 
     const agent = await callResolvePromptAgent(

@@ -857,24 +857,18 @@ export class WebSurfaceController {
         origin: t.origin,
         kind: t.kind, // job kind ('feature'/'bugfix'/'onboarding'/'event'/'review'/null) — drives the web badge
         status: t.status,
-        halt: t.halt ?? null,
-        activity: t.activity,
-        halted: t.halted,
-        // True only while the operator's "Ship it" is being finalized (PR opening): the job re-uses the
-        // `running` status during shipping, so this distinguishes "opening PR" from "building threads" and
-        // keeps the card pinned in "Ready to Ship" instead of "Building".
-        shipping: t.status === 'running' && t.ship_review_approved_at != null,
+        // True while the operator's "Ship it" is being finalized (PR opening) — its own `shipping` status,
+        // so the card stays pinned in "Ready to Ship" instead of "Building".
+        shipping: t.status === 'shipping',
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
         blockedSeedMessage:
           t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
         needsYou: deriveNeedsYou({
           status: t.status,
-          activity: t.activity,
           openQuestion: t.open_question_count > 0,
           awaitingSecret:
             t.awaiting_secret_id != null || t.open_secret_count > 0,
-          halted: t.halted || t.halt != null,
         }),
         createdAt: t.created_at,
         // The observed PR (null until one exists) — drives the sidebar's PR-status glyph. `mergeable`
@@ -953,19 +947,14 @@ export class WebSurfaceController {
       title: t.title,
       origin: t.origin,
       status: t.status,
-      halt: t.halt ?? null,
-      activity: t.activity,
-      halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
       blockedSeedMessage:
         t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
       needsYou: deriveNeedsYou({
         status: t.status,
-        activity: t.activity,
         openQuestion: t.open_question_count > 0,
         awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
-        halted: t.halted || t.halt != null,
       }),
       baseBranch: t.base_branch,
       createdAt: t.created_at,
@@ -1815,8 +1804,9 @@ export class WebSurfaceController {
     @Query('force') force?: string,
   ): Promise<{ ok: boolean; status: string }> {
     const thread = await this.requireThread(jobId, org.id);
-    if (!thread.halt) {
-      // Idempotent / not-applicable: nothing to retry (already running, done, or pre-build).
+    // Idempotent / not-applicable: terminal jobs have nothing to retry. (Job-level halt is gone — a parked
+    // turn now shows on the focused thread's display-only `halt_reason`; re-drive is left to `dispatcher.retry`.)
+    if (['merged', 'cancelled', 'deleting'].includes(thread.status)) {
       return { ok: false, status: thread.status };
     }
     if (force !== 'true') {
@@ -1832,7 +1822,7 @@ export class WebSurfaceController {
       }
     }
     await this.dispatcher.retry(jobId);
-    return { ok: true, status: 'running' };
+    return { ok: true, status: thread.status };
   }
 
   /**
@@ -3611,10 +3601,8 @@ export class WebSurfaceController {
       prState: t.pr_state,
       needsYou: deriveNeedsYou({
         status: t.status,
-        activity: t.activity,
         openQuestion: t.open_question_count > 0,
         awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
-        halted: t.halted || t.halt != null,
       }),
       createdAt: t.created_at,
     }));
@@ -3645,10 +3633,8 @@ export class WebSurfaceController {
         : null,
       needsYou: deriveNeedsYou({
         status: t.status,
-        activity: t.activity,
         openQuestion: t.open_question_count > 0,
         awaitingSecret: t.awaiting_secret_id != null || t.open_secret_count > 0,
-        halted: t.halted || t.halt != null,
       }),
       createdAt: t.created_at,
     };

@@ -17,6 +17,7 @@ import {
   reviewAgentsForThread,
   type AutoFixContext,
   type FindingSeverity,
+  type ReviewFinding,
 } from '../autofix';
 import type {
   DecisionRecord,
@@ -47,7 +48,6 @@ import {
   INTERNAL_PROFILE_AWARENESS_TOOL,
 } from '@shared/engine/engine.types';
 import { ProfileAwarenessService } from '../workspace-profile';
-import { summarizeTurnFailure } from '@shared/engine/turn-failure-summary';
 import {
   defaultResumeAt,
   isCorroboratedSessionLimit,
@@ -133,8 +133,6 @@ import {
 } from '../thread-kind';
 import { threadGroupKindSpec } from '../thread-group-kind';
 import { BuildShipService } from './build-ship.service';
-import { PipelineAwarenessStore } from './pipeline-awareness.store';
-import { clampEvidenceOutput } from './live-verification-support';
 import {
   DriverStoreService,
   type DriverThread,
@@ -161,6 +159,20 @@ import {
 } from './repo-resolver';
 import { JobLifecycleService } from './job-lifecycle.service';
 import { AutoMergeService } from './auto-merge.service';
+
+/**
+ * Head+TAIL clamp for one piece of self-reported `complete_thread` evidence output. A plain head-only
+ * `slice(0, N)` silently drops the decisive line of a curated proof when it sits past the cut, so keep a
+ * head (which command) AND a tail (its result) joined by a visible elision marker. The default cap sits
+ * above the measured prod p99 evidence length, so essentially all real evidence passes through untouched.
+ */
+function clampEvidenceOutput(s: string, cap = 3000): string {
+  if (s.length <= cap) return s;
+  const head = Math.min(1200, Math.floor(cap / 3));
+  const tail = cap - head;
+  const elided = s.length - head - tail;
+  return `${s.slice(0, head)}\n…[${elided} chars elided]…\n${s.slice(s.length - tail)}`;
+}
 
 /**
  * W4 — the THREAD DRIVER. The legible, deterministic, resumable replacement for v1's implicit
@@ -310,7 +322,6 @@ export class ThreadDriver implements JobDispatcher {
     // The ONE merge resolution path — the manual "Merge PR" click lands here (resolveMergeApprovalDurably)
     // exactly like the auto path.
     private readonly autoMerge: AutoMergeService,
-    private readonly awareness: PipelineAwarenessStore,
     // Lets the terminal-error catch tell a shutdown-induced abort (leave the job resumable) apart from a
     // real failure — so a graceful restart mid-build no longer self-marks the job `failed`.
     private readonly election: LeaderElectionService,
@@ -439,23 +450,6 @@ export class ThreadDriver implements JobDispatcher {
     };
   }
 
-  /**
-   * Buffer a PASSIVE pipeline milestone for the thread brain (no turn runs; it's drained into the next
-   * operator turn). Best-effort + idempotent (deduped by `id`): the driver fires the same thread-group
-   * boundary repeatedly across a resume, so the buffer keeps one. A failed append never breaks the build.
-   */
-  private async recordMilestone(
-    jobId: string,
-    id: string,
-    text: string,
-  ): Promise<void> {
-    await this.awareness
-      .appendMarker(jobId, { id, text, at: new Date().toISOString() })
-      .catch((err) =>
-        this.logger.debug(`milestone append failed (continuing): ${err}`),
-      );
-  }
-
   /** Sanity ceiling on a job's threads — a malformed plan can't drive an unbounded build. A code
    *  constant: the approved thread list is human-gated, so this is belt-and-braces, not a deploy knob. */
   private get maxThreads(): number {
@@ -553,12 +547,10 @@ export class ThreadDriver implements JobDispatcher {
     // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
     // re-entry. Boot `resume()` never calls `resumePaused()`, so it still keeps the accumulated, restart-safe count.
     await this.store.clearDriverRetryCounters(jobId);
-    // Clear the halt (only retry/resumePaused/redriveThread may un-halt) then re-drive the preserved phase.
-    await this.store.clearJobHalt(jobId);
     // Clear the durable auto-resume clock too, so the leader sweep never re-fires this resume (no-op for a
     // credential resume that was never parked on the clock).
     await this.store.setSessionResume(jobId, null, null);
-    await this.store.setJobStatus(jobId, 'running');
+    await this.store.setJobStatus(jobId, 'building');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
         `resumePaused job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
@@ -582,7 +574,7 @@ export class ThreadDriver implements JobDispatcher {
    */
   async reattachTurnRow(row: ActiveTurnEntity): Promise<ReattachOutcome> {
     const job = await this.store.loadJob(row.job_id).catch(() => null);
-    if (!job || job.status !== 'running' || job.halt != null) {
+    if (!job || job.status !== 'building' || job.halt != null) {
       // Not drivable: `runJob` would no-op on a non-running / halted job anyway. Leave it for its existing
       // recovery path; the watchdog keeps the (live) turn alive.
       return 'deferred';
@@ -628,14 +620,11 @@ export class ThreadDriver implements JobDispatcher {
     // retry budget too — mirrors the old function-local `attempt` counter, which reset on every drive()
     // re-entry. Boot `resume()` never calls `retry()`, so it still keeps the accumulated, restart-safe count.
     await this.store.clearDriverRetryCounters(jobId);
-    // Clear the halt (the invariant: only retry/resumePaused/redriveThread may un-halt) and re-drive. The
-    // status flip is a no-op in practice — a halt is only ever recorded mid-drive, i.e. while `running` — but
-    // it self-heals any drifted/backfilled phase so `runJob`'s `running` gate lets the re-drive through.
-    await this.store.clearJobHalt(jobId);
+    // Self-heal any drifted/backfilled phase so `runJob`'s `building` gate lets the re-drive through.
     // A Force-resume of a session-limit park routes through here — clear the durable auto-resume clock so the
     // leader sweep never re-fires (harmless no-op for a non-parked retry).
     await this.store.setSessionResume(jobId, null, null);
-    await this.store.setJobStatus(jobId, 'running');
+    await this.store.setJobStatus(jobId, 'building');
     void this.drive(jobId).catch((err) => {
       this.logger.error(
         `retry job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
@@ -684,15 +673,10 @@ export class ThreadDriver implements JobDispatcher {
       return { ok: false, reason: `thread ${threadId} is already complete` };
     }
     await this.store.clearTerminalRecord(threadId).catch(() => undefined);
-    // Clear the JOB-level phase-preserving halt too: the re-drive must lift the halt or `runJob`/`drive`'s
-    // halt gate would refuse to re-drive.
-    await this.store.clearJobHalt(jobId).catch(() => undefined);
     // RE-ARM the #254 transient-drive retry lane (this re-drive re-enters `drive()`), mirroring
     // `retry`/`resumePaused` — a fresh drive gets a fresh transient budget.
     await this.store.clearDriverRetryCounters(jobId).catch(() => undefined);
-    await this.store
-      .setThreadStatus(threadId, 'executing')
-      .catch(() => undefined);
+    await this.store.setThreadStatus(threadId, 'idle').catch(() => undefined);
     await this.store
       .setThreadCondition(threadId, 'none')
       .catch(() => undefined);
@@ -701,8 +685,8 @@ export class ThreadDriver implements JobDispatcher {
         .setThreadOrientation(threadId, guidance)
         .catch(() => undefined);
     }
-    if (job.status !== 'running') {
-      await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    if (job.status !== 'building') {
+      await this.store.setJobStatus(jobId, 'building').catch(() => undefined);
     }
     this.logger.log(
       `redriveThread job=${jobId} thread=${threadId} — re-driving`,
@@ -783,9 +767,8 @@ export class ThreadDriver implements JobDispatcher {
         .catch(() => undefined);
     }
     await this.store.setThreadStatus(mr.id, 'done').catch(() => undefined);
-    await this.store.clearJobHalt(jobId).catch(() => undefined);
     await this.store.setSessionResume(jobId, null, null).catch(() => undefined);
-    await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    await this.store.setJobStatus(jobId, 'building').catch(() => undefined);
     void this.drive(jobId).catch((err) =>
       this.logger.error(
         `operatorShipWithoutReview job=${jobId} crashed: ${err}`,
@@ -902,15 +885,6 @@ export class ThreadDriver implements JobDispatcher {
           const resetSource: 'usage_api' | 'parsed_string' = limit.rateLimitType
             ? 'usage_api'
             : 'parsed_string';
-          const at = new Date().toISOString();
-          await this.store
-            .setJobHalt(jobId, {
-              kind: 'session_limit',
-              reason: limit.message,
-              at,
-              resumeAt: resumeClock,
-            })
-            .catch(() => undefined);
           await this.store
             .setSessionResume(jobId, resumeClock, {
               lane: 'build',
@@ -918,7 +892,6 @@ export class ThreadDriver implements JobDispatcher {
               resetSource,
             })
             .catch(() => undefined);
-          await this.relaySessionLimitPaused(jobId, resumeAt);
           await this.store
             .clearDriverRetryCounters(jobId)
             .catch(() => undefined);
@@ -961,15 +934,6 @@ export class ThreadDriver implements JobDispatcher {
         this.logger.error(
           `job=${jobId} failed: ${err instanceof Error ? err.stack : err}`,
         );
-        await this.store
-          .setJobHalt(jobId, {
-            kind: 'failed',
-            reason: shortReason(err),
-            at: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-        // RELAY the failure into the thread — a failed job must never dead-end silently (issue #2).
-        await this.relayFailure(jobId, err);
       }
     } finally {
       this.active.delete(jobId);
@@ -981,8 +945,8 @@ export class ThreadDriver implements JobDispatcher {
    * host backstop). `runJob` is resumable — a re-entry fast-forwards completed threads/batches and resumes
    * the interrupted turn — so a retry is safe. Non-transient errors and an exhausted budget propagate to
    * `drive()`'s classification (paused / detached / failed). Skipped entirely while draining (a shutdown is
-   * not a retryable error — drive() leaves the job running for boot-resume). Quiet + visible, not silent: each
-   * retry posts a durable notice and fans a best-effort live indicator (see `relayRetrying`).
+   * not a retryable error — drive() leaves the job running for boot-resume). Quiet: each retry fans a
+   * best-effort live indicator (`liveTurns.retry`).
    */
   private async runJobWithTransientRetry(jobId: string): Promise<void> {
     const maxRetries = MAX_HOST_RETRIES;
@@ -1020,7 +984,6 @@ export class ThreadDriver implements JobDispatcher {
             err instanceof Error ? err.message : err
           }`,
         );
-        await this.relayRetrying(jobId, n, maxRetries);
         const job = await this.store.loadJob(jobId).catch(() => null);
         const lane = await this.retryLaneForJob(jobId);
         try {
@@ -1061,9 +1024,8 @@ export class ThreadDriver implements JobDispatcher {
         MAX_HOST_RETRIES,
       );
       if (ok) {
-        // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
-        // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
-        await this.relayRetrying(jobId, n, MAX_HOST_RETRIES);
+        // RETRY: no halt set (no paused banner) — a best-effort live indicator, then a precise 10s re-drive of
+        // the SAME engine session via the durable resume clock + in-process timer.
         const lane = await this.retryLaneForJob(jobId);
         try {
           this.liveTurns.retry(job?.repoId ?? jobId, jobId, lane, {
@@ -1097,27 +1059,11 @@ export class ThreadDriver implements JobDispatcher {
       await this.holdForCodexReviewOutage(jobId, err);
       return;
     }
-    await this.store
-      .setJobHalt(jobId, {
-        kind: 'blocked_credentials',
-        reason: cleanAuthHaltReason(err.message, err.engine),
-        at: new Date().toISOString(),
-      })
-      .catch(() => undefined);
-    let markedReauth = false;
     if (orgId && selected && this.claudeCreds) {
-      markedReauth = await this.claudeCreds
+      await this.claudeCreds
         .markNeedsReauth(orgId, selected.id, err.message)
-        .then(() => true)
-        .catch(() => false);
+        .catch(() => undefined);
     }
-    await this.relayPaused(
-      jobId,
-      err,
-      markedReauth
-        ? 'Your Claude login expired and could not be refreshed — reconnect it in Settings, then resume.'
-        : cleanAuthHaltReason(err.message, err.engine),
-    );
   }
 
   /** Best-effort live lane for a build host retry: current/next executable thread, else the Main fallback. */
@@ -1150,19 +1096,10 @@ export class ThreadDriver implements JobDispatcher {
     jobId: string,
     err: unknown,
   ): Promise<void> {
-    const at = new Date().toISOString();
     const reason = 'Master review is paused — Codex is unreachable.';
     const resumeAt = new Date(
       Date.now() + CODEX_REVIEW_OUTAGE_RETRY_MS,
     ).toISOString();
-    await this.store
-      .setJobHalt(jobId, {
-        kind: 'codex_review_unavailable',
-        reason,
-        at,
-        resumeAt,
-      })
-      .catch(() => undefined);
     await this.store
       // `resetSource` is required by the column type but not used for routing — 'usage_api' mirrors the
       // host-retry park's fixed-clock convention (`scheduleBuildHostRetry`), since this clock isn't a
@@ -1173,7 +1110,6 @@ export class ThreadDriver implements JobDispatcher {
         resetSource: 'usage_api',
       })
       .catch(() => undefined);
-    await this.relayCodexReviewOutage(jobId, resumeAt);
   }
 
   /**
@@ -1227,245 +1163,12 @@ export class ThreadDriver implements JobDispatcher {
       this.hostRetryTimers.delete(jobId);
     }
     await this.store.setSessionResume(jobId, null, null).catch(() => undefined);
-    await this.store.setJobStatus(jobId, 'running').catch(() => undefined);
+    await this.store.setJobStatus(jobId, 'building').catch(() => undefined);
     void this.drive(jobId).catch((err) =>
       this.logger.error(
         `resumeRetry job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
       ),
     );
-  }
-
-  /**
-   * Post the durable QUIET "Reconnecting … auto-retry n/m…" notice (a `system_notice` row, not the scary
-   * paused/failed operator box) — the real backstop deliverable; the live indicator fan is best-effort on
-   * top. Durable-first via the block sink, mirroring `relayPaused`/`relayFailure`.
-   */
-  private async relayRetrying(
-    jobId: string,
-    n: number,
-    max: number,
-  ): Promise<void> {
-    const text = `Reconnecting to Claude — auto-retry ${n}/${max}…`;
-    const threadId = await this.planningThreadId(jobId);
-    await this.blockSink
-      .appendBlock(jobId, {
-        kind: 'chat',
-        threadId,
-        text,
-        meta: { source: 'system_notice' },
-      })
-      .catch((e) =>
-        this.logger.warn(
-          `could not record retry notice for job=${jobId}: ${e}`,
-        ),
-      );
-  }
-
-  /** Post a "paused on a credential error" notice so the human fixes creds + pings resume. Durable: writes
-   *  DIRECTLY to `messages` via the block sink FIRST (independent of route resolution / the live SSE post,
-   *  which is only best-effort) — see {@link relayFailure} for why. An `overrideText` swaps the generic body
-   *  for an actionable one (e.g. the `needs_reauth` reconnect prompt). */
-  private async relayPaused(
-    jobId: string,
-    err: unknown,
-    overrideText?: string,
-  ): Promise<void> {
-    const text =
-      overrideText != null
-        ? `:lock: Build paused — ${overrideText}\n_Your work + the engine session are saved; resume (or reply here) to continue the SAME session._`
-        : `:lock: Build paused — a credential/auth error halted the engine (${shortReason(err)}).\n_Your work + the engine session are saved; fix the credentials and ping resume (or reply here) to continue the SAME session._`;
-    const { summary } = summarizeTurnFailure(err);
-    const threadId = await this.planningThreadId(jobId);
-    await this.blockSink
-      .appendBlock(jobId, {
-        kind: 'chat',
-        threadId,
-        text,
-        meta: {
-          source: 'system_operator',
-          severity: 'warning',
-          category: 'auth',
-          summary,
-        },
-      })
-      .catch((e) =>
-        this.logger.error(
-          `could not durably record pause for job=${jobId}: ${e}`,
-        ),
-      );
-    try {
-      const job = await this.store.loadJob(jobId);
-      const route = await this.store.route(job);
-      await this.post(route, text);
-    } catch (e) {
-      this.logger.warn(`could not live-relay pause for job=${jobId}: ${e}`);
-    }
-  }
-
-  /**
-   * Post a "parked on a session/usage limit" notice (build lane). Mirrors {@link relayPaused} (durable-first
-   * via the block sink, best-effort live post on top) but marks the block `sessionLimit` so the UI can render
-   * the park + its Force-resume affordance. The text is STABLE (no live now-timestamp) so a re-drive that
-   * re-parks the same limit dedupes against the last notice instead of stacking near-identical boxes.
-   */
-  private async relaySessionLimitPaused(
-    jobId: string,
-    resumeAt?: string,
-  ): Promise<void> {
-    const text = `You've hit your session limit — resets ${resumeAt ? fmtReset(resumeAt) : 'soon'}. Auto-resumes then; use Force resume now to resume earlier.`;
-    const alreadyPosted = await this.store
-      .hasRecentSystemOperatorNotice(jobId, text)
-      .catch(() => false);
-    if (!alreadyPosted) {
-      const threadId = await this.planningThreadId(jobId);
-      await this.blockSink
-        .appendBlock(jobId, {
-          kind: 'chat',
-          threadId,
-          text,
-          meta: {
-            source: 'system_operator',
-            severity: 'warning',
-            sessionLimit: true,
-            category: 'session_limit',
-            summary:
-              "You've hit your Claude session limit — it auto-resumes at reset.",
-            ...(resumeAt ? { resumeAt } : {}),
-          },
-        })
-        .catch((e) =>
-          this.logger.error(
-            `could not durably record session-limit park for job=${jobId}: ${e}`,
-          ),
-        );
-    }
-    try {
-      const job = await this.store.loadJob(jobId);
-      const route = await this.store.route(job);
-      if (route.channel && !alreadyPosted) {
-        await this.surface.post(route.channel, text, {
-          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-          ...(route.orgId ? { orgId: route.orgId } : {}),
-          meta: {
-            source: 'system_operator',
-            severity: 'warning',
-            sessionLimit: true,
-            category: 'session_limit',
-            summary:
-              "You've hit your Claude session limit — it auto-resumes at reset.",
-            ...(resumeAt ? { resumeAt } : {}),
-          },
-        });
-      }
-    } catch (e) {
-      this.logger.warn(
-        `could not live-relay session-limit park for job=${jobId}: ${e}`,
-      );
-    }
-  }
-
-  /**
-   * Post a "master_review paused — Codex outage" notice (build lane). Mirrors {@link relaySessionLimitPaused}
-   * (durable-first via the block sink, best-effort live post on top) but the dedup can't rely on an exact-text
-   * match over the default 120s window the way the session-limit park does: `session_limit`'s `resumeAt` is an
-   * EXTERNAL absolute reset instant that stays constant across re-parks of the same limit, while this hold's
-   * clock is a SELF-imposed `now + CODEX_REVIEW_OUTAGE_RETRY_MS` recomputed fresh on every retry cycle — and
-   * the sweep re-drives (and thus re-holds) on exactly that cadence, well outside 120s. So the notice text
-   * here is kept STABLE (it never embeds `resumeAt`) and the dedup window is widened to span one full retry
-   * cycle, so a same-outage re-hold matches the previous notice instead of stacking a near-identical box every
-   * `CODEX_REVIEW_OUTAGE_RETRY_MS`. Marks the block `codexReviewUnavailable` so the UI can render the outage
-   * card + its "Ship without review" affordance.
-   */
-  private async relayCodexReviewOutage(
-    jobId: string,
-    resumeAt?: string,
-  ): Promise<void> {
-    const text = `:hourglass: Master review is paused — Codex is unreachable. It auto-retries every few minutes; you can also “Ship without review” to skip the automated review and proceed to the ship gate now.`;
-    const alreadyPosted = await this.store
-      .hasRecentSystemOperatorNotice(
-        jobId,
-        text,
-        CODEX_REVIEW_OUTAGE_RETRY_MS + 60_000,
-      )
-      .catch(() => false);
-    if (!alreadyPosted) {
-      await this.blockSink
-        .appendBlock(jobId, {
-          kind: 'chat',
-          threadId: await this.planningThreadId(jobId),
-          text,
-          meta: {
-            source: 'system_operator',
-            severity: 'warning',
-            codexReviewUnavailable: true,
-            ...(resumeAt ? { resumeAt } : {}),
-          },
-        })
-        .catch((e) =>
-          this.logger.error(
-            `could not durably record codex-review-outage hold for job=${jobId}: ${e}`,
-          ),
-        );
-    }
-    try {
-      const job = await this.store.loadJob(jobId);
-      const route = await this.store.route(job);
-      if (route.channel && !alreadyPosted) {
-        await this.surface.post(route.channel, text, {
-          ...(route.threadTs ? { threadTs: route.threadTs } : {}),
-          ...(route.orgId ? { orgId: route.orgId } : {}),
-          meta: {
-            source: 'system_operator',
-            severity: 'warning',
-            codexReviewUnavailable: true,
-            ...(resumeAt ? { resumeAt } : {}),
-          },
-        });
-      }
-    } catch (e) {
-      this.logger.warn(
-        `could not live-relay codex-review-outage hold for job=${jobId}: ${e}`,
-      );
-    }
-  }
-
-  /**
-   * Post a clear "build failed — why" into the job's thread. Durable: writes DIRECTLY to `messages` via
-   * the block sink FIRST — `this.post()` only pushes to the in-memory SSE outbox (see `WebSurface.post`),
-   * it never persists a row, so a bare `post()`-only relay is invisible to any client that reconnects or
-   * wasn't connected at the moment of failure (the `/messages` REST history reads the DB, not the outbox).
-   * That gap is what let job 6e467abe-3a79-4be2-b9a8-951a89ab0c84 flip to `failed` with zero trace in
-   * `messages` — `post()`/`route()` themselves didn't even need to throw. The live `post()` below is kept
-   * best-effort on top, purely for the immediate SSE nudge.
-   */
-  private async relayFailure(jobId: string, err: unknown): Promise<void> {
-    const text = `:x: Build failed — ${shortReason(err)}\n_The job is marked failed; reply in this thread to retry or adjust the plan._`;
-    const { category, summary } = summarizeTurnFailure(err);
-    const threadId = await this.planningThreadId(jobId);
-    await this.blockSink
-      .appendBlock(jobId, {
-        kind: 'chat',
-        threadId,
-        text,
-        meta: {
-          source: 'system_operator',
-          severity: 'error',
-          category,
-          summary,
-        },
-      })
-      .catch((e) =>
-        this.logger.error(
-          `could not durably record failure for job=${jobId}: ${e}`,
-        ),
-      );
-    try {
-      const job = await this.store.loadJob(jobId);
-      const route = await this.store.route(job);
-      await this.post(route, text);
-    } catch (e) {
-      this.logger.warn(`could not live-relay failure for job=${jobId}: ${e}`);
-    }
   }
 
   /**
@@ -1476,7 +1179,7 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async runJob(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId);
-    if (job.status !== 'running') {
+    if (job.status !== 'building') {
       this.logger.warn(
         `job=${jobId} not running (status=${job.status}) — not driving`,
       );
@@ -1529,8 +1232,6 @@ export class ThreadDriver implements JobDispatcher {
       );
       return;
     }
-    // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
-    await this.store.setActivity(jobId, 'build').catch(() => undefined);
     await this.store.recomputeBuildStageProgress(jobId).catch(() => undefined);
     // CAP (MAX_SECTIONS): bound the number of BUILD thread groups driven per run, but NEVER drop a
     // master_review thread group (it rides last). I cap BUILD THREAD GROUPS rather than builder threads —
@@ -1583,14 +1284,10 @@ export class ThreadDriver implements JobDispatcher {
         );
         return;
       }
-      // Activity maps to the thread-group kind (`master_review` vs `build`) — keyed off the registry shape.
       const spec = threadGroupKindSpec(threadGroup.kind);
       const isMasterReviewThreadGroup = spec.roles.some(
         (r) => r.role === 'master_review',
       );
-      await this.store
-        .setActivity(job.id, isMasterReviewThreadGroup ? 'master_review' : 'build')
-        .catch(() => undefined);
       const res: ThreadGroupDriveResult = isMasterReviewThreadGroup
         ? await this.driveMasterReviewThreadGroup(
             job,
@@ -1652,8 +1349,6 @@ export class ThreadDriver implements JobDispatcher {
       }
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
-    // Build shipped — the system is done working this job; hand it back to idle.
-    await this.store.setActivity(job.id, 'idle').catch(() => undefined);
   }
 
   /**
@@ -1688,11 +1383,9 @@ export class ThreadDriver implements JobDispatcher {
       const builders = (
         await this.store.driverThreadsForThreadGroup(threadGroup.id)
       ).filter((t) => t.kind === 'builder');
-      const builderFinished = (t: DriverThread) =>
-        t.status === 'done' || t.status === 'auto_fixing';
-      // Carry the newest finished builder's handoff forward — covers both a resume (including the
-      // `auto_fixing` review window) and the post-run state (the leg we just finished). A rotated leg
-      // overrides this with its own `handoff_in` below.
+      const builderFinished = (t: DriverThread) => t.status === 'done';
+      // Carry the newest finished builder's handoff forward — covers both a resume and the post-run state
+      // (the leg we just finished). A rotated leg overrides this with its own `handoff_in` below.
       const lastFinished = [...builders].reverse().find(builderFinished);
       if (lastFinished?.handoffOut) handoff = lastFinished.handoffOut;
       const next = builders.find((t) => !builderFinished(t));
@@ -1899,11 +1592,6 @@ export class ThreadDriver implements JobDispatcher {
       route,
       `:mag: Build reviewed — ready to ship *${title}*. Review the diff, then click *Ship it* to open the PR.`,
     ).catch(() => undefined);
-    await this.recordMilestone(
-      job.id,
-      `ship-review:${job.id}`,
-      'The build finished; it is parked awaiting your ship-review approval (with each thread’s self-reported verification) before the PR opens.',
-    ).catch(() => undefined);
     // AUTO-APPROVE (per-job opt-in): the Ship card is posted above for audit; now immediately apply the SAME
     // resolution the operator's "Ship it" click would. Re-read the flag FRESH here — the `job` argument was
     // loaded at runJob start and a build can run for minutes; an operator may enable auto-approve mid-build
@@ -2025,9 +1713,9 @@ export class ThreadDriver implements JobDispatcher {
    * SHIP-REVIEW RETRACT (the Atlas `withdraw_ship` tool OR the manual "Amend build" click). Flip
    * `awaiting_ship_review → amending` (idempotent in the store — acts only while parked, so a stale/double
    * retract is a no-op) and post a durable note. Unlike {@link resolveShipApprovalDurably}, this does NOT
-   * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work. The brain
-   * re-arms the gate by calling `report_verification({ passed: true })` once the amend is verified, which
-   * re-parks DIRECTLY (`amending → awaiting_ship_review`, no rebuild); `parkForShipReview` accepts `amending`.
+   * re-drive — the job sits in `amending` for the operator/Atlas to do the follow-up work. Once the amend
+   * is done it is re-parked at the ship-review gate (`amending → awaiting_ship_review`, no rebuild);
+   * `parkForShipReview` accepts `amending`.
    *
    * Returns whether it actually acted (the store CAS affected a row) — the amend-proposal Approve path
    * uses this to wake the brain ONLY when the retract really fired (a stale/double click returns false).
@@ -2054,8 +1742,9 @@ export class ThreadDriver implements JobDispatcher {
 
   /**
    * HALT the build on a NOT-DONE thread: flip the job to the single "needs the operator" state and relay a
-   * DURABLE card so the halt never dead-ends silently (durable-first via the block sink — see
-   * {@link relayFailure} for why a bare `post()` is invisible to reconnecting clients). A thread that ended
+   * DURABLE card so the halt never dead-ends silently (durable-first via the block sink — a bare `post()` is
+   * invisible to reconnecting clients, since the `/messages` REST history reads the DB, not the SSE outbox).
+   * A thread that ended
    * without `complete_thread` collapses to ONE advisory outcome (`incomplete`) — no reason taxonomy, no judge,
    * no autonomous retry loop, no owed brain wake. The operator re-drives it via chat ({@link redriveThread}).
    */
@@ -2069,11 +1758,6 @@ export class ThreadDriver implements JobDispatcher {
     const term = await this.store
       .getTerminalRecord(thread.id)
       .catch(() => null);
-    const at = new Date().toISOString();
-    const reason = `${thread.brief} ended without asserting completion (no complete_thread)`;
-    await this.store
-      .setJobHalt(job.id, { kind: 'incomplete', reason, at })
-      .catch(() => undefined);
     const text = `:warning: Build halted — *${thread.brief}* ended without asserting completion (no \`complete_thread\`), so nothing shipped. Ping to retry, or open the thread to see what it did.`;
     await this.blockSink
       .appendBlock(job.id, {
@@ -2088,11 +1772,6 @@ export class ThreadDriver implements JobDispatcher {
         ),
       );
     await this.post(route, text).catch(() => undefined);
-    await this.recordMilestone(
-      job.id,
-      `thread:${thread.id}:incomplete`,
-      text,
-    ).catch(() => undefined);
     await this.writeCompletionMd(job, thread, term).catch((e) =>
       this.logger.warn(
         `could not write completion.md for thread=${thread.id}: ${e}`,
@@ -2216,7 +1895,7 @@ export class ThreadDriver implements JobDispatcher {
     //    by it, so re-capturing on a RESUME (after the thread already committed) would collapse it to HEAD →
     //    empty range → the review is silently skipped and the commit mis-recorded as `(nothing)`.
     const sectionStartSha = await this.resolveThreadStartSha(thread, sandbox);
-    await this.store.setThreadStatus(thread.id, 'executing');
+    await this.store.setThreadStatus(thread.id, 'idle');
     // Clear any stale halt overlay from a prior run — this (re)start of the turn puts the step back on the
     // linear ladder, so a resumed/retried thread must not keep a persisted 'incomplete'|'failed'|'paused'.
     await this.store
@@ -2289,14 +1968,6 @@ export class ThreadDriver implements JobDispatcher {
       .setThreadCondition(thread.id, 'none')
       .catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} done`);
-    await this.recordMilestone(
-      job.id,
-      `thread:${thread.id}:done`,
-      `Thread "${thread.brief}" finished building.` +
-        (droppedTasks > 0
-          ? ` (${droppedTasks} unreconciled task(s) dropped)`
-          : ''),
-    );
     await this.post(
       route,
       `:white_check_mark: Thread done — *${thread.brief}*`,
@@ -2369,7 +2040,7 @@ export class ThreadDriver implements JobDispatcher {
     if (!spec.children) return;
     // The review window: show the builder `auto_fixing` (the unchanged web affordance) while children run.
     await this.store
-      .setThreadStatus(thread.id, 'auto_fixing')
+      .setThreadStatus(thread.id, 'idle')
       .catch(() => undefined);
 
     const channel = route.channel ?? job.repoId;
@@ -2526,13 +2197,6 @@ export class ThreadDriver implements JobDispatcher {
     if (postReview && postReview.status !== 'done') {
       await this.runPostReview(ctx, thread, postReview);
     }
-
-    // Passive milestone: the review pass is transient (builder flips to `done` next), so record it.
-    await this.recordMilestone(
-      job.id,
-      `thread:${thread.id}:autofix`,
-      `Post-build review + fix pass ran over the diff for thread "${thread.brief}".`,
-    );
   }
 
   /**
@@ -2561,7 +2225,7 @@ export class ThreadDriver implements JobDispatcher {
       return;
     }
     await this.store
-      .setThreadStatus(child.id, 'executing')
+      .setThreadStatus(child.id, 'idle')
       .catch(() => undefined);
     // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
     await this.store
@@ -2613,7 +2277,7 @@ export class ThreadDriver implements JobDispatcher {
     child: ReviewChildThread,
   ): Promise<void> {
     await this.store
-      .setThreadStatus(child.id, 'executing')
+      .setThreadStatus(child.id, 'idle')
       .catch(() => undefined);
     try {
       const siblings = await this.store.reviewChildren(thread.id);
@@ -2689,7 +2353,7 @@ export class ThreadDriver implements JobDispatcher {
       return { steps: existing };
     }
 
-    await this.store.setThreadStatus(thread.id, 'planning');
+    await this.store.setThreadStatus(thread.id, 'idle');
     const planned: PlannedStep[] = [
       { title: thread.brief, brief: thread.brief },
     ];
@@ -2872,11 +2536,6 @@ export class ThreadDriver implements JobDispatcher {
             route,
             `:raising_hand: I need your input to continue *${thread.brief}*:\n> ${question}\n_Reply in this thread to continue._`,
           );
-          await this.recordMilestone(
-            job.id,
-            `thread:${thread.id}:input:${questionId.slice(0, 8)}`,
-            `The build paused to ask the operator: ${question}`,
-          );
         }
         // Suspend the wall-clock budget across the (human-paced) wait, then poll the durable card.
         deadline.pause();
@@ -2890,7 +2549,7 @@ export class ThreadDriver implements JobDispatcher {
             .markOperatorInputDelivered(job.id, questionId)
             .catch(() => undefined);
           await this.store
-            .setThreadStatus(thread.id, 'executing')
+            .setThreadStatus(thread.id, 'idle')
             .catch(() => undefined);
           await this.store
             .setThreadCondition(thread.id, 'none')
@@ -2944,6 +2603,51 @@ export class ThreadDriver implements JobDispatcher {
         });
         await this.writeDeviationsMd(job);
         return { ok: true };
+      };
+    }
+
+    // STRUCTURED REVIEW FINDINGS (review_agent only). The reviewer calls this as it finds issues — findings
+    // ACCUMULATE incrementally onto its own `threads.review_findings` row (each item shaped exactly like
+    // `ReviewFinding`, so review_fix's dedupe/fix plumbing consumes them unchanged). It never grades; the
+    // reviewer signals it is finished with `complete_thread`.
+    if (thread.kind === 'review_agent') {
+      const severities: FindingSeverity[] = ['low', 'medium', 'high'];
+      tools.report_findings = async (args) => {
+        const raw = Array.isArray(args['findings'])
+          ? (args['findings'] as unknown[])
+          : [];
+        const findings: ReviewFinding[] = raw
+          .map((e) => {
+            const o = (e ?? {}) as Record<string, unknown>;
+            const title = String(o['title'] ?? '').trim();
+            const detail = String(o['detail'] ?? '').trim();
+            if (!title || !detail) return null;
+            const sev = String(o['severity'] ?? '').trim() as FindingSeverity;
+            const fileRaw = o['file'];
+            return {
+              lens: String(o['lens'] ?? 'review').trim() || 'review',
+              severity: severities.includes(sev) ? sev : 'medium',
+              file:
+                typeof fileRaw === 'string' && fileRaw.trim()
+                  ? fileRaw.trim()
+                  : null,
+              title,
+              detail,
+            } satisfies ReviewFinding;
+          })
+          .filter((f): f is ReviewFinding => f !== null);
+        if (findings.length === 0) {
+          return {
+            ok: false,
+            error:
+              'each finding needs a non-empty title and detail (severity low|medium|high, file repo-relative or null)',
+          };
+        }
+        const total = await this.store.appendThreadReviewFindings(
+          thread.id,
+          findings,
+        );
+        return { ok: true, recorded: findings.length, total };
       };
     }
 

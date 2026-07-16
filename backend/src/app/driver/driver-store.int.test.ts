@@ -135,7 +135,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       brief: 'Backend — wire the webhook handler',
     });
     await store.setThreadPlan(thread.id, 'detailed plan prose', null); // → hasPlan: true
-    await store.setThreadStatus(thread.id, 'executing');
+    await store.setThreadStatus(thread.id, 'idle');
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       status: string;
@@ -163,7 +163,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(state.threadGroups[0].threads).toHaveLength(1);
     const [sec] = state.threadGroups[0].threads;
     expect(sec.hasPlan).toBe(true);
-    expect(sec.status).toBe('executing');
+    expect(sec.status).toBe('idle');
     // Before the review thread group materializes child rows, the read model exposes NO children — the current
     // code does not synthesize a preview child. Materialized review rows are covered by the next test.
     expect(sec.children).toEqual([]);
@@ -235,7 +235,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       role: 'builder',
       brief: 'Backend — review children',
     });
-    await store.setThreadStatus(thread.id, 'auto_fixing');
+    await store.setThreadStatus(thread.id, 'idle');
 
     const childSpecs = [
       {
@@ -291,7 +291,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         await store.setThreadStatus(lenses[1].id, 'done');
       })(),
     ]);
-    await store.setThreadStatus(lenses[2].id, 'executing'); // third still running
+    await store.setThreadStatus(lenses[2].id, 'idle'); // third still running
 
     const state = (await store.getPipelineState(job.id, ORG_ID)) as {
       threadGroups: Array<{
@@ -323,7 +323,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       status: 'done',
       findings: 2,
     });
-    expect(byLens.get('consistency')?.status).toBe('executing');
+    expect(byLens.get('consistency')?.status).toBe('idle');
     // Each lens carries its own streaming lane; the review_fix child rides the fix lane.
     expect(byLens.get('best_practices')?.lane).toBe(
       `autofix:${thread.id}:best_practices`,
@@ -367,7 +367,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       role: 'builder',
       brief: 'Backend — task list',
     });
-    await store.setThreadStatus(thread.id, 'executing');
+    await store.setThreadStatus(thread.id, 'idle');
 
     // An un-touched thread group: `tasks` is `[]` (no computed fallback — unlike reviewAgents, there's no
     // fixed/expected set for pure LLM output).
@@ -657,7 +657,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       role: 'builder',
       brief: 'Backend — halt',
     });
-    await store.setThreadStatus(thread.id, 'executing');
+    await store.setThreadStatus(thread.id, 'idle');
     return { jobId: job.id, threadGroupId: threadGroup.id, threadId: thread.id };
   }
 
@@ -682,7 +682,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       ordinal: 20,
       brief: 'master review',
     });
-    await store.setThreadStatus(masterReview.id, 'executing');
+    await store.setThreadStatus(masterReview.id, 'idle');
     expect(await store.masterReviewThreadId(jobId)).toBe(masterReview.id);
   });
 
@@ -863,8 +863,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         origin: 'control',
         title: 'ship-parked',
         kind: 'feature',
-        status: 'awaiting_ship_review',
-        activity: 'idle',
+        status: 'ready',
         base_branch: BASE_BRANCH,
       }),
     );
@@ -917,7 +916,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
 
     const row = await jobs.findOne({ where: { id: jobId } });
     expect(row?.status).toBe('amending');
-    expect(row?.activity).toBe('idle');
     expect(row?.ship_review_approved_at).toBeNull();
 
     const cardRow = await messages.findOne({
@@ -949,7 +947,6 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
         title: 'amending-job',
         kind: 'feature',
         status: 'amending',
-        activity: 'idle',
         base_branch: BASE_BRANCH,
       }),
     );
@@ -982,8 +979,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     expect(parked).toBe(true);
 
     const row = await jobs.findOne({ where: { id: job.id } });
-    expect(row?.status).toBe('awaiting_ship_review');
-    expect(row?.activity).toBe('idle');
+    expect(row?.status).toBe('ready');
 
     const cardRow = await messages.findOne({
       where: { job_id: job.id, ts: `ship-review:${job.id}`, kind: 'card' },

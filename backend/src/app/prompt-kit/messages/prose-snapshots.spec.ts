@@ -58,7 +58,7 @@ const baseThread: DriverThread = {
   orientation: null,
   handoffIn: null,
   handoffOut: null,
-  status: 'executing',
+  status: 'idle',
   kind: 'builder',
   threadGroupId: 't1',
   parentThreadId: null,

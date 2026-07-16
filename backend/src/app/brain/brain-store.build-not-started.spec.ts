@@ -63,9 +63,6 @@ describe('BrainStoreService.buildNotStarted', () => {
       id: 'job-1',
       build_path: 'direct',
       direct_build_started_at: new Date(),
-      // Still null — verification is only written at the finalize_build gate, at the END of the turn. The
-      // gate must NOT depend on it: the build has already started once the marker is stamped.
-      direct_build_verification: null,
     });
     const threads = fakeThreadsRepo([]);
     const store = makeStore({ jobs, threads });

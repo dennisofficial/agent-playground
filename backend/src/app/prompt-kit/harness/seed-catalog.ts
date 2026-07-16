@@ -266,9 +266,9 @@ export function wakeForAmendApprovedBody(): AgentMessage {
     [
       'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
       '**amending**. Review the operator\'s requested change against the diff and evidence in this',
-      "session, then make the fix, then call `report_verification({ passed: true })`",
-      'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
-      'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
+      'session, then make the fix and verify it. When it is done the job is re-parked directly at the',
+      'ship-review gate (amending → ready-to-ship, no rebuild). Do not re-propose unless something material',
+      'changed.',
     ].join('\n'),
   );
 }

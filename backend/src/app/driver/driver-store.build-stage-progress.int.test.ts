@@ -188,12 +188,12 @@ describe('DriverStoreService.recomputeBuildStageProgress (live Postgres + GET /w
     const b1 = await builder(groupB.id, 'B leg 1');
     const b2 = await builder(groupB.id, 'B leg 2');
     await store.setThreadStatus(b1.id, 'done');
-    await store.setThreadStatus(b2.id, 'auto_fixing');
+    await store.setThreadStatus(b2.id, 'done');
 
     // Group C — a builder still executing → NOT done.
     const groupC = await buildGroup('build', 'C');
     const c1 = await builder(groupC.id, 'C leg 1');
-    await store.setThreadStatus(c1.id, 'executing');
+    await store.setThreadStatus(c1.id, 'idle');
 
     // Group D — zero builder threads yet → NOT done (pre-creation guard).
     await buildGroup('build', 'D');

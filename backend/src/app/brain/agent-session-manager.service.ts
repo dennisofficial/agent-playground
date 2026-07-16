@@ -58,7 +58,6 @@ import {
   webConventionEditProposalCard,
   webMcpProposalCard,
   webQuestionCard,
-  webShipReviewCard,
   webSkillEditAccessCard,
   webSkillProposalCard,
   wrapSystemNotification,
@@ -106,8 +105,6 @@ import {
   RESET_VERIFY_TEXT,
   COMPACTION_SYSTEM,
   COMPACTION_INSTRUCTION,
-  CONTINUATION_PREAMBLE,
-  foldCompactionSeed,
   renderEventDelivery,
   renderFollowUpJobSeed,
   renderBornBlockedUnblockPrefix,
@@ -123,27 +120,9 @@ import {
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
 // agent-session-manager.spec) keep resolving after the content catalog moved into the prompt-kit hub.
 export { CONTINUATION_PREAMBLE } from '../prompt-kit/harness';
-import { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
-import {
-  pipelineStateSignature,
-  renderAwarenessPrefix,
-  renderPipelineStateSummary,
-} from '../driver/pipeline-awareness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
 import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
-import {
-  LIVE_VERIFICATION_JUDGE,
-  type LiveVerificationJudge,
-  type LiveVerificationVerdict,
-} from '../driver/live-verification-judge';
-import {
-  clampEvidenceOutput,
-  NON_RUNTIME_FILE_RE,
-  renderLockedDecisionsSummary,
-  renderTerminalRecordSummary,
-  type VerificationEvidence,
-} from '../driver/live-verification-support';
 import { DecisionClassifier } from '../decision-gate';
 import {
   CredentialResolver,
@@ -395,8 +374,6 @@ export class AgentSessionManager
     private readonly classifier: DecisionClassifier,
     private readonly ship: BuildShipService,
     @Inject(DRIVER_REPO) private readonly repos: DriverRepoResolver,
-    // Passive pipeline-milestone awareness: the durable per-thread buffer drained into each operator turn.
-    private readonly awareness: PipelineAwarenessStore,
     // Job-to-job "blocked by" edges + the wake funnel (create_job dependsOn, link_job_dependency, manual UI).
     private readonly jobDeps: JobDependencyService,
     // Per-org engine subscription secret for the in-sandbox brain turn (the SDK harness).
@@ -418,11 +395,6 @@ export class AgentSessionManager
     // The shared send seam — the brain registers its `main`-lane transport (the durable steer/fresh-turn
     // pump) so a generic caller can `postToThread(laneFor('main', jobId), …)` without knowing it's the brain.
     private readonly threadInput: ThreadInputService,
-    // ADR-0005 live-verification judge — the SAME port the driver's per-thread gate uses (shared @Global
-    // LiveVerificationModule). Gates the direct-build `finalize_build` ship: a runtime diff must be exercised
-    // live (curl / drive / run), not merely typechecked, before the PR opens.
-    @Inject(LIVE_VERIFICATION_JUDGE)
-    private readonly liveVerificationJudge: LiveVerificationJudge,
     // Host-side subscription usage snapshot — the Main-lane session-limit park reads `getResetAt(orgId,
     // rateLimitType)` to seed the resume clock when the engine didn't surface a precise reset instant.
     // @Global OnboardingModule.
@@ -682,16 +654,6 @@ export class AgentSessionManager
       await this.reattachOwnedTurns();
     } catch (err) {
       this.logger.warn(`redis turn re-attach failed: ${err}`);
-    }
-
-    // 2b) Re-drive any compaction STRANDED between its (now-finished) exec and the reseed commit — the
-    //     post-conclusion window re-attach can't cover (no `active_turns` row left). Guarded on "no live
-    //     turn" so the exec is provably dead and a fresh run cannot race it. Runs AFTER `reattachOwnedTurns`
-    //     (which awaits compaction reseeds), so a just-reattached job is no longer stranded here.
-    try {
-      await this.reconcileStrandedCompactions();
-    } catch (err) {
-      this.logger.warn(`compaction reconcile failed: ${err}`);
     }
 
     // 2) Backfill any question the operator ANSWERED (durably stamped) but whose delivery turn a host crash
@@ -993,9 +955,8 @@ export class AgentSessionManager
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
    * amending`), so the brain just needs to do the follow-up work it proposed. Delivered durably onto the
    * job's `post_build` stage-thread session (resolved, or spawned as a fallback) via the pump — non-blocking
-   * so the amend-approve HTTP path returns immediately. The brain re-arms the gate by calling
-   * `report_verification({ passed: true })` once the amend is verified (re-parks directly at
-   * `awaiting_ship_review`, no rebuild).
+   * so the amend-approve HTTP path returns immediately. Once the amend is done the job is re-parked at the
+   * ship-review gate (`amending → awaiting_ship_review`, no rebuild).
    */
   async wakeForAmendApproved(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
@@ -1859,7 +1820,7 @@ export class AgentSessionManager
     const job = await this.store.loadJob(review.job_id).catch(() => null);
     if (!job) return;
     // A terminal job no longer owes a review continuation (operator already saw the plan, or it's closed).
-    if (job.status === 'awaiting_approval' || job.status === 'running') return;
+    if (job.status === 'awaiting_approval' || job.status === 'building') return;
     const live = await this.turnRegistry
       .runningBrainTurn(review.job_id)
       .catch(() => null);
@@ -2318,7 +2279,7 @@ export class AgentSessionManager
     if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
     const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
     // Mirror the `finalize_build` refusal gate: only a `running` build with an owning feature branch latches.
-    if (!job || job.status !== 'running' || !job.featureBranch) return;
+    if (!job || job.status !== 'building' || !job.featureBranch) return;
     const sandbox = await this.lifecycle
       .findSandbox(job.id, job.orgId)
       .catch(() => null);
@@ -2346,7 +2307,7 @@ export class AgentSessionManager
           .threadRole(stimulus.resumeThreadId)
           .catch(() => null)
       : null;
-    return stageRole ?? 'planning';
+    return stageRole ?? 'planner';
   }
 
   /** Which stage persona this turn runs as (see `resolveStageKind`). */
@@ -2570,31 +2531,10 @@ export class AgentSessionManager
         .catch((err) => this.logger.debug(`clear setup_error failed: ${err}`));
     }
 
-    // Which stage this turn runs as — gates the host-side prefixes below (d8: post_build/ci don't grill and
-    // aren't the ones tracking build-progress awareness; the amend return-path lives on post_build now).
-    // Resolved once here and reused at the tool-surface call below so both never drift apart.
+    // Which stage this turn runs as — gates the host-side prefixes below (d8: post_build/ci don't grill;
+    // the amend return-path lives on post_build now). Resolved once here and reused at the tool-surface call
+    // below so both never drift apart.
     const stageRole = await this.resolveStageKind(stimulus);
-
-    // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
-    // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
-    // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
-    // delta into a clearly-passive reminder so the brain knows where the build stands. SYNTHETIC
-    // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
-    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn. PLANNING-only:
-    // post_build/ci ARE the post-build stage, so build-milestone awareness is noise there.
-    if (isOperatorAuthored(stimulus) && stageRole === 'planning') {
-      const awarenessPrefix = await this.buildAwarenessPrefix(
-        stimulus.jobId,
-        stimulus.orgId,
-      );
-      if (awarenessPrefix) {
-        reminderChunks.push({
-          kind: 'system_reminder',
-          body: awarenessPrefix,
-          attrs: { reminderKind: 'awareness' },
-        });
-      }
-    }
 
     // Surface the brain's OWN still-open questions back into THIS turn. Question cards live outside the
     // engine session — a fresh turn (a new operator message, an event delivery, or a restart-rebuilt session
@@ -2602,7 +2542,7 @@ export class AgentSessionManager
     // brain re-asks the same question over and over. Advisory reminder listing each open card's id + gist, so
     // it waits (or `withdraw_question`s) instead of re-posting. PLANNING-only: post_build/ci have no
     // `ask_question` tool (Thread 2), so there is nothing to remind them about.
-    if (stageRole === 'planning') {
+    if (stageRole === 'planner') {
       const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
         stimulus.jobId,
       );
@@ -2700,20 +2640,6 @@ export class AgentSessionManager
         [...noticeChunks, ...reminderChunks],
         fromExternal(this.engineBody(stimulus)),
       );
-    }
-
-    // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
-    // Open THIS turn with it as recovered memory so the fresh session (session_id is null → engine starts
-    // new) re-orients. Cleared the instant the fresh session is born (see the eager session persist below)
-    // — NOT here — so a crash before the new session exists re-folds it next turn rather than dropping it.
-    // (Reset and compaction are mutually exclusive: compaction nulls the session id, so `wasReset &&
-    // sessionId` above cannot also be true.)
-    const compactionSeed = sandboxRow?.pending_compaction_seed ?? null;
-    const hadCompactionSeed = !!compactionSeed;
-    if (compactionSeed) {
-      // The seed was hub-composed (CONTINUATION_PREAMBLE + summary) then stashed on the sandbox row, so it
-      // re-crosses the seam as brand-erased external text; the fold + mint stay inside the hub factory.
-      task = foldCompactionSeed(fromExternal(compactionSeed), task);
     }
 
     // Onboarding threads (`kind='onboarding'`) run a different mission prompt + a curated, build-free
@@ -2989,27 +2915,11 @@ export class AgentSessionManager
         ) {
           const sid = e.sessionId;
           sandboxRow.session_id = sid;
-          // If this turn folded a compaction seed, the fresh session now exists — clear the seed AND the
-          // abandon marker in the SAME write: the compacted session is fully retired, so recovery may resume
-          // normal skips for this job. A crash before this point re-folds the seed + keeps the marker (both
-          // safe — recovery keeps skipping the abandoned session until the fresh one is truly born).
-          if (hadCompactionSeed) {
-            sandboxRow.pending_compaction_seed = null;
-            sandboxRow.compacting_session_id = null;
-          }
           try {
             void Promise.resolve(
               this.sandboxRows.update(
                 { job_id: stimulus.jobId, org_id: stimulus.orgId },
-                {
-                  session_id: sid,
-                  ...(hadCompactionSeed
-                    ? {
-                        pending_compaction_seed: null,
-                        compacting_session_id: null,
-                      }
-                    : {}),
-                },
+                { session_id: sid },
               ),
             ).catch((err) =>
               this.logger.warn(
@@ -3547,7 +3457,7 @@ export class AgentSessionManager
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
     const postBuild = role === 'post_build';
-    const ci = role === 'ci';
+    const ci = role === 'ship';
     // The brain's own live checklist — the SAME `task_*` host-bridge tools the build threads register,
     // scoped to the job's planning stage. Carried by all three branches (normal/review/onboarding) since
     // every persona prompt teaches the task-list discipline.
@@ -3629,17 +3539,6 @@ export class AgentSessionManager
       };
     };
 
-    // Diagnostics done-gate for the DIRECT-BUILD path (ADR 0004 rider 3) — this is the brain's own
-    // `finalize_build` gate, which runs INSIDE a live brain turn (no separate resume needed): the brain
-    // must self-report a clean verification pass via
-    // `report_verification` before `finalize_build` will ship. Reset per turn (this closure is rebuilt fresh
-    // at turn start / boot re-attach — see `buildTools` call sites), so a later turn must re-verify.
-    let directBuildVerified = false;
-    // The STRUCTURED live-verification evidence the brain reports alongside `passed` — the substance the
-    // ADR-0005 judge grades in `finalize_build` (a bare boolean gives it nothing to judge). Mirrors the
-    // driver's `complete_thread` `verification[]` shape. Turn-local (reset with `directBuildVerified`).
-    let directBuildVerification: VerificationEvidence[] = [];
-
     const tools: Record<string, ToolImpl> = {
       [INTERNAL_PROFILE_AWARENESS_TOOL]: (args) =>
         this.profileAwareness
@@ -3651,82 +3550,6 @@ export class AgentSessionManager
               command: String(args['command'] ?? ''),
             })
           : Promise.resolve(null),
-      report_verification: async (args) => {
-        const passed = args['passed'] === true;
-        directBuildVerified = passed;
-        // Coerce `verification` with the SAME tolerant logic as the driver's `complete_thread`
-        // (`thread-driver.service.ts`): an array of {kind,command,exitCode,outputTail} (filtered on a real
-        // command), OR a free-text string collapsed into one `reported` entry — never silently drop evidence.
-        directBuildVerification = Array.isArray(args['verification'])
-          ? (args['verification'] as unknown[])
-              .map((e) => {
-                const o = (e ?? {}) as Record<string, unknown>;
-                return {
-                  kind: String(o['kind'] ?? '').trim(),
-                  command: String(o['command'] ?? '').trim(),
-                  exitCode: Number.isFinite(Number(o['exitCode']))
-                    ? Number(o['exitCode'])
-                    : -1,
-                  outputTail: clampEvidenceOutput(
-                    String(o['outputTail'] ?? ''),
-                  ),
-                };
-              })
-              .filter((v) => v.command)
-          : typeof args['verification'] === 'string' &&
-              args['verification'].trim()
-            ? [
-                {
-                  kind: 'reported',
-                  command: '(see outputTail)',
-                  exitCode: 0,
-                  outputTail: clampEvidenceOutput(args['verification'].trim()),
-                },
-              ]
-            : [];
-        if (passed) {
-          // AMEND RE-PARK: after an approved `withdraw_ship`, the job sits in `amending` while the brain does
-          // the follow-up work it proposed. A clean verification here re-arms the ship gate DIRECTLY
-          // (`amending → awaiting_ship_review`) and re-posts the "Ship it" card — the amend IS the fix, so
-          // there is no detour back through a `running` build. On any other status this is the normal
-          // direct-build flag-set (finalize_build ships), so leave it untouched.
-          const job = await this.store
-            .loadJob(stimulus.jobId)
-            .catch(() => null);
-          if (job?.status === 'amending') {
-            const title = job.title ?? 'this build';
-            const summary =
-              'Amend verified. Review the diff, then click **Ship it** to open the PR.';
-            const card = webShipReviewCard({ jobId: job.id, title, summary });
-            const parked = await this.driverStore.parkForShipReview(
-              job.id,
-              card as unknown as Record<string, unknown>,
-              summary,
-              job.orgId,
-              job.decisionRecordId ?? null,
-            );
-            return {
-              ok: true,
-              message: parked
-                ? 'Amend verified — re-parked at the ship-review gate. The operator can Ship it now.'
-                : 'Amend verified.',
-            };
-          }
-          return { ok: true };
-        }
-        const remaining = Array.isArray(args['remaining'])
-          ? (args['remaining'] as unknown[])
-              .map((x) => String(x).trim())
-              .filter(Boolean)
-          : [];
-        return {
-          ok: true,
-          message: remaining.length
-            ? `Noted as unverified — fix these before finalize_build: ${remaining.join('; ')}`
-            : 'Noted as unverified — fix the remaining errors before finalize_build.',
-        };
-      },
-
       get_pipeline_state: async (_args) => {
         return this.driverStore.getPipelineState(
           stimulus.jobId,
@@ -4251,7 +4074,7 @@ export class AgentSessionManager
             reason: 'No job on this thread — call submit_plan first',
           };
         }
-        if (job.status !== 'running' || job.halt != null) {
+        if (job.status !== 'building' || job.halt != null) {
           return {
             ok: false,
             reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
@@ -4294,7 +4117,7 @@ export class AgentSessionManager
         const reason = String(args['reason'] ?? '').trim();
         const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
         if (!job) return { ok: false, reason: 'No job on this thread.' };
-        if (job.status !== 'running' || job.halt != null) {
+        if (job.status !== 'building' || job.halt != null) {
           return {
             ok: false,
             reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ' and halted' : ''} — hold_build only applies to a running, un-halted job in the pre-start base-check window.`,
@@ -4308,11 +4131,6 @@ export class AgentSessionManager
           };
         }
         await this.store.reopenPlanning(job.id);
-        await this.recordMilestone(
-          stimulus.jobId,
-          `hold:${job.decisionRecordId ?? job.id}`,
-          `Build held after the base-check — back to planning${reason ? `: ${reason}` : '.'}`,
-        );
         return {
           ok: true,
           jobId: job.id,
@@ -4423,22 +4241,10 @@ export class AgentSessionManager
             reason: 'No job on this thread — nothing to finalize',
           };
         const jobId = job.id;
-        if (job.status !== 'running') {
+        if (job.status !== 'building') {
           return {
             ok: false,
             reason: `Job ${jobId} is '${job.status}' — only an approved (running) build can be finalized`,
-          };
-        }
-        if (!directBuildVerified) {
-          // ADR 0004 rider 3 — a `done` claim is only as good as the verification actually run. Run
-          // `mcp__atlas-lsp-ts__diagnostics` on the changed files + the repo's own typecheck, fix anything
-          // they find, then call `report_verification({ passed: true })` before finalize_build will ship.
-          return {
-            ok: false,
-            reason:
-              'Not yet verified — run mcp__atlas-lsp-ts__diagnostics on the files you changed and the ' +
-              "repo's own typecheck, fix anything they find, then call report_verification({ passed: true }) " +
-              'before calling finalize_build again.',
           };
         }
         const sandbox = await this.lifecycle.findSandbox(
@@ -4451,118 +4257,7 @@ export class AgentSessionManager
             reason: 'No sandbox for this thread — cannot finalize',
           };
 
-        const rec = (await this.driverStore
-          .getDecisionRecord(stimulus.jobId)
-          .catch(() => null)) as {
-          overview: string;
-          decisions: Decision[];
-        } | null;
         const repo = await this.repos.resolve(job);
-
-        // ADR-0005 LIVE-VERIFICATION GATE (direct-build analog of the driver's `complete_thread` gate). A
-        // direct build that touched a runtime surface must have been EXERCISED LIVE (curl / drive / run),
-        // not just typechecked — the judge grades the structured evidence the brain reported via
-        // `report_verification`. Runs BEFORE `preShip`, mirroring the driver's pre-persist gate; the base ref
-        // is `origin/<default>` (same ref preShip's leak-scan uses), and `changedFileNames` unions untracked
-        // files so the brain's still-uncommitted direct-build changes are seen pre-commit. On a
-        // touched-but-inadequate verdict this REFUSES the tool (synchronous, mid-turn) — the brain reads the
-        // reason, does the live run, and calls `finalize_build` again. Fail-closed + always-on (mirrors the
-        // driver: no key / malformed / throw → touched-but-unverified), no rollout dial.
-        const changedFiles = await this.git.changedFileNames(
-          sandbox.worktreePath,
-          `origin/${repo.defaultBranch}`,
-        );
-        const nonRuntime =
-          changedFiles.length === 0 ||
-          changedFiles.every((f) => NON_RUNTIME_FILE_RE.test(f));
-        let verdict: LiveVerificationVerdict | undefined;
-        if (!nonRuntime) {
-          verdict = await this.liveVerificationJudge
-            .judge({
-              terminalRecordSummary: renderTerminalRecordSummary({
-                summary: rec?.overview ?? job.title ?? 'direct build',
-                verification: directBuildVerification,
-              }),
-              changedFiles,
-              lockedDecisionsSummary: renderLockedDecisionsSummary(
-                rec ? { decisions: rec.decisions } : null,
-              ),
-              orgId: stimulus.orgId,
-            })
-            .catch(() => undefined);
-        }
-        const effective: LiveVerificationVerdict = nonRuntime
-          ? {
-              runtimeSurfaceTouched: false,
-              liveVerificationAdequate: true,
-              reason: 'non-runtime file set (pre-filter)',
-            }
-          : (verdict ?? {
-              runtimeSurfaceTouched: true,
-              liveVerificationAdequate: false,
-              reason: 'live-verification judge unavailable',
-            });
-        // Persist on BOTH paths (pass + refusal) so direct-build verdicts are queryable — the observability
-        // hook the prod audit needs. Best-effort; a write failure must never wedge the ship turn.
-        await this.store
-          .recordDirectBuildVerification(jobId, {
-            verdict: effective,
-            at: new Date().toISOString(),
-          })
-          .catch((err) =>
-            this.logger.debug(`recordDirectBuildVerification failed: ${err}`),
-          );
-        if (
-          effective.runtimeSurfaceTouched &&
-          !effective.liveVerificationAdequate
-        ) {
-          let detail = [effective.reason, effective.missingChecks]
-            .filter(Boolean)
-            .join(' — ');
-          // The judge was CONSULTED but returned nothing → UNAVAILABLE, not a real "inadequate" verdict.
-          // Distinguish infra-unavailability from genuinely-inadequate evidence so the brain retries the ship
-          // (rather than being told to go re-exercise work that may already be fine). A missing key is a real
-          // config gap the operator must fix.
-          let judgeUnavailable = false;
-          if (!nonRuntime && !verdict) {
-            const hasKey = await this.creds
-              .anthropicKey(stimulus.orgId)
-              .catch(() => undefined);
-            if (!hasKey) {
-              detail = `no Anthropic API key configured for the live-verification judge — configure one. (${detail})`;
-            } else {
-              judgeUnavailable = true;
-            }
-          }
-          if (judgeUnavailable) {
-            await this.store.appendSystemEvent(
-              jobId,
-              `Live-verification judge temporarily unavailable during direct-build ship — ${detail}`,
-            );
-            return {
-              ok: false,
-              jobId,
-              reason:
-                `The live-verification judge is temporarily unavailable (transient infra: Anthropic outage or ` +
-                `API-key rate/credit limit) — this is NOT a problem with your evidence. Wait a moment and call ` +
-                `finalize_build again; it should clear once the service recovers.`,
-            };
-          }
-          await this.store.appendSystemEvent(
-            jobId,
-            `Live-verification gate blocked the direct-build ship — ${detail}`,
-          );
-          return {
-            ok: false,
-            jobId,
-            reason:
-              `Live validation inadequate — ${detail}. Actually exercise the changed runtime surface ` +
-              `(curl the endpoint / drive the UI / run the CLI) — or, if the change is internal plumbing ` +
-              `never echoed in an HTTP/UI/CLI surface, boot the process and capture a log line proving the ` +
-              `changed value was passed at runtime. Then re-report_verification with the captured evidence, ` +
-              `then finalize_build again.`,
-          };
-        }
 
         // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). We are ALREADY inside this
         // brain turn, so we cannot seed a nested open-PR turn (that is the driver/boot ship path). Hand
@@ -4836,8 +4531,7 @@ export class AgentSessionManager
     // host-tools.group.ts's postBuildTools/ciTools fragments — keep both in lockstep). Full engineering
     // (edit/git/gh/subagents) is native Bash/Edit/Task, not a host tool, so both stages keep it; they only
     // lose the planning apparatus (grill/decisions/plan/dispatch — post_build/ci never author or approve a
-    // plan). `report_verification` lets either confirm a fix before it stands; only post_build additionally
-    // gets `withdraw_ship` — it owns the amend loop, ci does not.
+    // plan). Only post_build additionally gets `withdraw_ship` — it owns the amend loop, ci does not.
     if (postBuild || ci) {
       const base = {
         [INTERNAL_PROFILE_AWARENESS_TOOL]:
@@ -4845,7 +4539,6 @@ export class AgentSessionManager
         get_pipeline_state: tools.get_pipeline_state,
         recall: tools.recall,
         remember: tools.remember,
-        report_verification: tools.report_verification,
         create_job: tools.create_job,
         list_jobs: tools.list_jobs,
         link_job_dependency: tools.link_job_dependency,
@@ -6552,14 +6245,17 @@ export class AgentSessionManager
   private async prepareRepropose(jobId: string): Promise<{ refuse?: string }> {
     const existing = await this.store.loadJob(jobId).catch(() => null);
     if (!existing) return {};
-    // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. A build
-    // FAILURE is now the orthogonal `halt` axis (JobStatus has no 'failed'/'paused'); a failed/paused job
-    // keeps its phase (typically 'running'), so it's still caught here. `amending` is deliberately NOT
-    // listed — like `planning`, it's a shaping state where a fresh propose_plan is allowed.
+    // Statuses past the approval gate (post-`awaiting_approval`) — never (re)propose over these. Covers the
+    // whole build→review→ship→PR window (the former single `running`/`done` span, now split into distinct
+    // phases). `amending` is deliberately NOT listed — like `planning`, it's a shaping state where a fresh
+    // propose_plan is allowed.
     const pastGate: JobStatus[] = [
-      'running',
-      'awaiting_ship_review',
-      'done',
+      'building',
+      'master_review',
+      'ready',
+      'shipping',
+      'pr_open',
+      'merged',
       'cancelled',
       'deleting',
     ];
@@ -6707,14 +6403,6 @@ export class AgentSessionManager
       await this.store
         .setActivity(stimulus.jobId, 'base_check')
         .catch(() => undefined);
-      // Passive milestone — the plan WAS approved (drained into the NEXT operator turn). Recorded AFTER the
-      // durable `approve`. The former `dispatched:` milestone is dropped — it now fires when the build
-      // actually starts (inside `dispatch_build`), not at approval.
-      await this.recordMilestone(
-        stimulus.jobId,
-        `approved:${decisionRecordId}`,
-        'Your plan was approved by the operator.',
-      );
       await this.saySystemNotice(
         stimulus,
         'Approved — checking the base branch before starting…',
@@ -6853,22 +6541,6 @@ export class AgentSessionManager
     };
     const auth = await this.creds.engineAuth(stimulus.orgId, 'claude');
 
-    // Durably mark the session being ABANDONED before the summary turn runs. Two duties: (1) recovery-skip —
-    // `TurnRecoveryService` must not surface this session's transcript, whose tail becomes the internal
-    // summary; (2) resume signal — if `session_id` still equals this after a restart, the reseed never
-    // committed and the boot reconciler completes it. Cleared on a non-crash failure below, and when the
-    // fresh session is born (the eager session-id persist).
-    await this.sandboxRows
-      .update(
-        { job_id: stimulus.jobId, org_id: stimulus.orgId },
-        { compacting_session_id: sessionId },
-      )
-      .catch((err) =>
-        this.logger.warn(
-          `compaction: marker set failed for job=${stimulus.jobId}: ${err}`,
-        ),
-      );
-
     const channel = stimulus.replyRoute?.jobRef ?? stimulus.jobId;
     let summary = '';
     try {
@@ -6918,12 +6590,11 @@ export class AgentSessionManager
       );
       summary = (result.result ?? '').trim();
     } catch (err) {
-      // A non-clean summary turn never reaches `end_turn`, so recovery would not surface it — safe to clear
-      // the marker (no leak) and give up this cycle (best-effort; no boot retry-loop).
+      // A non-clean summary turn never reaches `end_turn`, so recovery would not surface it — give up this
+      // cycle (best-effort; no boot retry-loop) with the session left intact.
       this.logger.error(
         `compaction: summary turn failed for job=${stimulus.jobId} — leaving session intact: ${err}`,
       );
-      await this.clearCompactionMarker(stimulus.jobId, stimulus.orgId);
       return;
     }
 
@@ -6931,16 +6602,14 @@ export class AgentSessionManager
       this.logger.warn(
         `compaction: empty summary for job=${stimulus.jobId} — leaving session intact`,
       );
-      await this.clearCompactionMarker(stimulus.jobId, stimulus.orgId);
       return;
     }
 
     try {
       await this.completeCompaction(stimulus.jobId, stimulus.orgId, summary);
     } catch (err) {
-      // The summary is durable in the SDK JSONL and `compacting_session_id` still points at this session, so
-      // the boot reconciler re-drives it (by then the exec is done → safe). Leave the marker set; keep the
-      // in-memory row coherent (session NOT abandoned yet).
+      // The summary is durable in the SDK JSONL, so the reset is best-effort — keep the in-memory row
+      // coherent (session NOT reset yet) and give up this cycle.
       this.logger.error(
         `compaction: completion failed for job=${stimulus.jobId} (will re-drive on boot): ${err}`,
       );
@@ -6953,34 +6622,18 @@ export class AgentSessionManager
     );
   }
 
-  /** Clear the {@link JobSandboxEntity.compacting_session_id} marker (best-effort). */
-  private async clearCompactionMarker(
-    jobId: string,
-    orgId: string,
-  ): Promise<void> {
-    await this.sandboxRows
-      .update({ job_id: jobId, org_id: orgId }, { compacting_session_id: null })
-      .catch((err) =>
-        this.logger.warn(
-          `compaction: marker clear failed for job=${jobId}: ${err}`,
-        ),
-      );
-  }
-
   /**
-   * ATOMIC compaction completion — the reseed (null `session_id`, stash the lean seed) and the inspectable
-   * `build_event` pill land in ONE transaction, so a crash can never leave the session abandoned without its
-   * audit pill (Codex review). `compacting_session_id` is deliberately KEPT (recovery keeps skipping the
-   * abandoned session until the fresh one is born). Bounded in-process retry rides out a transient DB blip;
-   * on exhaustion it throws and the caller leaves the marker set for the boot reconciler. Shared by the
-   * fresh run and {@link reattachCompactionOne}.
+   * ATOMIC compaction completion — the session reset (null `session_id`) and the inspectable `build_event`
+   * pill land in ONE transaction, so a crash can never leave the session reset without its audit pill (Codex
+   * review). The summary is durable on the `build_event` message row. Bounded in-process retry rides out a
+   * transient DB blip; on exhaustion it throws and the caller leaves the session intact. Shared by the fresh
+   * run and {@link reattachCompactionOne}.
    */
   private async completeCompaction(
     jobId: string,
     orgId: string,
     summary: string,
   ): Promise<void> {
-    const seed = `${CONTINUATION_PREAMBLE}\n\n${summary}`;
     const pillText =
       '🗜️ Compacted the planning conversation into a lean handoff — the build is running and future turns start fresh.';
     const threadId = await this.planningThreadId(jobId);
@@ -6991,7 +6644,7 @@ export class AgentSessionManager
           await mgr.update(
             JobSandboxEntity,
             { job_id: jobId, org_id: orgId },
-            { session_id: null, pending_compaction_seed: seed },
+            { session_id: null },
           );
           await mgr.insert(TranscriptMessageEntity, {
             job_id: jobId,
@@ -7056,65 +6709,14 @@ export class AgentSessionManager
     }
     const summary = (result.result ?? '').trim();
     if (!summary) {
-      // The exec concluded with no usable summary — drop the abandon marker and leave the session intact
-      // (a fresh compaction can be re-driven later). The turn row was finalized by reattach's own path.
-      await this.clearCompactionMarker(row.job_id, row.org_id);
+      // The exec concluded with no usable summary — leave the session intact (a fresh compaction can be
+      // re-driven later). The turn row was finalized by reattach's own path.
       return;
     }
     await this.completeCompaction(row.job_id, row.org_id, summary);
     this.logger.log(
       `Leader: completed re-attached compaction for job=${row.job_id}`,
     );
-  }
-
-  /**
-   * Re-drive a compaction STRANDED between its finished exec and the reseed commit (leader-only) — the
-   * observed failure class (crash after the summary turn concluded, before the reseed landed). `session_id`
-   * still equals `compacting_session_id`, but no `active_turns` compaction row remains (the exec finished),
-   * so the exec is provably dead and a fresh run cannot race it. The `hasRunningForThread` guard defers to
-   * {@link reattachOwnedTurns} whenever a turn IS still live (never double-run).
-   */
-  private async reconcileStrandedCompactions(): Promise<void> {
-    let stranded: JobSandboxEntity[];
-    try {
-      stranded = await this.sandboxRows
-        .createQueryBuilder('s')
-        .where('s.compacting_session_id IS NOT NULL')
-        .andWhere('s.session_id IS NOT NULL')
-        .andWhere("s.lifecycle <> 'closed'")
-        .getMany();
-    } catch (err) {
-      this.logger.warn(`compaction reconcile: query failed: ${err}`);
-      return;
-    }
-    for (const row of stranded) {
-      const live = await this.turnRegistry
-        .hasRunningForThread(row.job_id)
-        .catch(() => false);
-      if (live) continue; // a turn is live — reattach (or the queue) owns it; don't race a second run.
-      this.logger.log(
-        `Leader: re-driving stranded compaction for job=${row.job_id}`,
-      );
-      void this.enqueueCompaction(
-        this.compactionStimulus(row.job_id, row.org_id, row.repo_id),
-      );
-    }
-  }
-
-  /** Minimal synthetic stimulus for a server-driven compaction re-drive (body unused — `compact` short-circuits). */
-  private compactionStimulus(
-    jobId: string,
-    orgId: string,
-    repoId: string,
-  ): TurnEnvelope {
-    return internalEnvelope({
-      jobId,
-      orgId,
-      repoId,
-      author: { id: 'atlas', displayName: 'Atlas' },
-      type: 'user',
-      body: '',
-    });
   }
 
   /**
@@ -7186,11 +6788,8 @@ export class AgentSessionManager
       'and curl the endpoint / drive the UI / run the CLI for real. If the change is internal plumbing whose ' +
       'effect is never echoed in an HTTP/UI/CLI surface (e.g. an option/value handed to an SDK), instead boot ' +
       'the process and capture a log line proving the changed value was passed at runtime. Typecheck, build, ' +
-      'lint, and the test suite are NOT live verification on their own. Report what you ran with ' +
-      '`report_verification({ passed: true, verification: [{ kind, command, exitCode, outputTail }, …] })` — ' +
-      'capture the real command, its exit code, and a tail of its output. `finalize_build` now runs a ' +
-      'live-verification judge over that evidence and REFUSES to ship a runtime change you only typechecked. ' +
-      'Only then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
+      'lint, and the test suite are NOT live verification on their own. ' +
+      'Then call `finalize_build` to commit, review, and open the PR. Do NOT call submit_plan or ' +
       'start_direct_build again.';
     const synthetic = internalEnvelope({
       jobId: stimulus.jobId,
@@ -7439,41 +7038,6 @@ export class AgentSessionManager
     }
   }
 
-  // ── Passive pipeline-milestone awareness ─────────────────────────────────────────────────────────
-
-  /**
-   * Drain the thread's buffered milestones + the net-current-state delta and render the clearly-passive
-   * prefix to prepend to this OPERATOR turn (null when there's nothing to convey). Atomic drain (a single
-   * locked transaction in the store) so a milestone the driver appends mid-turn isn't read-cleared and
-   * lost. Best-effort: any failure returns null so the turn proceeds — `get_pipeline_state` remains the
-   * authoritative pull. Gated by the call site to PLANNING only — post_build/ci ARE the post-build stage, so
-   * build-milestone awareness would be noise there.
-   */
-  private async buildAwarenessPrefix(
-    jobId: string,
-    orgId: string,
-  ): Promise<string | null> {
-    try {
-      const state = await this.driverStore.getPipelineState(jobId, orgId);
-      const sig = pipelineStateSignature(state);
-      const { markers, stateChanged } = await this.awareness.drainAndAdvance(
-        jobId,
-        sig,
-      );
-      if (markers.length === 0 && !stateChanged) return null;
-      const prefix = renderAwarenessPrefix(
-        markers,
-        stateChanged ? renderPipelineStateSummary(state) : null,
-      );
-      return prefix || null;
-    } catch (err) {
-      this.logger.debug(
-        `pipeline-awareness prefix failed (continuing): ${err}`,
-      );
-      return null;
-    }
-  }
-
   /**
    * An advisory prefix listing this thread's still-OPEN `ask_question` cards (asked, not yet answered or
    * withdrawn) so a fresh turn doesn't re-ask them — the fix for the "brain keeps asking the same question"
@@ -7524,9 +7088,8 @@ export class AgentSessionManager
       return (
         'This build is AMENDING — the ship-review gate was retracted so you can make a follow-up fix. ' +
         'Make the change in the sandbox and verify it (typecheck/build/tests, plus a live run of any ' +
-        'runtime surface you touched). When it is done and verified, call ' +
-        '`report_verification({ passed: true })` with your live evidence — that re-parks the job DIRECTLY ' +
-        'at the ship-review gate (amending → ready-to-ship, no rebuild) and re-posts the "Ship it" card for ' +
+        'runtime surface you touched). When it is done and verified, the job is re-parked at the ' +
+        'ship-review gate (amending → ready-to-ship, no rebuild) and the "Ship it" card is re-posted for ' +
         'the operator. Do not re-propose amending unless something material changed.'
       );
     } catch (err) {
@@ -7666,9 +7229,9 @@ export class AgentSessionManager
   /**
    * Build an `onMilestone` callback for the provisioning chain (`ensureProvisioned`/`ensureContainer`) —
    * narrates the genuinely slow attach sub-steps (a real image rebuild, a cold container create) as a
-   * quiet operator-visible pill via `appendSystemEvent`, NOT a fake Atlas reply and NOT `recordMilestone`
-   * (that mechanism buffers for the BRAIN's own next turn — this needs to be seen by the operator now).
-   * Fire-and-forget with a debug-logged catch, matching this file's other best-effort append style.
+   * quiet operator-visible pill via `appendSystemEvent` (NOT a fake Atlas reply) — it needs to be seen by
+   * the operator now. Fire-and-forget with a debug-logged catch, matching this file's other best-effort
+   * append style.
    */
   private sandboxMilestoneNotifier(
     stimulus: TurnEnvelope,
@@ -7684,19 +7247,6 @@ export class AgentSessionManager
           this.logger.debug(`milestone event append failed: ${err}`),
         );
     };
-  }
-
-  /** Buffer a passive pipeline milestone for the brain (no turn runs). Best-effort + idempotent by `id`. */
-  private async recordMilestone(
-    jobId: string,
-    id: string,
-    text: string,
-  ): Promise<void> {
-    await this.awareness
-      .appendMarker(jobId, { id, text, at: new Date().toISOString() })
-      .catch((err) =>
-        this.logger.debug(`milestone append failed (continuing): ${err}`),
-      );
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────────────────────────

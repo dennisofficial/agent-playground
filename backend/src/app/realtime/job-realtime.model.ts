@@ -3,13 +3,7 @@ import {
   RealtimeRuleGuard,
   type Row,
 } from '@workspace/pg-realtime';
-import type { JobHalt } from '@workspace/shared';
-import {
-  deriveNeedsYou,
-  JOB_ACTIVITIES,
-  type JobActivity,
-  type JobProvenance,
-} from '@shared/domain/job';
+import { deriveNeedsYou, type JobProvenance } from '@shared/domain/job';
 import type { CiCounts } from '../git';
 
 /**
@@ -38,11 +32,6 @@ export interface ThreadRealtimeRow extends Row {
   /** Job kind ('feature'|'bugfix'|'onboarding'|'event'|'review'|null) — small text col, always in SELECT */
   kind: string | null;
   status: string;
-  /** What the system is doing now ('idle'|'turn'|'plan_review'|'build'|'master_review') — any non-'idle'
-   *  value suppresses the "needs you" dot while the system owns the next step. */
-  activity: JobActivity;
-  /** Unresolved turn-failure box outstanding — drives the sidebar ✕ glyph even when status is untouched. */
-  halted: boolean;
   needsYou: boolean;
   createdAt: string;
   orgId: string;
@@ -65,11 +54,8 @@ export interface ThreadRealtimeRow extends Row {
    *  DriverStoreService.recomputeBuildStageProgress. Null = not applicable / never computed. */
   buildStagesDone: number | null;
   buildStagesTotal: number | null;
-  /** True only while a "Ship it" is being finalized (PR opening). Shipping re-uses the `running` status,
-   *  so this distinguishes "opening PR" from "building threads" and keeps the card in "Ready to Ship". */
+  /** True only while a "Ship it" is being finalized (PR opening) — the dedicated `shipping` status. */
   shipping: boolean;
-  /** Null when healthy; when set, the sidebar renders a red halt overlay from it. */
-  halt: JobHalt | null;
   /** Who spawned this job (immutable snapshot), or null for top-level jobs. */
   createdBy: JobProvenance | null;
 }
@@ -89,13 +75,6 @@ class ThreadOrgGuard extends RealtimeRuleGuard<
 
 function mapRow(raw: Row): ThreadRealtimeRow {
   const status = String(raw.status);
-  // The WAL row values are `unknown`, so narrow `activity` to the union (unknown/bad → 'idle').
-  const rawActivity = String(raw.activity ?? 'idle');
-  const activity: JobActivity = (JOB_ACTIVITIES as readonly string[]).includes(
-    rawActivity,
-  )
-    ? (rawActivity as JobActivity)
-    : 'idle';
   // The durable human-input gate (see `deriveNeedsYou`): how many `ask_question` cards await the operator.
   // `SELECT *` snapshots and the WAL new-row image both carry this small (never-TOASTed) column, so it is
   // always present here; opening/answering a question updates the thread row → fires a realtime delta.
@@ -104,7 +83,6 @@ function mapRow(raw: Row): ThreadRealtimeRow {
   // requests still use the single-slot `awaiting_secret_id` pointer. Either awaiting the operator counts.
   const awaitingSecret =
     raw.awaiting_secret_id != null || Number(raw.open_secret_count ?? 0) > 0;
-  const halted = raw.halted === true;
   const createdAt = raw.created_at;
   return {
     jobId: String(raw.id),
@@ -112,14 +90,10 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     origin: String(raw.origin),
     kind: (raw.kind as string | null) ?? null,
     status,
-    activity,
-    halted,
     needsYou: deriveNeedsYou({
       status,
-      activity,
       openQuestion,
       awaitingSecret,
-      halted: halted || raw.halt != null,
     }),
     createdAt:
       createdAt instanceof Date ? createdAt.toISOString() : String(createdAt),
@@ -136,9 +110,7 @@ function mapRow(raw: Row): ThreadRealtimeRow {
       raw.build_stages_done == null ? null : Number(raw.build_stages_done),
     buildStagesTotal:
       raw.build_stages_total == null ? null : Number(raw.build_stages_total),
-    // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).
-    shipping: status === 'running' && raw.ship_review_approved_at != null,
-    halt: (raw.halt as JobHalt | null) ?? null,
+    shipping: status === 'shipping',
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
   };
 }
@@ -147,8 +119,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
 export const THREADS_MODEL: ModelConfig<ThreadRealtimeRow> = {
   table: 'jobs',
   primaryKey: 'id',
-  // `halt` is jsonb. On UPDATE, pgoutput may omit an unchanged TOASTed jsonb value; refetch so status-only
-  // or activity deltas never accidentally map an existing halt to null in the sidebar cache.
+  // pgoutput may omit unchanged TOASTed jsonb values on UPDATE; refetch so a status-only delta always maps
+  // against the full row.
   refetchOnUpdate: true,
   mapRow,
   guard: new ThreadOrgGuard(),

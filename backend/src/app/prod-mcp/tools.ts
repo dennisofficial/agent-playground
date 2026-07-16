@@ -159,8 +159,6 @@ async function jobOverview(
     job: {
       id: job.id,
       status: job.status,
-      activity: job.activity,
-      halt: job.halt,
       buildPath: job.build_path,
       prUrl: job.pr_url,
       prNumber: job.pr_number,
@@ -182,7 +180,7 @@ async function jobOverview(
       ordinal: t.ordinal,
       brief: t.brief,
       status: t.status,
-      condition: t.condition,
+      haltReason: t.halt_reason,
       parentThreadId: t.parent_thread_id,
       failureSummary: deriveFailureSummary(t.terminal_record),
     })),

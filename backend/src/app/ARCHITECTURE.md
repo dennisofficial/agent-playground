@@ -170,8 +170,8 @@ GATE thread group — spawned right at the gate (`ThreadDriver.parkForShipReview
 `parkForShipReview`, which calls `ensurePostBuildThread` once the transitioning write commits, i.e. as soon
 as build/direct_build thread groups + `master_review` complete and the job parks `awaiting_ship_review`), on its
 own fresh session (`threads.session_id`, isolated from `job_sandboxes.session_id`). It summarizes the build,
-proposes a preview, and owns the amend loop (`withdraw_ship` → `amending` → follow-up work →
-`report_verification` re-park) — it does **not** open the PR. `ci` is the post-ship PR-lifecycle thread group —
+proposes a preview, and owns the amend loop (`withdraw_ship` → `amending` → follow-up work → ship-review
+re-park) — it does **not** open the PR. `ci` is the post-ship PR-lifecycle thread group —
 spawned at Ship (`BuildShipService.ship()` → `ensureCiThread`, before `openPrAtShip`) and again idempotently
 once the PR is recorded (`latchPr` → `ensureCiThread` post-`setPrReady`); it owns PR creation (`openPrAtShip`
 now fires with the **`ci`** thread's id, not `post_build`'s), the authoritative base-branch reconcile at PR

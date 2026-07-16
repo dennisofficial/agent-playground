@@ -12,10 +12,7 @@
 import type { Agent } from '../prompt-kit';
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
-import type {
-  ThreadInput,
-  ThreadKind as LaneKind,
-} from '../surface/thread-registry';
+import type { ThreadInput } from '../surface/thread-registry';
 
 /**
  * The ROLE of a `threads` row — the single differentiator across every thread-like concept (renamed from
@@ -74,8 +71,6 @@ export interface ThreadKindSpec {
   execution: ThreadExecution;
   /** Engine-agnostic reasoning effort (e.g. `xhigh` for master review); undefined = the engine default. */
   reasoningEffort?: ReasoningEffort;
-  /** The wire lane this kind streams on — resolved through `surface/thread-registry.ts` (`laneFor`). */
-  laneKind: LaneKind;
   /** Who holds the input side (operator composer / another agent / read-only). */
   inputPolicy: ThreadInput;
   /** Whether the OPERATOR may chat with a thread of this role at all (d12) — uniform capability, per-role

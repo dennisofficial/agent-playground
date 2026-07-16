@@ -9,7 +9,7 @@ const ORDINAL_GAP = 10;
 
 /**
  * job-bootstrap / JobBootstrapService — owns "every job has exactly one `planning` thread group + its single
- * `planning`-role thread from the moment its `JobEntity` row exists" (d7: `thread_group_id` is never null).
+ * `planner`-role thread from the moment its `JobEntity` row exists" (d7: `thread_group_id` is never null).
  * Moved out of `BrainStoreService` (which still exposes `ensurePlanningThreadGroup` as a thin delegate for its
  * own `persistPlan`/`createFollowUpJob` callers) so every job-creation seam — including the ones outside
  * `BrainModule` (driver/surface/stimulus) — can call it directly without a `BrainModule` import cycle.
@@ -24,7 +24,7 @@ export class JobBootstrapService {
   ) {}
 
   /**
-   * Ensure the job's ONE `planning` thread group + `planning`-role thread exist (idempotent create-if-absent).
+   * Ensure the job's ONE `planning` thread group + `planner`-role thread exist (idempotent create-if-absent).
    * The brain's conversation session IS this thread's session, and it anchors the job-level card messages
    * (question/ship/amend/merge) that have no build-lane thread of their own (see
    * `DriverStoreService.planningThreadId`). Safe to call repeatedly — a second call with the thread group already
@@ -89,13 +89,13 @@ export class JobBootstrapService {
    */
   async ciThreadId(jobId: string): Promise<string | null> {
     const thread = await this.threads.findOne({
-      where: { job_id: jobId, role: 'ci' },
+      where: { job_id: jobId, role: 'ship' },
       order: { ordinal: 'DESC' },
     });
     return thread?.id ?? null;
   }
 
-  /** The planning thread group's single `planning`-role thread — ordinal 0, so builders (gap-numbered after the
+  /** The planning thread group's single `planner`-role thread — ordinal 0, so builders (gap-numbered after the
    *  highest top-level ordinal) never collide with it on the job-wide UNIQUE(job_id, parent, ordinal). */
   private async createPlanningThread(
     threadGroupId: string,
@@ -107,11 +107,11 @@ export class JobBootstrapService {
         thread_group_id: threadGroupId,
         job_id: jobId,
         org_id: orgId,
-        role: 'planning',
+        role: 'planner',
         ordinal: 0,
-        brief: 'Main',
+        brief: 'Planner',
         type: 'general',
-        status: 'pending',
+        status: 'idle',
       }),
     );
   }

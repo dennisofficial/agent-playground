@@ -12,10 +12,10 @@ import type { ThreadKindSpec } from './spec';
 
 /**
  * The twin of prompt-kit's `validateFragments` test: the real registry must pass boot validation, and the
- * validator must fail loudly on the misconfigurations it guards (unknown Agent / laneKind / child kind).
+ * validator must fail loudly on the misconfigurations it guards (unknown Agent / child kind).
  */
 describe('thread-kind registry', () => {
-  it('the real registry passes boot validation (every kind binds a valid Agent + laneKind; children resolve)', () => {
+  it('the real registry passes boot validation (every kind binds a valid Agent; children resolve)', () => {
     expect(() => validateThreadKinds()).not.toThrow();
   });
 
@@ -97,17 +97,6 @@ describe('thread-kind registry', () => {
       },
     ];
     expect(() => validateThreadKinds(bad)).toThrow(/unknown Agent/);
-  });
-
-  it('validateThreadKinds rejects an unknown laneKind', () => {
-    const bad: ThreadKindSpec[] = [
-      {
-        ...threadKindSpec('builder'),
-        laneKind: 'nonsense' as never,
-        children: undefined,
-      },
-    ];
-    expect(() => validateThreadKinds(bad)).toThrow(/unknown laneKind/);
   });
 
   it('validateThreadKinds rejects a child of unknown kind', () => {

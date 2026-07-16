@@ -261,8 +261,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           title: 'Stream-closed self-heal',
           kind: 'feature',
           build_path: 'plan',
-          status: 'running',
-          activity: 'idle',
+          status: 'building',
           base_branch: 'main',
         }),
       );
@@ -431,10 +430,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           mergeNow: async () => false,
         } as unknown as import('./auto-merge.service').AutoMergeService,
         {
-          appendMarker: async () => undefined,
-          drainAndAdvance: async () => ({ markers: [], stateChanged: false }),
-        } as unknown as import('./pipeline-awareness.store').PipelineAwarenessStore,
-        {
           isDraining: () => electionState.draining,
           isLeader: () => electionState.leader && !electionState.draining,
         } as unknown as LeaderElectionService,
@@ -462,11 +457,6 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         } as unknown as import('../job-bootstrap').JobBootstrapService,
       );
 
-      // Spy on the REAL store's setJobHalt so we can assert a `failed` halt was NEVER stamped, while the
-      // real Postgres write still goes through (no mockImplementation override — call-through). Job failure
-      // is signaled via `JobHalt.kind === 'failed'`, not the `JobStatus` phase.
-      const setJobHaltSpy = vi.spyOn(store, 'setJobHalt');
-
       // ── drive it ─────────────────────────────────────────────────────────────────────────────────────
       const domainJob = await store.loadJob(job.id);
       await driver.dispatch(domainJob);
@@ -479,8 +469,8 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       while (Date.now() < deadline) {
         const row = await jobs.findOneOrFail({ where: { id: job.id } });
         finalStatus = row.status;
-        if (row.status === 'done' || row.status === 'failed') break;
-        if (row.status === 'awaiting_ship_review' && !shipApproved) {
+        if (row.status === 'pr_open') break;
+        if (row.status === 'ready' && !shipApproved) {
           shipApproved = true;
           await driver.resolveShipApprovalDurably(job.id, 'auto-test');
         }
@@ -488,19 +478,13 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
       }
 
       // ── assertions — the lane SELF-HEALED, read back from live Postgres ────────────────────────────────
-      expect(finalStatus).toBe('done');
+      expect(finalStatus).toBe('pr_open');
 
       const execCalls = calls.filter((c) => c.mode === 'execute');
       expect(execCalls.length).toBeGreaterThanOrEqual(2); // turn 1 (stream-closed throw) + turn 2 (fresh, completed)
 
-      // Never stamped a `failed` halt at any point in the drive.
-      expect(
-        setJobHaltSpy.mock.calls.some((c) => c[1]?.kind === 'failed'),
-      ).toBe(false);
-
       const finalRow = await jobs.findOneOrFail({ where: { id: job.id } });
-      expect(finalRow.status).toBe('done');
-      expect(finalRow.halt).toBeNull();
+      expect(finalRow.status).toBe('pr_open');
       expect(finalRow.pr_url).toBeTruthy();
 
       const threadRow = await threads.findOneOrFail({

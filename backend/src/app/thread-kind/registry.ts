@@ -8,7 +8,6 @@
  * `spec.children`.
  */
 import { Agent, renderAgentPrompt } from '../prompt-kit';
-import { THREAD_REGISTRY } from '../surface/thread-registry';
 import type { SessionEngine } from '@shared/domain';
 import type { ReasoningEffort } from '@shared/engine';
 import type { ThreadKindSpec, ThreadRole } from './spec';
@@ -39,9 +38,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',
-    laneKind: 'main',
-    inputPolicy: 'operator',
+    reasoningEffort: 'high',    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'main',
     runner: 'session-backed',
@@ -56,9 +53,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The plan reviewer reasons hard — the effort the `review_plan` turn actually runs at
     // (`plan-review.service.ts` reads it from here, single source of truth).
     reasoningEffort: 'xhigh',
-    execution: 'render-only',
-    laneKind: 'codex-review',
-    inputPolicy: 'agent',
+    execution: 'render-only',    inputPolicy: 'agent',
     operatorInput: false,
     taskScope: 'none',
     runner: 'session-backed',
@@ -71,9 +66,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'top-level',
-    reasoningEffort: 'high',
-    laneKind: 'builder',
-    inputPolicy: 'none',
+    reasoningEffort: 'high',    inputPolicy: 'none',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'execute-turn',
@@ -95,9 +88,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'review',
     execution: 'child',
-    reasoningEffort: 'high',
-    laneKind: 'autofix-lens',
-    inputPolicy: 'none',
+    reasoningEffort: 'high',    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'none',
     runner: 'execute-turn',
@@ -109,9 +100,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'execute',
     execution: 'child',
-    reasoningEffort: 'high',
-    laneKind: 'autofix-fix',
-    inputPolicy: 'none',
+    reasoningEffort: 'high',    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'none',
     runner: 'execute-turn',
@@ -124,9 +113,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'codex',
     mode: 'execute',
     execution: 'top-level',
-    reasoningEffort: 'xhigh',
-    laneKind: 'builder',
-    inputPolicy: 'none',
+    reasoningEffort: 'xhigh',    inputPolicy: 'none',
     operatorInput: false,
     taskScope: 'thread',
     runner: 'execute-turn',
@@ -140,9 +127,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',
-    laneKind: 'main',
-    inputPolicy: 'operator',
+    reasoningEffort: 'high',    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
@@ -156,9 +141,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
-    reasoningEffort: 'high',
-    laneKind: 'main',
-    inputPolicy: 'operator',
+    reasoningEffort: 'high',    inputPolicy: 'operator',
     operatorInput: true,
     taskScope: 'thread',
     runner: 'session-backed',
@@ -213,15 +196,16 @@ export interface LaneDefaultFooter {
 
 /**
  * The config-driven composer-footer default for a lane — what the footer shows BEFORE the lane's first
- * turn completes (so a fresh Main reads "Opus 4.8", a builder reads "Sonnet 5", a Codex review reads
+ * turn completes (so a fresh planner reads "Opus 4.8", a builder reads "Sonnet 5", a Codex review reads
  * "Codex · xHigh"). Registry is the single source: `engine`/`effort` come straight off the spec; for
- * claude kinds `model` is the brain default on the `main` lane and the worker default everywhere else
- * (codex has no pinned model). Once a real `turn_meta` exists the web prefers it over this.
+ * claude kinds `model` is the brain default on the conversational session-backed lanes (planner/post_build/
+ * ship) and the worker default everywhere else (codex has no pinned model). Once a real `turn_meta` exists
+ * the web prefers it over this.
  */
 export function laneDefaultFooter(kind: string): LaneDefaultFooter {
   const spec = threadKindSpec(kind);
   const claudeModel =
-    spec.laneKind === 'main' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
+    spec.mode === 'conversational' ? CLAUDE_BRAIN_MODEL : CLAUDE_WORKER_MODEL;
   return {
     engine: spec.engine,
     ...(spec.engine === 'claude' ? { model: claudeModel } : {}),
@@ -231,14 +215,13 @@ export function laneDefaultFooter(kind: string): LaneDefaultFooter {
 
 /**
  * Fail LOUDLY on a misconfigured kind set (repo convention, twin of `validateFragments`): a duplicate
- * kind, an agent not in the `Agent` enum, a lane kind not in the `THREAD_REGISTRY`, a child that names an
- * unknown kind, and a smoke render of every kind's `Agent` prompt (surfaces a throwing fragment early).
+ * kind, an agent not in the `Agent` enum, a child that names an unknown kind, and a smoke render of every
+ * kind's `Agent` prompt (surfaces a throwing fragment early).
  */
 export function validateThreadKinds(
   specs: readonly ThreadKindSpec[] = THREAD_KIND_SPECS,
 ): void {
   const validAgents = new Set<string>(Object.values(Agent));
-  const validLaneKinds = new Set<string>(THREAD_REGISTRY.map((d) => d.kind));
   const validKinds = new Set<string>(specs.map((s) => s.kind));
   const seen = new Set<string>();
   for (const s of specs) {
@@ -249,11 +232,6 @@ export function validateThreadKinds(
     if (!validAgents.has(s.agent)) {
       throw new Error(
         `thread-kind: kind "${s.kind}" binds an unknown Agent "${s.agent}".`,
-      );
-    }
-    if (!validLaneKinds.has(s.laneKind)) {
-      throw new Error(
-        `thread-kind: kind "${s.kind}" names an unknown laneKind "${s.laneKind}" (not in THREAD_REGISTRY).`,
       );
     }
     // A `children` factory must only reference kinds that have a spec (so the materializer always resolves).

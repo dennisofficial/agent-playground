@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PipelineAwarenessStore } from './pipeline-awareness.store';
 import type { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 
@@ -15,9 +14,6 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
       computeSig: vi.fn(async () => 'sig-1'),
       hydrateFiles: vi.fn(async () => ({ forbiddenPaths: [], notices: [] })),
     } as unknown as WorktreeHydrator;
-    const awareness = {
-      appendMarker: vi.fn(async () => undefined),
-    } as unknown as PipelineAwarenessStore;
     const config = {
       importLegacyIfEmpty: vi.fn(async () => undefined),
       getSetupScript: vi.fn(async () => null),
@@ -42,7 +38,6 @@ describe('WorktreeProvisioner.provisionAndAttach — onMilestone pass-through', 
 
     const provisioner = new WorktreeProvisioner(
       hydrator,
-      awareness,
       config,
       mcp,
       sandboxProvider,

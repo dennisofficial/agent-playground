@@ -1,5 +1,5 @@
 /**
- * JobDependencyService + JobUnblockSweep — the "blocked by" edge model and the wake funnel, proven
+ * JobDependencyService — the "blocked by" edge model and the wake funnel, proven
  * against live Postgres (atlas_test schema; no fakes on the persistence side). The only stubbed
  * collaborator is BrainGateway — replaced with a capture double so we can assert exactly which jobs are
  * woken, with which replayed seed and which blocker roster (name + how each resolved), without booting the
@@ -11,7 +11,6 @@
  *  (c) onBlockerResolved('merged') unblocks, clears the seed, and dispatches a wake (blocker: merged);
  *  (d) a multi-blocker dependent stays blocked until the LAST blocker resolves;
  *  (e) each non-merge resolution (closed_unmerged / cancelled / deleted) is reported in the blocker roster;
- *  (f) JobUnblockSweep unblocks a job whose blocker row is absent (a dropped-event backstop);
  *  (g) removeDependency manually lifts an edge and reports it as `removed` in the roster.
  */
 
@@ -29,7 +28,6 @@ import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { ENTITIES, JobEntity } from '../persistence/entities';
-import { JobUnblockSweep } from '../driver/job-unblock-sweep.service';
 import { JobDependencyService } from './job-dependency.service';
 
 const ORG_ID = '2c111111-1111-4111-8111-111111111111';
@@ -60,11 +58,10 @@ interface WakeCall {
   blockers: UnblockBlockerInfo[];
 }
 
-describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
+describe('JobDependencyService (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
   let service: JobDependencyService;
-  let sweep: JobUnblockSweep;
   let jobs: Repository<JobEntity>;
   let repoId: string;
   let otherRepoId: string;
@@ -78,7 +75,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       ],
       providers: [
         JobDependencyService,
-        JobUnblockSweep,
         {
           provide: BrainGateway,
           useValue: {
@@ -102,7 +98,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     }).compile();
 
     service = mod.get(JobDependencyService);
-    sweep = mod.get(JobUnblockSweep);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
 
@@ -215,20 +210,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(reloaded.status).toBe('blocked');
     expect(reloaded.blocked_seed_message).toBe('build the follow-up');
     expect(wakes).toHaveLength(0); // parked, never started
-  });
-
-  it('rejects blocking a job while its brain turn is active', async () => {
-    const blocker = await makeJob({ status: 'running' });
-    const dependent = await makeJob({ activity: 'turn' });
-
-    await expect(
-      service.addDependency({
-        orgId: ORG_ID,
-        repoId,
-        jobId: dependent.id,
-        dependsOnJobId: blocker.id,
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   // ── (c) merge → unblock + clear seed + wake (blocker roster: merged) ──────────────────────────
@@ -406,33 +387,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(hows).toContain('deleted');
     expect(hows).toContain('closed_unmerged');
     expect(hows).not.toContain('cancelled');
-  });
-
-  // ── (f) JobUnblockSweep unblocks a job whose blocker row is absent ─────────────────────────────
-  it('(f) the sweep unblocks a blocked job whose blocker edge has vanished', async () => {
-    const blocker = await makeJob({ status: 'running' });
-    const dependent = await makeJob();
-    await service.addDependency({
-      orgId: ORG_ID,
-      repoId,
-      jobId: dependent.id,
-      dependsOnJobId: blocker.id,
-    });
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'blocked',
-    );
-
-    // A dropped wake event: the blocker vanishes (hard delete cascades its job_dependencies edge) but
-    // the dependent is still parked. The sweep must reconcile it.
-    await jobs.delete({ id: blocker.id });
-
-    const unblocked = await sweep.tick();
-    expect(unblocked).toBe(1);
-    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
-      'open',
-    );
-    expect(wakes).toHaveLength(1);
-    expect(wakes[0].blockers).toEqual([]); // the blocker row vanished, so there is nothing to name
   });
 
   // ── (g) removeDependency manually lifts an edge, reported as `removed` ─────────────────────────
@@ -615,7 +569,6 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
         prNumber: 42,
       });
       expect(row.createdAt).toBeInstanceOf(Date);
-      expect(typeof row.activity).toBe('string');
     });
   });
 });

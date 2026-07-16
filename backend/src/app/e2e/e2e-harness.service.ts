@@ -832,21 +832,18 @@ export class E2eHarness {
     return this.dataSource.getRepository(entity);
   }
 
-  /** PR-ready = the driver's terminal `done` status WITH a recorded `pr_url`. */
+  /** PR-ready = the driver's `pr_open` status WITH a recorded `pr_url`. */
   private isPrReady(row: JobEntity | null): boolean {
-    return !!row && row.status === 'done' && !!row.pr_url;
+    return !!row && row.status === 'pr_open' && !!row.pr_url;
   }
 
-  /** A terminal state the poll can stop on (so a halted/`cancelled` job surfaces fast, not on timeout). */
+  /** A terminal state the poll can stop on (so a `cancelled` job surfaces fast, not on timeout). */
   private isTerminal(row: JobEntity | null): boolean {
-    return (
-      !!row &&
-      (this.isPrReady(row) || row.halt != null || row.status === 'cancelled')
-    );
+    return !!row && (this.isPrReady(row) || row.status === 'cancelled');
   }
 
   private isShipGate(row: JobEntity | null): boolean {
-    return !!row && row.status === 'awaiting_ship_review';
+    return !!row && row.status === 'ready';
   }
 
   private async waitForShipGateOrPrReady(
@@ -856,7 +853,7 @@ export class E2eHarness {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
-      if (this.isPrReady(row) || this.isShipGate(row) || row?.halt != null) {
+      if (this.isPrReady(row) || this.isShipGate(row)) {
         return row ?? undefined;
       }
       await delay(250);

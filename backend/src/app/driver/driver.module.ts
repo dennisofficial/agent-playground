@@ -36,15 +36,12 @@ import { CHAT_SURFACE, type ChatSurface } from '../surface/chat-surface.port';
 import { descriptorForLane } from '../surface/thread-registry';
 import { AutoMergeService } from './auto-merge.service';
 import { GitStateReconciler } from './git-state-reconciler.service';
-import { SessionResumeSweep } from './session-resume-sweep.service';
-import { JobUnblockSweep } from './job-unblock-sweep.service';
 import { BuildShipService } from './build-ship.service';
 import { DriverStoreService } from './driver-store.service';
 import {
   BuildLaneDeliveryService,
   LANE_SEEDER,
 } from './build-lane-delivery.service';
-import { PipelineAwarenessStore } from './pipeline-awareness.store';
 import { DRIVER_REPO, GitDriverRepoResolver } from './repo-resolver';
 import { ThreadDriver } from './thread-driver.service';
 import { JobLifecycleService } from './job-lifecycle.service';
@@ -64,8 +61,6 @@ import { ExposureService } from '../exposure';
 const REAP_INTERVAL = 'driver:reap';
 const REAP_IDLE_INTERVAL = 'driver:reap-idle';
 const POLL_INTERVAL = 'driver:poll';
-const SESSION_RESUME_INTERVAL = 'driver:session-resume';
-const JOB_UNBLOCK_INTERVAL = 'driver:job-unblock';
 const PREVIEW_INTERVAL = 'driver:preview';
 const TOKEN_REFRESH_INTERVAL = 'driver:token-refresh';
 const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
@@ -113,7 +108,6 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
   ],
   providers: [
     DriverStoreService,
-    PipelineAwarenessStore,
     BuildShipService,
     BuildLaneDeliveryService,
     // The lane-capable host-seed seam — lets the brain's `JitHostExecutor` route a build-lane target through
@@ -128,8 +122,6 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     GithubTokenRefreshService,
     BaseMoveMergeabilitySync,
     GitStateReconciler,
-    SessionResumeSweep,
-    JobUnblockSweep,
     WorktreeHydrator,
     WorktreeProvisioner,
     // THE DISPATCH SEAM — the real driver overrides W3's no-op (removed from BrainModule).
@@ -155,7 +147,6 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
     GitStateReconciler,
     WorktreeProvisioner,
     DriverStoreService,
-    PipelineAwarenessStore,
     BuildShipService,
     BuildLaneDeliveryService,
     LANE_SEEDER,
@@ -169,8 +160,6 @@ export class DriverModule
   private promoteSub?: Subscription;
   private demoteSub?: Subscription;
   private pollInFlight = false; // skip a heartbeat if the prior tick is still running (slow GitHub / many PRs)
-  private sessionResumeInFlight = false; // skip a tick if the prior session-resume sweep is still running
-  private jobUnblockInFlight = false; // skip a tick if the prior job-unblock sweep is still running
   private previewInFlight = false; // skip a preview reconcile if the prior tick is still converging Caddy
   private tokenRefreshInFlight = false; // skip a token-refresh tick if the prior sweep is still running
   private buildLaneSweepInFlight = false; // skip a tick if the prior build-lane sweep is still running
@@ -183,8 +172,6 @@ export class DriverModule
     private readonly env: EnvService,
     private readonly lifecycle: JobLifecycleService,
     private readonly reconciler: GitStateReconciler,
-    private readonly sessionResumeSweep: SessionResumeSweep,
-    private readonly jobUnblockSweep: JobUnblockSweep,
     private readonly election: LeaderElectionService,
     @Inject(CHAT_SURFACE) private readonly surface: ChatSurface,
     private readonly onboarding: OnboardingService,
@@ -278,8 +265,6 @@ export class DriverModule
       this.startReapTimer(); // transient: stopped on demote, restarted on every promote
       this.startReapIdleTimer(); // fast idle-reap sweep (1 min), leader-only
       this.startPollTimer(); // the fast adaptive PR-state heartbeat (leader-only, like the reap timer)
-      this.startSessionResumeTimer(); // auto-resume lanes parked on a Claude session limit (leader-only)
-      this.startJobUnblockTimer(); // backstop: wake blocked jobs whose blockers are all terminal (leader-only)
       this.startPreviewTimer(); // the marker → port_state/Caddy reconciler (leader-only; Caddy is exposure-gated)
       this.startTokenRefreshTimer(); // app-mode in-sandbox git token-file refresh sweep (leader-only)
       this.startBuildLaneSweepTimer(); // build-lane host-seed at-least-once re-drive backstop (leader-only)
@@ -288,8 +273,6 @@ export class DriverModule
       this.stopReapTimer();
       this.stopReapIdleTimer();
       this.stopPollTimer();
-      this.stopSessionResumeTimer();
-      this.stopJobUnblockTimer();
       this.stopPreviewTimer();
       this.stopTokenRefreshTimer();
       this.stopBuildLaneSweepTimer();
@@ -298,23 +281,18 @@ export class DriverModule
 
   /**
    * The slow housekeeping sweep: close threads whose PR has merged/closed (reclaims container + worktree),
-   * re-drive stranded jobs, GC merged-job disk, and reclaim orphaned Docker artifacts. unref so it never
-   * keeps the process alive. Idle-reap is NOT here — it rides its own fast `startReapIdleTimer` (1 min) so a
-   * quiet container is reclaimed promptly; the GitHub PR-state observation rides the fast `startPollTimer`
-   * heartbeat. This timer keeps only the `pollPrClosures` merge/close-teardown backstop (teardown is already
-   * real-time via the `/webhooks/github/state` webhook) + the stranded-job re-drive backstop + the
-   * orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the Docker address pool can't exhaust).
-   * `pollPrClosures` hits the GitHub API, so it stays on the slow cadence — do NOT move it to the fast timer.
+   * GC merged-job disk, and reclaim orphaned Docker artifacts. unref so it never keeps the process alive.
+   * Idle-reap is NOT here — it rides its own fast `startReapIdleTimer` (1 min) so a quiet container is
+   * reclaimed promptly; the GitHub PR-state observation rides the fast `startPollTimer` heartbeat. This timer
+   * keeps only the `pollPrClosures` merge/close-teardown backstop (teardown is already real-time via the
+   * `/webhooks/github/state` webhook) + the orphaned-artifact sweep (leaked `-net`/`-dind` reclaim, so the
+   * Docker address pool can't exhaust). `pollPrClosures` hits the GitHub API, so it stays on the slow
+   * cadence — do NOT move it to the fast timer.
    */
   private startReapTimer(): void {
     if (this.scheduler.doesExist('interval', REAP_INTERVAL)) return;
     const everyMs = 30 * 60 * 1000; // 30m — PR-merge cleanup + housekeeping sweep cadence.
     const iv = setInterval(() => {
-      // At-least-once re-drive backstop: leadership-fenced drives yield on demotion, and the promote-time
-      // resume() covers the normal re-promote — but a demote landing DURING a drive's yield (before drive()
-      // clears its `active` guard) can race the re-promote resume() and strand the job `running`. This
-      // idempotent sweep re-drives any such stranded job within one interval (skips in-flight via `active`).
-      void this.driver.resume().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
       // Disk GC: reclaim the worktree + scratch dirs of merged/closed jobs whose sandbox has sat detached
@@ -387,65 +365,6 @@ export class DriverModule
   private stopPollTimer(): void {
     if (this.scheduler.doesExist('interval', POLL_INTERVAL)) {
       this.scheduler.deleteInterval(POLL_INTERVAL);
-    }
-  }
-
-  /**
-   * The auto-resume heartbeat (~30s) — the leader un-parks every lane whose durable `session_resume_at` clock
-   * is due (a Claude session/usage limit that has now reset). Leader-only (like the reap/poll timers): it
-   * re-drives builds + wakes brains, which must never run in two processes. `unref` so it never keeps the
-   * process alive; `sessionResumeInFlight` guards against overlap when a tick runs long.
-   */
-  private startSessionResumeTimer(): void {
-    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) return;
-    const everyMs = 30 * 1000; // 30s — the resume-clock granularity; a few seconds past reset is fine.
-    const iv = setInterval(() => {
-      if (this.sessionResumeInFlight) return;
-      this.sessionResumeInFlight = true;
-      void this.sessionResumeSweep
-        .tick()
-        .catch((err) => this.logger.warn(`session-resume tick failed: ${err}`))
-        .finally(() => {
-          this.sessionResumeInFlight = false;
-        });
-    }, everyMs);
-    iv.unref?.();
-    this.scheduler.addInterval(SESSION_RESUME_INTERVAL, iv);
-  }
-
-  private stopSessionResumeTimer(): void {
-    if (this.scheduler.doesExist('interval', SESSION_RESUME_INTERVAL)) {
-      this.scheduler.deleteInterval(SESSION_RESUME_INTERVAL);
-    }
-  }
-
-  /**
-   * The job-unblock backstop heartbeat (~30s) — the leader re-reconciles every `blocked` job, waking any
-   * whose blockers are all terminal-or-absent. The event-driven funnel ({@link JobDependencyService.onBlockerResolved})
-   * handles the normal case; this catches a wake dropped by a crash. Leader-only (it wakes brains, which must
-   * never run in two processes); `unref` so it never keeps the process alive; `jobUnblockInFlight` guards
-   * against overlap when a tick runs long.
-   */
-  private startJobUnblockTimer(): void {
-    if (this.scheduler.doesExist('interval', JOB_UNBLOCK_INTERVAL)) return;
-    const everyMs = 30 * 1000; // 30s — a dropped wake is recovered within one tick.
-    const iv = setInterval(() => {
-      if (this.jobUnblockInFlight) return;
-      this.jobUnblockInFlight = true;
-      void this.jobUnblockSweep
-        .tick()
-        .catch((err) => this.logger.warn(`job-unblock tick failed: ${err}`))
-        .finally(() => {
-          this.jobUnblockInFlight = false;
-        });
-    }, everyMs);
-    iv.unref?.();
-    this.scheduler.addInterval(JOB_UNBLOCK_INTERVAL, iv);
-  }
-
-  private stopJobUnblockTimer(): void {
-    if (this.scheduler.doesExist('interval', JOB_UNBLOCK_INTERVAL)) {
-      this.scheduler.deleteInterval(JOB_UNBLOCK_INTERVAL);
     }
   }
 
@@ -588,8 +507,6 @@ export class DriverModule
     this.stopReapTimer();
     this.stopReapIdleTimer();
     this.stopPollTimer();
-    this.stopSessionResumeTimer();
-    this.stopJobUnblockTimer();
     this.stopPreviewTimer();
     this.stopTokenRefreshTimer();
     this.stopBuildLaneSweepTimer();

@@ -91,9 +91,6 @@ export class AutoMergeService {
    *  messages are still queued for the next turn. */
   private async brainSettled(job: JobEntity): Promise<boolean> {
     const idle =
-      job.activity === 'idle' &&
-      !job.halted &&
-      job.halt == null &&
       job.open_question_count === 0 &&
       job.open_secret_count === 0 &&
       job.awaiting_secret_id == null;

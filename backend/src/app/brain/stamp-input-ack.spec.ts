@@ -107,7 +107,6 @@ function makeManager(opts: {
     inert, // turnRecovery…git (27)
     inert, // prompts (PromptService)
     inert, // threadInput (ThreadInputService)
-    inert, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     inert, // usage (OauthUsageService)
     inert, // selfSufficiency
   );

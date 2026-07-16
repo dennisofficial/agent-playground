@@ -105,17 +105,15 @@ function makeManager(pending: TurnEnvelope[]) {
     inert,
     inert,
     inert,
-    inert,
-    inert, // turnHarness…creds (21)
-    inert, // mcp (McpResolver, 22)
-    election, // election (23)
+    inert, // turnHarness…creds (20)
+    inert, // mcp (McpResolver, 21)
+    election, // election (22)
     inert,
     inert,
     inert,
     inert, // turnRecovery…git (27)
     { generate: () => 'SYSTEM' } as never, // prompts (28, PromptService)
     { register: () => undefined } as never, // threadInput (ThreadInputService)
-    { judge: async () => undefined } as never, // liveVerificationJudge (LIVE_VERIFICATION_JUDGE)
     { getResetAt: () => undefined } as never, // usage (OauthUsageService)
     inert, // selfSufficiency
   );

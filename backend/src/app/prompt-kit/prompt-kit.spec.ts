@@ -517,12 +517,11 @@ describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
     for (const marker of PLANNING_ONLY_MARKERS) {
       expect(out, marker).not.toContain(marker);
     }
-    // Task 2's curated host-tool subset: post_build owns verification + the amend loop, but none of the
+    // Task 2's curated host-tool subset: post_build owns the amend loop, but none of the
     // grill/convention-profile apparatus. Checked as the fully-qualified `mcp__..__name` tool-listing form,
     // since the bare word "ask_question" also appears in unrelated shared prose (e.g. sandbox.group.ts's
     // impossible-request routing note, which every ENGINEERING_STAGES agent carries regardless of its
     // actual toolset).
-    expect(out).toContain('report_verification');
     expect(out).toContain('withdraw_ship');
     expect(out).not.toContain('__ask_question');
     expect(out).not.toContain('propose_convention_profile_change');
@@ -536,9 +535,8 @@ describe('POST_BUILD / CI lean prompts (the exploded-brain stages)', () => {
     for (const marker of PLANNING_ONLY_MARKERS) {
       expect(out, marker).not.toContain(marker);
     }
-    // Task 2's curated host-tool subset: ci owns verification but NOT the amend loop (that's post_build's)
-    // or the grill/convention-profile apparatus. See the note above on `__ask_question`.
-    expect(out).toContain('report_verification');
+    // Task 2's curated host-tool subset: ci owns neither the amend loop (that's post_build's) nor the
+    // grill/convention-profile apparatus. See the note above on `__ask_question`.
     expect(out).not.toContain('withdraw_ship');
     expect(out).not.toContain('__ask_question');
     expect(out).not.toContain('propose_convention_profile_change');
