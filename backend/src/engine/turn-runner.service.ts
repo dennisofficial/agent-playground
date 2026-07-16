@@ -23,19 +23,26 @@ import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from '../app/sandbox/image/host-tool-s
 import { buildLspBridgeOptions } from './transport/bridges/lsp-bridge-options';
 import { buildUserMcpBridgeOptions } from './transport/bridges/user-mcp-bridge-options';
 import { TurnTransport } from './transport/turn-transport.service';
+import { EngineEventBus } from './events/engine-events';
 
 /**
  * Orchestrates ONE in-container turn: read the spec, run it to a terminal frame, finalize. This is the
  * body of the old `engine-entrypoint.ts:runOverRedis` MINUS the raw Redis calls (now {@link TurnTransport})
  * and MINUS the {@link EngineCore} internals (unchanged) — same bridges, same merge, same frames.
  *
- * `onEvent` calls `TurnTransport.emitEvent` DIRECTLY here; routing engine events through the event bus is
- * a later thread's job. On failure it appends the terminal `error` frame (verbatim from the entrypoint's
- * catch) and RETHROWS, so `main.ts` maps the throw to exit code 1 (the host runner reads that binary code).
+ * `onEvent` publishes each event on {@link EngineEventBus} rather than calling `TurnTransport.emitEvent`
+ * directly — `TurnEventForwarder` is the bus's sole subscriber and does that forwarding. Every OTHER
+ * transport call here (`readSpec`/`startHeartbeat`/`openToolBridge`/`onAbort`/`readSteerInput`/`emitFinal`/
+ * `emitError`) still goes straight through `TurnTransport`, unaffected by this. On failure it appends the
+ * terminal `error` frame (verbatim from the entrypoint's catch) and RETHROWS, so `main.ts` maps the throw
+ * to exit code 1 (the host runner reads that binary code).
  */
 @Injectable()
 export class TurnRunner {
-  constructor(private readonly transport: TurnTransport) {}
+  constructor(
+    private readonly transport: TurnTransport,
+    private readonly bus: EngineEventBus,
+  ) {}
 
   async run(turnId: string): Promise<void> {
     try {
@@ -175,7 +182,7 @@ export class TurnRunner {
 
       const runArgs: RunEngineArgs = {
         ...spec,
-        onEvent: (e: EngineEvent) => this.transport.emitEvent(turnId, e),
+        onEvent: (e: EngineEvent) => this.bus.emit(turnId, e),
         ...(spec.steerable
           ? { signal: abortController.signal, steerInput }
           : {}),

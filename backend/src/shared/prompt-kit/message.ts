@@ -73,6 +73,9 @@ export const SEALED_DELIVERY_PRIMITIVES = [
 export const SANCTIONED_SEAM_GLOBS = [
   'src/shared/prompt-kit/**',
   'src/shared/engine/engine-core.ts',
+  // `engine-core.ts`'s internals (steer plumbing, options assembly, …) were decomposed into
+  // sibling files under this directory — same seam, just relocated call sites.
+  'src/shared/engine/engine-core/**',
   'src/app/brain/jit-host-executor.ts',
 ] as const;
 

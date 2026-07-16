@@ -6,6 +6,8 @@ import { IoredisStreamAdapter } from '../_lib/redis/ioredis-stream.adapter';
 import { engineRedisClientProvider } from './engine-redis-client.provider';
 import { TurnTransport } from './transport/turn-transport.service';
 import { TurnRunner } from './turn-runner.service';
+import { EngineEventBus } from './events/engine-events';
+import { TurnEventForwarder } from './events/turn-event-forwarder';
 
 /**
  * The engine app's composition root. Deliberately does NOT import the host `RedisModule`/`EnvModule` —
@@ -15,8 +17,9 @@ import { TurnRunner } from './turn-runner.service';
  * per-turn Redis I/O behind that port (+ the raw client for its dedicated blocking connections) and
  * `TurnRunner` runs one turn to a terminal frame.
  *
- * `EventEmitterModule` is wired ahead of a later thread that routes engine events through the bus; today
- * `TurnRunner`'s `onEvent` still calls `TurnTransport.emitEvent` directly.
+ * `TurnRunner` publishes each engine event on `EngineEventBus` rather than calling `TurnTransport.emitEvent`
+ * directly; `TurnEventForwarder` is the bus's sole subscriber and does that forwarding, via the
+ * `EventEmitterModule` wired below.
  */
 @Module({
   imports: [EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' })],
@@ -25,6 +28,8 @@ import { TurnRunner } from './turn-runner.service';
     { provide: REDIS_STREAM_PORT, useClass: IoredisStreamAdapter },
     TurnTransport,
     TurnRunner,
+    EngineEventBus,
+    TurnEventForwarder,
   ],
   exports: [REDIS_STREAM_PORT, REDIS_CLIENT],
 })
