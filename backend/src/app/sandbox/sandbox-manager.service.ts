@@ -551,10 +551,19 @@ export class SandboxManager implements SandboxProvider {
       image,
       network,
       privileged: true,
+      // tini as PID 1 reaps the esbuild/vitest zombies that `exec sleep infinity` (sandbox-init.sh)
+      // otherwise leaks — always on.
+      init: true,
       // Best-effort CPU: a low relative weight so agent compute bursts (builds/tests) yield to the host
       // control plane under contention, while still using the whole box when it's idle. Undefined when
       // SANDBOX_CPU_SHARES is unset ⇒ Docker default (no de-prioritization).
       cpuShares: this.env.get('SANDBOX_CPU_SHARES'),
+      // Hard per-sandbox ceilings so one job can't monopolize the shared box (a single build was seen
+      // taking 8 cores + 18.9 GB). Env-tunable on the box without a redeploy; defaults 6 cores / 24 GB /
+      // 8192 pids. NanoCpus is a real throughput cap (unlike cpuShares).
+      nanoCpus: Math.round((this.env.get('SANDBOX_MAX_CPUS') ?? 6) * 1e9),
+      memoryBytes: (this.env.get('SANDBOX_MAX_MEMORY_GB') ?? 24) * 1024 ** 3,
+      pidsLimit: this.env.get('SANDBOX_MAX_PIDS') ?? 8192,
       binds: this.dedupeBindsByTarget(binds),
       volumes: [{ name: `${name}-dind`, path: '/var/lib/docker' }],
       // Bake the preview identity so `atlas-svc` can advertise a service's public URL from inside the
