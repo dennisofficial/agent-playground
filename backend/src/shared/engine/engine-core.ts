@@ -241,6 +241,11 @@ export interface EngineCoreConfig {
  * Codex SDK's coding model.
  */
 const DEFAULT_WORKER_MODEL = 'claude-sonnet-5';
+// Bound on the AUTHORITATIVE end-of-turn `getContextUsage()` control round-trip (below). This await sits
+// inside the message-consuming loop that drives the whole turn, so a hang here would freeze message
+// consumption for a turn that can otherwise run for hours; a slow/never-resolving control response must
+// never block reading further SDK messages.
+const CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS = 5_000;
 // NOTE: Codex runs subscription-only here — a ChatGPT-account OAuth token (see `resolveAuth`; there is no
 // API-key path). A ChatGPT account REJECTS any explicit model with a 400 ("The '<model>' model is not
 // supported when using Codex with a ChatGPT account"), including `gpt-5-codex` and `gpt-5`. So we do NOT
@@ -1057,11 +1062,21 @@ export class EngineCore {
             // `usage.contextBreakdown` below, so the durable persisted value must come from a call we KNOW
             // has settled. Still mid-iteration (the query handle is alive) so the control channel is
             // reachable. On failure, keep whatever the live path above already captured, if anything.
+            // Bounded by a timeout (not just a try/catch on rejection): this await sits inside the
+            // message-consuming loop, so an unbounded/never-resolving control round-trip on this
+            // shipped-but-not-yet-documented SDK method would otherwise stall the whole turn.
             if (typeof claudeQuery.getContextUsage === 'function') {
               try {
-                lastBreakdown = normalizeContextBreakdown(
-                  await claudeQuery.getContextUsage(),
-                );
+                const raw = await Promise.race([
+                  claudeQuery.getContextUsage(),
+                  new Promise<null>((r) =>
+                    setTimeout(
+                      () => r(null),
+                      CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS,
+                    ),
+                  ),
+                ]);
+                if (raw) lastBreakdown = normalizeContextBreakdown(raw);
               } catch {
                 // keep whatever the live path above already captured, if anything
               }
