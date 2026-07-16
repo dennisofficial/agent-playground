@@ -302,12 +302,16 @@ export function Composer({
 
     const hasText = trimmed.length > 0;
     const hasAttachments = attachments.length > 0;
-    const hasStaged = stagedAnswers.length > 0;
+    // Exclude entries still `submitting` from a prior send that hasn't been confirmed by the refetch yet
+    // (pruneStagedAnswers only drops them once threadMessages reconfirms the card) — otherwise a second
+    // Send before that round-trip lands would resend their already-submitted payload.
+    const unsubmittedStagedAnswers = stagedAnswers.filter((a) => !a.submitting);
+    const hasStaged = unsubmittedStagedAnswers.length > 0;
     if (hasStaged || hasText || hasAttachments) {
       // Eager clear: the composer text and staged tray clear the instant Send is hit, so the lifecycle
       // renders through a server-driven "sending" state (the message/card themselves) rather than sitting
       // in the composer until the mutation settles. A failed send restores both below.
-      const stagedSnapshot = stagedAnswers;
+      const stagedSnapshot = unsubmittedStagedAnswers;
       const stagedIds = stagedSnapshot.map((a) => a.cardId);
       const items: MessageInput[] = [
         ...stagedSnapshot.map(toMessageItem),
@@ -427,7 +431,7 @@ export function Composer({
                   (!text.trim() &&
                     comments.length === 0 &&
                     attachments.length === 0 &&
-                    stagedAnswers.length === 0) ||
+                    stagedAnswers.filter((a) => !a.submitting).length === 0) ||
                   message.isPending ||
                   sendReviewComments.isPending
                 }
