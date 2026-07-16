@@ -9,9 +9,11 @@ import {
 } from './turn-harness.service';
 
 /**
- * The shared transcript spine — converts an engine turn's events into a live lane push + durable blocks.
- * Lifted verbatim from the brain's former `makeTurnStreamer`; these lock the role-parameterization
- * (lane + metaTag) and the idempotent finalization (finish/abort run once; late events are dropped).
+ * The shared transcript spine — converts an engine turn's events into durable blocks (+ optional usage
+ * harvest). Live push is a separate, independently-tested concern in `redis-engine-runner`'s realtime
+ * consumer group. Lifted verbatim from the brain's former `makeTurnStreamer`; these lock the
+ * role-parameterization (lane + metaTag) and the idempotent finalization (finish/abort run once; late
+ * events are dropped).
  */
 function setup() {
   const live = new LiveTurnStore();
@@ -84,11 +86,6 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
       input: { file_path: 'a' },
     });
     h.onEvent({ kind: 'tool_result', id: 't1', result: 'ok' });
-
-    // DURING the turn the live lane is the sole source of in-flight blocks.
-    expect(
-      live.snapshot('R', 'T', 'phase:s1')!.blocks.map((b) => b.kind),
-    ).toEqual(['thinking', 'text', 'tool']);
 
     await h.finish('hi');
 
@@ -300,8 +297,11 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
   });
 
   it('finish turn_meta: appends a turn_meta block LAST carrying usage + context occupancy when usage is given', async () => {
-    const { persisted, factory } = setup();
+    const { persisted, factory, live } = setup();
     const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+    // The live turn state (its `startedAt` clock) is created by the realtime consumer group in production,
+    // not by the harness's onEvent — simulate that push so `finish` can read the "worked <elapsed>" clock.
+    live.push('R', 'T', { kind: 'text', text: 'reply' });
     h.onEvent({ kind: 'text', text: 'reply' });
     await h.finish('reply', {
       usage: {
@@ -326,8 +326,8 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     });
     expect(meta.contextTokens).toBe(1200);
     expect(meta.contextLimit).toBe(1_000_000);
-    // Per-turn work duration: computed from the still-live turn's `startedAt` (set by the first `onEvent`),
-    // so the footer can show "worked <elapsed>". A non-negative number in ms.
+    // Per-turn work duration: computed from the still-live turn's `startedAt` (populated by the realtime
+    // consumer group), so the footer can show "worked <elapsed>". A non-negative number in ms.
     expect(typeof meta.workedMs).toBe('number');
     expect(meta.workedMs as number).toBeGreaterThanOrEqual(0);
   });

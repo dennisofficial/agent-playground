@@ -1730,6 +1730,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
 
   it('build turns ride the shared transcript spine: richStream on, blocks tagged meta.phaseId, a build_anchor per thread batch', async () => {
     const seen: Array<{ mode: string; richStream?: boolean }> = [];
+    let liveRef: LiveTurnStore | undefined;
     const turn = {
       runTurn: vi.fn(
         async (input: {
@@ -1738,18 +1739,29 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           stepId?: string | null;
           richStream?: boolean;
           toolBridge?: ToolBridgeOptions;
+          liveRoute?: { channel: string; jobId: string; lane?: string };
           onEvent?: (e: { kind: string; [k: string]: unknown }) => void;
         }) => {
           seen.push({ mode: input.mode, richStream: input.richStream });
-          input.onEvent?.({ kind: 'thinking', text: 'planning the edit' });
-          input.onEvent?.({ kind: 'text', text: 'editing the file' });
-          input.onEvent?.({
-            kind: 'tool_use',
-            id: 't1',
-            name: 'Edit',
-            input: { file_path: 'a.ts' },
-          });
-          input.onEvent?.({ kind: 'tool_result', id: 't1', result: 'ok' });
+          const events: Array<{ kind: string; [k: string]: unknown }> = [
+            { kind: 'thinking', text: 'planning the edit' },
+            { kind: 'text', text: 'editing the file' },
+            { kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } },
+            { kind: 'tool_result', id: 't1', result: 'ok' },
+          ];
+          for (const e of events) {
+            input.onEvent?.(e);
+            // Stand in for RedisEngineRunner.consumeRealtime: the realtime consumer group mirrors each
+            // engine event into the LiveTurnStore off `liveRoute` — the harness's onEvent no longer does.
+            if (input.liveRoute) {
+              liveRef?.push(
+                input.liveRoute.channel,
+                input.liveRoute.jobId,
+                e,
+                input.liveRoute.lane,
+              );
+            }
+          }
           await assertThreadDone(input);
           return {
             report: `did ${input.stepId}`,
@@ -1777,6 +1789,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       operatorInputCards: [],
     };
     const h = assemble(state, { turn });
+    liveRef = h.liveTurns;
     await h.driver.dispatch(state.job);
     await flushUntil(() => state.job.status === 'done');
 

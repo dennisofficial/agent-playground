@@ -16,3 +16,13 @@ export const turnKeys = (turnId: string) => ({
 
 /** The consumer group the host uses to drain a turn's tools stream (one logical host across replicas). */
 export const TOOLS_GROUP = 'host';
+
+/** Drains `turn:{T}:events` for the caller-supplied onEvent fan-out (persistence-accumulation, usage
+ *  harvest, idle-timeout/alive-grace liveness verdict) — the renamed former sole reader. */
+export const EVENTS_RUNNER_GROUP = 'runner';
+/** Drains `turn:{T}:events` ONLY to push live frames into LiveTurnStore — independent of the runner
+ *  group, so a slow/stuck persistence path never blocks the operator's live transcript. */
+export const EVENTS_REALTIME_GROUP = 'realtime';
+/** Drains `turn:{T}:events` ONLY to stamp registry liveness (heartbeat + resume cursor) — independent
+ *  of the runner group, so the watchdog's dead-turn detection never depends on the business onEvent path. */
+export const EVENTS_WATCHDOG_GROUP = 'watchdog';

@@ -143,20 +143,24 @@ export class AutoFixStage {
   }
 
   /**
-   * A {@link TurnHarness} bound to one auto-fix turn's lane — or `undefined` when the context carries no
-   * streaming identity (jobId + channel), in which case the caller runs the engine directly with no
-   * harness (the pre-streaming path). `sub` picks the sub-lane + block meta: a review lens or the fix turn.
+   * A {@link TurnHarness} bound to one auto-fix turn's lane — plus the `route` (channel/jobId/lane) it was
+   * built from, so a `run()` can thread that SAME route through as `liveRoute` for the realtime consumer
+   * group's live push. `undefined` when the context carries no streaming identity (jobId + channel), in
+   * which case the caller runs the engine directly with no harness (the pre-streaming path). `sub` picks the
+   * sub-lane + block meta: a review lens or the fix turn.
    */
   private harnessFor(
     ctx: AutoFixContext,
     sub: { lensId: string } | { fix: true },
-  ): TurnHarness | undefined {
+  ):
+    | { harness: TurnHarness; route: { channel: string; jobId: string; lane: string } }
+    | undefined {
     if (!ctx.jobId || !ctx.channel || !ctx.autofixId) return undefined;
     const isFix = 'fix' in sub;
     const lane = isFix
       ? autofixFixLane(ctx.autofixId)
       : autofixLensLane(ctx.autofixId, sub.lensId);
-    return this.turnHarness.create({
+    const harness = this.turnHarness.create({
       jobId: ctx.jobId,
       orgId: ctx.orgId,
       threadId: ctx.threadId ?? ctx.autofixId,
@@ -168,6 +172,7 @@ export class AutoFixStage {
         ...(isFix ? { fixTurn: true } : { lensId: sub.lensId }),
       },
     });
+    return { harness, route: { channel: ctx.channel, jobId: ctx.jobId, lane } };
   }
 
   /**
@@ -345,7 +350,8 @@ export class AutoFixStage {
   ): Promise<ReviewFinding[]> {
     // Stream this lens's reasoning + file reads onto its own sub-lane (when the ctx carries a streaming
     // identity) so it renders like every other agent turn. `undefined` → the pre-streaming direct path.
-    const harness = this.harnessFor(ctx, { lensId: lens.id });
+    const streaming = this.harnessFor(ctx, { lensId: lens.id });
+    const harness = streaming?.harness;
     const task = buildReviewPrompt(lens, ctx);
     // Surface this lens's review prompt on its sub-lane, inline before its reasoning — so the operator sees
     // what the reviewer was asked, not just its findings. Best-effort; no-op on the direct path (no harness).
@@ -365,6 +371,7 @@ export class AutoFixStage {
         ...(harness
           ? { richStream: true, onEvent: (e) => harness.onEvent(e) }
           : {}),
+        ...(streaming ? { liveRoute: streaming.route } : {}),
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
@@ -412,7 +419,7 @@ export class AutoFixStage {
     sub: { lensId: string } | { fix: true },
     message: string,
   ): Promise<void> {
-    const harness = this.harnessFor(ctx, sub);
+    const harness = this.harnessFor(ctx, sub)?.harness;
     await harness?.finish(message).catch(() => undefined);
   }
 
@@ -488,7 +495,8 @@ export class AutoFixStage {
     options: AutoFixOptions,
   ): Promise<{ fixReport: string; commits: AutoFixCommit[] }> {
     // Stream the fix turn onto the `…:fix` sub-lane (when streaming); else the coarse debug log only.
-    const harness = this.harnessFor(ctx, { fix: true });
+    const streaming = this.harnessFor(ctx, { fix: true });
+    const harness = streaming?.harness;
     const onEvent = (e: EngineEvent): void => {
       if (e.kind === 'tool') this.logger.debug(`fix-turn tool: ${e.name}`);
       harness?.onEvent(e);
@@ -514,6 +522,7 @@ export class AutoFixStage {
         sandboxKey: { ...ctx.sandboxKey, subId: 'fix' },
         mode: 'execute',
         ...(harness ? { richStream: true } : {}),
+        ...(streaming ? { liveRoute: streaming.route } : {}),
         onEvent,
         ...(target ? { target } : {}),
         ...(options.model ? { model: options.model } : {}),

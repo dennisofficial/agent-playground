@@ -3525,6 +3525,7 @@ export class ThreadDriver implements JobDispatcher {
               commitNudge: attempt,
             },
           },
+          liveRoute: { channel, jobId: job.id, lane },
           onEvent: (e) => harness.onEvent(e),
         },
         `commit nudge "${thread.brief}" #${attempt}`,
@@ -3614,6 +3615,7 @@ export class ThreadDriver implements JobDispatcher {
         lane: row.lane,
         kind: row.kind,
         engine: spec.engine,
+        liveRoute: { channel: row.channel, jobId: job.id, lane: row.lane },
         onEvent: (e) => harness.onEvent(e),
         // Re-supply the host tool closure — the in-sandbox session may have an in-flight
         // `request_operator_input` request whose response the re-attached host must still serve.
@@ -3899,6 +3901,7 @@ export class ThreadDriver implements JobDispatcher {
               batchOrdinal: anchor.batchOrdinal ?? null,
             },
           },
+          liveRoute: { channel, jobId: job.id, lane },
           // Stamp each folded host seed delivered the instant the Leg turn is durably registered (the
           // restart-survivable hand-off — a later crash resumes THIS turn rather than re-draining the seeds).
           ...(seedIds.length

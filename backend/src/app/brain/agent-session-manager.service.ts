@@ -2111,6 +2111,9 @@ export class AgentSessionManager
             },
             toolBridge: { jobId: row.job_id, tools },
             ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
+            // Realtime live push via the runner's independent `realtime` consumer group — same 'main' lane
+            // the reattach replay streams the brain conversation on (mirrors this `onEvent`→streamer wiring).
+            liveRoute: { channel: row.channel, jobId: row.job_id, lane: 'main' },
           },
         );
         if (result.sessionId && stimulus.resumeThreadId) {
@@ -2823,6 +2826,9 @@ export class AgentSessionManager
         },
       },
       ...(opts?.onRegistered ? { onTurnRegistered: opts.onRegistered } : {}),
+      // Realtime live push to the operator UI via RedisEngineRunner's independent `realtime` consumer group
+      // (mirrors this `onEvent`→streamer wiring). Same lane the brain conversation streams on.
+      liveRoute: { channel, jobId: stimulus.jobId, lane: 'main' },
       onEvent: (e) => {
         if (e.kind === 'session' && e.sessionId) {
           this.bindInjectedMemorySession(stimulus.jobId, e.sessionId);

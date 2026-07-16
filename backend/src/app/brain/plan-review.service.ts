@@ -333,6 +333,11 @@ export class PlanReviewService {
             signal: ac.signal,
             ...(resumeSessionId ? { sessionId: resumeSessionId } : {}),
             richStream: true,
+            liveRoute: {
+              channel,
+              jobId: input.jobId,
+              lane: codexReviewLane(input.jobId),
+            },
             onEvent: (e) => {
               if (e.kind === 'session' && e.sessionId) {
                 // The Codex session id folds onto the plan_review thread's own `session_id` (retired

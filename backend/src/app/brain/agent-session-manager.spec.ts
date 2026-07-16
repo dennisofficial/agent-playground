@@ -3666,28 +3666,35 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   });
 
   it('streams every engine event live AND persists authoritative blocks (text/thinking/tool), no duplicate final reply', async () => {
+    const events: EngineEvent[] = [
+      { kind: 'session', sessionId: 'sess-1' },
+      { kind: 'thinking', text: 'reasoning…' },
+      { kind: 'text', text: 'Hello' },
+      { kind: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } },
+      { kind: 'tool_result', id: 'tu1', result: 'file contents', isError: false },
+      { kind: 'text', text: 'Done.' },
+      { kind: 'result', text: 'Done.' },
+    ];
+    let liveRef: LiveTurnStore | undefined;
     const run = vi.fn(async (args: RunEngineArgs) => {
-      args.onEvent?.({ kind: 'session', sessionId: 'sess-1' });
-      args.onEvent?.({ kind: 'thinking', text: 'reasoning…' });
-      args.onEvent?.({ kind: 'text', text: 'Hello' });
-      args.onEvent?.({
-        kind: 'tool_use',
-        id: 'tu1',
-        name: 'Read',
-        input: { path: 'README.md' },
-      });
-      args.onEvent?.({
-        kind: 'tool_result',
-        id: 'tu1',
-        result: 'file contents',
-        isError: false,
-      });
-      args.onEvent?.({ kind: 'text', text: 'Done.' });
-      args.onEvent?.({ kind: 'result', text: 'Done.' });
+      for (const e of events) {
+        args.onEvent?.(e);
+        // Stand in for RedisEngineRunner.consumeRealtime: the realtime consumer group mirrors each engine
+        // event into the LiveTurnStore off `liveRoute` in production — the harness's onEvent no longer does.
+        if (args.liveRoute) {
+          liveRef?.push(
+            args.liveRoute.channel,
+            args.liveRoute.jobId,
+            e,
+            args.liveRoute.lane,
+          );
+        }
+      }
       return { result: 'Done.', sessionId: 'sess-1' };
     });
     const { manager, store, surface, liveTurns, blockSink, dockerRunner } =
       makeManager({ run });
+    liveRef = liveTurns;
 
     await manager.handleChatTurn(stimulus);
 

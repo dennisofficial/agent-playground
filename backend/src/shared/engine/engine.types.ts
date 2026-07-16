@@ -446,6 +446,14 @@ export interface RunEngineArgs {
    * re-attach to this turn after a restart. Ignored by the pipe runner. See ADR 0001.
    */
   turnMeta?: TurnMeta;
+  /**
+   * Host-only routing for the REALTIME consumer-group push (LiveTurnStore) — independent of `turnMeta`
+   * (which drives restart-reattach registration). Present ⇔ the caller wants this turn's events streamed
+   * live to the operator UI (mirrors whatever `onEvent` closure the caller built its harness around).
+   * Absent ⇒ no realtime push for this turn (e.g. a no-harness autofix direct path, or an internal turn
+   * like compaction that is intentionally not surfaced in the operator transcript).
+   */
+  liveRoute?: { channel: string; jobId: string; lane?: string };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -472,7 +480,8 @@ type HostOnlyArgKey =
   | 'target'
   | 'toolBridge'
   | 'bridgeCall'
-  | 'turnMeta';
+  | 'turnMeta'
+  | 'liveRoute';
 /** Fields TRANSFORMED at the boundary (mapped to container-space by `buildSpec`, not copied verbatim). */
 type TransformedArgKey =
   | 'cwd'
@@ -597,6 +606,8 @@ export interface EngineRunnerPort {
       signal?: AbortSignal;
       /** Dispatch-time Claude credential id, host-only; used to stamp replayed rate-limit events. */
       credentialId?: string;
+      /** Host-only realtime-push routing (LiveTurnStore) — see {@link RunEngineArgs.liveRoute}. */
+      liveRoute?: { channel: string; jobId: string; lane?: string };
     },
   ): Promise<EngineRunResult>;
   /**
