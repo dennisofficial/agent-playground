@@ -17,6 +17,7 @@ import {
 } from '../persistence/entities';
 import { BRAIN_SINK, StimulusModule, type BrainSink } from '../stimulus';
 import { AgentSessionManager } from './agent-session-manager.service';
+import { ChatToolProvider } from './chat-tool-provider.service';
 import { DrainService } from './drain.service';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
@@ -74,6 +75,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
     DecisionApprovalService,
     PlanReviewService,
     TurnRecoveryService,
+    ChatToolProvider,
     AgentSessionManager,
     DrainService,
     JitHostExecutor,
@@ -95,6 +97,7 @@ import { TurnRecoveryService } from './turn-recovery.service';
   ],
   exports: [
     AgentSessionManager,
+    ChatToolProvider,
     DecisionApprovalService,
     BrainStoreService,
     JitHostExecutor,
