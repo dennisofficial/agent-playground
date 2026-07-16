@@ -274,6 +274,7 @@ export function PhaseView({
         lane={codexReviewLane(jobRef.jobId)}
         composer
         readOnly
+        archived={job?.status === "archived"}
         defaultFooter={job?.planReview?.defaultFooter}
         emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
         onSelectNode={onSelectNode}
@@ -300,6 +301,7 @@ export function PhaseView({
         lane={reviewChild.lane}
         composer
         readOnly
+        archived={job?.status === "archived"}
         defaultFooter={reviewChild.defaultFooter}
         emptyText={
           isFix
@@ -343,6 +345,7 @@ export function PhaseView({
         lane={threadLane(thread.id)}
         composer
         readOnly={!thread.operatorInput}
+        archived={job?.status === "archived"}
         defaultFooter={thread.defaultFooter}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet — this thread hasn’t run."
@@ -360,6 +363,7 @@ export function PhaseView({
         lane="__none__"
         composer
         readOnly
+        archived={job?.status === "archived"}
         onSelectNode={onSelectNode}
         emptyText="No build activity yet."
       />
