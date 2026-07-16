@@ -256,11 +256,11 @@ export class E2eHarness {
       () => undefined,
     );
     await q(
-      `DELETE FROM messages WHERE job_id IN (
+      `DELETE FROM transcript_messages WHERE job_id IN (
          SELECT id FROM jobs WHERE org_id = $1)`,
       [TEAM_ID],
     ).catch(() => undefined);
-    await q(`DELETE FROM stimuli WHERE org_id = $1`, [TEAM_ID]).catch(
+    await q(`DELETE FROM inbound_messages WHERE org_id = $1`, [TEAM_ID]).catch(
       () => undefined,
     );
     await q(`DELETE FROM job_sandboxes WHERE org_id = $1`, [TEAM_ID]).catch(

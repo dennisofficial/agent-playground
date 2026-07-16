@@ -112,7 +112,7 @@ async function purge(): Promise<void> {
     ])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
       [PLAN_JOB, DIRECT_JOB],
     ])
     .catch(() => undefined);
@@ -269,7 +269,7 @@ beforeEach(async () => {
   await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
     [PLAN_DR, DIRECT_DR],
   ]);
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+  await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [PLAN_JOB, DIRECT_JOB],
   ]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [

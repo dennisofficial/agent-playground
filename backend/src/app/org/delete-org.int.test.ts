@@ -176,7 +176,7 @@ async function purge(): Promise<void> {
     );
     const ids = threadIds.map((t) => t.id);
     if (ids.length) {
-      await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [ids]);
+      await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [ids]);
     }
     for (const table of [
       'threads',
@@ -226,7 +226,7 @@ async function seedThreadChildren(
     [jobId, orgId, threadGroup.id],
   );
   await ds.query(
-    `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
     [jobId, thread.id],
   );
   await ds.query(
@@ -234,7 +234,7 @@ async function seedThreadChildren(
     [orgId, repoIdArg, jobId],
   );
   await ds.query(
-    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+    `INSERT INTO inbound_messages (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
     [orgId, repoIdArg, jobId],
   );
 }
@@ -264,7 +264,7 @@ async function seedOrgDirect(
   );
   // A stimulus parked on the org/repo BEFORE any thread existed (job_id NULL) — orphaned unless swept.
   await ds.query(
-    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`,
+    `INSERT INTO inbound_messages (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`,
     [orgId, repoIdArg, dedupeKey],
   );
 }
@@ -443,7 +443,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
     // messages carry no org_id — assert by the (now-deleted) jobs' ids.
     const msgs = await ds.query(
-      `SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`,
+      `SELECT COUNT(*)::int AS c FROM transcript_messages WHERE job_id = ANY($1)`,
       [[t1.jobId, t2.jobId]],
     );
     expect(Number(msgs[0].c)).toBe(0);

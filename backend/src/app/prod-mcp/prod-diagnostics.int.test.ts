@@ -168,7 +168,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     surface.post.mockClear();
     surface.seedSystemNotification.mockClear();
     await ds.query(
-      'TRUNCATE prod_maintenance_write, messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE prod_maintenance_write, transcript_messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 

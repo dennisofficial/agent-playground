@@ -546,7 +546,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
 
       // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.
       const noticeRows: Array<{ text: string }> = await ds.query(
-        `SELECT text FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
+        `SELECT text FROM transcript_messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
         [job.id],
       );
       expect(noticeRows.length).toBeGreaterThanOrEqual(3);

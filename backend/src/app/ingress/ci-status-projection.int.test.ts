@@ -187,7 +187,7 @@ describe('ciStatus projections end-to-end (live Postgres, booted HTTP server)', 
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   it('a signed check_run webhook debounce-syncs jobs.ci_status, observed by both the header and sidebar projections', async () => {

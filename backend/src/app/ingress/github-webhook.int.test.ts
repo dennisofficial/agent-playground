@@ -194,9 +194,9 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
   beforeEach(async () => {
     delivered.length = 0;
-    await ds.query('DELETE FROM stimuli WHERE org_id = $1', [ORG_ID]);
+    await ds.query('DELETE FROM inbound_messages WHERE org_id = $1', [ORG_ID]);
     await ds.query(
-      'DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      'DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
       [ORG_ID],
     );
     await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);

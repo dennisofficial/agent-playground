@@ -375,7 +375,7 @@ export class BrainStoreService {
         contextLimit?: number | null;
       } | null;
     }> = await this.dataSource.query(
-      `SELECT meta FROM messages
+      `SELECT meta FROM transcript_messages
          WHERE job_id = $1 AND kind = 'turn_meta' AND meta->>'phaseId' IS NULL
          ORDER BY created_at DESC
          LIMIT 1`,
