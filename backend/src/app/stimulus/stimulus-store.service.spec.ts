@@ -469,6 +469,41 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(chat.message.type).toBe('seed');
   });
 
+  it("with systemChunk 'skip': writes the durable stimuli row but NO transcript pill (the silent re-drive contract)", async () => {
+    const threads = fakeRepo<JobEntity>('thread');
+    const stimuli = fakeRepo<InboundMessageEntity>('stim');
+    const messageRows: TranscriptMessageEntity[] = [];
+    const messagesRepo = fakeMessageRepoWithQueryBuilder(messageRows);
+    const ds = fakeDataSourceWithMessageRepo(messagesRepo);
+    const store = new StimulusStoreService(
+      threads.repo,
+      messagesRepo,
+      stimuli.repo,
+      ds,
+      makeBootstrap(),
+    );
+
+    const chat = await store.recordChatStimulus({
+      orgId: 'T1',
+      repoId: 'web',
+      jobId: 'job-9',
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: 'job-9' },
+      body: '<system_notice>Please continue with the current task: "X".</system_notice>',
+      // What the recovery re-drive nudges (retryResumeNudge) now pass: silence and delivery are decoupled.
+      systemChunk: 'skip',
+    });
+
+    // SILENT: neither a curated pill nor a raw operator bubble — zero operator-facing transcript rows.
+    expect(messageRows).toHaveLength(0);
+    // STILL DELIVERED: the durable stimulus envelope is returned, so the brain turn is still driven.
+    expect(chat.message.type).toBe('seed');
+    expect(chat).toMatchObject({ jobId: 'job-9' });
+  });
+
   it('the curated pill is DEDUPED on chunkKey — a second seed with the same key writes NO additional message row', async () => {
     const threads = fakeRepo<JobEntity>('thread');
     const stimuli = fakeRepo<InboundMessageEntity>('stim');

@@ -3136,12 +3136,17 @@ export class AgentSessionManager
             .jobTitle(stimulus.jobId)
             .catch(() => null);
           const nudge = retryResumeNudge(title ?? undefined);
+          // `seedRow: 'skip'` keeps this re-drive SILENT: the durable stimulus row is still written (the
+          // brain turn is driven), but no operator-facing transcript pill is rendered. This auto-resume was
+          // always meant to have "no operator box" — a bare seed with no seedRow falls through to the generic
+          // "A harness system notification was delivered to Atlas." pill, which is the leak we're closing.
           this.surface.seedSystemNotification?.(
             stimulus.repoId,
             stimulus.jobId,
             nudge,
             {
               orgId: stimulus.orgId,
+              seedRow: 'skip',
             },
           );
         } else {
@@ -7877,11 +7882,14 @@ export class AgentSessionManager
           const title = await this.store
             .jobTitle(stimulus.jobId)
             .catch(() => null);
+          // `seedRow: 'skip'` keeps the re-drive SILENT (drives the turn, renders no pill). The operator
+          // already saw the visible "Reconnecting to Claude — auto-retry n/N…" notice appended when the
+          // retry was scheduled; a second "Please continue…" box here is redundant plumbing.
           this.surface.seedSystemNotification?.(
             stimulus.repoId,
             stimulus.jobId,
             retryResumeNudge(title ?? undefined),
-            { orgId: stimulus.orgId },
+            { orgId: stimulus.orgId, seedRow: 'skip' },
           );
         } catch (e) {
           this.logger.warn(
