@@ -1579,6 +1579,11 @@ export class ThreadDriver implements JobDispatcher {
     // failure must not fail the (already-committed) park itself.
     const postBuildThreadId = await this.store.postBuildThreadId(job.id);
     if (postBuildThreadId) {
+      // Advance the routing pointer (d4): the job is `ready` and the post_build thread is now the active
+      // head the console should open to.
+      await this.store
+        .setFocusedThread(job.id, postBuildThreadId)
+        .catch(() => undefined);
       await this.brainGateway
         .seedPostBuildGate({
           jobId: job.id,
@@ -1866,6 +1871,12 @@ export class ThreadDriver implements JobDispatcher {
       );
       return { outcome: 'done', handoff: live.handoffOut ?? handoffIn };
     }
+    // Advance the routing pointer (d4): this thread is now the active pipeline head — the first builder Leg
+    // after plan approval, a rotated Leg, or the master_review thread. Write-gated in the store, so a resume
+    // of the same thread is a no-op.
+    await this.store
+      .setFocusedThread(job.id, thread.id)
+      .catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
       route,
@@ -2283,6 +2294,11 @@ export class ThreadDriver implements JobDispatcher {
     await this.store
       .setThreadStatus(child.id, 'idle')
       .catch(() => undefined);
+    // Advance the routing pointer (d4): this review_agent lens child is now the active pipeline head.
+    if (ctx.jobId)
+      await this.store
+        .setFocusedThread(ctx.jobId, child.id)
+        .catch(() => undefined);
     // Clear any stale halt overlay from a prior run before (re)running the lens's turn.
     await this.store
       .setThreadCondition(child.id, 'none')
@@ -2335,6 +2351,11 @@ export class ThreadDriver implements JobDispatcher {
     await this.store
       .setThreadStatus(child.id, 'idle')
       .catch(() => undefined);
+    // Advance the routing pointer (d4): this review_fix child is now the active pipeline head.
+    if (ctx.jobId)
+      await this.store
+        .setFocusedThread(ctx.jobId, child.id)
+        .catch(() => undefined);
     try {
       const siblings = await this.store.reviewChildren(thread.id);
       const all = siblings

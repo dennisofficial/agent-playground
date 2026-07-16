@@ -270,6 +270,41 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { status });
   }
 
+  /**
+   * Advance the server-authoritative routing pointer (`jobs.focused_thread_id`) the console opens to. The
+   * scheduler calls this as the pipeline moves (create → planner, approve → first Leg, each new active
+   * thread, ready → post_build, ship → ship thread); the web override (an operator clicking a thread) also
+   * routes here. Write-gated so re-driving the SAME active thread — or a redundant override — is a no-op that
+   * doesn't churn the WAL/realtime projection.
+   */
+  async setFocusedThread(jobId: string, threadId: string): Promise<void> {
+    await this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ focused_thread_id: threadId })
+      .where('id = :jobId AND focused_thread_id IS DISTINCT FROM :threadId', {
+        jobId,
+        threadId,
+      })
+      .execute();
+  }
+
+  /**
+   * LIVE `scoping → planning` (d14): a CAS flip fired the instant the planner session's first Write/Edit into
+   * `/context/specs/**` is observed mid-stream. Guarded on `status = 'scoping'` so it is idempotent — a second
+   * matching write after the transition updates zero rows. Returns whether it actually transitioned (so the
+   * caller can short-circuit further checks this turn).
+   */
+  async markScopingToPlanning(jobId: string): Promise<boolean> {
+    const res = await this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ status: 'planning' })
+      .where("id = :jobId AND status = 'scoping'", { jobId })
+      .execute();
+    return (res.affected ?? 0) > 0;
+  }
+
   /** Recompute the job's build-stage progress and write it change-gated onto the jobs row so the flat
    *  realtime projection carries it live. A build/direct_build thread group is "done" when it has >=1
    *  builder thread and all its builder threads have finished building — status 'done' or 'auto_fixing'
@@ -1458,6 +1493,9 @@ export class DriverStoreService {
         // The planning lane's pre-turn footer default — so a planning job shows "Opus 4.8" before its first
         // brain turn completes (no `turn_meta` to derive from yet).
         mainDefaultFooter: laneDefaultFooter('planning'),
+        // The routing pointer even a pre-build (scoping/planning) job carries — it points at the planner
+        // thread so the console can resolve /workspace/:jobId/:threadId before any pipeline exists.
+        focusedThreadId: job.focused_thread_id ?? null,
         createdBy: job.created_by ?? null,
         autoApproveMode: job.auto_approve_mode ?? 'off',
         autoMerge: job.auto_merge ?? false,
@@ -1586,6 +1624,9 @@ export class DriverStoreService {
       title: job.title,
       status: job.status,
       halt: null,
+      // The server-authoritative routing pointer the console opens to (d4) — advanced by the scheduler as
+      // the pipeline moves, overridable by an operator clicking a thread.
+      focusedThreadId: job.focused_thread_id ?? null,
       createdBy: job.created_by ?? null,
       blockedBy,
       blockedSeedMessage,

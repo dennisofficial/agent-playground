@@ -109,6 +109,10 @@ export class BuildShipService {
       orgId: job.orgId,
       decisionRecordId: job.decisionRecordId ?? null,
     });
+    // Advance the routing pointer (d4): ship was dispatched — the ship thread is now the active head.
+    await this.store
+      .setFocusedThread(job.id, ci.threadId)
+      .catch(() => undefined);
     await this.brainGateway.openPrAtShip({
       jobId: job.id,
       orgId: job.orgId,

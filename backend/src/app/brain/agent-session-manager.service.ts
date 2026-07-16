@@ -285,6 +285,10 @@ export class AgentSessionManager
    *  what happens / what's lost, does NOT reset); the SECOND actually queues the hard reset. Cleared on any
    *  operator turn, so a stale arm can't fire a later reset the operator didn't just ask for. */
   private readonly pendingHardReset = new Set<string>();
+  /** Jobs whose LIVE `scoping → planning` CAS (d14) has already been attempted this process, so the planner's
+   *  many spec Writes in one turn each trigger at most one no-op UPDATE. Bounded by the job count; never cleared
+   *  (a re-plan re-entering `planning` needs no re-flip). */
+  private readonly scopingPlanningChecked = new Set<string>();
   /** Set by `finalize_build` when a direct-build ship is committed and about to open its PR inline; consumed
    *  by the turn-end latch in `runChatTurn` (records the PR + flips done promptly). */
   private readonly directBuildShipPending = new Map<string, boolean>();
@@ -510,6 +514,32 @@ export class AgentSessionManager
         `setThreadHaltReason(${reason ?? 'clear'}) failed (display-only): ${err}`,
       );
     }
+  }
+
+  /**
+   * LIVE `scoping → planning` detection (d14). Observe the planner session's streamed tool events mid-turn:
+   * the FIRST `Write`/`Edit`/`MultiEdit` whose target lands under `/context/specs/**` (canonically `plan.md`)
+   * flips `jobs.status` `scoping → planning` immediately — not at turn boundary, no fs watcher. The store CAS
+   * is idempotent (guarded on `status='scoping'`), and the in-memory guard collapses the planner's many spec
+   * Writes in one turn into a single attempt. Fully defensive: a DB hiccup here must never break the stream.
+   */
+  private maybeMarkPlanningLive(jobId: string, event: EngineEvent): void {
+    if (event.kind !== 'tool_use') return;
+    if (this.scopingPlanningChecked.has(jobId)) return;
+    const name = event.name;
+    if (name !== 'Write' && name !== 'Edit' && name !== 'MultiEdit') return;
+    const filePath = (event.input as { file_path?: unknown } | undefined)
+      ?.file_path;
+    if (typeof filePath !== 'string') return;
+    const specsPrefix = `${CONTAINER_CONTEXT}/specs`;
+    if (filePath !== specsPrefix && !filePath.startsWith(`${specsPrefix}/`))
+      return;
+    this.scopingPlanningChecked.add(jobId);
+    void this.driverStore.markScopingToPlanning(jobId).catch((err) =>
+      this.logger.warn(
+        `live scoping→planning transition failed for job=${jobId}: ${err}`,
+      ),
+    );
   }
 
   /**
@@ -2164,6 +2194,7 @@ export class AgentSessionManager
             // Same durable-delivery ack handling as a fresh run: an `input_ack` replayed on re-attach still
             // stamps its stimulus `delivered_at`, so a steer acked while the host was down can't redeliver.
             onEvent: (e) => {
+              this.maybeMarkPlanningLive(row.job_id, e);
               this.stampInputAck(e);
               streamer.onEvent(e);
             },
@@ -2968,6 +2999,9 @@ export class AgentSessionManager
               ),
             );
         }
+        // LIVE `scoping → planning` (d14): the planner's first spec Write/Edit flips the job the instant it
+        // streams past — before the turn ends.
+        this.maybeMarkPlanningLive(stimulus.jobId, e);
         // Durable chat delivery: an `input_ack` means the engine PUSHED a steered operator message into the
         // session — stamp that stimulus `delivered_at` (the only place a steer is marked delivered).
         this.stampInputAck(e);
@@ -3881,6 +3915,11 @@ export class AgentSessionManager
           overview || goal,
           'feature',
         );
+        // A plan is now being reviewed (Codex is running / Atlas is addressing findings) — reflect the phase
+        // on the job. NOT a needs-you state; the operator gate is `awaiting_approval`, reached by propose_plan.
+        await this.driverStore
+          .setJobStatus(jobId, 'plan_reviewing')
+          .catch(() => undefined);
         const outcome = await this.planReview.review({
           jobId,
           orgId: stimulus.orgId,

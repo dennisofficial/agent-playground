@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadGroupEntity, ThreadEntity } from '../persistence/entities';
+import {
+  ThreadGroupEntity,
+  ThreadEntity,
+  JobEntity,
+} from '../persistence/entities';
 
 /** Ordinals are gap-numbered (10, 20, 30…) so a later insert can splice without renumbering. */
 const ORDINAL_GAP = 10;
@@ -21,6 +25,8 @@ export class JobBootstrapService {
     private readonly threadGroups: Repository<ThreadGroupEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
+    @InjectRepository(JobEntity, DB_CONNECTION)
+    private readonly jobs: Repository<JobEntity>,
   ) {}
 
   /**
@@ -102,7 +108,7 @@ export class JobBootstrapService {
     jobId: string,
     orgId: string,
   ): Promise<void> {
-    await this.threads.save(
+    const thread = await this.threads.save(
       this.threads.create({
         thread_group_id: threadGroupId,
         job_id: jobId,
@@ -114,5 +120,15 @@ export class JobBootstrapService {
         status: 'idle',
       }),
     );
+    // Seed the routing pointer (d4) at job creation: the console opens `/workspace/:jobId/:threadId` to the
+    // planner thread. Guarded on `focused_thread_id IS NULL` so this idempotent bootstrap (called on every
+    // chat stimulus) sets it exactly once and never clobbers a later scheduler advance or operator override.
+    await this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ focused_thread_id: thread.id })
+      .where('id = :jobId AND focused_thread_id IS NULL', { jobId })
+      .execute()
+      .catch(() => undefined);
   }
 }

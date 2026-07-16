@@ -10,13 +10,20 @@
 import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
-import { ThreadGroupEntity, ThreadEntity } from '../persistence/entities';
+import {
+  ThreadGroupEntity,
+  ThreadEntity,
+  JobEntity,
+} from '../persistence/entities';
 import { JobBootstrapService } from './job-bootstrap.service';
 
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ThreadGroupEntity, ThreadEntity], DB_CONNECTION),
+    TypeOrmModule.forFeature(
+      [ThreadGroupEntity, ThreadEntity, JobEntity],
+      DB_CONNECTION,
+    ),
   ],
   providers: [JobBootstrapService],
   exports: [JobBootstrapService],

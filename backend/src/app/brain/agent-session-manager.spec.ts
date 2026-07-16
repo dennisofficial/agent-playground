@@ -266,6 +266,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     getTerminalRecord: vi.fn(),
     resolveSessionAnchor: vi.fn().mockResolvedValue(undefined),
     threadsForJob: vi.fn().mockResolvedValue([]),
+    setJobStatus: vi.fn().mockResolvedValue(undefined),
     appendDirectBuildSection: vi.fn().mockResolvedValue({
       threadGroupId: 'tg-direct',
       threadId: 'thread-direct',
@@ -462,6 +463,10 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     (mockStore.resetAllActivity as ReturnType<typeof vi.fn>).mockResolvedValue(
       0,
     );
+    // review_plan flips jobs.status → plan_reviewing (a best-effort promise; resetAllMocks wiped the inline resolve).
+    (
+      mockDriverStore.setJobStatus as ReturnType<typeof vi.fn>
+    ).mockResolvedValue(undefined);
 
     // By default: no existing open job on the thread → openJob creates a fresh one.
     (mockStore.openJobOnThread as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -3368,6 +3373,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       threadRole: vi.fn().mockResolvedValue(opts.threadRole ?? null),
       threadSessionId: vi.fn().mockResolvedValue(undefined),
       setThreadSessionId: vi.fn().mockResolvedValue(undefined),
+      setJobStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as DriverStoreService;
     const stimulusStore = {
       eligiblePendingChat: vi.fn().mockResolvedValue([]),

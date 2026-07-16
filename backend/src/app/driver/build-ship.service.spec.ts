@@ -78,6 +78,7 @@ describe('BuildShipService — brain opens the PR; host gates + latches', () => 
         threadGroupId: 'tg2',
         threadId: 'ci1',
       })),
+      setFocusedThread: vi.fn(async () => undefined),
       ...over,
     } as unknown as DriverStoreService;
   }

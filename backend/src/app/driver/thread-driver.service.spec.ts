@@ -258,6 +258,7 @@ function makeStore(state: StoreState): {
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
+    setFocusedThread: vi.fn(async (_id: string, _threadId: string) => undefined),
     recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
     hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
       return (state.systemNotices ?? []).includes(text);
