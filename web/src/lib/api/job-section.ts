@@ -79,6 +79,13 @@ export function sectionOf(t: InboxThread): JobSection | null {
   }
 }
 
+/** The thread's anchor ts for its current (raw) status — first-entry into that status, falling back to
+ *  `createdAt` for pre-migration rows or a status missing from the map. */
+function anchorMs(t: InboxThread): number {
+  const iso = t.sectionFirstEntered?.[t.rawStatus];
+  return Date.parse(iso ?? t.createdAt);
+}
+
 export function groupThreadsBySection(
   threads: InboxThread[],
 ): { section: JobSection; threads: InboxThread[] }[] {
@@ -88,6 +95,9 @@ export function groupThreadsBySection(
     if (!s) continue;
     (by.get(s) ?? by.set(s, []).get(s)!).push(t);
   }
+  // Newest arrival into the section on top; a kickback (re-entry) is a no-op on the anchor, so it
+  // restores the job's original slot rather than floating it back to the top.
+  for (const list of by.values()) list.sort((a, b) => anchorMs(b) - anchorMs(a));
   return SECTION_ORDER.filter((s) => by.has(s)) // conditional render: empty sections omitted
     .map((s) => ({ section: s, threads: by.get(s)! }));
 }

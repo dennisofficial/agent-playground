@@ -52,6 +52,9 @@ interface RealtimeRow {
   shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
+  /** jobs.section_first_entered — backend JobStatus -> ISO ts of first entry; the map only ever grows,
+   *  so an update always overwrites straight from the WAL row. */
+  sectionFirstEntered?: Record<string, string> | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
@@ -141,6 +144,8 @@ export function useAllJobsRealtime(): void {
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
+          rawStatus: row.status ?? next[idx].rawStatus,
+          sectionFirstEntered: row.sectionFirstEntered ?? null,
           activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
           halted: row.halted,
