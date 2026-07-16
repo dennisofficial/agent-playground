@@ -134,7 +134,7 @@ import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
 import type { EnvService } from '@core/config/env/env.service';
-import { retryResumeNudge } from '../prompt-kit/harness';
+import { retryResumeNudge, interruptRedriveNudge } from '../prompt-kit/harness';
 import type { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
 
@@ -4194,6 +4194,27 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(
       (notice![2] as { meta?: { retryable?: boolean } }).meta?.retryable,
     ).toBeUndefined();
+  });
+
+  // ── benign-abort auto-resume (d3): a mid-turn interrupt (`aborted_streaming`) silently re-drives the
+  // SAME session with a nudge that reframes the cancellation for the brain, not the generic retry nudge ──
+  describe('benign-abort auto-resume seeds the interrupt-reframe nudge', () => {
+    it('seeds interruptRedriveNudge (not the generic retryResumeNudge) on a benign aborted_streaming', async () => {
+      const run = vi
+        .fn()
+        .mockRejectedValue(new Error('terminal_reason=aborted_streaming'));
+      const { manager, store, surface } = makeManager({ run });
+
+      await manager.handleChatTurn(stimulus);
+
+      expect(store.jobTitle).toHaveBeenCalledWith(THREAD_ID);
+      expect(surface.seedSystemNotification).toHaveBeenCalledWith(
+        PROJECT_ID,
+        THREAD_ID,
+        interruptRedriveNudge(undefined),
+        { orgId: TEAM_ID, seedRow: 'skip' },
+      );
+    });
   });
 
   // ── host-retry backstop (d1-B): a retryable transient error (transient auth hiccup / host↔container

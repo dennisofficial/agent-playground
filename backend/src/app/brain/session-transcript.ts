@@ -86,6 +86,15 @@ interface RawLine {
   };
 }
 
+/** True when a tool_result is the SDK's mid-turn-interrupt cancellation, not a genuine tool failure. */
+export function isInterruptAbortResult(result: unknown): boolean {
+  const s = typeof result === 'string' ? result : JSON.stringify(result ?? '');
+  return (
+    s.includes('AbortError: interrupt') ||
+    s.includes("The user doesn't want to take this action right now")
+  );
+}
+
 /** A `user` line that is the operator's prompt (text content), NOT a tool-result feedback message. */
 function isOperatorPrompt(m: RawLine): boolean {
   if (m.type !== 'user' || m.toolUseResult != null) return false;
@@ -208,6 +217,8 @@ function mapTurnBlocks(lines: RawLine[]): {
             b.toolPaired = true;
             b.meta.result = block.content ?? null;
             b.meta.isError = Boolean(block.is_error);
+            if (b.meta.isError && isInterruptAbortResult(block.content))
+              b.meta.superseded = true;
             if (Array.isArray(patch) && patch.length)
               b.meta.structuredPatch = patch;
             break;

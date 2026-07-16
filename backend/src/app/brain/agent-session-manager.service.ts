@@ -118,6 +118,7 @@ import {
   maskedFileNotice,
   wakeForAmendApprovedBody,
   retryResumeNudge,
+  interruptRedriveNudge,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
@@ -3161,7 +3162,7 @@ export class AgentSessionManager
           const title = await this.store
             .jobTitle(stimulus.jobId)
             .catch(() => null);
-          const nudge = retryResumeNudge(title ?? undefined);
+          const nudge = interruptRedriveNudge(title ?? undefined);
           // `seedRow: 'skip'` keeps this re-drive SILENT: the durable stimulus row is still written (the
           // brain turn is driven), but no operator-facing transcript pill is rendered. This auto-resume was
           // always meant to have "no operator box" — a bare seed with no seedRow falls through to the generic

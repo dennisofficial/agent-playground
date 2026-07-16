@@ -111,6 +111,52 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(live.snapshot('R', 'T', 'phase:s1')).toBeNull();
   });
 
+  it('tool_result: tags meta.superseded=true when the result is the SDK mid-turn-interrupt cancellation', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+    h.onEvent({
+      kind: 'tool_use',
+      id: 't1',
+      name: 'Edit',
+      input: { file_path: 'a' },
+    });
+    h.onEvent({
+      kind: 'tool_result',
+      id: 't1',
+      result: 'AbortError: interrupt',
+      isError: true,
+    });
+    await h.finish('hi');
+
+    const tool = persisted.find((p) => p.block.kind === 'tool')!;
+    expect(tool.block.meta).toMatchObject({
+      isError: true,
+      superseded: true,
+    });
+  });
+
+  it('tool_result: a genuine tool error stays isError=true without superseded', async () => {
+    const { persisted, factory } = setup();
+    const h = factory.create({ jobId: 'T', threadId: 'th1', channel: 'R' });
+    h.onEvent({
+      kind: 'tool_use',
+      id: 't1',
+      name: 'Bash',
+      input: { command: 'cat missing' },
+    });
+    h.onEvent({
+      kind: 'tool_result',
+      id: 't1',
+      result: 'Error: ENOENT no such file',
+      isError: true,
+    });
+    await h.finish('hi');
+
+    const tool = persisted.find((p) => p.block.kind === 'tool')!;
+    expect(tool.block.meta?.isError).toBe(true);
+    expect(tool.block.meta?.superseded).toBeFalsy();
+  });
+
   it('resetLane silently clears a live lane (no turn_end) and is a guarded no-op on an empty lane', () => {
     const { live, factory } = setup();
     const frames: Array<{ event: { kind?: string } }> = [];
