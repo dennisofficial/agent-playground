@@ -282,6 +282,15 @@ function makeStore(state: StoreState): {
         brief: 'Ship — open the PR',
       }),
     ),
+    postBuildThreadId: vi.fn(async (jobId: string) => {
+      const existing = state.threads.find(
+        (thread) =>
+          thread.jobId === jobId &&
+          thread.parentThreadId == null &&
+          thread.kind === 'post_build',
+      );
+      return existing?.id ?? null;
+    }),
     ensureCiThread: vi.fn(async () =>
       ensureSingletonThread({
         kind: 'ci',
@@ -1124,9 +1133,13 @@ function assemble(
   // brain through. Records each seeded `openPrAtShip` turn + the driver's Phase-3 `notifyThreadHalted`
   // wakes (the seeded/wake turns themselves are exercised in the brain specs — here the host latches by
   // branch discovery, and the fake mirrors the brain stamping `halt_waked_at`).
+  const gateSeeds: Array<{ jobId: string; threadId: string }> = [];
   const brainGateway = {
     openPrAtShip: async (input: { jobId: string; branch: string }) => {
       shipSeeds.push({ jobId: input.jobId, branch: input.branch });
+    },
+    seedPostBuildGate: async (input: { jobId: string; threadId: string }) => {
+      gateSeeds.push({ jobId: input.jobId, threadId: input.threadId });
     },
     notifyThreadHalted: async (
       jobId: string,
@@ -1265,8 +1278,8 @@ function assemble(
       async (jobId: string) => {
         if (state.job.status !== 'running') return false;
         state.job.status = 'awaiting_ship_review';
-        // Fire the "Ship it" on a MACROtask (not a microtask): the parking drive must fully unwind and clear
-        // its `active` guard first, else the re-drive is dropped as a duplicate and the job wedges at running.
+        // Fire the "Ship it" on a MACROtask to preserve the historical operator-after-park shape for most
+        // tests. A dedicated regression below covers the tighter click-while-parking race.
         setTimeout(() => {
           void driver.resolveShipApprovalDurably(jobId, 'auto-test');
         }, 0);
@@ -3452,6 +3465,28 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     // The re-drive fast-forwarded the already-done threads — it did NOT re-execute or re-review them.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it('ships when the ship approval races the active drive that is parking the gate', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    (h.store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
+      async (jobId: string) => {
+        if (state.job.status !== 'running') return false;
+        state.job.status = 'awaiting_ship_review';
+        await h.driver.resolveShipApprovalDurably(jobId, 'dennis');
+        return true;
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toEqual([
+      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
+    ]);
   });
 
   it('a second (stale/double) ship approval is a no-op once the job has shipped', async () => {

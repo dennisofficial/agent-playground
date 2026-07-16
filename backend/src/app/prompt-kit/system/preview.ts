@@ -56,37 +56,37 @@ const SAMPLE_WORKSPACE_PROFILE = [
 export const AGENT_PROMPTS: AgentPromptInfo[] = [
   {
     id: 'brain',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain turn',
     ctx: { jobKind: 'feature' },
   },
   {
     id: 'brain-onboarding',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — onboarding',
     ctx: { jobKind: 'onboarding' },
   },
   {
     id: 'brain-bugfix',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — bugfix job kind',
     ctx: { jobKind: 'bugfix' },
   },
   {
     id: 'brain-event',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — event job kind',
     ctx: { jobKind: 'event' },
   },
   {
     id: 'brain-review',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — review job kind',
     ctx: { jobKind: 'review' },
   },
   {
     id: 'brain-org-instructions',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — with standing operator/org instructions',
     ctx: {
       jobKind: 'feature',
@@ -95,7 +95,7 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   },
   {
     id: 'brain-repo-conventions',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — with an attached repo house-style profile',
     ctx: {
       jobKind: 'feature',
@@ -104,12 +104,24 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   },
   {
     id: 'brain-workspace-profile',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     note: 'job brain — with a populated workspace profile snapshot',
     ctx: {
       jobKind: 'feature',
       settings: { workspaceProfile: SAMPLE_WORKSPACE_PROFILE },
     },
+  },
+  {
+    id: 'post-build-gate',
+    agent: Agent.POST_BUILD,
+    note: 'ship-review gate turn (post_build thread)',
+    ctx: { jobKind: 'feature' },
+  },
+  {
+    id: 'ci-post-ship',
+    agent: Agent.CI,
+    note: 'post-ship PR-lifecycle turn (ci thread)',
+    ctx: { jobKind: 'feature' },
   },
   {
     id: 'worker-orchestrate',

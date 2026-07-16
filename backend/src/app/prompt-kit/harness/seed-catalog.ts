@@ -211,13 +211,15 @@ export function renderFollowUpJobSeed(input: {
 
 /**
  * WAKE body for `AgentSessionManager.wakeForAmendApproved` — the operator approved the "Amend build?"
- * proposal; the brain's resumed session already recalls what it proposed, so this stays generic.
+ * proposal. This resumes the post_build session itself (its own prior turns already carry the amend
+ * proposal + the operator's requested change), so it does not lean on a live planning transcript.
  */
 export function wakeForAmendApprovedBody(): AgentMessage {
   return agentMessage(
     [
       'The operator APPROVED your amend proposal — the ship-review gate is retracted and the job is now',
-      '**amending**. Do the follow-up work you proposed, then call `report_verification({ passed: true })`',
+      '**amending**. Review the operator\'s requested change against the diff and evidence in this',
+      "session, then make the fix, then call `report_verification({ passed: true })`",
       'with your live evidence — that re-parks the job directly at the ship-review gate (amending →',
       'ready-to-ship, no rebuild). Do not re-propose unless something material changed.',
     ].join('\n'),

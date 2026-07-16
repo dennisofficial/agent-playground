@@ -4,7 +4,7 @@
  *
  * TOPIC bucket: acting safely & finishing.
  */
-import { Agent } from '../agent';
+import { Agent, SHIP_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding } from '../conditions';
 
@@ -12,7 +12,7 @@ import { isBuildBrain, isOnboarding } from '../conditions';
 export class SafetyGroup {
   /** Act with care, report truthfully. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1290,
     condition: isBuildBrain,
   })
@@ -30,9 +30,29 @@ export class SafetyGroup {
     ].join('\n');
   }
 
+  /** Act with care, report truthfully — the POST_BUILD/CI twin of `actWithCare`, reworded for their own
+   *  gated actions (amend, PR creation/push) instead of naming propose_plan/dispatch_build. */
+  @Fragment({
+    usedBy: SHIP_STAGES,
+    order: 8032,
+    condition: isBuildBrain,
+  })
+  actWithCarePostShip(): string {
+    return [
+      'ACT WITH CARE, REPORT TRUTHFULLY: an amend, a push, or opening/updating a PR is a hard-to-reverse,',
+      'outward-facing action — take it only when the work is genuinely ready, never to "move things along".',
+      'Before you overwrite or delete anything in `/workspace`, look at what is actually there: if it',
+      'contradicts what you expected, or you did not create it, surface that instead of plowing ahead. Report',
+      'outcomes as they truly are — if a verification command fails, say so and show the output; if you',
+      'skipped a check, say that; when something is done and verified, state it plainly without hedging. Never',
+      'report a build, test, or fix as succeeding on the strength of what you intended rather than what you',
+      'actually observed.',
+    ].join('\n');
+  }
+
   /** FINISH (only when the fleet is green). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2120,
     condition: isOnboarding,
   })
@@ -62,7 +82,7 @@ export class SafetyGroup {
 
   /** You do NOT plan/grill/build here. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2130,
     condition: isOnboarding,
   })

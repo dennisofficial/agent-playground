@@ -13,7 +13,7 @@ import { Agent } from '../agent';
 export class AutoMergeGroup {
   /** Tell the brain a green, mergeable PR merges itself with no human at the final gate. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING, Agent.CI],
     order: 1251,
     condition: hasAutoMerge,
   })

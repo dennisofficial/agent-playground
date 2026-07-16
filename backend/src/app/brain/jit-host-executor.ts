@@ -14,8 +14,10 @@ import {
   type LaneSeeder,
 } from '../driver/build-lane-delivery.service';
 
-/** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant). */
-export type JitLifecycleEvent = 'preview-requested' | 'plan-approved';
+/** The lifecycle events this executor knows how to fire (mirrors `JitTrigger`'s `'lifecycle'` variant).
+ *  `preview-requested` was retired in Thread 4 — post_build's preview now seeds directly via
+ *  `composePreviewPrepSeed` (`AgentSessionManager.seedPreviewOnPostBuild`), not through this lifecycle path. */
+export type JitLifecycleEvent = 'plan-approved';
 
 /** The dynamic per-fire data a lifecycle caller supplies — where to seed, and for whom. */
 export type JitLifecycleFireCtx = {
@@ -37,20 +39,18 @@ export type JitLifecycleFireCtx = {
   decisionRecordId?: string;
   /**
    * The lane to seed onto — `'main'` (the brain, default) or a build lane (`'thread:<threadId>'`). d4 makes
-   * the seed MECHANISM lane-capable; the two existing lifecycle rules stay brain-only, so a build-lane target
+   * the seed MECHANISM lane-capable; the one remaining lifecycle rule stays brain-only, so a build-lane target
    * is dispatched through the injected {@link LaneSeeder} rather than the operator chat surface.
    */
   lane?: string;
-  /** The repo's stored preview recipe (lifecycle:preview-requested) — spliced into the seed's managed block. */
-  previewInstructions?: string | null;
 };
 
 /**
  * The HOST-SIDE JIT executor (Pillar 4) — the half of the content/wiring split that fires `lifecycle`-trigger
- * rules from the catalog (`findLifecycleRule`). A caller (e.g. `spinUpPreview`) owns WHEN to fire (its own
- * gating/idempotency); this executor owns HOW: look up the enabled rule, render its payload, and seed it as a
- * `host-seed-notice` turn with the rule's declared seed row — so the visible transcript row and the dedup
- * `chunkKey` stay exactly what the rule declares, not re-derived at each call site.
+ * rules from the catalog (`findLifecycleRule`). A caller owns WHEN to fire (its own gating/idempotency); this
+ * executor owns HOW: look up the enabled rule, render its payload, and seed it as a `host-seed-notice` turn
+ * with the rule's declared seed row — so the visible transcript row and the dedup `chunkKey` stay exactly what
+ * the rule declares, not re-derived at each call site.
  */
 @Injectable()
 export class JitHostExecutor {
@@ -75,9 +75,6 @@ export class JitHostExecutor {
       ...(ctx.baseBranch !== undefined ? { baseBranch: ctx.baseBranch } : {}),
       ...(ctx.decisionRecordId !== undefined
         ? { decisionRecordId: ctx.decisionRecordId }
-        : {}),
-      ...(ctx.previewInstructions !== undefined
-        ? { previewInstructions: ctx.previewInstructions }
         : {}),
     };
     const body = rule.render(fireCtx);

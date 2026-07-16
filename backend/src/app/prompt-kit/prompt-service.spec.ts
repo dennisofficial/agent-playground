@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it } from 'vitest';
 import { PromptService } from './prompt.service';
@@ -27,14 +28,14 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
       'event',
       'onboarding',
     ] as const) {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out.length, `jobKind=${jobKind}`).toBeGreaterThan(10_000);
       expect(out.startsWith('You are Atlas'), `jobKind=${jobKind}`).toBe(true);
     }
   });
 
   it('carries the job-kind block + behavioral tail, in that order, for a feature job', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     const identityAt = out.indexOf(
       'You are Atlas, an autonomous software-engineering orchestrator',
     );
@@ -50,8 +51,8 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   });
 
   it('onboarding vs feature select DIFFERENT fragments (jobKind is a condition, not an agent)', () => {
-    const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const feature = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
+    const onboarding = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
 
@@ -83,8 +84,8 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   });
 
   it('carries the UI-preview + context-link guidance on build brains, not onboarding', () => {
-    const feature = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const feature = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
+    const onboarding = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
     expect(feature).toContain('UI PREVIEW BY DEFAULT');
@@ -96,16 +97,16 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
     const marker = 'OPERATOR / ORG INSTRUCTIONS';
     const custom = 'Always prefer pnpm over npm in this workspace.';
 
-    const without = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const without = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(without).not.toContain(marker);
 
-    const blank = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const blank = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       settings: { userOrgInstructions: '   ' },
     });
     expect(blank).not.toContain(marker); // whitespace-only is treated as absent
 
-    const withInstr = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const withInstr = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'feature',
       settings: { userOrgInstructions: custom },
     });
@@ -117,6 +118,42 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
   });
 });
 
+/**
+ * Byte-parity guard for the ATLAS_MAIN → PLANNING split (Thread 1 of the "explode the brain" plan). Every
+ * fragment-audience change in that split was ADDITIVE ONLY — PLANNING was never removed from a fragment,
+ * and no fragment's TEXT was edited — so `Agent.PLANNING`'s assembled prompt must be byte-identical to the
+ * legacy monolithic brain's output for the SAME fragment set.
+ *
+ * SNAPSHOT REFRESHED at the merge of this branch with `main` (`df8f77e8`). The original golden was captured
+ * from the split base (`c4d27b77`); since then `main` legitimately ADVANCED the brain prompt (task-list
+ * tools, forget/update_memory, session-limit prose, …), all of which flow into PLANNING because the split
+ * kept PLANNING in every fragment those changes touch. The refresh was verified NOT to be a merge
+ * regression: the merged PLANNING prompt (a) still contains the planning core (grilling / propose_plan) and
+ * every `main` addition (LIVE TASK LIST, task_create, forget, update_memory), and (b) contains ZERO
+ * ship-persona text (`postBuildTools`/`ciTools`/`postShipContext`/`autonomyPostShip` are gated to
+ * POST_BUILD/CI and never leak into PLANNING). A failure here means PLANNING's prompt drifted from the
+ * legacy brain; that's either a real regression or an intentional change that needs a fresh snapshot.
+ */
+describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with the monolithic brain prompt', () => {
+  const PRE_SPLIT_SHA256: Record<string, string> = {
+    feature:
+      'ff6df9eb363e2c18e0840bc3511aa840a8654de67dade2de1c4485ba65f303b9',
+    bugfix: '8ac1c196d8f8fb78ccf29f430a52c405127a01882a054c6dabfb65f09ba16cba',
+    onboarding:
+      '0d8393508147d5c3181d5e38a2ec1a3ae5aad4c2033f68d540c382ca04e956ce',
+    review: 'e974415c5b8c6f07654a657d83e6264244bb54dfcd5f9f1037a21ef758d58780',
+  };
+
+  it.each(['feature', 'bugfix', 'onboarding', 'review'] as const)(
+    'jobKind=%s renders byte-identical to the monolithic brain snapshot',
+    (jobKind) => {
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
+      const sha256 = createHash('sha256').update(out).digest('hex');
+      expect(sha256).toBe(PRE_SPLIT_SHA256[jobKind]);
+    },
+  );
+});
+
 describe('PromptService — DI facade boots + validates', () => {
   it('resolves + primes without throwing (the real fragment set is valid)', async () => {
     const moduleRef = await Test.createTestingModule({
@@ -125,7 +162,7 @@ describe('PromptService — DI facade boots + validates', () => {
     await moduleRef.init(); // fires onModuleInit → primeFragments (boot-loud validation)
     const prompts = moduleRef.get(PromptService);
     expect(
-      prompts.generate(Agent.ATLAS_MAIN, { jobKind: 'feature' }).length,
+      prompts.generate(Agent.PLANNING, { jobKind: 'feature' }).length,
     ).toBeGreaterThan(10_000);
   });
 });
@@ -134,12 +171,12 @@ describe('validateFragments — fails loudly', () => {
   it('throws on a duplicate order within an agent', () => {
     @FragmentGroup()
     class ClashingGroup {
-      @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 5000 })
+      @Fragment({ usedBy: [Agent.PLANNING], order: 5000 })
       a(): string {
         return 'A';
       }
 
-      @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 5000 })
+      @Fragment({ usedBy: [Agent.PLANNING], order: 5000 })
       b(): string {
         return 'B';
       }

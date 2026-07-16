@@ -4,8 +4,10 @@ import { Injectable, Logger } from '@nestjs/common';
  * The typed contract the DRIVER uses to reach the BRAIN. It is implemented by the concrete brain
  * (`AgentSessionManager`), which registers itself via {@link BrainGateway.bind} on bootstrap.
  *
- * Both calls carry plain data and return `Promise<void>`:
- *  - `openPrAtShip` — REQUEST/RESPONSE: awaited to completion (the ship step latches the PR only after it).
+ * All calls carry plain data and return `Promise<void>`:
+ *  - `openPrAtShip` — ENQUEUES the open-PR seed onto the ci lane and returns; the PR is latched by the reconciler.
+ *  - `seedPreviewOnPostBuild` — ENQUEUES the "Spin up preview" seed onto the post_build lane and returns.
+ *  - `seedPostBuildGate` — ENQUEUES the ship-review-gate initial message onto the post_build lane and returns.
  *  - `wakeUnblockedJob` — fire-and-forget notification the driver awaits only to log per-attempt failures;
  *    at-least-once retry is driven by the JobUnblockSweep.
  */
@@ -17,8 +19,23 @@ export interface BrainGatewayHandler {
     branch: string;
     defaultBranch: string;
     title: string;
-    /** The dedicated `post_build` thread group thread this open-PR turn runs on — its OWN fresh session, isolated
-     *  from the planning brain's session (d14/d15). */
+    /** The `ci` thread-group thread this open-PR seed is enqueued onto — its OWN fresh session, isolated from the
+     *  planning brain's session (d14/d15). Enqueued on the ci lane (serialized behind any live post_build turn
+     *  via the per-job `active_turns` guard); the PR is latched by the reconciler once the queued turn opens it. */
+    threadId: string;
+  }): Promise<void>;
+  seedPreviewOnPostBuild(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    previewInstructions: string | null;
+  }): Promise<void>;
+  /** SEEDS the ship-review-gate initial message onto the job's already-spawned `post_build` thread. Called
+   *  once, right after the gate-park DB transition, from `ThreadDriver.parkForShipReview`. */
+  seedPostBuildGate(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
     threadId: string;
   }): Promise<void>;
   wakeUnblockedJob(
@@ -72,6 +89,18 @@ export class BrainGateway implements BrainGatewayHandler {
     input: Parameters<BrainGatewayHandler['openPrAtShip']>[0],
   ): Promise<void> {
     return this.require().openPrAtShip(input);
+  }
+
+  seedPreviewOnPostBuild(
+    input: Parameters<BrainGatewayHandler['seedPreviewOnPostBuild']>[0],
+  ): Promise<void> {
+    return this.require().seedPreviewOnPostBuild(input);
+  }
+
+  seedPostBuildGate(
+    input: Parameters<BrainGatewayHandler['seedPostBuildGate']>[0],
+  ): Promise<void> {
+    return this.require().seedPostBuildGate(input);
   }
 
   wakeUnblockedJob(

@@ -270,6 +270,10 @@ export class ThreadDriver implements JobDispatcher {
   private readonly logger = new Logger(ThreadDriver.name);
   /** Jobs being driven right now — guards against a double dispatch / a resume racing a live drive. */
   private readonly active = new Set<string>();
+  private readonly driveAfterActiveTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   constructor(
     private readonly store: DriverStoreService,
@@ -1629,9 +1633,15 @@ export class ThreadDriver implements JobDispatcher {
     // marker INLINE and returns true — we fall through to finalizeBuild WITHIN this same drive rather than
     // re-driving (a re-entrant drive() would be dropped by the single-flight `active` guard, stalling the
     // ship until the next process boot). false → the job is parked awaiting the operator's click.
-    if (shipGateApplies(job) && job.shipReviewApprovedAt == null) {
-      const autoApproved = await this.parkForShipReview(job, route);
-      if (!autoApproved) return;
+    if (shipGateApplies(job)) {
+      const gateJob =
+        job.shipReviewApprovedAt == null
+          ? await this.store.loadJob(job.id).catch(() => job)
+          : job;
+      if (gateJob.shipReviewApprovedAt == null) {
+        const autoApproved = await this.parkForShipReview(job, route);
+        if (!autoApproved) return;
+      }
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
     // Build shipped — the system is done working this job; hand it back to idle.
@@ -1854,11 +1864,29 @@ export class ThreadDriver implements JobDispatcher {
       job.id,
       card as unknown as Record<string, unknown>,
       summary,
+      job.orgId,
+      job.decisionRecordId ?? null,
     );
     if (!parked) return false;
     this.logger.log(
       `job=${job.id} parked at ship-review gate — awaiting operator "Ship it"`,
     );
+    // The DB-layer park above already ensured the post_build thread exists (DriverStoreService.
+    // parkForShipReview → ensurePostBuildThread); deliver its opening gate turn now. Best-effort: a seed
+    // failure must not fail the (already-committed) park itself.
+    const postBuildThreadId = await this.store.postBuildThreadId(job.id);
+    if (postBuildThreadId) {
+      await this.brainGateway
+        .seedPostBuildGate({
+          jobId: job.id,
+          orgId: job.orgId,
+          repoId: job.repoId,
+          threadId: postBuildThreadId,
+        })
+        .catch((err) =>
+          this.logger.warn(`post_build gate seed failed (continuing): ${err}`),
+        );
+    }
     await this.post(
       route,
       `:mag: Build reviewed — ready to ship *${title}*. Review the diff, then click *Ship it* to open the PR.`,
@@ -1876,6 +1904,12 @@ export class ThreadDriver implements JobDispatcher {
     // running (the just-parked status makes its CAS succeed) + stamps the marker; we return true so runJob
     // falls through to finalizeBuild in THIS drive (a re-entrant drive() would hit the single-flight guard).
     const fresh = await this.store.loadJob(job.id).catch(() => job);
+    if (fresh.shipReviewApprovedAt != null) {
+      this.logger.log(
+        `job=${job.id} ship approval landed while gate was parking — shipping inline`,
+      );
+      return true;
+    }
     if (!modeApprovesShip(fresh.autoApproveMode)) return false;
     const approver = await this.resolveAutoApprover(fresh);
     const acted = await this.store.approveShip(job.id);
@@ -1922,12 +1956,39 @@ export class ThreadDriver implements JobDispatcher {
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
-    void this.drive(jobId).catch((err) =>
-      this.logger.error(
-        `ship-approve drive job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
-      ),
-    );
+    this.driveAfterActive(jobId, 'ship-approve');
     return true;
+  }
+
+  private driveAfterActive(jobId: string, reason: string): void {
+    if (!this.active.has(jobId)) {
+      void this.drive(jobId).catch((err) =>
+        this.logger.error(
+          `${reason} drive job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
+        ),
+      );
+      return;
+    }
+    if (this.driveAfterActiveTimers.has(jobId)) return;
+    const poll = (): void => {
+      if (this.active.has(jobId)) {
+        const next = setTimeout(poll, 25);
+        if (typeof next.unref === 'function') next.unref();
+        this.driveAfterActiveTimers.set(jobId, next);
+        return;
+      }
+      this.driveAfterActiveTimers.delete(jobId);
+      void this.drive(jobId).catch((err) =>
+        this.logger.error(
+          `${reason} deferred drive job=${jobId} crashed: ${
+            err instanceof Error ? err.stack : err
+          }`,
+        ),
+      );
+    };
+    const timer = setTimeout(poll, 25);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.driveAfterActiveTimers.set(jobId, timer);
   }
 
   /**

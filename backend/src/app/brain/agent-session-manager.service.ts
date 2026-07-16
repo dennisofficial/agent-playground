@@ -89,7 +89,11 @@ import { BuildShipService } from '../driver/build-ship.service';
 import { AutoMergeService } from '../driver/auto-merge.service';
 import { BrainGateway } from '../brain-gateway';
 import { Agent, PromptService } from '../prompt-kit';
-import { shipOpenPrBody } from '../prompt-kit';
+import {
+  shipOpenPrBody,
+  composePreviewPrepSeed,
+  postBuildGateSeed,
+} from '../prompt-kit';
 import type { AgentMessage } from '../prompt-kit/message';
 import { agentMessage, fromExternal } from '../prompt-kit/message';
 import { isSubstantiveQuery, renderMemoryRecall } from '../prompt-kit/jit';
@@ -212,6 +216,7 @@ import { summarizeTurnFailure } from '../engine/turn-failure-summary';
 import type { TurnFailureCategory } from '../engine/turn-failure-summary';
 import type { EngineHomeKey } from '../engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
+import type { ThreadRole } from '../thread-kind';
 import { BrainStoreService } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
@@ -850,16 +855,17 @@ export class AgentSessionManager
     // steers a re-attached live turn or runs a fresh one; the periodic sweep keeps re-driving after boot.
     try {
       await this.stimulusStore.resetChatLeases();
-      const threads = await this.stimulusStore.undeliveredChatThreads();
-      if (threads.length > 0) {
+      const lanes = await this.stimulusStore.undeliveredChatLanes();
+      if (lanes.length > 0) {
         this.logger.log(
-          `Leader: re-driving undelivered operator message(s) across ${threads.length} thread(s)`,
+          `Leader: re-driving undelivered operator message(s) across ${lanes.length} lane(s)`,
         );
-        for (const t of threads) {
-          void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
-            this.logger.warn(
-              `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
-            ),
+        for (const t of lanes) {
+          void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch(
+            (err) =>
+              this.logger.warn(
+                `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
+              ),
           );
         }
       }
@@ -884,15 +890,13 @@ export class AgentSessionManager
   }
 
   /**
-   * SERVER-INITIATED open-PR turn (the ship step). Seeds the job-brain session with the ship turn-prompt
-   * (reconcile the branch against its base → push → author the PR body → `gh pr create`) as a harness turn.
-   * The brain runs it in ITS OWN sandbox on the feature branch with
-   * its already-resolved engine auth + git auth — no separate `engine.run` session — and the HOST records
-   * the opened PR afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so
-   * this turn needs no `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s.
-   * MUST only be called when the brain is IDLE (the driver/boot ship paths); a caller already inside a brain
-   * turn (the direct-build `finalize_build` tool) instead returns {@link shipOpenPrBody} as guidance so the
-   * brain opens the PR inline in its current turn — it cannot nest a second brain turn.
+   * SERVER-INITIATED open-PR seed (the ship step). ENQUEUES the ship turn-prompt (reconcile the branch
+   * against its base → push → author the PR body → `gh pr create`) onto the job's `ci` stage-thread lane
+   * via the durable pump — it does NOT run the turn inline, so it returns as soon as the seed is persisted
+   * and serializes behind any live post_build turn on the per-job queue. The brain runs it in ITS OWN sandbox
+   * on the feature branch with its already-resolved engine auth + git auth, and the HOST records the opened PR
+   * afterward by branch discovery (`BuildShipService.latchPr` / the git-state reconciler), so this needs no
+   * `report_pr_opened` tool. Idempotent: a re-seed on an already-open PR just `gh pr edit`s (dedup by chunkKey).
    */
   async openPrAtShip(input: {
     jobId: string;
@@ -903,22 +907,27 @@ export class AgentSessionManager
     title: string;
     threadId: string;
   }): Promise<void> {
-    const stimulus = harnessDeliveryStimulus({
-      jobId: input.jobId,
+    const recorded = await this.stimulusStore.recordChatStimulus({
       orgId: input.orgId,
       repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
       body: shipOpenPrBody({
         branch: input.branch,
         defaultBranch: input.defaultBranch,
         title: input.title,
       }),
-      seedRow: {
+      lane: `thread:${input.threadId}`,
+      systemChunk: {
         label: 'Opening the pull request.',
         chunkKey: `seed:ship:${input.jobId}`,
       },
-      resumeThreadId: input.threadId,
     });
-    await this.handleChatTurn(stimulus);
+    await this.enqueueChat(recorded);
   }
 
   /**
@@ -987,25 +996,114 @@ export class AgentSessionManager
   /**
    * WAKE the job brain because the operator APPROVED its "Amend build?" proposal (the `withdraw_ship`
    * tool's card). By this point the operator retract path has already run (`awaiting_ship_review →
-   * amending`), so the brain just needs to do the follow-up work it proposed. The brain's session is
-   * resumed, so it recalls WHAT it proposed — the delivery stays generic. The brain re-arms the gate by
-   * calling `report_verification({ passed: true })` once the amend is verified (re-parks directly at
-   * `awaiting_ship_review`, no rebuild). Concurrency-safe via `handleChatTurn`.
+   * amending`), so the brain just needs to do the follow-up work it proposed. Delivered durably onto the
+   * job's `post_build` stage-thread session (resolved, or spawned as a fallback) via the pump — non-blocking
+   * so the amend-approve HTTP path returns immediately. The brain re-arms the gate by calling
+   * `report_verification({ passed: true })` once the amend is verified (re-parks directly at
+   * `awaiting_ship_review`, no rebuild).
    */
   async wakeForAmendApproved(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId).catch(() => null);
     if (!job) return;
-    const stimulus = harnessDeliveryStimulus({
-      jobId,
+    const threadId =
+      (await this.driverStore.postBuildThreadId(jobId)) ??
+      (
+        await this.driverStore.ensurePostBuildThread({
+          jobId,
+          orgId: job.orgId,
+          decisionRecordId: job.decisionRecordId ?? null,
+        })
+      ).threadId;
+    const recorded = await this.stimulusStore.recordChatStimulus({
       orgId: job.orgId,
       repoId: job.repoId,
+      jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
       body: wakeForAmendApprovedBody(),
-      seedRow: {
+      lane: `thread:${threadId}`,
+      systemChunk: {
         label: 'Amend approved — resuming to make the changes.',
         chunkKey: `seed:amend-approved:${jobId}`,
       },
     });
-    await this.handleChatTurn(stimulus);
+    await this.enqueueChat(recorded);
+  }
+
+  /**
+   * SEED the operator "Spin up preview" request onto the job's `post_build` stage-thread session (d14). Runs
+   * the preview-prep prompt (author a preview recipe / spin the preview up) on the fresh post_build session,
+   * NOT planning. Durable + non-blocking: the request is persisted then enqueued via the pump, so the HTTP
+   * handler returns immediately and a crash re-drives the seed. Falls back to spawning the post_build thread
+   * if the gate somehow skipped it. Idempotent per job via the `preview` chunkKey.
+   */
+  async seedPreviewOnPostBuild(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    previewInstructions: string | null;
+  }): Promise<void> {
+    const job = await this.store.loadJob(input.jobId).catch(() => null);
+    const threadId =
+      (await this.driverStore.postBuildThreadId(input.jobId)) ??
+      (
+        await this.driverStore.ensurePostBuildThread({
+          jobId: input.jobId,
+          orgId: input.orgId,
+          decisionRecordId: job?.decisionRecordId ?? null,
+        })
+      ).threadId;
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: composePreviewPrepSeed(input.previewInstructions),
+      lane: `thread:${threadId}`,
+      systemChunk: {
+        label: 'Spin up preview requested',
+        chunkKey: chunkKey.preview(input.jobId),
+      },
+    });
+    await this.enqueueChat(recorded);
+  }
+
+  /**
+   * SEED the ship-review-gate initial message onto the job's `post_build` stage-thread session. Called once,
+   * right after the driver's gate-park transition (`ThreadDriver.parkForShipReview`), which by then has
+   * already ensured the post_build thread exists — this only delivers its opening turn. Durable + idempotent
+   * per job via the `gate` chunkKey, so a re-drive of the park can't re-seed it twice.
+   */
+  async seedPostBuildGate(input: {
+    jobId: string;
+    orgId: string;
+    repoId: string;
+    threadId: string;
+  }): Promise<void> {
+    const recorded = await this.stimulusStore.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: postBuildGateSeed(),
+      lane: `thread:${input.threadId}`,
+      systemChunk: {
+        label: 'Build ready — review at the ship gate',
+        chunkKey: chunkKey.gate(input.jobId),
+      },
+    });
+    await this.enqueueChat(recorded);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────────────────────────
@@ -1186,6 +1284,11 @@ export class AgentSessionManager
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
     if (!live?.turn_id) return false;
+    // `runningBrainTurn` returns the job's ONE live brain turn across all its lanes/sessions. Never cross-steer
+    // a stimulus into a turn on a different lane (e.g. a `ci` seed into a live `post_build` turn) — leave the
+    // durable row pending for that lane's own pump/sweep once this turn ends and the `active_turns` row clears.
+    if (this.activeTurnLane(live) !== this.laneForStimulus(stimulus))
+      return false;
     try {
       await this.engineRunner.steer(
         live.turn_id,
@@ -1524,7 +1627,24 @@ export class AgentSessionManager
 
   /** BrainSink.enqueueChat — a persisted operator message is ready; ensure the brain takes it. */
   async enqueueChat(stimulus: ChatStimulus): Promise<void> {
-    await this.pumpThread(stimulus.jobId, stimulus.orgId, stimulus.repoId);
+    await this.pumpThread(
+      stimulus.jobId,
+      stimulus.orgId,
+      stimulus.repoId,
+      this.laneForStimulus(stimulus),
+    );
+  }
+
+  /** The durable routing coordinate a chat stimulus targets: its own `thread:<id>` lane, else `'main'`. */
+  private laneForStimulus(stimulus: { resumeThreadId?: string }): string {
+    return stimulus.resumeThreadId
+      ? `thread:${stimulus.resumeThreadId}`
+      : 'main';
+  }
+
+  /** Active turns created before lane metadata, or older test doubles, are the legacy main brain lane. */
+  private activeTurnLane(turn: { lane?: string | null }): string {
+    return turn.lane ?? 'main';
   }
 
   /**
@@ -1539,6 +1659,7 @@ export class AgentSessionManager
     jobId: string,
     orgId: string,
     repoId: string,
+    lane = 'main',
   ): Promise<void> {
     if (this.election.getState() === 'draining') return;
 
@@ -1551,11 +1672,11 @@ export class AgentSessionManager
 
     // FAST PATH: a live brain turn is steered directly (the pump core resolves + steers `now`-priority
     // pending; `queue`/`later` stay pending for turn-end / ride-along).
-    const lane = this.mainDeliveryLane(jobId, orgId, repoId);
+    const deliveryLane = this.deliveryLane(jobId, orgId, repoId, lane);
     if (
       await trySteerLive(
         this.stimulusStore,
-        lane,
+        deliveryLane,
         AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
         this.logger,
       )
@@ -1569,7 +1690,7 @@ export class AgentSessionManager
     const prev = this.turnQueues.get(key) ?? Promise.resolve();
     const next = prev
       .catch(() => undefined)
-      .then(() => this.deliverPendingViaFreshTurn(lane));
+      .then(() => this.deliverPendingViaFreshTurn(deliveryLane));
     this.turnQueues.set(
       key,
       next.finally(() => {
@@ -1580,21 +1701,27 @@ export class AgentSessionManager
   }
 
   /**
-   * The brain's `main`-lane descriptor for the delivery pump: live-turn resolution stays `runningBrainTurn`
-   * (its exact live-turn + compaction semantics), steering stays the engine `steer`, body framing stays
-   * `engineBody`, and a fresh-turn drain coalesces the pending batch into ONE brain turn.
+   * The brain's delivery-pump descriptor for a given `lane` (`'main'` or `'thread:<id>'`): steering stays the
+   * engine `steer`, body framing stays `engineBody`, and a fresh-turn drain coalesces the pending batch into
+   * ONE brain turn. `resolveLiveTurn` is LANE-MATCHED — `runningBrainTurn` returns the job's single running
+   * brain turn across ALL its lanes/sessions, so it only counts as this lane's live turn when its `.lane`
+   * matches; otherwise the row stays queued (never cross-steered into a different session's turn).
    */
-  private mainDeliveryLane(
+  private deliveryLane(
     jobId: string,
     orgId: string,
     repoId: string,
+    lane: string,
   ): DeliveryLane {
     return {
       jobId,
       orgId,
       repoId,
-      lane: 'main',
-      resolveLiveTurn: () => this.turnRegistry.runningBrainTurn(jobId),
+      lane,
+      resolveLiveTurn: async () => {
+        const live = await this.turnRegistry.runningBrainTurn(jobId);
+        return live && this.activeTurnLane(live) === lane ? live : null;
+      },
       canSteer: () => typeof this.engineRunner.steer === 'function',
       steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
       renderBody: (p) => this.engineBody(p),
@@ -1648,9 +1775,14 @@ export class AgentSessionManager
    */
   private async collectPendingForTurn(
     jobId: string,
+    lane: string,
   ): Promise<CollectedPending | null> {
     const pending = await this.stimulusStore
-      .eligiblePendingChat(jobId, AgentSessionManager.CHAT_DELIVERY_LEASE_MS)
+      .eligiblePendingChat(
+        jobId,
+        AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+        lane,
+      )
       .catch((err) => {
         this.logger.warn(
           `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
@@ -1679,7 +1811,7 @@ export class AgentSessionManager
 
   /** Run ONE fresh turn that consumes the lane's pending operator messages (coalesced, oldest first). */
   private async deliverPendingViaFreshTurn(lane: DeliveryLane): Promise<void> {
-    const collected = await this.collectPendingForTurn(lane.jobId);
+    const collected = await this.collectPendingForTurn(lane.jobId, lane.lane);
     if (!collected) return;
     // Only WAKE for a wake-eligible (now/queue) message. A thread whose only pending rows are `later`
     // composes them as ride-along into some OTHER turn — it must never start a turn on its own.
@@ -1699,6 +1831,13 @@ export class AgentSessionManager
           nowOnly,
           this.logger,
         );
+      return;
+    }
+
+    const otherLive = await this.turnRegistry
+      .runningBrainTurn(lane.jobId)
+      .catch(() => null);
+    if (otherLive?.turn_id && this.activeTurnLane(otherLive) !== lane.lane) {
       return;
     }
 
@@ -1726,17 +1865,22 @@ export class AgentSessionManager
   /** LEADER periodic + boot re-drive of any operator message still undelivered (the at-least-once sweep). */
   private async sweepUndeliveredChat(): Promise<void> {
     if (this.election.getState() !== 'leader') return;
-    let threads: Array<{ jobId: string; orgId: string; repoId: string }>;
+    let lanes: Array<{
+      jobId: string;
+      orgId: string;
+      repoId: string;
+      lane: string;
+    }>;
     try {
-      threads = await this.stimulusStore.undeliveredChatThreads();
+      lanes = await this.stimulusStore.undeliveredChatLanes();
     } catch (err) {
       this.logger.debug(
         `chat delivery sweep query failed (will retry): ${err}`,
       );
       return;
     }
-    for (const t of threads) {
-      void this.pumpThread(t.jobId, t.orgId, t.repoId).catch((err) =>
+    for (const t of lanes) {
+      void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch((err) =>
         this.logger.debug(
           `chat sweep pump failed for thread=${t.jobId}: ${err}`,
         ),
@@ -2078,7 +2222,13 @@ export class AgentSessionManager
       const reattachKind =
         (await this.store.loadJob(row.job_id).catch(() => null))?.kind ?? null;
       const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
-      const tools = this.buildTools(stimulus, reattachKind, repoSlug);
+      const stageRole = await this.resolveStageKind(stimulus);
+      const tools = this.buildTools(
+        stimulus,
+        reattachKind,
+        repoSlug,
+        stageRole,
+      );
       // Drop any live-turn state stranded by a prior subscription that died without finish/abort/discard, so
       // the '0-0' event replay below rebuilds a CLEAN buffer (a fresh turn_start) instead of appending onto a
       // stale open block — the root cause of persistent multiple-cursor state. Silent (no turn_end) to avoid
@@ -2215,6 +2365,7 @@ export class AgentSessionManager
         stimulus.jobId,
         stimulus.orgId,
         stimulus.repoId,
+        this.laneForStimulus(stimulus),
       ).catch((err) =>
         this.logger.debug(`turn-end re-pump failed (sweep will retry): ${err}`),
       );
@@ -2252,6 +2403,25 @@ export class AgentSessionManager
       branch: job.currentBranch ?? sandbox.branch,
     };
     await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
+  }
+
+  /** Which thread-kind registry key this turn runs as: a re-homed turn (post_build/ci) uses its thread's
+   *  role; a plain planning turn (no resumeThreadId) is 'planning'. onboarding/review remain 'planning' via
+   *  jobKind conditions. A missing/unreadable thread row falls back to 'planning' rather than failing the
+   *  turn. Single source for both the prompt persona (`resolvePromptAgent`) and any other per-stage lookup
+   *  (e.g. `threadKindSpec(...).reasoningEffort`) so they never drift apart. */
+  private async resolveStageKind(stimulus: ChatStimulus): Promise<ThreadRole> {
+    const stageRole = stimulus.resumeThreadId
+      ? await this.driverStore
+          .threadRole(stimulus.resumeThreadId)
+          .catch(() => null)
+      : null;
+    return stageRole ?? 'planning';
+  }
+
+  /** Which stage persona this turn runs as (see `resolveStageKind`). */
+  private async resolvePromptAgent(stimulus: ChatStimulus): Promise<Agent> {
+    return threadKindSpec(await this.resolveStageKind(stimulus)).agent;
   }
 
   /** The turn body (provision → attach → in-sandbox engine turn → stream + persist). Serialized by the
@@ -2467,13 +2637,19 @@ export class AgentSessionManager
         .catch((err) => this.logger.debug(`clear setup_error failed: ${err}`));
     }
 
+    // Which stage this turn runs as — gates the host-side prefixes below (d8: post_build/ci don't grill and
+    // aren't the ones tracking build-progress awareness; the amend return-path lives on post_build now).
+    // Resolved once here and reused at the tool-surface call below so both never drift apart.
+    const stageRole = await this.resolveStageKind(stimulus);
+
     // PASSIVE pipeline-milestone awareness (buffer-and-flush, NOT a push). On an OPERATOR turn — and only
     // after the provisioning guards above succeeded, so a closed/failed turn never clears the buffer
     // un-injected — atomically drain any milestones buffered while the brain was idle + the net-state
     // delta into a clearly-passive reminder so the brain knows where the build stands. SYNTHETIC
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
-    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn.
-    if (isOperatorAuthored(stimulus)) {
+    // buffer before the operator sees it). Best-effort: a failure here never blocks the turn. PLANNING-only:
+    // post_build/ci ARE the post-build stage, so build-milestone awareness is noise there.
+    if (isOperatorAuthored(stimulus) && stageRole === 'planning') {
       const awarenessPrefix = await this.buildAwarenessPrefix(
         stimulus.jobId,
         stimulus.orgId,
@@ -2491,16 +2667,19 @@ export class AgentSessionManager
     // engine session — a fresh turn (a new operator message, an event delivery, or a restart-rebuilt session
     // whose context was compacted) has no in-context memory of what it already asked, so without this the
     // brain re-asks the same question over and over. Advisory reminder listing each open card's id + gist, so
-    // it waits (or `withdraw_question`s) instead of re-posting. Applies to every turn; best-effort.
-    const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
-      stimulus.jobId,
-    );
-    if (openQuestionsPrefix) {
-      reminderChunks.push({
-        kind: 'system_reminder',
-        body: openQuestionsPrefix,
-        attrs: { reminderKind: 'open_questions' },
-      });
+    // it waits (or `withdraw_question`s) instead of re-posting. PLANNING-only: post_build/ci have no
+    // `ask_question` tool (Thread 2), so there is nothing to remind them about.
+    if (stageRole === 'planning') {
+      const openQuestionsPrefix = await this.buildOpenQuestionsPrefix(
+        stimulus.jobId,
+      );
+      if (openQuestionsPrefix) {
+        reminderChunks.push({
+          kind: 'system_reminder',
+          body: openQuestionsPrefix,
+          attrs: { reminderKind: 'open_questions' },
+        });
+      }
     }
 
     // Same idea for still-open file-upload requests (posted, not yet uploaded/withdrawn): a compacted or
@@ -2537,8 +2716,12 @@ export class AgentSessionManager
     // land in `amending`: the brain's own `withdraw_ship` proposal (which wakes the brain) AND the operator's
     // manual "Amend build" click (which does NOT wake the brain at all). A one-time wake can also be compacted
     // mid-amend. So re-state the return path EVERY turn while amending, so the brain always knows how to get
-    // back to ready-to-ship. Best-effort; null unless the job is `amending`.
-    const amendingPrefix = await this.buildAmendingPrefix(stimulus.jobId);
+    // back to ready-to-ship. Best-effort; null unless the job is `amending`. POST_BUILD-only: the amend loop
+    // now runs on the post_build session (d3), not planning — stop rendering it there.
+    const amendingPrefix =
+      stageRole === 'post_build'
+        ? await this.buildAmendingPrefix(stimulus.jobId)
+        : null;
     if (amendingPrefix) {
       reminderChunks.push({
         kind: 'system_reminder',
@@ -2609,7 +2792,12 @@ export class AgentSessionManager
     // get build-free subsets — see buildTools). The repo SLUG (not the UUID) gates the atlas-prod toolset,
     // resolved once here and reused for the jobContext.isAtlasRepo prompt flag below.
     const repoSlug = await this.resolveRepoSlug(stimulus.repoId);
-    const tools = this.buildTools(stimulus, brainJob?.kind ?? null, repoSlug);
+    const tools = this.buildTools(
+      stimulus,
+      brainJob?.kind ?? null,
+      repoSlug,
+      stageRole,
+    );
 
     // All turns run inside the Docker sandbox container.
     const runner: EngineRunnerPort = this.engineRunner;
@@ -2728,14 +2916,17 @@ export class AgentSessionManager
         ? { isAtlasRepo: true }
         : {}),
     };
+    const promptAgent = threadKindSpec(stageRole).agent;
+
     const runArgs: RunEngineArgs = {
       engine: 'claude',
       task,
       cwd: sandbox.worktreePath,
-      // Assembled from fragments (ATLAS_MAIN): the onboarding vs normal-brain split is a jobKind condition,
-      // not a separate prompt id — `isOnboarding` still gates the toolset above. Byte-identical to the legacy
+      // Assembled from fragments: which stage persona (PLANNING/POST_BUILD/CI) resolved just above from the
+      // thread's role — the onboarding vs normal-brain split is a jobKind condition, not a separate prompt id
+      // (`isOnboarding` still gates the toolset above). PLANNING stays byte-identical to the legacy ATLAS_MAIN
       // (see prompt-service.spec — the brain is assembled purely from `@Fragment`s).
-      systemPrompt: this.prompts.generate(Agent.ATLAS_MAIN, {
+      systemPrompt: this.prompts.generate(promptAgent, {
         jobKind: brainJob?.kind ?? null,
         job: jobContext,
         settings: {
@@ -2755,8 +2946,8 @@ export class AgentSessionManager
         : {}),
       mode: 'execute', // the session manages its own read-only posture via custom plan mode
       model: AgentSessionManager.BRAIN_MODEL, // the thread brain reasons/plans — pin it to Opus
-      ...(threadKindSpec('planning').reasoningEffort
-        ? { modelReasoningEffort: threadKindSpec('planning').reasoningEffort }
+      ...(threadKindSpec(stageRole).reasoningEffort
+        ? { modelReasoningEffort: threadKindSpec(stageRole).reasoningEffort }
         : {}),
       richStream: true, // token-level deltas + thinking + tool calls/results (the brain conversation)
       steerable: true, // streaming-input mode: operator messages steer this turn mid-flight (priority:'now')
@@ -2781,7 +2972,7 @@ export class AgentSessionManager
         jobId: stimulus.jobId,
         orgId: stimulus.orgId,
         channel,
-        lane: 'main',
+        lane: this.laneForStimulus(stimulus),
         kind: 'brain',
         // Enough to rebuild the ChatStimulus + buildTools closure on a boot re-attach (see reattachOne).
         // `seed`/`seedQuestionId` are persisted so a re-attached DELIVERY turn can still stamp its card
@@ -3413,9 +3604,12 @@ export class AgentSessionManager
     stimulus: ChatStimulus,
     kind: string | null = null,
     repoSlug: string | null = null,
+    role: ThreadRole | null = null,
   ): Record<string, ToolImpl> {
     const onboarding = kind === 'onboarding';
     const review = kind === 'review';
+    const postBuild = role === 'post_build';
+    const ci = role === 'ci';
     // The brain's own live checklist — the SAME `task_*` host-bridge tools the build threads register,
     // scoped to the job's planning stage. Carried by all three branches (normal/review/onboarding) since
     // every persona prompt teaches the task-list discipline.
@@ -3570,6 +3764,8 @@ export class AgentSessionManager
               job.id,
               card as unknown as Record<string, unknown>,
               summary,
+              job.orgId,
+              job.decisionRecordId ?? null,
             );
             return {
               ok: true,
@@ -4697,6 +4893,28 @@ export class AgentSessionManager
         ...taskTools,
         ...atlasProd,
       };
+    }
+    // POST_BUILD/CI re-homed turns get a curated, engineering-focused subset (mirrors the prose in
+    // host-tools.group.ts's postBuildTools/ciTools fragments — keep both in lockstep). Full engineering
+    // (edit/git/gh/subagents) is native Bash/Edit/Task, not a host tool, so both stages keep it; they only
+    // lose the planning apparatus (grill/decisions/plan/dispatch — post_build/ci never author or approve a
+    // plan). `report_verification` lets either confirm a fix before it stands; only post_build additionally
+    // gets `withdraw_ship` — it owns the amend loop, ci does not.
+    if (postBuild || ci) {
+      const base = {
+        [INTERNAL_PROFILE_AWARENESS_TOOL]:
+          tools[INTERNAL_PROFILE_AWARENESS_TOOL],
+        get_pipeline_state: tools.get_pipeline_state,
+        recall: tools.recall,
+        remember: tools.remember,
+        report_verification: tools.report_verification,
+        create_job: tools.create_job,
+        list_jobs: tools.list_jobs,
+        link_job_dependency: tools.link_job_dependency,
+        ...intake,
+        ...atlasProd,
+      };
+      return postBuild ? { ...base, withdraw_ship: tools.withdraw_ship } : base;
     }
     // Normal threads get the full toolset above + intake. Onboarding threads get a curated, build-free
     // subset (they don't build/PR; they explore, provision, and finish) — `finish_onboarding` stays
@@ -7153,12 +7371,13 @@ export class AgentSessionManager
   }
 
   /**
-   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn is steered (the event-row id is the
-   * steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn): a fresh turn framed
-   * by `renderEventDelivery` is queued on the per-thread turn queue and stamps delivery at its registration
-   * hand-off. Idempotent (skips an already-delivered row); lease-guarded so a concurrent sweep can't
-   * double-drive. Deliberately does NOT go through `handleChatTurn` — that method's seed steer fast-path
-   * (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the swallowed-steer race.
+   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn on the SAME lane is steered (the
+   * event-row id is the steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn on
+   * this lane): a fresh turn framed by `renderEventDelivery` is queued on the per-thread turn queue and stamps
+   * delivery at its registration hand-off. Idempotent (skips an already-delivered row); lease-guarded so a
+   * concurrent sweep can't double-drive. Deliberately does NOT go through `handleChatTurn` — that method's
+   * seed steer fast-path (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the
+   * swallowed-steer race.
    */
   async pumpEvent(stimulus: EventStimulus): Promise<void> {
     if (this.election.getState() === 'draining') return;
@@ -7168,10 +7387,15 @@ export class AgentSessionManager
     if (row?.delivered_at) return;
 
     const body = renderEventDelivery(stimulus);
+    const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    if (
+      live?.turn_id &&
+      this.activeTurnLane(live) === lane &&
+      typeof this.engineRunner.steer === 'function'
+    ) {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
     }
@@ -7215,14 +7439,22 @@ export class AgentSessionManager
     body: AgentMessage,
   ): Promise<void> {
     // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
-    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id). If the
+    // one live brain turn is on a DIFFERENT lane, leave this event pending for its own lane's sweep/queue turn;
+    // never lease it or cross-steer it into the wrong stage session.
+    const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    if (
+      live?.turn_id &&
+      this.activeTurnLane(live) === lane &&
+      typeof this.engineRunner.steer === 'function'
+    ) {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
     }
+    if (live?.turn_id && this.activeTurnLane(live) !== lane) return;
 
     // Lease BEFORE dispatch (like the chat fresh path) so a concurrent sweep can't re-drive a duplicate
     // while this potentially-long turn runs.
@@ -7281,7 +7513,8 @@ export class AgentSessionManager
    * prefix to prepend to this OPERATOR turn (null when there's nothing to convey). Atomic drain (a single
    * locked transaction in the store) so a milestone the driver appends mid-turn isn't read-cleared and
    * lost. Best-effort: any failure returns null so the turn proceeds — `get_pipeline_state` remains the
-   * authoritative pull.
+   * authoritative pull. Gated by the call site to PLANNING only — post_build/ci ARE the post-build stage, so
+   * build-milestone awareness would be noise there.
    */
   private async buildAwarenessPrefix(
     jobId: string,
@@ -7313,7 +7546,8 @@ export class AgentSessionManager
    * withdrawn) so a fresh turn doesn't re-ask them — the fix for the "brain keeps asking the same question"
    * loop, whose root cause is that question cards live OUTSIDE the engine session and are never otherwise
    * re-surfaced once the session's in-context memory is lost (a new turn, an event, a restart/compaction).
-   * Null when nothing is open. Best-effort — a failure here never blocks the turn.
+   * Null when nothing is open. Best-effort — a failure here never blocks the turn. Gated by the call site to
+   * PLANNING only — post_build/ci carry no `ask_question` tool, so they never have anything open to remind.
    */
   private async buildOpenQuestionsPrefix(
     jobId: string,
@@ -7347,7 +7581,8 @@ export class AgentSessionManager
    * Persistent per-turn reminder while a job sits in `amending` (the ship-review gate retracted for a
    * follow-up fix). This is the durable teacher of the return path: unlike the one-time amend-approved wake,
    * it fires EVERY turn while amending, so it covers the manual "Amend build" click (which never wakes the
-   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort.
+   * brain) and survives compaction. Returns null unless the job is `amending`. Best-effort. Gated by the call
+   * site to the POST_BUILD session only (d3: the amend loop runs there now, not on planning).
    */
   private async buildAmendingPrefix(jobId: string): Promise<string | null> {
     try {

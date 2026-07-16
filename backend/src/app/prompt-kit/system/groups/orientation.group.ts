@@ -4,7 +4,7 @@
  *
  * TOPIC bucket: orientation / doing-the-work.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import {
@@ -17,7 +17,7 @@ import {
 export class OrientationGroup {
   /** Investigate first / docs before grep / delegate / other subagents / web access. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1080,
     condition: notOnboarding,
   })
@@ -58,7 +58,7 @@ export class OrientationGroup {
 
   /** The onboarding grounding gate + bring-up Loop. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2020,
     condition: isOnboarding,
   })
@@ -145,7 +145,7 @@ export class OrientationGroup {
 
   /** Dev logins for validation. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2040,
     condition: isOnboarding,
   })

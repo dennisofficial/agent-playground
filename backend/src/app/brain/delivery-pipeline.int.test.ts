@@ -156,7 +156,9 @@ describe('Atlas message-delivery pipeline (integration): real pump + real Stimul
   ) {
     const runningBrainTurn = vi
       .fn()
-      .mockResolvedValue(opts.live ? { turn_id: 'turn-live-1' } : null);
+      .mockResolvedValue(
+        opts.live ? { turn_id: 'turn-live-1', lane: 'main' } : null,
+      );
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 
     let capturedTask: string | undefined;

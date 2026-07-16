@@ -14,7 +14,13 @@ import type { LiveVerificationJudge } from '../driver/live-verification-judge';
 import type { PipelineAwarenessStore } from '../driver/pipeline-awareness.store';
 import type { JobDependencyService } from '../job-deps';
 import type { DecisionClassifier } from '../decision-gate';
-import type { BlockSink, ChatSurface, LiveTurnStore } from '../surface';
+import type { ThreadRole } from '../thread-kind';
+import type {
+  BlockSink,
+  ChatSurface,
+  LiveTurnStore,
+  TaskEventSink,
+} from '../surface';
 import { TurnHarnessFactory } from '../surface';
 
 /** A no-op transcript harness for tests that don't exercise streaming. */
@@ -181,6 +187,8 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     setHalted: vi.fn().mockResolvedValue(undefined),
     resetAllActivity: vi.fn().mockResolvedValue(0),
     clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+    // A clean turn clears the benign-abort auto-resume budget (runChatTurnInner, post-turn housekeeping).
+    clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
   } as unknown as BrainStoreService;
 
   const mockDriverStore = {
@@ -1644,15 +1652,17 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   // (e.g. `__profile_awareness`) are reserved-internal: they're invoked only via the raw `bridgeCall`
   // round-trip and are filtered out of `toolBridgeTools` before the container ever builds an SDK proxy
   // tool for them, so they never pass through TOOL_SHAPES and are exempt from this guard.
-  it('every buildTools()-registered tool (all kinds) has a TOOL_SHAPES entry', () => {
+  it('every buildTools()-registered tool (all kinds/roles) has a TOOL_SHAPES entry', () => {
     for (const kind of [null, 'review', 'onboarding']) {
-      const tools = manager.buildTools(fakeStimulus, kind);
-      for (const name of Object.keys(tools)) {
-        if (name.startsWith('__')) continue;
-        expect(
-          TOOL_SHAPES,
-          `brain tool "${name}" (kind=${kind}) must have a TOOL_SHAPES entry`,
-        ).toHaveProperty(name);
+      for (const role of [null, 'post_build', 'ci'] as const) {
+        const tools = manager.buildTools(fakeStimulus, kind, null, role);
+        for (const name of Object.keys(tools)) {
+          if (name.startsWith('__')) continue;
+          expect(
+            TOOL_SHAPES,
+            `brain tool "${name}" (kind=${kind}, role=${role}) must have a TOOL_SHAPES entry`,
+          ).toHaveProperty(name);
+        }
       }
     }
   });
@@ -1666,9 +1676,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
-      for (const name of Object.keys(manager.buildTools(fakeStimulus, kind))) {
-        // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
-        if (!profile.has(name) && !name.startsWith('__')) registered.add(name);
+      for (const role of [undefined, 'post_build', 'ci'] as const) {
+        for (const name of Object.keys(
+          manager.buildTools(fakeStimulus, kind, null, role),
+        )) {
+          // `__`-prefixed tools are reserved-internal (never model-facing, never in the web contract).
+          if (!profile.has(name) && !name.startsWith('__'))
+            registered.add(name);
+        }
       }
     }
     const contract = new Set<string>(ATLAS_HOST_BRIDGE_TOOLS);
@@ -1685,6 +1700,53 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         registered.has(name),
         `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`,
       ).toBe(true);
+    }
+  });
+
+  it('post_build/ci get the curated ship-stage subset (full engineering tools, no planning apparatus)', () => {
+    const postBuild = manager.buildTools(
+      fakeStimulus,
+      'feature',
+      null,
+      'post_build',
+    );
+    const ci = manager.buildTools(fakeStimulus, 'feature', null, 'ci');
+    for (const name of [
+      'get_pipeline_state',
+      'recall',
+      'remember',
+      'report_verification',
+      'create_job',
+      'list_jobs',
+      'link_job_dependency',
+    ]) {
+      expect(typeof postBuild[name], name).toBe('function');
+      expect(typeof ci[name], name).toBe('function');
+    }
+    expect(typeof postBuild['withdraw_ship']).toBe('function');
+    expect(ci['withdraw_ship']).toBeUndefined();
+    for (const name of [
+      'ask_question',
+      'withdraw_question',
+      'create_decision',
+      'update_decision',
+      'delete_decision',
+      'get_decision_record',
+      'set_job_kind',
+      'review_plan',
+      'propose_plan',
+      'withdraw_plan',
+      'dispatch_build',
+      'hold_build',
+      'start_direct_build',
+      'finalize_build',
+      'propose_convention_profile_change',
+    ]) {
+      expect(
+        postBuild[name],
+        `post_build should not have ${name}`,
+      ).toBeUndefined();
+      expect(ci[name], `ci should not have ${name}`).toBeUndefined();
     }
   });
 
@@ -3322,11 +3384,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     resetContainer?: ReturnType<typeof vi.fn>;
     hardResetSandbox?: ReturnType<typeof vi.fn>;
     /** A live brain turn `runningBrainTurn` returns (drives the steer-into-live path); default none. */
-    runningBrainTurn?: { turn_id: string } | null;
+    runningBrainTurn?: { turn_id: string; lane?: string } | null;
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
     stimulusRow?: ChatStimulus | null;
+    /** `driverStore.threadRole` result — the stage a `resumeThreadId`d turn resolves to (d8 prefix gating). */
+    threadRole?: ThreadRole | null;
     /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
      *  (`OauthUsageService.getUtilization`) — defaults to `undefined` (uncorroborated). */
     usageUtilization?: number;
@@ -3474,6 +3538,9 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     const turnHarness = new TurnHarnessFactory(liveTurns, blockSink, usage);
     const driverStore = {
       getPipelineState: vi.fn().mockResolvedValue({ status: 'no_job' }),
+      threadRole: vi.fn().mockResolvedValue(opts.threadRole ?? null),
+      threadSessionId: vi.fn().mockResolvedValue(undefined),
+      setThreadSessionId: vi.fn().mockResolvedValue(undefined),
     } as unknown as DriverStoreService;
     const awareness = {
       appendMarker: vi.fn().mockResolvedValue(undefined),
@@ -3801,6 +3868,99 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     expect(meta.contextTokens).toBe(23_100);
     expect(meta.contextTokens).not.toBe(187_795);
     expect(meta.contextLimit).toBe(1_000_000); // opus → 1M window
+  });
+
+  describe('per-stage host-side turn-prefix gating (d8)', () => {
+    // Distinctive substrings from the three gated prefixes — see `buildAwarenessPrefix` /
+    // `buildOpenQuestionsPrefix` / `buildAmendingPrefix` in agent-session-manager.service.ts.
+    const AWARENESS_MARK = 'Pipeline updates since your last message';
+    const OPEN_QUESTIONS_MARK = 'still awaiting an';
+    const AMENDING_MARK = 'This build is AMENDING';
+
+    /** Wires every gated prefix's trigger condition ON (markers pending, an open question, job amending) so
+     *  each test only has to assert which subset of the three actually reached the engine's task. */
+    function makeManagerWithAllPrefixesTriggered(opts: {
+      resumeThreadId?: string;
+      threadRole?: ThreadRole | null;
+    }) {
+      const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's1' });
+      const drainAndAdvance = vi.fn().mockResolvedValue({
+        markers: [
+          {
+            id: 'm1',
+            text: 'a builder finished a leg',
+            at: '2026-07-16T00:00:00Z',
+          },
+        ],
+        stateChanged: false,
+      });
+      const built = makeManager({
+        run,
+        drainAndAdvance,
+        threadRole: opts.threadRole,
+      });
+      (
+        built.store.openQuestionCards as ReturnType<typeof vi.fn>
+      ).mockResolvedValue([
+        { questionId: 'q1', header: 'Which DB?', question: 'Which DB?' },
+      ]);
+      (built.store.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
+        kind: null,
+        status: 'amending',
+      });
+      const turnStimulus: ChatStimulus = {
+        ...stimulus,
+        ...(opts.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
+      };
+      return { ...built, run, turnStimulus };
+    }
+
+    function composedTask(dockerRunner: EngineRunnerPort): string {
+      return (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0]
+        .task as string;
+    }
+
+    it('PLANNING (no resumeThreadId) renders the awareness + open-questions prefixes, never amending', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({});
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).toContain(AWARENESS_MARK);
+      expect(task).toContain(OPEN_QUESTIONS_MARK);
+      expect(task).not.toContain(AMENDING_MARK);
+    });
+
+    it('POST_BUILD (resumeThreadId → post_build) renders the amending prefix, never awareness/open-questions', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({
+          resumeThreadId: 'thr-pb-1',
+          threadRole: 'post_build',
+        });
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).toContain(AMENDING_MARK);
+      expect(task).not.toContain(AWARENESS_MARK);
+      expect(task).not.toContain(OPEN_QUESTIONS_MARK);
+    });
+
+    it('CI (resumeThreadId → ci) renders none of the three gated prefixes', async () => {
+      const { manager, dockerRunner, turnStimulus } =
+        makeManagerWithAllPrefixesTriggered({
+          resumeThreadId: 'thr-ci-1',
+          threadRole: 'ci',
+        });
+
+      await manager.handleChatTurn(turnStimulus);
+
+      const task = composedTask(dockerRunner);
+      expect(task).not.toContain(AWARENESS_MARK);
+      expect(task).not.toContain(OPEN_QUESTIONS_MARK);
+      expect(task).not.toContain(AMENDING_MARK);
+    });
   });
 
   it('turn_meta context occupancy is null when the engine surfaces no per-call usage (no wrong ring)', async () => {
@@ -4229,7 +4389,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       findSandbox: { worktreePath: '/wt' },
       run,
       steer,
-      runningBrainTurn: { turn_id: 'T-live' },
+      runningBrainTurn: { turn_id: 'T-live', lane: 'main' },
       stimulusRow: answerSeed,
       // the answered, not-yet-delivered card the seed carries
       pendingCard: {
@@ -4981,6 +5141,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       setHalted: vi.fn().mockResolvedValue(undefined),
       clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
       ...storeOverrides,
     } as unknown as BrainStoreService;
     const manager = new AgentSessionManager(
@@ -5176,8 +5337,10 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     const store = {
       loadJob: overrides.loadJob ?? vi.fn().mockResolvedValue(runningJob),
       setActivity: vi.fn().mockResolvedValue(undefined),
+      setHalted: vi.fn().mockResolvedValue(undefined),
       endTurnActivity: vi.fn().mockResolvedValue(undefined),
       clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
     } as unknown as BrainStoreService;
     const lifecycle = {
       findSandbox:
@@ -5476,6 +5639,53 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     expect(stimulusRows.update).not.toHaveBeenCalled();
   });
 
+  it('a CI-routed event steers only into the matching CI lane', async () => {
+    const ciEvent: EventStimulus = {
+      ...eventStimulus,
+      id: 'stim-evt-ci',
+      resumeThreadId: 'thr-ci',
+    };
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-ci',
+      lane: 'thread:thr-ci',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.deliverEvent(ciEvent);
+
+    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith([
+      'stim-evt-ci',
+    ]);
+    expect(steer).toHaveBeenCalledWith(
+      'turn-ci',
+      'stim-evt-ci',
+      expect.stringContaining('CI job #42 failed'),
+    );
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it('a CI-routed event never cross-steers into a live non-CI lane', async () => {
+    const ciEvent: EventStimulus = {
+      ...eventStimulus,
+      id: 'stim-evt-ci',
+      resumeThreadId: 'thr-ci',
+    };
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-post-build',
+      lane: 'thread:thr-post-build',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.deliverEvent(ciEvent);
+
+    expect(steer).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
   it('SWALLOWED-STEER RACE: a live turn steered but no input_ack → the event stays UNDELIVERED (regression)', async () => {
     // The reported bug: an event steered into a just-finishing turn is swallowed, yet the old path stamped
     // delivered anyway. Now a bare steer NEVER stamps — only input_ack does — so the row stays null and the
@@ -5637,7 +5847,12 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   function makeManager(
     opts: {
       pending?: ChatStimulus[];
-      threads?: Array<{ jobId: string; orgId: string; repoId: string }>;
+      threads?: Array<{
+        jobId: string;
+        orgId: string;
+        repoId: string;
+        lane: string;
+      }>;
       jobStatus?: string;
     } = {},
   ) {
@@ -5651,7 +5866,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
-      undeliveredChatThreads: vi.fn().mockResolvedValue(opts.threads ?? []),
+      undeliveredChatLanes: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
       findChatStimulusById: vi.fn().mockResolvedValue(null),
     };
@@ -5728,7 +5943,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({
       pending,
     });
-    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live', lane: 'main' });
     const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
@@ -5852,7 +6067,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     const { manager, runningBrainTurn, steer } = makeManager({ pending });
     runningBrainTurn
       .mockResolvedValueOnce(null) // pumpThread's own check
-      .mockResolvedValueOnce({ turn_id: 'turn-appeared' }); // deliverPendingViaFreshTurn's re-check
+      .mockResolvedValueOnce({ turn_id: 'turn-appeared', lane: 'main' }); // deliverPendingViaFreshTurn's re-check
     const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
 
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
@@ -5865,10 +6080,35 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
 
+  it('a different lane live turn leaves this lane pending unleased for its own retry', async () => {
+    const pending = [
+      pendingRow('s-ci', 'open the PR', new Date('2026-07-02T12:00:00Z')),
+    ];
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({
+      pending,
+    });
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-post-build',
+      lane: 'thread:thr-post-build',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID, 'thread:thr-ci');
+
+    expect(stimulusStore.eligiblePendingChat).toHaveBeenCalledWith(
+      JOB_ID,
+      expect.any(Number),
+      'thread:thr-ci',
+    );
+    expect(steer).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
   it('a steer failure does not throw — the message stays undelivered for the sweep to re-drive', async () => {
     const pending = [pendingRow('s1', 'msg', new Date('2026-07-02T12:00:00Z'))];
     const { manager, steer, runningBrainTurn } = makeManager({ pending });
-    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live' });
+    runningBrainTurn.mockResolvedValue({ turn_id: 'turn-live', lane: 'main' });
     steer.mockRejectedValue(new Error('redis xadd failed'));
 
     await expect(
@@ -5894,8 +6134,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   describe('sweepUndeliveredChat (the leader periodic + boot re-drive)', () => {
     it('LEADER: pumps every distinct thread with an undelivered chat stimulus', async () => {
       const threads = [
-        { jobId: 'th-a', orgId: 'T1', repoId: 'r1' },
-        { jobId: 'th-b', orgId: 'T1', repoId: 'r1' },
+        { jobId: 'th-a', orgId: 'T1', repoId: 'r1', lane: 'main' },
+        { jobId: 'th-b', orgId: 'T1', repoId: 'r1', lane: 'main' },
       ];
       const { manager, getState } = makeManager({ threads });
       getState.mockReturnValue('leader');
@@ -5907,14 +6147,14 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         manager as never as { sweepUndeliveredChat: () => Promise<void> }
       ).sweepUndeliveredChat();
 
-      expect(pumpSpy).toHaveBeenCalledWith('th-a', 'T1', 'r1');
-      expect(pumpSpy).toHaveBeenCalledWith('th-b', 'T1', 'r1');
+      expect(pumpSpy).toHaveBeenCalledWith('th-a', 'T1', 'r1', 'main');
+      expect(pumpSpy).toHaveBeenCalledWith('th-b', 'T1', 'r1', 'main');
       expect(pumpSpy).toHaveBeenCalledTimes(2);
     });
 
     it('NON-LEADER: does nothing (no query, no pump)', async () => {
       const { manager, getState, stimulusStore } = makeManager({
-        threads: [{ jobId: 'th-a', orgId: 'T1', repoId: 'r1' }],
+        threads: [{ jobId: 'th-a', orgId: 'T1', repoId: 'r1', lane: 'main' }],
       });
       getState.mockReturnValue('follower');
       const pumpSpy = vi
@@ -5925,7 +6165,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         manager as never as { sweepUndeliveredChat: () => Promise<void> }
       ).sweepUndeliveredChat();
 
-      expect(stimulusStore.undeliveredChatThreads).not.toHaveBeenCalled();
+      expect(stimulusStore.undeliveredChatLanes).not.toHaveBeenCalled();
       expect(pumpSpy).not.toHaveBeenCalled();
     });
   });

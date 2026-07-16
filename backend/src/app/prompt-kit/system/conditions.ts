@@ -2,7 +2,7 @@
  * prompt-kit / conditions — reusable `@Fragment` gate predicates.
  *
  * The onboarding vs normal-brain split is a CONDITION on `ctx.jobKind`, not a separate agent: both are
- * `Agent.ATLAS_MAIN`. A fragment that belongs only to the normal brain gates `notOnboarding`; an
+ * `Agent.PLANNING`. A fragment that belongs only to the normal brain gates `notOnboarding`; an
  * onboarding-only fragment gates `isOnboarding`; a fragment shared by both omits the gate.
  */
 import type { JobKind } from '../../domain';

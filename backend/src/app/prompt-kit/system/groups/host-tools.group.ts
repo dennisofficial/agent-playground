@@ -5,7 +5,7 @@
  * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
  * `TOOL_QUALIFICATION_NOTE` catalog block.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
   isAtlasRepo,
@@ -23,7 +23,7 @@ import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 export class HostToolsGroup {
   /** The host tools — qualification + enumeration + ambient capability tools. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1040,
     condition: isBuildBrain,
   })
@@ -70,9 +70,89 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
+  /** The POST_BUILD/CI curated host tools (orders 1042/1043: unique vs hostTools@1040/reviewTools@1041, and
+   *  from EACH OTHER since each fragment now targets its own single agent, not the shared `SHIP_STAGES`
+   *  audience). Both stages lose the PLANNING-only `hostTools()` catalog above IN FULL — no
+   *  ask_question/withdraw_question (grill), no create_decision/update_decision/delete_decision/
+   *  get_decision_record, no review_plan/propose_plan/withdraw_plan/dispatch_build/hold_build/
+   *  start_direct_build/finalize_build/set_job_kind/propose_convention_profile_change — that whole apparatus
+   *  belongs to PLANNING, the plan-author/approver they were split off from. Both stages ACT (verify a fix,
+   *  amend), they don't plan. Mirroring `reviewTools()`/`onboardingTools()`, each gets its own qualification
+   *  note + curated list so the `mcp__` calling convention and the ambient capability tools (referenced
+   *  bare-name elsewhere, e.g. `cloudSandbox()`, `environmentGaps()`, `atlasSvc()`, `createJob()`) are
+   *  actually documented for them. `withdraw_ship` is POST_BUILD-only: it owns the amend loop; CI does not,
+   *  and does not get the tool registered (see `buildTools` in agent-session-manager.service.ts) — CI owns
+   *  PR creation/maintenance directly via `gh`/git (Bash), not a host tool. */
+  @Fragment({
+    usedBy: [Agent.POST_BUILD],
+    order: 1042,
+    condition: isBuildBrain,
+  })
+  postBuildTools(): string {
+    return [
+      `You have the host tools listed below. ${TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME)}`,
+      'Call every host tool with its fields DIRECTLY at the top level (no `args` wrapper). This is the',
+      'ship-review GATE, not the planning brain — you have NO grilling or plan-authoring/plan-review tools,',
+      'and no decision-record tools, this session. You ACT: verify a fix, or amend the build. Your host',
+      'tools this session:',
+      `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__report_verification  — report whether a fix is verified ({ passed, verification, remaining? }); a clean pass while the job is amending re-parks it DIRECTLY at the ship-review gate`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__withdraw_ship        — PROPOSE amending the READY-TO-SHIP build: posts an "Amend build?" card for the operator. It does NOT retract the gate — only the operator can, by approving. After proposing, STOP and wait; if approved you'll be re-woken to do the work. Frame your reason as YOUR OWN recommendation (never "Operator wants…"). Keeps completed work; the gate re-arms once follow-up work lands.`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo; optionally born blocked with dependsOn (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__list_jobs            — list this repo's sibling jobs to discover ids for peer dependencies (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__link_job_dependency  — explicitly mark one existing same-repo job as blocked by another`,
+      `You ALSO have these AMBIENT capability tools — usable ANY turn, whenever the work hits the friction they solve (see ENVIRONMENT GAPS below):`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_secret       — securely request a missing SECRET VALUE from the operator (stored encrypted, rendered to a path; persists for future jobs). You may keep SEVERAL open at once (like request_file) — no need to wait one at a time`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_file         — have the operator UPLOAD a whole file/key (env file, service-account JSON, .pem; encrypted, granted to a gitignored path); several may be open at once`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_secret_request — retract a still-open request_secret card BY requestId (wrong target / no longer needed); post a corrected request_secret if you still need it`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — idempotent commands that ARM the box (install/build/index), NOT ones that start runtime services (docker/DB/app server — those are on-demand per turn); runs on EVERY cold sandbox bring-up for every future job on this repo (no PR). It REPLACES the whole script — read_setup_script FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script    — read the repo's CURRENT cold-boot setup script (raw body) so you can edit it safely before write_setup_script (which overwrites the whole thing)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_preview_instructions — save the repo's PREVIEW RECIPE ({ instructions }) — how to stand up this repo's demo-ready preview stack (envs, ports, compose/migrate/seed, deep-link); injected into the "Spin up preview" seed for every job on this repo (no PR). It REPLACES the whole recipe — read_preview_instructions FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_preview_instructions  — read the repo's CURRENT preview recipe (raw body) so you can edit it safely before write_preview_instructions (which overwrites the whole thing)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree`,
+    ].join('\n');
+  }
+
+  /** The CI curated host tools (order 1043). Same as `postBuildTools()` minus `withdraw_ship` — CI does not
+   *  own the amend loop; it owns PR creation/maintenance directly via `gh`/git (Bash), not a host tool. */
+  @Fragment({ usedBy: [Agent.CI], order: 1043, condition: isBuildBrain })
+  ciTools(): string {
+    return [
+      `You have the host tools listed below. ${TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME)}`,
+      'Call every host tool with its fields DIRECTLY at the top level (no `args` wrapper). This is a',
+      'post-ship PR-lifecycle stage, not the planning brain — you have NO grilling or plan-authoring/',
+      'plan-review tools, and no decision-record tools, this session. You ACT: confirm a pushed fix before',
+      'it stands. Your host tools this session:',
+      `  - mcp__${BRIDGE_SERVER_NAME}__get_pipeline_state   — read the current job/pipeline state for this thread`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__recall               — retrieve relevant memory facts (semantic search)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__remember             — store a new memory fact`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__report_verification  — confirm a pushed fix (e.g. after a failing check or review comment) before it stands ({ passed, verification, remaining? })`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__create_job           — spin off a NEW job on this same repo; optionally born blocked with dependsOn (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__list_jobs            — list this repo's sibling jobs to discover ids for peer dependencies (see CREATE_JOB below)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__link_job_dependency  — explicitly mark one existing same-repo job as blocked by another`,
+      `You ALSO have these AMBIENT capability tools — usable ANY turn, whenever the work hits the friction they solve (see ENVIRONMENT GAPS below):`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_secret       — securely request a missing SECRET VALUE from the operator (stored encrypted, rendered to a path; persists for future jobs). You may keep SEVERAL open at once (like request_file) — no need to wait one at a time`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__request_file         — have the operator UPLOAD a whole file/key (env file, service-account JSON, .pem; encrypted, granted to a gitignored path); several may be open at once`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_file_request — retract a still-open request_file card BY requestId (wrong path / no longer needed); post a corrected request_file if you still need the file`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__withdraw_secret_request — retract a still-open request_secret card BY requestId (wrong target / no longer needed); post a corrected request_secret if you still need it`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__derive_secret        — store a value YOU computed from an already-granted credential (no operator wait; e.g. a printed webhook secret)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_workspace_config — amend the repo's DB-backed workspace config (mounts) — a live write for every future job on this repo, no PR`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_setup_script   — save the repo's cold-boot setup script ({ script }) — idempotent commands that ARM the box (install/build/index), NOT ones that start runtime services (docker/DB/app server — those are on-demand per turn); runs on EVERY cold sandbox bring-up for every future job on this repo (no PR). It REPLACES the whole script — read_setup_script FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_setup_script    — read the repo's CURRENT cold-boot setup script (raw body) so you can edit it safely before write_setup_script (which overwrites the whole thing)`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__write_preview_instructions — save the repo's PREVIEW RECIPE ({ instructions }) — how to stand up this repo's demo-ready preview stack (envs, ports, compose/migrate/seed, deep-link); injected into the "Spin up preview" seed for every job on this repo (no PR). It REPLACES the whole recipe — read_preview_instructions FIRST to see the current body`,
+      `  - mcp__${WORKSPACE_PROFILE_BRIDGE_NAME}__read_preview_instructions  — read the repo's CURRENT preview recipe (raw body) so you can edit it safely before write_preview_instructions (which overwrites the whole thing)`,
+      `  - mcp__${BRIDGE_SERVER_NAME}__reset_sandbox        — recreate your container from scratch to prove the setup cold-boots (recreates on your NEXT turn — call it, then STOP). Add { hard:true } for a full from-scratch reset (fresh worktree + container, session kept) — two-call confirm; refuses on a dirty/unpushed tree`,
+    ].join('\n');
+  }
+
   /** The atlas-prod host tools — ONLY present on the Atlas repo itself. The 7 read tools mirror the
    *  prod-diagnostics reader; propose_prod_write is a STRUCTURALLY-GATED write (propose-only). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1044, condition: isAtlasRepo })
+  @Fragment({ usedBy: ENGINEERING_STAGES, order: 1044, condition: isAtlasRepo })
   atlasProdTools(): string {
     return [
       `You are on the Atlas repo itself, so you ALSO have the atlas-prod tools — read-only production diagnostics plus a STRUCTURALLY-GATED prod DB write. Call the mcp__${ATLAS_PROD_BRIDGE_NAME}__ form:`,
@@ -94,7 +174,7 @@ export class HostToolsGroup {
    * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
    */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1045,
     condition: notOnboarding,
   })
@@ -104,7 +184,7 @@ export class HostToolsGroup {
 
   /** The flat top-level calling convention. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1050,
     condition: notOnboarding,
   })
@@ -120,7 +200,7 @@ export class HostToolsGroup {
 
   /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1060,
     condition: isBuildBrain,
   })
@@ -143,7 +223,7 @@ export class HostToolsGroup {
 
   /** The onboarding session's curated host tools. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2050,
     condition: isOnboarding,
   })
@@ -202,7 +282,7 @@ export class HostToolsGroup {
   }
 
   /** The review session's curated host tools (order 1041: unique vs hostTools@1040). */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1041, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1041, condition: isReview })
   reviewTools(): string {
     return [
       TOOL_QUALIFICATION_NOTE(BRIDGE_SERVER_NAME),

@@ -85,6 +85,7 @@ import {
 import { JOB_DISPATCHER, type JobDispatcher } from '../brain/job-dispatcher';
 import { BrainStoreService } from '../brain/brain-store.service';
 import { AgentSessionManager } from '../brain/agent-session-manager.service';
+import { BrainGateway } from '../brain-gateway';
 import { JitHostExecutor } from '../brain/jit-host-executor';
 import { WebSurface } from './web-surface';
 import { LiveTurnStore } from './live-turn-store';
@@ -816,6 +817,10 @@ export class WebSurfaceController {
     // that owns the lane (steer-if-live / re-drive-if-halted), instead of always the planning brain. From the
     // @Global LiveTurnModule. @Optional (trailing), same reason as `exposure`/`jit` above.
     @Optional() private readonly threadInput?: ThreadInputService,
+    // The neutral driver→brain seam — `spinUpPreview` enqueues the "Spin up preview" seed onto the job's
+    // post_build session through it (durable pump). From the @Global BrainGatewayModule. @Optional (trailing),
+    // same reason as `exposure`/`jit` above — keeps the positional-arg unit tests compiling.
+    @Optional() private readonly brainGateway?: BrainGateway,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -2011,16 +2016,14 @@ export class WebSurfaceController {
     } catch {
       previewInstructions = null;
     }
-    const ts =
-      this.jit?.fireLifecycle('preview-requested', {
-        repoId: thread.repo_id,
-        jobId,
-        orgId: org.id,
-        // Same concrete surface the hand-rolled call used — NOT the ambient `CHAT_SURFACE` (which the
-        // 'agent' test surface can rebind to something else entirely).
-        surface: this.surface,
-        previewInstructions,
-      }) ?? '';
+    await this.brainGateway?.seedPreviewOnPostBuild({
+      jobId,
+      orgId: org.id,
+      repoId: thread.repo_id,
+      previewInstructions: previewInstructions ?? null,
+    });
+    // The durable pump enqueues the seed without a rendered message row, so there is no timestamp to echo.
+    const ts = '';
     return { ok: true, ts };
   }
 

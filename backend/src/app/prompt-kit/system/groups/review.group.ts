@@ -14,7 +14,7 @@ import { isReview } from '../conditions';
 @FragmentGroup()
 export class ReviewGroup {
   /** Scope the PR — the target + how to fetch it. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1082, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1082, condition: isReview })
   scope(): string {
     return [
       'SCOPE THE PR. The operator names the PR to review (a `<review>` block on your first turn carries the PR',
@@ -30,7 +30,7 @@ export class ReviewGroup {
   }
 
   /** The finder angles — what a real defect looks like. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1084, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1084, condition: isReview })
   finderAngles(): string {
     return [
       'HUNT FOR REAL DEFECTS, not style nits. Read every hunk line by line, then Read the enclosing function',
@@ -46,7 +46,7 @@ export class ReviewGroup {
   }
 
   /** Verify before you report. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1086, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1086, condition: isReview })
   verify(): string {
     return [
       'VERIFY EACH FINDING BEFORE YOU REPORT IT. A plausible-looking bug that cannot actually happen is noise',
@@ -60,7 +60,7 @@ export class ReviewGroup {
   }
 
   /** Present the review + offer next steps. */
-  @Fragment({ usedBy: [Agent.ATLAS_MAIN], order: 1088, condition: isReview })
+  @Fragment({ usedBy: [Agent.PLANNING], order: 1088, condition: isReview })
   present(): string {
     return [
       'PRESENT THE REVIEW to the operator as a normal chat message (never a raw JSON array). Lead with a 2–3',
