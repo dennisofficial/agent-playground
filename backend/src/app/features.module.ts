@@ -6,6 +6,7 @@ import { ClusterModule } from './cluster';
 import { AutoFixModule } from './autofix';
 import { BrainModule } from './brain';
 import { BrainGatewayModule } from './brain-gateway';
+import { DriverApprovalGatewayModule } from './driver-approval-gateway';
 import { DecisionGateModule } from './decision-gate';
 import { DriverModule, LiveVerificationModule } from './driver';
 import { HostStatsModule } from './host-stats';
@@ -85,6 +86,7 @@ import { ThreadGroupKindModule } from './thread-group-kind';
     DecisionGateModule,
     AutoFixModule,
     BrainGatewayModule,
+    DriverApprovalGatewayModule,
     BrainModule,
     DriverModule,
     LiveVerificationModule,
