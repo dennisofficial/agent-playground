@@ -840,7 +840,7 @@ export class DriverStoreService {
       select: { id: true, config: true },
     });
     const v = isRecord(g?.config) ? g!.config.skillNudge : undefined;
-    return isRecord(v) ? (v as unknown as SkillNudge) : null;
+    return isSkillNudge(v) ? v : null;
   }
 
   /**
@@ -2096,6 +2096,15 @@ function toThread(row: ThreadEntity): DriverThread {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSkillNudge(value: unknown): value is SkillNudge {
+  if (!isRecord(value) || !Array.isArray(value.skills)) return false;
+  if (typeof value.at !== 'string') return false;
+  return value.skills.every(
+    (s) =>
+      isRecord(s) && typeof s.name === 'string' && typeof s.reason === 'string',
+  );
 }
 
 function toReviewChild(row: ThreadEntity): ReviewChildThread {

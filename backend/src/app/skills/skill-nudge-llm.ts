@@ -21,21 +21,25 @@ import { fence, fenceOrNone } from '../prompt-fence';
  * here is worth risking a thrown error interrupting the build turn it's meant to merely assist.
  */
 
-export interface SkillNudgeSelector {
+export type SkillNudgeSelection = { name: string; reason: string };
+
+export type SkillNudgeSelectorInput = {
+  /** The thread's overview + brief + decisions, rendered as plain text — untrusted, fenced. */
+  context: string;
+  /** The candidate skills the build turn could attach. */
+  skills: { name: string; description: string }[];
+  /** The tenant whose Anthropic key backs this call (omit → env fallback). */
+  orgId?: string;
+};
+
+export type SkillNudgeSelector = {
   /**
    * Pick which of the available skills are directly relevant to a thread's current work.
    * @returns the relevant skills (possibly empty) — NEVER throws; resolves to `[]` when no LLM is
    *          available (no key), on any error, or when nothing genuinely applies.
    */
-  select(input: {
-    /** The thread's overview + brief + decisions, rendered as plain text — untrusted, fenced. */
-    context: string;
-    /** The candidate skills the build turn could attach. */
-    skills: { name: string; description: string }[];
-    /** The tenant whose Anthropic key backs this call (omit → env fallback). */
-    orgId?: string;
-  }): Promise<{ name: string; reason: string }[]>;
-}
+  select(input: SkillNudgeSelectorInput): Promise<SkillNudgeSelection[]>;
+};
 
 export const SKILL_NUDGE_SELECTOR = Symbol('SKILL_NUDGE_SELECTOR');
 
@@ -45,16 +49,20 @@ export const SKILL_NUDGE_SELECTOR = Symbol('SKILL_NUDGE_SELECTOR');
  * can't break templating.
  */
 export namespace SelectSkillNudgeChain {
-  export interface Input {
+  export type Input = {
     context: string;
     skills: { name: string; description: string }[];
-  }
+  };
 
   export const Schema = z.object({
     relevant: z.array(
       z.object({
         name: z.string(),
-        reason: z.string(),
+        reason: z
+          .string()
+          .describe(
+            'One short line explaining why the skill directly applies.',
+          ),
       }),
     ),
   });
@@ -141,11 +149,7 @@ export class AnthropicSkillNudgeSelector implements SkillNudgeSelector {
     return c;
   }
 
-  async select(input: {
-    context: string;
-    skills: { name: string; description: string }[];
-    orgId?: string;
-  }): Promise<{ name: string; reason: string }[]> {
+  async select(input: SkillNudgeSelectorInput): Promise<SkillNudgeSelection[]> {
     const chain = await this.chain(input.orgId);
     if (!chain) return [];
     try {
@@ -156,10 +160,15 @@ export class AnthropicSkillNudgeSelector implements SkillNudgeSelector {
       const knownNames = new Set(input.skills.map((s) => s.name));
       return out.relevant
         .filter((r) => knownNames.has(r.name))
-        .map((r) => ({ name: r.name, reason: r.reason }));
+        .map((r) => ({ name: r.name, reason: oneLineReason(r.reason) }));
     } catch {
       // Malformed/blocked structured output → fail soft; a silent nudge is a harmless no-op.
       return [];
     }
   }
+}
+
+function oneLineReason(reason: string): string {
+  const normalized = reason.replace(/\s+/g, ' ').trim();
+  return (normalized || 'directly relevant').slice(0, 200);
 }

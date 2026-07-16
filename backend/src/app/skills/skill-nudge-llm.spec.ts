@@ -68,4 +68,18 @@ describe('AnthropicSkillNudgeSelector', () => {
     const result = await selector.select({ context: 'ctx', skills });
     expect(result).toEqual([{ name: 'a', reason: 'r' }]);
   });
+
+  it('normalizes selected reasons to one line before persisting', async () => {
+    const chainFactory = () => ({
+      invoke: async () => ({
+        relevant: [{ name: 'a', reason: 'line one\nline two' }],
+      }),
+    });
+    const selector = new AnthropicSkillNudgeSelector(
+      async () => 'fake-key',
+      chainFactory as any,
+    );
+    const result = await selector.select({ context: 'ctx', skills });
+    expect(result).toEqual([{ name: 'a', reason: 'line one line two' }]);
+  });
 });

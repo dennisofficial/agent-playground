@@ -75,7 +75,7 @@ export function renderBatchTask(
         '\n<available_skills>',
         'A skill that looks directly relevant to THIS thread is available. Before you start implementing,',
         'load it with the `Skill` tool to pull its guidance — do not work from memory when a matching skill exists:',
-        ...skillNudge.map((s) => `- \`${s.name}\` — ${s.reason}`),
+        ...skillNudge.map((s) => `- \`${s.name}\``),
         '</available_skills>',
       ].join('\n')
     : '';

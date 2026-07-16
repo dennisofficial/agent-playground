@@ -17,7 +17,7 @@ do the thing
 <available_skills>
 A skill that looks directly relevant to THIS thread is available. Before you start implementing,
 load it with the `Skill` tool to pull its guidance — do not work from memory when a matching skill exists:
-- `nestjs-best-practices` — backend NestJS work
+- `nestjs-best-practices`
 </available_skills>
 
 COMMIT YOUR WORK (required — the host does NOT commit for you): once the work is done and verified, run `git add -A` (your `.gitignore` governs what's tracked; if build or cache junk appears in `git status`, add it to `.gitignore` instead of committing it), commit with a clear message, and `git push` your branch. Leave the working tree CLEAN. THEN call `complete_thread`. If you finish without committing, your work is treated as unfinished.

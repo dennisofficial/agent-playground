@@ -108,6 +108,24 @@ interface StoreState {
   threadGroupConfigs?: Record<string, Record<string, unknown>>;
 }
 
+function isFakeSkillNudge(
+  value: unknown,
+): value is { skills: { name: string; reason: string }[]; at: string } {
+  if (value == null || typeof value !== 'object' || Array.isArray(value))
+    return false;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.skills) || typeof record.at !== 'string')
+    return false;
+  return record.skills.every(
+    (s) =>
+      s != null &&
+      typeof s === 'object' &&
+      !Array.isArray(s) &&
+      typeof (s as Record<string, unknown>).name === 'string' &&
+      typeof (s as Record<string, unknown>).reason === 'string',
+  );
+}
+
 function makeStore(state: StoreState): {
   store: DriverStoreService;
   state: StoreState;
@@ -545,9 +563,7 @@ function makeStore(state: StoreState): {
     // skills) counts as "already decided".
     readGroupSkillNudge: vi.fn(async (threadGroupId: string) => {
       const v = state.threadGroupConfigs?.[threadGroupId]?.skillNudge;
-      return v != null && typeof v === 'object' && !Array.isArray(v)
-        ? (v as { skills: { name: string; reason: string }[]; at: string })
-        : null;
+      return isFakeSkillNudge(v) ? v : null;
     }),
     persistGroupSkillNudge: vi.fn(
       async (
@@ -2074,6 +2090,52 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           p.includes('`nestjs-best-practices`'),
       ),
     ).toBe(true);
+  });
+
+  it('ignores malformed persisted group selection and re-decides the nudge fail-soft', async () => {
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [thread('sec-be', 10, 'Backend')],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+      threadGroupConfigs: {
+        'thread-group-sec-be': {
+          skillNudge: { skills: 'not-an-array', at: new Date().toISOString() },
+        },
+      },
+    };
+    const select = vi.fn(async () => [
+      { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
+    ]);
+    const h = assemble(state, {
+      skillResolver: {
+        resolveForTurn: async () =>
+          [
+            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+          ] as never,
+        resolveReviewSkillsForThread: async () => [],
+      },
+      skillNudgeSelector: { select } as unknown as SkillNudgeSelector,
+    });
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
+      'thread-group-sec-be',
+      expect.objectContaining({
+        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
+      }),
+    );
+    const prompt = String(
+      h.sunk.find((s) => s.block.kind === 'build_anchor')?.block.meta?.prompt,
+    );
+    expect(prompt).toContain('<available_skills>');
+    expect(prompt).toContain('`nestjs-best-practices`');
+    expect(prompt).not.toContain('backend NestJS work');
   });
 
   it('re-attaches a still-live build turn on resume instead of re-running it (recovery parity with the brain)', async () => {
