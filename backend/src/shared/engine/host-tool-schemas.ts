@@ -197,7 +197,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     dependsOn: z.union([z.string(), z.array(z.string())]).optional(),
     autoMode: z
       .object({
-        approveMode: z.enum(['off', 'plan', 'ship', 'both']).optional(),
+        approveMode: z.enum(['off', 'plan', 'ship']).optional(),
         merge: z.boolean().optional(),
       })
       .optional(),

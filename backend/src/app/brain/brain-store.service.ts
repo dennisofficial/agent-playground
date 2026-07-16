@@ -46,6 +46,11 @@ import {
 import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
 
+export type CreateJobAutoMode = {
+  approveMode?: Exclude<AutoApproveMode, 'both'>;
+  merge?: boolean;
+};
+
 /** Where a thread lives on the surface — the channel coordinate + the thread root ts to reply into. */
 export interface ThreadRoute {
   /** The surface-native channel coordinate (e.g. a Slack channel id); null until the channel is bound. */
@@ -2262,7 +2267,7 @@ export class BrainStoreService {
     /** Agent-facing `create_job` auto-mode override. Present (even `{}`) only when the caller wants to
      *  resolve auto-approve/auto-merge against the org's defaults; undefined (onboarding's call sites)
      *  leaves the auto_* columns at their entity defaults, unchanged from before this option existed. */
-    autoMode?: { approveMode?: AutoApproveMode; merge?: boolean };
+    autoMode?: CreateJobAutoMode;
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
