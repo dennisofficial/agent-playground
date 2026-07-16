@@ -141,6 +141,20 @@ export type EngineEvent =
       contextModel?: string;
       contextLimit: number;
     }
+  /**
+   * A full context-window breakdown for the MAIN agent — the same `/context`-style category decomposition
+   * as the {@link ContextBreakdown} type doc. Emitted mid-turn (a live, best-effort snapshot fetched via an
+   * extra control round-trip) AND at turn end (the authoritative, awaited snapshot). `parentToolUseId` is
+   * carried on the type for symmetry with `usage`, but in practice this event is only ever emitted for the
+   * MAIN agent — never set for a subagent (the SDK's `getContextUsage()` control method has no per-subagent
+   * variant). Claude-only; live-only (NOT persisted verbatim — the turn-end `turn_meta` block carries the
+   * last snapshot via {@link EngineUsage.contextBreakdown}).
+   */
+  | {
+      kind: 'context_breakdown';
+      parentToolUseId?: string;
+      breakdown: ContextBreakdown;
+    }
   /** A subscription rate-limit frame harvested from the SDK's `rate_limit_event` stream (claude.ai plans only).
    *  Carries the raw window info so the host can update the per-org usage snapshot AND (when status==='rejected')
    *  park the lane. Live-only; never persisted as a transcript block. */
@@ -206,6 +220,32 @@ export type EngineEvent =
       reason: string;
     };
 
+/** One category slice of a context-window breakdown (system prompt, tools, messages, etc.), as reported by
+ *  the Claude Agent SDK's `Query.getContextUsage()`. */
+export interface ContextBreakdownCategory {
+  name: string;
+  tokens: number;
+  color: string;
+}
+
+/**
+ * A full context-window breakdown for one main-agent turn — the same decomposition Claude Code's `/context`
+ * command renders. Sourced from the Claude Agent SDK's `Query.getContextUsage()` control method
+ * (streaming-input mode only); Claude-only (absent for Codex). Trimmed from the SDK's raw response to keep
+ * the persisted JSON small (see `normalizeContextBreakdown`).
+ */
+export interface ContextBreakdown {
+  model: string;
+  totalTokens: number;
+  maxTokens: number;
+  /** 0..100, as the SDK reports it. */
+  percentage: number;
+  categories: ContextBreakdownCategory[];
+  mcpTools?: { name: string; serverName: string; tokens: number }[];
+  memoryFiles?: { path: string; tokens: number }[];
+  agents?: { agentType: string; tokens: number }[];
+}
+
 /**
  * One model's slice of a turn's usage — the SDK's per-model breakdown (Claude only; absent for Codex).
  * All counts/cost are SDK-computed. Keyed by model id inside {@link EngineUsage.modelUsage}.
@@ -252,6 +292,10 @@ export interface EngineUsage {
    * when no per-call model was seen.
    */
   contextModel?: string;
+  /** The full per-category context breakdown for this turn's END-OF-TURN occupancy (Claude only; absent for
+   *  Codex or when the SDK's `getContextUsage()` control method is unavailable/errors). Sourced the same way
+   *  as {@link contextTokens} but carries the full `/context`-style category decomposition. */
+  contextBreakdown?: ContextBreakdown;
   /**
    * Per-model usage breakdown for the WHOLE turn (orchestrator + any subagents), keyed by model id —
    * the SDK's `result.modelUsage` map carried verbatim (Claude only; absent for Codex). The
