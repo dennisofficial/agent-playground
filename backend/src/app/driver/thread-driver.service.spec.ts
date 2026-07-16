@@ -239,6 +239,7 @@ function makeStore(state: StoreState): {
     setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
       state.job.activity = activity;
     }),
+    recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
       state.job.activity = 'idle';
@@ -1481,6 +1482,44 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(materialized.some((c) => c[0].id === staleId)).toBe(false);
     // The build still completes to a PR.
     expect(state.job.status).toBe('done');
+  });
+
+  it('resumes an auto_fixing builder as finished — no re-execute, review resumes, and handoff advances', async () => {
+    // A restart can catch a builder after it completed and while its review children are running:
+    // `runReviewChildren` has flipped the builder to `auto_fixing`, but the builder's own work and
+    // handoff are already durable. The build loop must resume review/advance, not re-run that builder.
+    const backend = thread('sec-be', 10, 'Backend', 'auto_fixing');
+    backend.handoffOut = 'Backend handoff from completed builder';
+    backend.startSha = 'sha-before-backend';
+    const frontend = thread('sec-fe', 20, 'Frontend');
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [backend, frontend],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const executeStepIds = h.calls
+      .filter((c) => c.mode === 'execute')
+      .map((c) => c.stepId);
+    expect(executeStepIds).not.toContain('sec-be-ph0');
+    expect(executeStepIds).toContain('sec-fe-ph0');
+    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith(
+      'sec-be',
+      'executing',
+    );
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'sec-be' }),
+      expect.any(Array),
+    );
+    expect(frontend.handoffIn).toBe('Backend handoff from completed builder');
+    expect(backend.status).toBe('done');
   });
 
   it('runs the master-review thread as a CODEX execute turn (xhigh) and SKIPS per-thread auto-fix for it', async () => {

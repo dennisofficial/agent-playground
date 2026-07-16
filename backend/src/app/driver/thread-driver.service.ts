@@ -1519,6 +1519,7 @@ export class ThreadDriver implements JobDispatcher {
     }
     // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
     await this.store.setActivity(jobId, 'build').catch(() => undefined);
+    await this.store.recomputeBuildStageProgress(jobId).catch(() => undefined);
     // CAP (MAX_SECTIONS): bound the number of BUILD thread groups driven per run, but NEVER drop a
     // master_review thread group (it rides last). I cap BUILD THREAD GROUPS rather than builder threads —
     // a build thread group's rotated legs are its own budget (MAX_LEGS_PER_THREAD_GROUP), so the pipeline
@@ -1669,12 +1670,14 @@ export class ThreadDriver implements JobDispatcher {
       const builders = (
         await this.store.driverThreadsForThreadGroup(threadGroup.id)
       ).filter((t) => t.kind === 'builder');
-      // Carry the newest already-done builder's handoff forward — covers both a resume (legs done before
-      // this drive) and the post-run state (the leg we just finished). A rotated leg overrides this with
-      // its own `handoff_in` below.
-      const lastDone = [...builders].reverse().find((t) => t.status === 'done');
-      if (lastDone?.handoffOut) handoff = lastDone.handoffOut;
-      const next = builders.find((t) => t.status !== 'done');
+      const builderFinished = (t: DriverThread) =>
+        t.status === 'done' || t.status === 'auto_fixing';
+      // Carry the newest finished builder's handoff forward — covers both a resume (including the
+      // `auto_fixing` review window) and the post-run state (the leg we just finished). A rotated leg
+      // overrides this with its own `handoff_in` below.
+      const lastFinished = [...builders].reverse().find(builderFinished);
+      if (lastFinished?.handoffOut) handoff = lastFinished.handoffOut;
+      const next = builders.find((t) => !builderFinished(t));
       if (!next) break; // builder chain genuinely finished
       const res = await this.runThread(
         job,
@@ -1694,6 +1697,10 @@ export class ThreadDriver implements JobDispatcher {
       }
       handoff = res.handoff;
     }
+
+    // Builder chain genuinely finished — advance the sidebar's build-stage count now (before review), so a
+    // just-finished builder counts immediately and the 'auto_fixing' review window doesn't hold it back.
+    await this.store.recomputeBuildStageProgress(job.id).catch(() => undefined);
 
     // REVIEW ONCE PER THREAD GROUP (d13): after the LAST builder leg is genuinely done, run the review
     // over the thread group's CUMULATIVE diff (the FIRST leg's `start_sha`..HEAD — HEAD already carries

@@ -263,6 +263,48 @@ export class DriverStoreService {
     await this.jobs.update({ id: jobId }, { activity });
   }
 
+  /** Recompute the job's build-stage progress and write it change-gated onto the jobs row so the flat
+   *  realtime projection carries it live. A build/direct_build thread group is "done" when it has >=1
+   *  builder thread and all its builder threads have finished building — status 'done' or 'auto_fixing'
+   *  (the review-window affordance). Review is NOT required, and 'auto_fixing' prevents the count
+   *  regressing while a just-finished builder is being reviewed. Scoped to the job's ACTIVE plan
+   *  revision (`jobs.decision_record_id`), same as {@link threadsForJob} — a mid-build re-plan keeps the
+   *  prior revision's build thread groups around as immutable history, and without this filter they'd
+   *  keep being counted alongside the new plan's groups forever. */
+  async recomputeBuildStageProgress(jobId: string): Promise<void> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
+    const activeRecordId = job?.decision_record_id ?? null;
+    const groups = await this.threadGroups.find({ where: { job_id: jobId } });
+    const buildGroups = groups.filter(
+      (g) =>
+        (g.kind === 'build' || g.kind === 'direct_build') &&
+        (activeRecordId
+          ? g.decision_record_id === activeRecordId
+          : g.decision_record_id == null),
+    );
+    const total = buildGroups.length;
+    const builderFinished = (s: string) => s === 'done' || s === 'auto_fixing';
+    let done = 0;
+    for (const g of buildGroups) {
+      const builders = await this.threads.find({
+        where: { thread_group_id: g.id, role: 'builder' },
+        select: { id: true, status: true },
+      });
+      if (builders.length > 0 && builders.every((t) => builderFinished(t.status)))
+        done += 1;
+    }
+    await this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ build_stages_done: done, build_stages_total: total })
+      .where(
+        'id = :id AND (build_stages_done IS DISTINCT FROM :done OR build_stages_total IS DISTINCT FROM :total)',
+        { id: jobId, done, total },
+      )
+      .execute()
+      .catch(() => undefined);
+  }
+
   /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
    *  JOB-level to stay distinct from {@link clearHalt} (the per-thread halt table). A halt means the build
    *  STOPPED, so `activity` is cleared to `idle` in the same write (a stale `build`/`master_review` must not

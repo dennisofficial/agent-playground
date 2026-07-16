@@ -61,6 +61,10 @@ export interface ThreadRealtimeRow extends Row {
   prState: string | null;
   /** Tri-state sidebar port badge ('exposed'|'internal'|null) — precomputed by ExposureService.reconcile. */
   portState: string | null;
+  /** Sidebar build-stage progress ('n of N' builder stages done) — precomputed by
+   *  DriverStoreService.recomputeBuildStageProgress. Null = not applicable / never computed. */
+  buildStagesDone: number | null;
+  buildStagesTotal: number | null;
   /** True only while a "Ship it" is being finalized (PR opening). Shipping re-uses the `running` status,
    *  so this distinguishes "opening PR" from "building threads" and keeps the card in "Ready to Ship". */
   shipping: boolean;
@@ -128,6 +132,10 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     prMergeable: (raw.pr_mergeable as string | null) ?? null,
     prState: (raw.pr_state as string | null) ?? null,
     portState: (raw.port_state as string | null) ?? null,
+    buildStagesDone:
+      raw.build_stages_done == null ? null : Number(raw.build_stages_done),
+    buildStagesTotal:
+      raw.build_stages_total == null ? null : Number(raw.build_stages_total),
     // Small timestamp col, always present in the `SELECT *` snapshot / WAL new-row image (never TOASTed).
     shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,

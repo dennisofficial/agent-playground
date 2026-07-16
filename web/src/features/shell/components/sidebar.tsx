@@ -609,6 +609,7 @@ function RepoGroup({
                   key={t.id}
                   thread={t}
                   orgId={orgId}
+                  section={section}
                   active={
                     pathname ===
                     threadHref({ orgId, repoId: repo.repoId, jobId: t.id })
@@ -704,10 +705,12 @@ function SidebarSection({
 function ThreadRow({
   thread,
   orgId,
+  section,
   active,
 }: {
   thread: InboxThread;
   orgId: string;
+  section: JobSection;
   active: boolean;
 }) {
   return (
@@ -786,6 +789,14 @@ function ThreadRow({
           style={{ background: "var(--accent)" }}
           aria-hidden
         />
+      ) : section === "building" && thread.buildStagesTotal != null ? (
+        <span
+          className="mt-px flex-none font-mono text-[10px] text-faint"
+          title="Builder stages completed"
+          aria-label={`${thread.buildStagesDone ?? 0} of ${thread.buildStagesTotal} builder stages completed`}
+        >
+          {thread.buildStagesDone ?? 0}/{thread.buildStagesTotal}
+        </span>
       ) : null}
     </Link>
   );

@@ -403,7 +403,7 @@ function ThreadGroupFold({
   const count = isDraft
     ? "draft"
     : tasks.length > 0
-      ? `[${done}/${tasks.length}]`
+      ? `${done}/${tasks.length}`
       : "";
 
   return (

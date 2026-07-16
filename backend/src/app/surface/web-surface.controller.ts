@@ -894,6 +894,9 @@ export class WebSurfaceController {
         ciCounts: t.ci_counts,
         // Tri-state sidebar port badge, precomputed by ExposureService.reconcile ('exposed'|'internal'|null).
         portState: t.port_state,
+        // Sidebar build-stage progress, precomputed by DriverStoreService.recomputeBuildStageProgress.
+        buildStagesDone: t.build_stages_done,
+        buildStagesTotal: t.build_stages_total,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,

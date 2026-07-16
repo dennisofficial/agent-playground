@@ -56,6 +56,11 @@ export interface RawInboxThread {
   /** Sidebar port badge tri-state (`jobs.port_state`): a live service exposed via a public preview URL,
    *  a live but unexposed service, or null when nothing is running. */
   portState?: "exposed" | "internal" | null;
+  /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`).
+   *  null = not applicable / never computed. */
+  buildStagesDone?: number | null;
+  /** Total build/direct_build thread groups in the job's plan (`jobs.build_stages_total`). */
+  buildStagesTotal?: number | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt?: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
@@ -95,6 +100,10 @@ export interface InboxThread {
   /** Sidebar port badge tri-state: a live service exposed via a public preview URL, a live but
    *  unexposed service, or null when nothing is running. Exposed-wins is resolved server-side. */
   portState: "exposed" | "internal" | null;
+  /** Count of build/direct_build thread groups whose builder work has finished. null = not applicable. */
+  buildStagesDone: number | null;
+  /** Total build/direct_build thread groups in the job's plan. */
+  buildStagesTotal: number | null;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
   halt: WireJobHalt | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
@@ -140,6 +149,8 @@ export function normalize(r: RawInboxThread): InboxThread {
     ci: r.ciStatus ?? null,
     ciCounts: r.ciCounts ?? null,
     portState: r.portState ?? null,
+    buildStagesDone: r.buildStagesDone ?? null,
+    buildStagesTotal: r.buildStagesTotal ?? null,
     halt: r.halt ?? null,
     shipping: r.shipping ?? false,
     createdBy: r.createdBy ?? null,
