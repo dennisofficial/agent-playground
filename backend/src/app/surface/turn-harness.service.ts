@@ -789,11 +789,7 @@ export class TurnHarnessFactory {
           }
           case 'user_text': {
             if (!e.text.trim()) break;
-            const meta = tagMeta(
-              e.parentToolUseId
-                ? { parentToolUseId: e.parentToolUseId }
-                : undefined,
-            );
+            const meta = tagMeta({ parentToolUseId: e.parentToolUseId });
             blocks.push({
               kind: 'user',
               text: e.text,

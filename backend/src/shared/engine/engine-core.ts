@@ -1004,7 +1004,11 @@ export class EngineCore {
               } else if (block.type === 'text' && parent) {
                 const text = block.text;
                 if (text && text.trim())
-                  onEvent?.({ kind: 'user_text', text, ...sub });
+                  onEvent?.({
+                    kind: 'user_text',
+                    text,
+                    parentToolUseId: parent,
+                  });
               }
             }
           }

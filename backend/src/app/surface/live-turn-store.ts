@@ -401,7 +401,7 @@ export class LiveTurnStore {
         return emittedAt;
       }
       case 'user_text': {
-        if (!text.trim()) break;
+        if (!pid || !text.trim()) break;
         const emittedAt = this.stamp();
         blocks.push({
           kind: 'user',

@@ -118,6 +118,22 @@ describe("job-stream user_text — parent→sub-agent SendMessage injection", ()
     });
   });
 
+  it("ignores user_text frames that are not parented to a sub-agent", () => {
+    const jobId = "job-user-text-unparented";
+
+    applyStreamFrame(jobId, MAIN_LANE, 1, {
+      kind: "user_text",
+      text: "main-thread steer echo must not render here",
+    });
+    applyStreamFrame(jobId, MAIN_LANE, 2, {
+      kind: "user_text",
+      text: "   ",
+      parentToolUseId: "tu-sub-ignored",
+    });
+
+    expect(peekLiveTurn(jobId)?.blocks).toHaveLength(0);
+  });
+
   it("never coalesces consecutive injections into one block (each is a discrete turn)", () => {
     const jobId = "job-user-text-discrete";
 

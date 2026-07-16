@@ -327,6 +327,7 @@ class ThreadStreamStore {
       case "user_text":
         // Always a standalone completed turn — never merged/coalesced with adjacent narration (unlike
         // "text", which may finalize an open delta block).
+        if (!pid || !text.trim()) break;
         blocks.push({
           kind: "user",
           key: `c${blockSeq++}`,

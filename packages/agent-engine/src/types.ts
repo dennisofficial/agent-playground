@@ -73,7 +73,7 @@ export type EngineEvent =
    * the agent's own narration. Only ever emitted when `parentToolUseId` is SET (sub-agent only); the
    * main-thread operator-steer path persists at call time and never relies on this.
    */
-  | { kind: 'user_text'; text: string; parentToolUseId?: string }
+  | { kind: 'user_text'; text: string; parentToolUseId: string }
   | { kind: 'tool'; name: string; detail?: string }
   | { kind: 'result'; text: string }
   /**
