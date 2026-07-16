@@ -55,6 +55,10 @@ export async function drainTurnEventConsumer(
         if (stop) return;
       }
     } catch {
+      // The failure may have happened AFTER XREADGROUP delivered entries but BEFORE we acked them. In that
+      // case those entries are now in this group's PEL and a later `>` read will never return them. Re-run
+      // the pending-recovery pass after the backoff so transient handler/Redis failures do not strand work.
+      claimedPending = false;
       // A transient redis error (e.g. the connection closing on shutdown) would otherwise tight-spin —
       // back off briefly so we don't busy-loop while the process drains (mirrors consumeTools).
       await new Promise((r) => setTimeout(r, 250));

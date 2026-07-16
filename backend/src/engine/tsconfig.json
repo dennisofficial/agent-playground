@@ -9,12 +9,7 @@
     "**/*",
     "../shared/**/*",
     "../_core/**/*",
-    "../_lib/**/*",
-    "../app/sandbox/redis-turn-keys.ts",
-    "../app/sandbox/container-paths.ts",
-    "../app/sandbox/image/host-tool-schemas.ts",
-    "../app/sandbox/image/reserved-mcp-names.ts",
-    "../app/sandbox/image/mcp-hub-config.ts"
+    "../_lib/**/*"
   ],
   "exclude": [
     "../../node_modules",

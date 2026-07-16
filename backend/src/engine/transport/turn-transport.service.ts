@@ -6,7 +6,7 @@ import type {
   EngineRunResult,
   TurnSpec,
 } from '@shared/engine/engine.types';
-import { turnKeys } from '../../app/sandbox/redis-turn-keys';
+import { turnKeys } from '@shared/engine/redis-turn-keys';
 import {
   REDIS_STREAM_PORT,
   type RedisStreamPort,

@@ -78,6 +78,31 @@ describe('drainTurnEventConsumer', () => {
     expect(seen).toEqual([1, 2]);
   });
 
+  it('reclaims an entry delivered before a transient handler failure', async () => {
+    const redis = new InMemoryRedisStream();
+    await seed(redis, [1]);
+
+    const seen: number[] = [];
+    let calls = 0;
+    await drainTurnEventConsumer({
+      redis,
+      stream: STREAM,
+      group: 'g1',
+      consumer: 'c1',
+      blockMs: 20,
+      isDone: () => false,
+      onEntry: (entry) => {
+        calls += 1;
+        const n = (entry.data as { n: number }).n;
+        seen.push(n);
+        if (calls === 1) throw new Error('transient');
+        return true;
+      },
+    });
+
+    expect(seen).toEqual([1, 1]);
+  });
+
   it('two independent groups on the same stream each see the FULL sequence independently', async () => {
     const redis = new InMemoryRedisStream();
     await seed(redis, [1, 2, 3]);

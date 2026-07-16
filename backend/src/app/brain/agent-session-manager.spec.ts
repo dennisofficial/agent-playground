@@ -3438,6 +3438,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     } as unknown as Repository<JobSandboxEntity>;
     const steer = opts.steer ?? vi.fn().mockResolvedValue(undefined);
     const dockerRunner = {
+      pushesLiveRouteEvents: true,
       run:
         opts.run ?? vi.fn().mockResolvedValue({ result: '', sessionId: 's' }),
       steer,

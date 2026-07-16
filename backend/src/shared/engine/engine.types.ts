@@ -591,6 +591,13 @@ export interface TurnMeta {
  * mode; the former in-process `EngineRunner` has been removed.
  */
 export interface EngineRunnerPort {
+  /**
+   * True when this runner consumes {@link RunEngineArgs.liveRoute} itself and mirrors events into
+   * `LiveTurnStore` out-of-band from the caller's `onEvent` handler. Callers that build a
+   * `TurnHarnessFactory` can use this to avoid double-pushing live frames while still supporting faked
+   * runners in full-App tests.
+   */
+  readonly pushesLiveRouteEvents?: boolean;
   run(args: RunEngineArgs): Promise<EngineRunResult>;
   /**
    * RE-ATTACH to an in-flight turn after a backend restart — resume tailing its durable Redis streams +

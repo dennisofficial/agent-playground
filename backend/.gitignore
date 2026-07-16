@@ -4,11 +4,11 @@
 *.tsbuildinfo
 /coverage
 
-# generated engine bundle (the API rebundles it on boot into dist; the CLI can regenerate it in src)
+# legacy generated engine bundle (removed from the Docker path; ignored so stale local artifacts stay local)
 engine-entrypoint.mjs
-# generated Codex MCP tool-bridge server bundle (re-bundled on boot alongside the engine bundle)
+# generated Codex MCP tool-bridge server bundle (re-bundled on boot alongside the engine app)
 mcp-bridge-server.mjs
-# generated in-sandbox MCP hub bundle (re-bundled on boot alongside the engine bundle)
+# generated in-sandbox MCP hub bundle (re-bundled on boot alongside the engine app)
 mcp-hub-server.mjs
 # generated engine app bundle (nest build engine --webpack; baked at image-build time, regenerable via
 # `pnpm -C backend build:engine`, mirrored live at boot by ensureEngineApp())

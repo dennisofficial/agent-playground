@@ -133,6 +133,29 @@ describe('TurnHarnessFactory — the shared transcript spine', () => {
     expect(frames.slice(before)).toHaveLength(0); // no frame at all, in particular no turn_end
   });
 
+  it('livePush: mirrors engine events into LiveTurnStore for direct or faked runners', async () => {
+    const { live, factory } = setup();
+    const h = factory.create({
+      jobId: 'T',
+      threadId: 'th1',
+      channel: 'R',
+      livePush: true,
+    });
+
+    h.onEvent({ kind: 'text_delta', text: 'Hel' });
+    h.onEvent({ kind: 'text_delta', text: 'lo' });
+
+    const snap = live.snapshot('R', 'T');
+    expect(snap).not.toBeNull();
+    expect(snap!.blocks.find((b) => b.kind === 'text')).toMatchObject({
+      text: 'Hello',
+      done: false,
+    });
+
+    await h.finish('Hello');
+    expect(live.snapshot('R', 'T')).toBeNull();
+  });
+
   it('usage: a subagent-tagged occupancy stamps its anchor Task block; a main-agent one does not', async () => {
     const { persisted, factory } = setup();
     const h = factory.create({

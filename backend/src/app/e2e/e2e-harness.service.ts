@@ -18,6 +18,8 @@ import {
   RepoEntity,
   JobEntity,
   OrganizationEntity,
+  UserEntity,
+  OrganizationMemberEntity,
 } from '../persistence/entities';
 import type { ChatStimulus } from '@shared/domain';
 import {
@@ -61,12 +63,15 @@ export interface E2eConfig {
 
 const TEAM_ID = 'a0a0a0a0-0000-4000-8000-000000000002'; // matches AgentChatSurface's DEFAULT_TEAM_ID (sentinel org uuid)
 const CHANNEL_REF = 'C-E2E';
-const PROJECT_ID = 'e2e-project';
+const PROJECT_ID = '00000000-e2e0-4000-8000-e2e000000002';
+const PROJECT_SLUG = 'e2e-project';
 const OFFLINE_REPO_URL = 'https://github.com/atlas-e2e/sample.git';
 /** Stable thread id pre-seeded by the harness for the feature scenario's direct submit_plan call. */
 const FEATURE_THREAD_ID = '00000000-e2e0-4000-8000-e2e000000001';
 /** Human author id stamped on the fake ChatStimulus in the feature scenario. */
 const DEFAULT_HUMAN_ID = 'U-E2E';
+/** Stable user id for approval rows, whose approver column is UUID-typed. */
+const E2E_APPROVER_ID = '00000000-e2e0-4000-8000-e2e000000003';
 
 /**
  * THE `e2e` HARNESS — the end-to-end verification (W9) of the whole Atlas v2 graph driven over the
@@ -131,6 +136,10 @@ export class E2eHarness {
           attach: async ({ sandbox }: { sandbox: unknown }) => sandbox,
           teardown: async () => {},
           teardownByIdentity: async () => {},
+          contextDirHost: (orgId: string, jobId: string) =>
+            `/tmp/atlas-e2e-context/${orgId}/${jobId}`,
+          supervisorDirHost: () => null,
+          probeLiveness: async () => ({ status: 'unknown' }),
         })
         .overrideProvider(LocalGitService)
         .useValue(new FakeLocalGitService())
@@ -194,6 +203,8 @@ export class E2eHarness {
     await this.purgePriorRun();
 
     const orgs = this.repo(OrganizationEntity);
+    const users = this.repo(UserEntity);
+    const members = this.repo(OrganizationMemberEntity);
     const projects = this.repo(RepoEntity);
     const threads = this.repo(JobEntity);
 
@@ -205,10 +216,27 @@ export class E2eHarness {
         status: 'active',
       }),
     );
+    await users.save(
+      users.create({
+        id: E2E_APPROVER_ID,
+        email: 'e2e-approver@example.invalid',
+        password_hash: 'e2e-no-login',
+        name: 'Atlas E2E Approver',
+        role: 'operator',
+      }),
+    );
+    await members.save(
+      members.create({
+        org_id: TEAM_ID,
+        user_id: E2E_APPROVER_ID,
+        role: 'owner',
+      }),
+    );
     await projects.save(
       projects.create({
+        id: PROJECT_ID,
         org_id: TEAM_ID,
-        slug: PROJECT_ID,
+        slug: PROJECT_SLUG,
         name: 'Atlas E2E Project',
         git_url: gitUrl,
         default_branch: baseBranch,
@@ -233,7 +261,7 @@ export class E2eHarness {
     );
 
     this.logger.log(
-      `Seeded ${TEAM_ID}/${PROJECT_ID} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`,
+      `Seeded ${TEAM_ID}/${PROJECT_SLUG} → ${gitUrl} (thread ${FEATURE_THREAD_ID})`,
     );
   }
 
@@ -267,6 +295,19 @@ export class E2eHarness {
       () => undefined,
     );
     await q(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(
+      `DELETE FROM organization_members WHERE org_id = $1 OR user_id = $2`,
+      [TEAM_ID, E2E_APPROVER_ID],
+    ).catch(() => undefined);
+    await q(`DELETE FROM repos WHERE org_id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM organizations WHERE id = $1`, [TEAM_ID]).catch(
+      () => undefined,
+    );
+    await q(`DELETE FROM users WHERE id = $1`, [E2E_APPROVER_ID]).catch(
       () => undefined,
     );
   }
@@ -329,7 +370,11 @@ export class E2eHarness {
       if (!card) return { name: 'feature', ok: false, steps };
 
       // Approve the decision record (the human gate) — the seam the Slack button would hit.
-      const resolved = this.approvals.resolve(card.jobId, 'approve', 'e2e');
+      const resolved = this.approvals.resolve(
+        card.jobId,
+        'approve',
+        E2E_APPROVER_ID,
+      );
       record(
         'approve',
         resolved,

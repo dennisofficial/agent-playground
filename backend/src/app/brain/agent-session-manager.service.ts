@@ -2093,6 +2093,7 @@ export class AgentSessionManager
         threadId,
         channel: row.channel,
         turnId: row.turn_id,
+        livePush: !this.engineRunner.pushesLiveRouteEvents,
       });
       const sandboxRow = await this.sandboxRows.findOne({
         where: { job_id: row.job_id, org_id: row.org_id },
@@ -2633,6 +2634,7 @@ export class AgentSessionManager
       orgId: stimulus.orgId,
       threadId,
       channel,
+      livePush: !this.engineRunner.pushesLiveRouteEvents,
     });
     // One-shot guard so THIS turn's fully-assembled prompt (the operator body PLUS the invisible folded
     // prefixes: compaction seed / reset notice / awareness / open-questions) is surfaced exactly once, on

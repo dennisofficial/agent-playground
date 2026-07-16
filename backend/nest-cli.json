@@ -27,7 +27,8 @@
       "sourceRoot": "src",
       "compilerOptions": {
         "tsConfigPath": "src/engine/tsconfig.json",
-        "webpack": true
+        "webpack": true,
+        "webpackConfigPath": "webpack.engine.config.js"
       }
     }
   }

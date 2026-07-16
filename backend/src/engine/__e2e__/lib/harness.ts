@@ -1,6 +1,6 @@
 // Shared helpers for the engine e2e scenarios. STANDALONE by design: imports only `ioredis` + node
 // builtins (never repo code), so `tsx` runs a scenario with no path-alias / project plumbing. The wire
-// shapes below MIRROR `@shared/engine/engine.types` (TurnSpec) and `app/sandbox/redis-turn-keys` — they
+// shapes below MIRROR `@shared/engine/engine.types` (TurnSpec) and `@shared/engine/redis-turn-keys` — they
 // are deliberately re-declared here rather than imported, exactly like the manual smoke scripts these
 // port from, so the harness stays decoupled from the app build.
 //
@@ -31,7 +31,7 @@ export const HAIKU = 'claude-haiku-4-5-20251001';
 
 export type Frame = Record<string, unknown> & { t?: string };
 
-/** One turn's Redis key namespace — mirrors `app/sandbox/redis-turn-keys.ts`. */
+/** One turn's Redis key namespace — mirrors `@shared/engine/redis-turn-keys.ts`. */
 export function turnKeys(turnId: string) {
   return {
     spec: `turn:${turnId}:spec`,

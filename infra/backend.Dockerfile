@@ -68,7 +68,8 @@ CMD ["node_modules/.bin/dotenvx", "run", "-f", ".env.production.enc", "--", "pnp
 FROM build AS prod-deps
 # --ignore-scripts: the dists were already built in `build`; pruning to --prod removes devDeps (tsup
 # etc.), so re-running workspace `prepare`/native rebuilds here would fail (tooling gone) and is
-# unnecessary — the already-built outputs are kept.
+# unnecessary — the already-built outputs are kept. esbuild stays as a runtime dep for the MCP bridge/hub
+# refreshers; the engine app itself is prebuilt by `build:engine` above.
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --prod --ignore-scripts
 
@@ -94,7 +95,7 @@ COPY --from=prod-deps /srv/atlas/app/backend/node_modules ./backend/node_modules
 COPY --from=build /srv/atlas/app/backend/dist        ./backend/dist
 COPY --from=build /srv/atlas/app/backend/src         ./backend/src
 # The sandbox image build context — a fixed committed dir (backend/sandbox/), identical at build & runtime
-# (NOT copied into dist). bundleEngine writes engine-entrypoint.mjs here at boot; ensureImage builds from it.
+# (NOT copied into dist). build:engine writes engine-app.js(+.map) here; ensureImage builds from it.
 COPY --from=build /srv/atlas/app/backend/sandbox     ./backend/sandbox
 COPY --from=build /srv/atlas/app/backend/migrations  ./backend/migrations
 COPY --from=build /srv/atlas/app/backend/cli         ./backend/cli
@@ -119,8 +120,8 @@ RUN chmod +x /usr/local/bin/backend-entrypoint.sh
 EXPOSE 4002
 
 # On first boot the backend (entirely in-process — no extra entrypoint logic):
-#   1. bundleEngine() → writes engine-entrypoint.mjs into the fixed backend/sandbox/ build-context dir AND
-#      mirrors it to ENGINE_BUNDLE_PATH (A8).
+#   1. ensureEngineApp() → verifies backend/sandbox/engine-app.js(+.map) and mirrors it to
+#      ENGINE_APP_BUNDLE_PATH / ENGINE_APP_MAP_PATH when configured.
 #   2. SandboxImageBuilder.ensureImage() → builds atlas-sandbox:latest on the host daemon from
 #      backend/sandbox/ if the tag is absent (or its context hash changed).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \

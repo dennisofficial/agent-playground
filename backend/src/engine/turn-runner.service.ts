@@ -19,7 +19,10 @@ import {
   partitionAtlasProdTools,
   qualifyAtlasProdToolNames,
 } from '@shared/bridge-names/atlas-prod-bridge-options';
-import { TOOL_SHAPES, TOOL_DESCRIPTIONS } from '../app/sandbox/image/host-tool-schemas';
+import {
+  TOOL_DESCRIPTIONS,
+  TOOL_SHAPES,
+} from '@shared/engine/host-tool-schemas';
 import { buildLspBridgeOptions } from './transport/bridges/lsp-bridge-options';
 import { buildUserMcpBridgeOptions } from './transport/bridges/user-mcp-bridge-options';
 import { TurnTransport } from './transport/turn-transport.service';
@@ -69,11 +72,7 @@ export class TurnRunner {
         | undefined;
       let workspaceProfileBridge: BridgeClaudeOptions | undefined;
       let atlasProdBridge: BridgeClaudeOptions | undefined;
-      if (
-        spec.engine === 'claude' &&
-        spec.toolBridgeTools &&
-        spec.toolBridgeTools.length > 0
-      ) {
+      if (spec.engine === 'claude' && Array.isArray(spec.toolBridgeTools)) {
         const toolBridge = this.transport.openToolBridge(turnId);
         // Round-trip for host tools invoked OUTSIDE the model's tool list (e.g. the install-awareness
         // PostToolUse hook): raw host result, not an SDK tool-content envelope.
@@ -122,15 +121,17 @@ export class TurnRunner {
           partitionWorkspaceProfileTools(spec.toolBridgeTools);
         const { rest: generalToolNames, atlasProd: atlasProdToolNames } =
           partitionAtlasProdTools(hostToolNames);
-        const server = claudeSdk.createSdkMcpServer({
-          name: BRIDGE_SERVER_NAME,
-          version: '1.0.0',
-          instructions:
-            'Atlas host tools. Call these to interact with the host harness.',
-          tools: generalToolNames.map(makeProxyTool),
-          alwaysLoad: true,
-        });
-        bridge = buildBridgeClaudeOptions(server, generalToolNames);
+        if (generalToolNames.length > 0) {
+          const server = claudeSdk.createSdkMcpServer({
+            name: BRIDGE_SERVER_NAME,
+            version: '1.0.0',
+            instructions:
+              'Atlas host tools. Call these to interact with the host harness.',
+            tools: generalToolNames.map(makeProxyTool),
+            alwaysLoad: true,
+          });
+          bridge = buildBridgeClaudeOptions(server, generalToolNames);
+        }
         if (profileToolNames.length > 0) {
           const profileServer = claudeSdk.createSdkMcpServer({
             name: WORKSPACE_PROFILE_BRIDGE_NAME,

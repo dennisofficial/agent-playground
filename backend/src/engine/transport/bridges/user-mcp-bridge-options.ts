@@ -21,9 +21,9 @@
  */
 import type { CodexExtraMcpServers } from '@shared/engine/codex-auth-home';
 import type { ResolvedMcpServer } from '@shared/engine/engine.types';
-import { mcpHubUrl } from '../../../app/sandbox/image/mcp-hub-config';
+import { mcpHubUrl } from '@shared/mcp/mcp-hub-config';
 
-import { isReservedMcpName } from '../../../app/sandbox/image/reserved-mcp-names';
+import { isReservedMcpName } from '@shared/mcp/reserved-mcp-names';
 
 export interface UserMcpBridgeOptions {
   /** `{ mcpServers: { <name>: {...} } }` — spread verbatim into the SDK `Options` (Claude). */

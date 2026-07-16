@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Redis } from 'ioredis';
 import { InMemoryRedisStream } from '../../_lib/redis/in-memory-redis-stream';
-import { turnKeys } from '../../app/sandbox/redis-turn-keys';
+import { turnKeys } from '@shared/engine/redis-turn-keys';
 import { TurnTransport } from './turn-transport.service';
 
 const TURN = 'T1';

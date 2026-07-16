@@ -218,8 +218,8 @@ export function submoduleGitlinks(worktreePath: string): string[] {
  * rev 15 = per-repo cold-boot setup script (`repos.setup_script`): run on every COLD attach and its hash
  *   folded into the `atlas.cfg` fingerprint (so editing the script recreates a warm container to re-run it).
  *   Bumped once so existing warm containers recreate and pick up the run-on-cold codepath.
- * rev 16 = added the new webpacked engine-app.js(+.map) bind alongside the old engine-entrypoint.mjs
- *   bind — recreates existing warm containers so they pick it up.
+ * rev 16 = replaced the old engine-entrypoint.mjs bind with the webpacked engine-app.js(+.map) bind —
+ *   recreates existing warm containers so they pick it up.
  *
  * NOTE: the per-repo mount SET + the setup-script hash are ALSO folded into the `atlas.cfg` fingerprint
  * below, so a changed manifest mount list / setup script recreates the container even without bumping this rev.

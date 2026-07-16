@@ -118,6 +118,8 @@ export interface AttachArgs {
 export class RedisEngineRunner implements EngineRunnerPort {
   private readonly logger = new Logger(RedisEngineRunner.name);
 
+  readonly pushesLiveRouteEvents = true;
+
   /** Turn ids THIS process is currently attach-looping (see {@link isAttached}). */
   private readonly attached = new Set<string>();
 
