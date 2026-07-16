@@ -871,6 +871,7 @@ function buildLogItems(
           result: m.result,
           isError: Boolean(m.isError),
           structuredPatch: m.structuredPatch as ToolItem["structuredPatch"],
+          jitContext: m.jitContext as ToolItem["jitContext"],
         },
       });
       continue;
