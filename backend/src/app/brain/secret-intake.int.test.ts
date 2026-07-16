@@ -128,7 +128,7 @@ describe('repo onboarding — secure secret intake (live Postgres, leak assertio
 
     // (3) THE LEAK ASSERTION — the plaintext value is in NO message row (card text, card jsonb, anything).
     const rows = await ds.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${SECRET_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);

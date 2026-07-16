@@ -239,6 +239,7 @@ function makeStore(state: StoreState): {
     setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
       state.job.activity = activity;
     }),
+    recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
       state.job.activity = 'idle';
@@ -281,6 +282,15 @@ function makeStore(state: StoreState): {
         brief: 'Ship — open the PR',
       }),
     ),
+    postBuildThreadId: vi.fn(async (jobId: string) => {
+      const existing = state.threads.find(
+        (thread) =>
+          thread.jobId === jobId &&
+          thread.parentThreadId == null &&
+          thread.kind === 'post_build',
+      );
+      return existing?.id ?? null;
+    }),
     ensureCiThread: vi.fn(async () =>
       ensureSingletonThread({
         kind: 'ci',
@@ -1123,9 +1133,13 @@ function assemble(
   // brain through. Records each seeded `openPrAtShip` turn + the driver's Phase-3 `notifyThreadHalted`
   // wakes (the seeded/wake turns themselves are exercised in the brain specs — here the host latches by
   // branch discovery, and the fake mirrors the brain stamping `halt_waked_at`).
+  const gateSeeds: Array<{ jobId: string; threadId: string }> = [];
   const brainGateway = {
     openPrAtShip: async (input: { jobId: string; branch: string }) => {
       shipSeeds.push({ jobId: input.jobId, branch: input.branch });
+    },
+    seedPostBuildGate: async (input: { jobId: string; threadId: string }) => {
+      gateSeeds.push({ jobId: input.jobId, threadId: input.threadId });
     },
     notifyThreadHalted: async (
       jobId: string,
@@ -1264,8 +1278,8 @@ function assemble(
       async (jobId: string) => {
         if (state.job.status !== 'running') return false;
         state.job.status = 'awaiting_ship_review';
-        // Fire the "Ship it" on a MACROtask (not a microtask): the parking drive must fully unwind and clear
-        // its `active` guard first, else the re-drive is dropped as a duplicate and the job wedges at running.
+        // Fire the "Ship it" on a MACROtask to preserve the historical operator-after-park shape for most
+        // tests. A dedicated regression below covers the tighter click-while-parking race.
         setTimeout(() => {
           void driver.resolveShipApprovalDurably(jobId, 'auto-test');
         }, 0);
@@ -1481,6 +1495,44 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(materialized.some((c) => c[0].id === staleId)).toBe(false);
     // The build still completes to a PR.
     expect(state.job.status).toBe('done');
+  });
+
+  it('resumes an auto_fixing builder as finished — no re-execute, review resumes, and handoff advances', async () => {
+    // A restart can catch a builder after it completed and while its review children are running:
+    // `runReviewChildren` has flipped the builder to `auto_fixing`, but the builder's own work and
+    // handoff are already durable. The build loop must resume review/advance, not re-run that builder.
+    const backend = thread('sec-be', 10, 'Backend', 'auto_fixing');
+    backend.handoffOut = 'Backend handoff from completed builder';
+    backend.startSha = 'sha-before-backend';
+    const frontend = thread('sec-fe', 20, 'Frontend');
+    const state: StoreState = {
+      job: makeJob(),
+      record: makeRecord(),
+      threads: [backend, frontend],
+      steps: [],
+      route: { channel: 'C1', threadTs: 't1' },
+      operatorInputCards: [],
+    };
+    const h = assemble(state);
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    const executeStepIds = h.calls
+      .filter((c) => c.mode === 'execute')
+      .map((c) => c.stepId);
+    expect(executeStepIds).not.toContain('sec-be-ph0');
+    expect(executeStepIds).toContain('sec-fe-ph0');
+    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith(
+      'sec-be',
+      'executing',
+    );
+    expect(h.store.materializeReviewChildren).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'sec-be' }),
+      expect.any(Array),
+    );
+    expect(frontend.handoffIn).toBe('Backend handoff from completed builder');
+    expect(backend.status).toBe('done');
   });
 
   it('runs the master-review thread as a CODEX execute turn (xhigh) and SKIPS per-thread auto-fix for it', async () => {
@@ -3426,6 +3478,28 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     // The re-drive fast-forwarded the already-done threads — it did NOT re-execute or re-review them.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it('ships when the ship approval races the active drive that is parking the gate', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    (h.store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
+      async (jobId: string) => {
+        if (state.job.status !== 'running') return false;
+        state.job.status = 'awaiting_ship_review';
+        await h.driver.resolveShipApprovalDurably(jobId, 'dennis');
+        return true;
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toEqual([
+      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
+    ]);
   });
 
   it('a second (stale/double) ship approval is a no-op once the job has shipped', async () => {

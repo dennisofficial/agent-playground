@@ -9,10 +9,10 @@ export * from './organization-member.entity';
 export * from './org-invite.entity';
 export * from './repo.entity';
 export * from './job.entity';
-export * from './message.entity';
+export * from './transcript-message.entity';
 export * from './active-turn.entity';
 export * from './tool-execution.entity';
-export * from './stimulus.entity';
+export * from './inbound-message.entity';
 export * from './thread-group.entity';
 export * from './thread.entity';
 export * from './task.entity';
@@ -39,10 +39,10 @@ import { OrganizationMemberEntity } from './organization-member.entity';
 import { OrgInviteEntity } from './org-invite.entity';
 import { RepoEntity } from './repo.entity';
 import { JobEntity } from './job.entity';
-import { MessageEntity } from './message.entity';
+import { TranscriptMessageEntity } from './transcript-message.entity';
 import { ActiveTurnEntity } from './active-turn.entity';
 import { ToolExecutionEntity } from './tool-execution.entity';
-import { StimulusEntity } from './stimulus.entity';
+import { InboundMessageEntity } from './inbound-message.entity';
 import { ThreadGroupEntity } from './thread-group.entity';
 import { ThreadEntity } from './thread.entity';
 import { TaskEntity } from './task.entity';
@@ -71,10 +71,10 @@ export const ENTITIES = [
   OrgInviteEntity,
   RepoEntity,
   JobEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ActiveTurnEntity,
   ToolExecutionEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   ThreadGroupEntity,
   ThreadEntity,
   TaskEntity,

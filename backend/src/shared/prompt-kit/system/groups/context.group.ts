@@ -4,7 +4,7 @@
  *
  * TOPIC bucket: context / authored artifacts (normal brain only).
  */
-import { Agent } from '../agent';
+import { Agent, SHIP_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain } from '../conditions';
 
@@ -12,7 +12,7 @@ import { isBuildBrain } from '../conditions';
 export class ContextGroup {
   /** The /context shared folder. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1150,
     condition: isBuildBrain,
   })
@@ -49,9 +49,27 @@ export class ContextGroup {
     ].join('\n');
   }
 
+  /** The /context shared folder — POST_BUILD/CI's leaner variant: they don't author specs, so this is a
+   *  pointer to what's already there (the plan, the build's evidence, any preview HTML) rather than the
+   *  spec-authoring cadence above, which stays PLANNING-only. */
+  @Fragment({
+    usedBy: SHIP_STAGES,
+    order: 1151,
+    condition: isBuildBrain,
+  })
+  postShipContext(): string {
+    return [
+      'THE /context SHARED FOLDER: `/context/specs` holds the plan this build was built from,',
+      '`/context/evidence/<NNN>/RESULTS.md` the live-run proof it was verified with, and `/context/artifacts`',
+      'any preview HTML — read these (plus the worktree, and job transcripts via `atlas-tx` if you need more)',
+      'to reconstruct what was built and why. Write your OWN live-run proof (logs, screenshots, a RESULTS.md)',
+      'under `/context/evidence` when you verify an amend.',
+    ].join('\n');
+  }
+
   /** normal block 15b — default to an HTML preview for UI work + link /context files. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1152,
     condition: isBuildBrain,
   })

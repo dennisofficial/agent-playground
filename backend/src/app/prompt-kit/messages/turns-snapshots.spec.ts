@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { shipOpenPrBody } from './ship-open-pr';
+import { postBuildGateSeed } from './post-build-gate';
 import {
   HANDOFF_SCHEMA,
   RECORD_LEG_HANDOFF_DESCRIPTION,
@@ -24,6 +25,12 @@ describe('turns / golden snapshots', () => {
     });
     await expect(out).toMatchFileSnapshot(
       './__snapshots__/ship-open-pr-body.txt',
+    );
+  });
+
+  it('postBuildGateSeed', async () => {
+    await expect(postBuildGateSeed()).toMatchFileSnapshot(
+      './__snapshots__/post-build-gate-body.txt',
     );
   });
 

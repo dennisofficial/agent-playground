@@ -32,11 +32,11 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ENTITIES,
   JobEntity,
-  MessageEntity,
-  StimulusEntity,
+  TranscriptMessageEntity,
+  InboundMessageEntity,
 } from '../persistence/entities';
 import { JobBootstrapService } from '../job-bootstrap';
-import type { EventStimulus } from '@shared/domain';
+import type { EventMessage } from '@shared/domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
@@ -114,10 +114,10 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
   let ds: DataSource;
   let controller: GithubEventsWebhookController;
   let jobs: Repository<JobEntity>;
-  let messages: Repository<MessageEntity>;
-  let stimuli: Repository<StimulusEntity>;
+  let messages: Repository<TranscriptMessageEntity>;
+  let stimuli: Repository<InboundMessageEntity>;
   let repoId: string;
-  const delivered: EventStimulus[] = [];
+  const delivered: EventMessage[] = [];
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
@@ -160,7 +160,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
         {
           provide: BRAIN_SINK,
           useValue: {
-            deliverEvent: async (s: EventStimulus) => void delivered.push(s),
+            deliverEvent: async (s: EventMessage) => void delivered.push(s),
             handleChat: async () => undefined,
             enqueueChat: async () => undefined,
           },
@@ -171,8 +171,8 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
     controller = mod.get(GithubEventsWebhookController);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
-    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
-    stimuli = mod.get(getRepositoryToken(StimulusEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
+    stimuli = mod.get(getRepositoryToken(InboundMessageEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, 'GH Int Org', 'gh-int-org', 'active')
@@ -194,9 +194,9 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
 
   beforeEach(async () => {
     delivered.length = 0;
-    await ds.query('DELETE FROM stimuli WHERE org_id = $1', [ORG_ID]);
+    await ds.query('DELETE FROM inbound_messages WHERE org_id = $1', [ORG_ID]);
     await ds.query(
-      'DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      'DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
       [ORG_ID],
     );
     await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { ChatStimulus } from '@shared/domain';
+import type { TurnEnvelope } from '@shared/domain';
 import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { StimulusStoreService } from './stimulus-store.service';
 
@@ -20,7 +20,7 @@ export const CHAT_DELIVERY_LEASE_MS = 2 * 60 * 1000;
 /** The coalescing selection for a fresh turn: the pending rows, one `<user>` chunk each, the id set to stamp
  *  delivered, and whether any row is wake-eligible (only then may a fresh turn START). */
 export interface CollectedPending {
-  pending: ChatStimulus[];
+  pending: TurnEnvelope[];
   userChunks: TurnChunk[];
   ids: string[];
   wake: boolean;
@@ -46,24 +46,24 @@ export interface DeliveryLane {
   canSteer(): boolean;
   steer(turnId: string, id: string, body: string): Promise<void>;
   /** The engine-facing string for a pending row's body (lane-specific framing). */
-  renderBody(pending: ChatStimulus): string;
+  renderBody(pending: TurnEnvelope): string;
   drainFreshTurn(collected: CollectedPending): Promise<void>;
 }
 
 /** Wake-eligible (d18): `now`/`queue` (absent = `now`) may WAKE a fresh turn; `later` only rides along. */
-export function isWakeEligible(s: ChatStimulus): boolean {
+export function isWakeEligible(s: TurnEnvelope): boolean {
   return (s.priority ?? 'now') !== 'later';
 }
 
 /** Steer-eligible (d18): only `now` (absent = `now`) steers mid-turn; `queue`/`later` never interrupt a live turn. */
-export function isNowPriority(s: ChatStimulus): boolean {
+export function isNowPriority(s: TurnEnvelope): boolean {
   return (s.priority ?? 'now') === 'now';
 }
 
 /** Build the `<user name at>` chunk for a human message — attribution reconstructed from the stimulus
  *  author + receipt time at engine-render time (the persisted body stays clean). `role` is provisioned for
  *  later multi-operator persona context; unset for now. */
-export function userChunkFor(stimulus: ChatStimulus): TurnChunk {
+export function userChunkFor(stimulus: TurnEnvelope): TurnChunk {
   return {
     kind: 'user',
     body: stimulus.body,
@@ -93,7 +93,7 @@ export async function collectPending(
       logger?.warn(
         `pump: eligiblePendingChat failed for thread=${jobId}: ${err}`,
       );
-      return [] as ChatStimulus[];
+      return [] as TurnEnvelope[];
     });
   if (pending.length === 0) return null;
   return {
@@ -109,7 +109,7 @@ export async function steerPending(
   store: StimulusStoreService,
   lane: Pick<DeliveryLane, 'steer' | 'renderBody'>,
   turnId: string,
-  pending: ChatStimulus[],
+  pending: TurnEnvelope[],
   logger?: Pick<Logger, 'warn' | 'debug'>,
 ): Promise<void> {
   await store
@@ -148,7 +148,7 @@ export async function trySteerLive(
       logger?.warn(
         `pump: eligiblePendingChat failed for thread=${lane.jobId}: ${err}`,
       );
-      return [] as ChatStimulus[];
+      return [] as TurnEnvelope[];
     });
   const nowOnly = pending.filter(isNowPriority);
   if (nowOnly.length)

@@ -4,16 +4,20 @@
  * durable ship card directly against live Postgres, then POSTs
  * `.../jobs/:jobId/spin-up-preview` and asserts the endpoint's full contract:
  *
- *   - at the gate, FIRST click → 201 `{ ok:true, ts }`, stamps the ship card `previewRequestedAt`, and
- *     emits ONE `SYSTEM_SEED_AUTHOR` seed turn carrying the full preview procedure + the
- *     `seed:preview:<jobId>` render row (captured off `surface.inbound$`);
- *   - a SECOND click → 201 `{ ok:true, ts:'' }`, no second seed (idempotent double-click);
+ *   - at the gate, FIRST click → 201 `{ ok:true, ts:'' }`, stamps the ship card `previewRequestedAt`, and
+ *     durably seeds the preview-prep body onto the job's `post_build` session (d14) — the pump runs that
+ *     turn to completion (fake engine) before the POST resolves, and writes ONE `seed:preview:<jobId>`
+ *     pill row (label + full body in `meta.fullBody`), asserted directly off `messages`. There is no
+ *     rendered timestamp to echo (the durable pump owns delivery, not a live `surface.inbound$` emission).
+ *   - a SECOND click → 201 `{ ok:true, ts:'' }`, no second seed row (idempotent double-click);
  *   - a job NOT at `awaiting_ship_review` → 201 `{ ok:false, ts:'' }`, no stamp, no seed.
  *
  * (The whole web-surface controller returns Nest's default 201 for POSTs — no `@HttpCode` anywhere; the
  * JSON body is the contract, mirroring `answerQuestion`/`provideSecret`.)
  *
- * Mirrors `web-surface.shipping.int.test.ts` for HTTP/auth setup.
+ * Mirrors `web-surface.shipping.int.test.ts` for HTTP/auth setup. The `SANDBOX_PROVIDER` override mirrors
+ * `streaming-resume.int.test.ts` — the seed now runs a real (fake-engine) turn on a fresh `post_build`
+ * session, which lazily provisions the job's sandbox on its first turn.
  */
 
 import { getDataSourceToken } from '@nestjs/typeorm';
@@ -28,6 +32,7 @@ import { ENGINE_RUNNER } from '@shared/engine';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
+import { SANDBOX_PROVIDER } from '../sandbox';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -38,15 +43,8 @@ import { JobTitler } from '../titling';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { JobBootstrapService } from '../job-bootstrap';
-import { WebSurface } from './web-surface';
 import { webShipReviewCard } from './web-approval-card';
-import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
-import type { InboundChatMessage } from './chat-surface.port';
-import type { SeedRow } from '@shared/domain/stimulus';
 import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
-
-/** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
-type SeedRowObject = Exclude<SeedRow, 'skip'>;
 
 const fakeCreds = {
   anthropicKey: async () => undefined,
@@ -66,7 +64,6 @@ const PASSWORD = 'spin-up-preview-it-pw-12345';
 
 let app: NestExpressApplication;
 let ds: DataSource;
-let surface: WebSurface;
 let configStore: WorkspaceConfigStore;
 let bootstrap: JobBootstrapService;
 let server: ReturnType<NestExpressApplication['getHttpServer']>;
@@ -87,7 +84,7 @@ async function register(
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
       [GATE_JOB, RUNNING_JOB],
     ])
     .catch(() => undefined);
@@ -116,7 +113,7 @@ async function seedShipCardRow(jobId: string): Promise<void> {
     summary: 'The build is ready.',
   });
   await ds.query(
-    `INSERT INTO messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, ts, card)
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, ts, card)
      VALUES ($1, $2, 'Atlas', 'atlas', 'atlas', 'Ready to ship', 'card', $3, $4::jsonb)`,
     [jobId, threadId, `ship-review:${jobId}`, JSON.stringify(card)],
   );
@@ -126,7 +123,7 @@ async function shipCard(
   jobId: string,
 ): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
-    `SELECT card FROM messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
+    `SELECT card FROM transcript_messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
     [jobId, `ship-review:${jobId}`],
   )) as Array<{ card: Record<string, unknown> }>;
   return rows[0]?.card;
@@ -136,20 +133,18 @@ function previewUrl(jobId: string): string {
   return `/web/orgs/${ORG}/repos/${REPO}/jobs/${jobId}/spin-up-preview`;
 }
 
-/** Collect the seed turns the surface emits during `fn` (the Subject fires synchronously on POST). */
-async function captureSeeds(
-  fn: () => Promise<void>,
-): Promise<InboundChatMessage[]> {
-  const seeds: InboundChatMessage[] = [];
-  const sub = surface.inbound$.subscribe((m) => {
-    if (m.seed) seeds.push(m);
-  });
-  try {
-    await fn();
-  } finally {
-    sub.unsubscribe();
-  }
-  return seeds;
+/**
+ * The durable `seed:preview:<jobId>` pill row (if any) — the seed now lands as a `transcript_messages` row
+ * on the job's `post_build` session, not a live `surface.inbound$` emission (d14). `text` carries the
+ * curated label; `meta.fullBody` carries the full preview-prep body handed to the engine.
+ */
+async function previewSeedRows(
+  jobId: string,
+): Promise<Array<{ text: string; meta: Record<string, unknown> }>> {
+  return ds.query(
+    `SELECT text, meta FROM transcript_messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+    [jobId, `seed:preview:${jobId}`],
+  );
 }
 
 beforeAll(async () => {
@@ -169,6 +164,15 @@ beforeAll(async () => {
     .useValue(fakeCreds)
     .overrideProvider(JobTitler)
     .useValue(new FakeThreadTitler())
+    // The preview seed now runs a real (fake-engine) turn on the job's `post_build` session, which
+    // lazily provisions the sandbox on its first turn — fake the provider so that provisioning resolves
+    // in-process instead of reaching for real Docker (mirrors `streaming-resume.int.test.ts`).
+    .overrideProvider(SANDBOX_PROVIDER)
+    .useValue({
+      attach: async ({ sandbox }: { sandbox: unknown }) => sandbox,
+      teardown: async () => {},
+      teardownByIdentity: async () => {},
+    })
     .compile();
 
   app = moduleRef.createNestApplication<NestExpressApplication>({
@@ -180,7 +184,6 @@ beforeAll(async () => {
 
   server = app.getHttpServer();
   ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
-  surface = app.get(WebSurface);
   configStore = app.get(WorkspaceConfigStore);
   bootstrap = app.get(JobBootstrapService);
 
@@ -208,7 +211,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Fresh cards/jobs per test — each `it` seeds the exact status it needs.
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+  await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [GATE_JOB, RUNNING_JOB],
   ]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [
@@ -234,34 +237,29 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await seedShipCardRow(GATE_JOB);
   }
 
-  it('first click at the gate: 200 {ok:true,ts}, stamps the card, emits ONE full-body preview seed', async () => {
+  it('first click at the gate: 201 {ok:true,ts:""}, stamps the card, durably seeds ONE full-body preview pill', async () => {
     await seedGateJob();
 
-    let res!: request.Response;
-    const seeds = await captureSeeds(async () => {
-      res = await request(server)
-        .post(previewUrl(GATE_JOB))
-        .set('Cookie', ownerCookie);
-    });
+    const res = await request(server)
+      .post(previewUrl(GATE_JOB))
+      .set('Cookie', ownerCookie);
 
     // The whole web-surface controller returns 201 for POSTs (no `@HttpCode`); the body is the contract.
+    // The durable pump enqueues the seed without a rendered message row, so there is no timestamp to echo.
     expect(res.status).toBe(201);
-    expect(res.body.ok).toBe(true);
-    expect(typeof res.body.ts).toBe('string');
-    expect(res.body.ts.length).toBeGreaterThan(0);
+    expect(res.body).toMatchObject({ ok: true, ts: '' });
 
     // (b) the ship card is stamped.
     const card = await shipCard(GATE_JOB);
     expect(typeof card?.previewRequestedAt).toBe('string');
 
-    // (c) exactly one SYSTEM seed carrying the full procedure + the preview render row.
-    expect(seeds).toHaveLength(1);
-    const seed = seeds[0];
-    expect(seed.authorId).toBe(SYSTEM_SEED_AUTHOR.id);
-    expect(seed.text).toContain(PREVIEW_PREP_SEED_BODY);
-    const seedRow = seed.seedRow as SeedRowObject;
-    expect(seedRow.chunkKey).toBe(`seed:preview:${GATE_JOB}`);
-    expect(seedRow.label).toBe('Spin up preview requested');
+    // (c) exactly one durable pill carrying the label + the full procedure (post-turn, so the fake-engine
+    // turn on the `post_build` session already ran to completion by the time the POST resolves).
+    const rows = await previewSeedRows(GATE_JOB);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].text).toBe('Spin up preview requested');
+    expect(rows[0].meta.fullBody).toContain(PREVIEW_PREP_SEED_BODY);
+    expect(rows[0].meta.chunkKey).toBe(`seed:preview:${GATE_JOB}`);
   });
 
   it('with a stored recipe: the seed splices the saved body in a ```md fence + the "update it" footer', async () => {
@@ -270,56 +268,47 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await configStore.setPreviewInstructions(ORG, REPO, recipe);
     await seedGateJob();
 
-    const seeds = await captureSeeds(async () => {
-      await request(server)
-        .post(previewUrl(GATE_JOB))
-        .set('Cookie', ownerCookie);
-    });
+    await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
 
-    expect(seeds).toHaveLength(1);
-    const text = seeds[0].text;
-    expect(text).toContain(PREVIEW_PREP_SEED_BODY);
-    expect(text).toContain('```md\n' + recipe + '\n```');
-    expect(text).toContain('UPDATE it with `write_preview_instructions`');
-    expect(text).toContain('REPO-scoped, JOB-AGNOSTIC memory');
+    const rows = await previewSeedRows(GATE_JOB);
+    expect(rows).toHaveLength(1);
+    const body = rows[0].meta.fullBody as string;
+    expect(body).toContain(PREVIEW_PREP_SEED_BODY);
+    expect(body).toContain('```md\n' + recipe + '\n```');
+    expect(body).toContain('UPDATE it with `write_preview_instructions`');
+    expect(body).toContain('REPO-scoped, JOB-AGNOSTIC memory');
   });
 
   it('with no stored recipe: the seed nudges saving one', async () => {
     await seedGateJob();
 
-    const seeds = await captureSeeds(async () => {
-      await request(server)
-        .post(previewUrl(GATE_JOB))
-        .set('Cookie', ownerCookie);
-    });
+    await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
 
-    expect(seeds).toHaveLength(1);
-    const text = seeds[0].text;
-    expect(text).toContain(PREVIEW_PREP_SEED_BODY);
-    expect(text).toContain('(no preview recipe saved yet)');
-    expect(text).toContain('SAVE the exact repeatable stand-up procedure');
-    expect(text).toContain('REPO-scoped, JOB-AGNOSTIC memory');
+    const rows = await previewSeedRows(GATE_JOB);
+    expect(rows).toHaveLength(1);
+    const body = rows[0].meta.fullBody as string;
+    expect(body).toContain(PREVIEW_PREP_SEED_BODY);
+    expect(body).toContain('(no preview recipe saved yet)');
+    expect(body).toContain('SAVE the exact repeatable stand-up procedure');
+    expect(body).toContain('REPO-scoped, JOB-AGNOSTIC memory');
   });
 
-  it('second click: 200 {ok:true,ts:""} idempotent — no second seed, stamp unchanged', async () => {
+  it('second click: 201 {ok:true,ts:""} idempotent — no second seed row, stamp unchanged', async () => {
     await seedGateJob();
     await request(server).post(previewUrl(GATE_JOB)).set('Cookie', ownerCookie);
     const firstStamp = (await shipCard(GATE_JOB))?.previewRequestedAt;
 
-    let res!: request.Response;
-    const seeds = await captureSeeds(async () => {
-      res = await request(server)
-        .post(previewUrl(GATE_JOB))
-        .set('Cookie', ownerCookie);
-    });
+    const res = await request(server)
+      .post(previewUrl(GATE_JOB))
+      .set('Cookie', ownerCookie);
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ ok: true, ts: '' });
-    expect(seeds).toHaveLength(0);
+    expect(await previewSeedRows(GATE_JOB)).toHaveLength(1);
     expect((await shipCard(GATE_JOB))?.previewRequestedAt).toBe(firstStamp);
   });
 
-  it('not at the gate (status running): 200 {ok:false}, no stamp, no seed', async () => {
+  it('not at the gate (status running): 201 {ok:false}, no stamp, no seed', async () => {
     await ds.query(
       `INSERT INTO jobs (id, org_id, repo_id, origin, title, kind, status, activity)
        VALUES ($1, $2, $3, 'control', 'Building build', 'feature', 'running', 'build')`,
@@ -328,16 +317,13 @@ describe('spin-up-preview — POST .../jobs/:jobId/spin-up-preview (live Postgre
     await bootstrap.ensurePlanningThreadGroup(RUNNING_JOB, ORG);
     await seedShipCardRow(RUNNING_JOB);
 
-    let res!: request.Response;
-    const seeds = await captureSeeds(async () => {
-      res = await request(server)
-        .post(previewUrl(RUNNING_JOB))
-        .set('Cookie', ownerCookie);
-    });
+    const res = await request(server)
+      .post(previewUrl(RUNNING_JOB))
+      .set('Cookie', ownerCookie);
 
     expect(res.status).toBe(201);
-    expect(res.body.ok).toBe(false);
-    expect(seeds).toHaveLength(0);
+    expect(res.body).toMatchObject({ ok: false, ts: '' });
+    expect(await previewSeedRows(RUNNING_JOB)).toHaveLength(0);
     expect((await shipCard(RUNNING_JOB))?.previewRequestedAt).toBeUndefined();
   });
 });

@@ -5,11 +5,23 @@
  * `renderAgentPrompt`) selects every fragment whose `usedBy` includes that agent. This is the Claude-Code-style
  * inversion — there is no whole-body prompt per role; a role's prompt is the set of fragments addressed to it.
  *
- * Onboarding is NOT an agent — it is the SAME `ATLAS_MAIN` agent under `ctx.jobKind === 'onboarding'`.
+ * Onboarding is NOT an agent — it is the SAME `PLANNING` agent under `ctx.jobKind === 'onboarding'`.
+ *
+ * `PLANNING`/`POST_BUILD`/`CI` are the three stages the former monolithic `ATLAS_MAIN` brain was exploded
+ * into (see `ENGINEERING_STAGES` below) — each its own context-fresh, isolated-session persona sharing one
+ * "engineering base" of fragments, plus its own stage-specific ones.
  */
 export enum Agent {
-  /** The conversational job brain (intent → grill → plan → steer; also the onboarding bring-up persona). */
-  ATLAS_MAIN = 'atlas_main',
+  /** The conversational job brain (intent → grill → plan → steer; also the onboarding bring-up persona).
+   *  NOTE: the wire value stays the pre-rename `'atlas_main'` — only the TS symbol is renamed (was
+   *  `ATLAS_MAIN`) — so no persisted/serialized agent tag needs a data migration. */
+  PLANNING = 'atlas_main',
+  /** The ship-review GATE stage (spawned after master_review): build summary + preview proposal + the
+   *  amend loop, on its own fresh session. Does not open the PR. */
+  POST_BUILD = 'post_build',
+  /** The post-ship PR-lifecycle stage (spawned at Ship): PR creation + authoritative base reconcile,
+   *  CI/CD updates, and ongoing PR maintenance (failing checks / review comments / conflicts). */
+  CI = 'ci',
   /** A build/execute thread orchestrator (`worker-orchestrate`). */
   WORKER = 'worker',
   /** A fan-out writer subagent (`implement`/`implement-deep`) — the only subagent that changes files. */
@@ -40,6 +52,15 @@ export enum Agent {
 
 /** Every agent — for a fragment that belongs in every assembled prompt. */
 export const ALL: Agent[] = Object.values(Agent);
+
+/** Every stage the ATLAS_MAIN brain exploded into — the shared "engineering base" audience (edit, verify-by-
+ *  running, git ownership, host-tools, sandbox/runtime basics). A fragment addressed here reaches all three
+ *  context-fresh stages; PLANNING additionally gets its own planning-only fragments. */
+export const ENGINEERING_STAGES: Agent[] = [Agent.PLANNING, Agent.POST_BUILD, Agent.CI];
+
+/** The two post-build operations stages (ship-gate + post-ship) — for fragments shared by both but not
+ *  PLANNING. */
+export const SHIP_STAGES: Agent[] = [Agent.POST_BUILD, Agent.CI];
 
 /** The code-changing build agents (worker orchestrator + its fan-out writers). */
 export const BUILDERS: Agent[] = [Agent.WORKER, Agent.FAN_OUT];

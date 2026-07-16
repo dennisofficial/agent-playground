@@ -254,6 +254,14 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'jsonb', nullable: true })
   ci_counts!: CiCounts | null;
 
+  /** Sidebar build-stage progress, written change-gated by DriverStoreService.recomputeBuildStageProgress:
+   *  count of build/direct_build thread groups whose builders are all done, out of the total. null = n/a. */
+  @Column({ type: 'int', nullable: true })
+  build_stages_done!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  build_stages_total!: number | null;
+
   /**
    * Last observed GitHub PR `mergeable_state` (e.g. `clean | dirty | behind | blocked`) — set by the
    * reconciler; `dirty` drives the merge-conflict badge + the conflict harness event to the brain.

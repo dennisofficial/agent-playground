@@ -9,10 +9,6 @@ import {
   ROTATION_SOFT_NUDGE,
 } from '../messages/build-handoff';
 import {
-  PREVIEW_PREP_SEED_BODY,
-  composePreviewPrepSeed,
-} from '../system/fragments';
-import {
   JIT_RULES,
   bgTaskCapRule,
   findLifecycleRule,
@@ -21,9 +17,9 @@ import {
   legRotationRule,
   memoryPrependRule,
   operatorMessageRules,
-  previewPrepRule,
   svcNudgeRule,
 } from './rules';
+import { planApprovedRule } from './plan-approved';
 import { validateJitRules } from './rule';
 import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
 import {
@@ -184,31 +180,6 @@ describe('bgTaskCapRule', () => {
   });
 });
 
-describe('previewPrepRule', () => {
-  it('is a lifecycle preview-requested rule delivered as a host seed notice', () => {
-    expect(previewPrepRule.trigger).toEqual({
-      kind: 'lifecycle',
-      event: 'preview-requested',
-    });
-    expect(previewPrepRule.delivery).toBe('host-seed-notice');
-    expect(previewPrepRule.render({})).toContain(PREVIEW_PREP_SEED_BODY);
-  });
-
-  it('carries the shipped seed label + chunkKey', () => {
-    expect(previewPrepRule.seed?.label).toBe('Spin up preview requested');
-    expect(previewPrepRule.seed?.chunkKey({ jobId: 'J' })).toBe(
-      'seed:preview:J',
-    );
-  });
-
-  it('splices the saved preview recipe body verbatim inside the managed fence', () => {
-    const recipe = '  export WEB_PORT=3000\npnpm seed\nOpen /dashboard\n';
-    expect(composePreviewPrepSeed(recipe)).toContain(
-      '```md\n' + recipe + '```',
-    );
-  });
-});
-
 describe('memoryPrependRule (turn-prefix rail, d18)', () => {
   it('is an operator-message rule delivered as a turn-prefix in the reserved memory slot', () => {
     expect(memoryPrependRule.trigger).toEqual({ kind: 'operator-message' });
@@ -245,7 +216,7 @@ describe('JIT_RULES catalog', () => {
     expect(JIT_RULES).toContain(githubFetchGuardRule);
   });
 
-  it('findLifecycleRule resolves preview-requested to previewPrepRule', () => {
-    expect(findLifecycleRule('preview-requested')).toBe(previewPrepRule);
+  it('findLifecycleRule resolves plan-approved to planApprovedRule (the only lifecycle rule left — Thread 4 retired preview-requested)', () => {
+    expect(findLifecycleRule('plan-approved')).toBe(planApprovedRule);
   });
 });

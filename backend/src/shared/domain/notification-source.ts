@@ -1,18 +1,19 @@
 /**
  * The `NotificationSource` edge — the INBOUND-ONLY notification edge. Where a `ChatSurface` is duplex
  * (post + `inbound$`, bound to a thread), a `NotificationSource` only ever EMITS: it parses + verifies +
- * routes a gateway's webhook payload into one `EventStimulus`. It has NO reply path — a notification
- * SEEDS a thread (the `EventStimulus` opens it) and every further exchange happens over the `ChatSurface`.
- * (Slated for rework — see `./stimulus.ts` + `../ARCHITECTURE.md` §7.)
+ * routes a gateway's webhook payload into one `ParsedEvent` (the intake seam then mints the `EventMessage`
+ * it delivers). It has NO reply path — a notification routes to the owning job's brain and every further
+ * exchange happens over the `ChatSurface`. (See `../ARCHITECTURE.md` §7.)
  *
  * Each gateway gets its OWN adapter (GitHub, generic webhook, later Sentry/PostHog/email) because
  * gateways are not equal: each owns its payload shape, signature/auth VERIFICATION, `dedupeKey`
  * derivation, SEVERITY mapping, and PROJECT ROUTING. The ONLY shared contract is the OUTPUT
- * (`EventStimulus`, `trust: 'untrusted'`) and everything downstream of it — so new gateways are
- * trivially extensible drop-ins.
+ * (`ParsedEvent` → `EventMessage`, `trust: 'untrusted'`) and everything downstream of it — so new gateways
+ * are trivially extensible drop-ins.
  */
 
-import type { EventStimulus } from './stimulus';
+import type { EventKind } from './message';
+import type { EventSeverity } from './seed-row';
 
 /**
  * The raw HTTP request an ingress controller hands an adapter — the exact bytes (for HMAC), the
@@ -29,15 +30,27 @@ export interface RawNotification {
 }
 
 /**
- * What verification + parsing yields BEFORE the intake mints the stimulus id / persists rows. The
- * adapter has already done routing (`orgId`/`repoId`), dedupe-key derivation, and severity
- * mapping; the intake seam adds the id, `receivedAt`, `jobId` (the seeded thread), and the
- * `kind`/`trust`/`source` invariants.
+ * What verification + parsing yields BEFORE the intake mints the message id / persists rows. The
+ * adapter has already done routing (`orgId`/`repoId`), dedupe-key derivation, and severity mapping; the
+ * intake seam adds the id, `receivedAt`, `jobId` (the owning thread), and the `type:'event'`/`trust`
+ * invariants when it builds the `EventMessage`. `eventKind` is the render-time discriminant threaded from
+ * ingress into the transcript row's `meta`. `correlation` is TRANSIENT — consumed once at routing
+ * (`resolveOwningJob`), never persisted onto the event row.
+ *
+ * A standalone shape (not `Omit<EventMessage, …>`) because the routing `correlation` here permits `null`
+ * branch/PR values the adapters emit, which the persisted `EventMessage.correlation` deliberately does not.
  */
-export type ParsedEvent = Omit<
-  EventStimulus,
-  'id' | 'receivedAt' | 'kind' | 'trust' | 'jobId'
->;
+export type ParsedEvent = {
+  orgId: string;
+  repoId: string;
+  source: string;
+  dedupeKey: string;
+  severity: EventSeverity;
+  eventKind: EventKind;
+  body: string;
+  correlation?: { branch?: string | null; prNumber?: number | null };
+  resumeThreadId?: string;
+};
 
 /** Why an adapter rejected a request — surfaced as the HTTP status the controller returns. */
 export type IngressRejectionReason =
@@ -105,8 +118,8 @@ export type IngressResult =
  * no `inbound$` — that asymmetry vs. `ChatSurface` IS the point.
  */
 export interface NotificationSource {
-  /** The gateway id this adapter handles, e.g. 'github' | 'webhook'. Becomes `EventStimulus.source`. */
+  /** The gateway id this adapter handles, e.g. 'github' | 'webhook'. Becomes the `EventMessage.source`. */
   readonly source: string;
-  /** Verify + parse + route a raw notification into an `EventStimulus` (or reject/ignore it). */
+  /** Verify + parse + route a raw notification into a `ParsedEvent` (or reject/ignore it). */
   handle(raw: RawNotification): Promise<IngressResult>;
 }

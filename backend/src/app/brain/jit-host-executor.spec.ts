@@ -4,7 +4,6 @@ import type {
   ChatSurface,
   InboundChatMessage,
 } from '../surface/chat-surface.port';
-import { PREVIEW_PREP_SEED_BODY } from '../prompt-kit';
 import { memoryPrependRule, renderPlanApprovedSeed } from '@shared/prompt-kit/jit';
 import { JitHostExecutor } from './jit-host-executor';
 
@@ -28,29 +27,6 @@ class FakeSurface implements ChatSurface {
 }
 
 describe('JitHostExecutor', () => {
-  it('fires the preview-prep rule byte-identical to the shipped hand-rolled seed call', () => {
-    const surface = new FakeSurface();
-    const executor = new JitHostExecutor(surface);
-
-    const ts = executor.fireLifecycle('preview-requested', {
-      repoId: 'R',
-      jobId: 'J',
-      orgId: 'O',
-    });
-
-    expect(ts).toBe('seeded-ts');
-    expect(surface.calls).toHaveLength(1);
-    const [channel, jobId, body, opts] = surface.calls[0];
-    expect(channel).toBe('R');
-    expect(jobId).toBe('J');
-    expect(body).toContain(PREVIEW_PREP_SEED_BODY);
-    expect(opts?.orgId).toBe('O');
-    expect(opts?.seedRow).toEqual({
-      label: 'Spin up preview requested',
-      chunkKey: 'seed:preview:J',
-    });
-  });
-
   it('returns "" when the surface cannot seed (no seedSystemNotification bound)', () => {
     const surface: ChatSurface = {
       name: 'fake',
@@ -60,7 +36,7 @@ describe('JitHostExecutor', () => {
     const executor = new JitHostExecutor(surface);
 
     expect(
-      executor.fireLifecycle('preview-requested', { repoId: 'R', jobId: 'J' }),
+      executor.fireLifecycle('plan-approved', { repoId: 'R', jobId: 'J' }),
     ).toBe('');
   });
 
@@ -101,7 +77,7 @@ describe('JitHostExecutor', () => {
     const override = new FakeSurface();
     const executor = new JitHostExecutor(injected);
 
-    executor.fireLifecycle('preview-requested', {
+    executor.fireLifecycle('plan-approved', {
       repoId: 'R',
       jobId: 'J',
       surface: override,

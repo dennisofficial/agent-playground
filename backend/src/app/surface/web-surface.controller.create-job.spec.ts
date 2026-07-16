@@ -69,6 +69,7 @@ function makeController(orgDefaults: OrgDefaults) {
     {} as never, // git
     {} as never, // jobDeps
     {} as never, // moduleRef
+    {} as never, // intake (StimulusIntake)
   );
   return { controller, jobs, savedRows };
 }

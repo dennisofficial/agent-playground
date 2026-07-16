@@ -29,9 +29,10 @@ function makeController(opts: {
   dispatcherRetry: ReturnType<typeof vi.fn>;
   seedSystemNotification: ReturnType<typeof vi.fn>;
   setSessionResume: ReturnType<typeof vi.fn>;
+  intakeChat?: ReturnType<typeof vi.fn>;
 }) {
   return new WebSurfaceController(
-    { seedSystemNotification: opts.seedSystemNotification } as never, // surface
+    { seedSystemNotification: opts.seedSystemNotification, name: 'web' } as never, // surface
     {} as never, // liveTurns
     {} as never, // driverStore
     {} as never, // threadLifecycle
@@ -57,6 +58,9 @@ function makeController(opts: {
     {} as never, // git
     {} as never, // jobDeps
     {} as never, // moduleRef
+    {
+      intakeChat: opts.intakeChat ?? vi.fn(async () => undefined),
+    } as never, // intake (StimulusIntake)
   );
 }
 
@@ -133,17 +137,26 @@ describe('WebSurfaceController — manual retry cooldown', () => {
       const jobs = fakeJobsRepo({ id: 'job-1', org_id: 'org-1', repo_id: 'repo-1', halt: null, status: 'running', title: 'Fix the flaky test' });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn(async () => undefined);
+      const intakeChat = vi.fn(async () => undefined);
       const controller = makeController({
         jobs,
         dispatcherRetry: vi.fn(),
         seedSystemNotification,
         setSessionResume,
+        intakeChat,
       });
 
       const result = await controller.retryTurn(ORG, 'job-1');
 
       expect(jobs.execute).toHaveBeenCalledTimes(1);
-      expect(seedSystemNotification).toHaveBeenCalledTimes(1);
+      // The resume nudge now seeds through the `StimulusIntake` seam as a typed `retry_resume_nudge`.
+      expect(intakeChat).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'retry_resume_nudge',
+          title: 'Fix the flaky test',
+        }),
+        expect.anything(),
+      );
       expect(setSessionResume).toHaveBeenCalledWith('job-1', null, null);
       expect(result).toEqual({ ok: true });
     });
@@ -153,15 +166,17 @@ describe('WebSurfaceController — manual retry cooldown', () => {
       jobs.execute.mockResolvedValue({ affected: 0 });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn();
+      const intakeChat = vi.fn(async () => undefined);
       const controller = makeController({
         jobs,
         dispatcherRetry: vi.fn(),
         seedSystemNotification,
         setSessionResume,
+        intakeChat,
       });
 
       await expect(controller.retryTurn(ORG, 'job-1')).rejects.toBeInstanceOf(HttpException);
-      expect(seedSystemNotification).not.toHaveBeenCalled();
+      expect(intakeChat).not.toHaveBeenCalled();
       expect(setSessionResume).not.toHaveBeenCalled();
     });
 
@@ -170,17 +185,19 @@ describe('WebSurfaceController — manual retry cooldown', () => {
       jobs.execute.mockResolvedValue({ affected: 0 });
       const seedSystemNotification = vi.fn();
       const setSessionResume = vi.fn(async () => undefined);
+      const intakeChat = vi.fn(async () => undefined);
       const controller = makeController({
         jobs,
         dispatcherRetry: vi.fn(),
         seedSystemNotification,
         setSessionResume,
+        intakeChat,
       });
 
       const result = await controller.retryTurn(ORG, 'job-1', 'true');
 
       expect(jobs.createQueryBuilder).not.toHaveBeenCalled();
-      expect(seedSystemNotification).toHaveBeenCalledTimes(1);
+      expect(intakeChat).toHaveBeenCalledTimes(1);
       expect(result).toEqual({ ok: true });
     });
   });

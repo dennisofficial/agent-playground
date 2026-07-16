@@ -15,8 +15,9 @@
  *    (planning / plan_review / build×2 / master_review), that a builder `record_leg_handoff` inserts a
  *    SECOND builder into the SAME thread group sharing the thread group's `tasks` checklist (2a), that review_agent +
  *    review_fix threads are thread-group-scoped children of the LAST builder run ONCE over the thread group diff (2b),
- *    that ship approval spawns a `post_build` thread group and `BrainGateway.openPrAtShip` fires with THAT
- *    thread's id (2d), and that recording the PR spawns a `ci` thread group (2e).
+ *    that the ship-review GATE (posted right after master review) spawns a `post_build` thread-group thread (2d),
+ *    and that `ship()` spawns a `ci` thread-group thread and `BrainGateway.openPrAtShip` fires with THAT (ci)
+ *    thread's id — PR creation lives on `ci`, not `post_build` (2e).
  *  - HALT PATH (separate drive): a `block_thread` halt leaves the thread `blocked`/paused, stops the job
  *    driving (no ship, no PR), and NEVER calls `BrainGateway` — proving the headless driver property (2c).
  */
@@ -216,11 +217,12 @@ function makePr(): GithubPrService {
   } as unknown as GithubPrService;
 }
 
-/** A `BrainGateway` whose two live methods are spies — the whole point of the headless-driver assertion. */
+/** A `BrainGateway` whose live methods are spies — the whole point of the headless-driver assertion. */
 function makeBrainGatewaySpy(): BrainGateway {
   return {
     openPrAtShip: vi.fn(async () => undefined),
     wakeUnblockedJob: vi.fn(async () => undefined),
+    seedPostBuildGate: vi.fn(async () => undefined),
   } as unknown as BrainGateway;
 }
 
@@ -557,16 +559,28 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
   ): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     let shipApproved = false;
+    let awaitingSince: number | null = null;
     let status = '';
     while (Date.now() < deadline) {
       const row = await jobs.findOneOrFail({ where: { id: jobId } });
       status = row.status;
       if (until(status)) break;
       // Belt-and-braces: the fixture opts into auto-approve so the gate resolves inline, but if a race ever
-      // parks it, click "Ship it" so the drive continues.
-      if (status === 'awaiting_ship_review' && !shipApproved) {
-        shipApproved = true;
-        await driver.resolveShipApprovalDurably(jobId, 'auto-test');
+      // genuinely parks it, click "Ship it" so the drive continues. DEBOUNCED: the gate's own inline
+      // auto-approve does a few DB round-trips right after the status flips (incl. spawning the post_build
+      // thread at the gate) before it stamps the approval marker, so a status observed on the very first poll
+      // may just be a mid-flight snapshot of that still-in-progress auto-approve. Clicking immediately would
+      // race the in-flight CAS — and since a concurrent `drive()` is single-flight-guarded (see
+      // ThreadDriver's `active` set), the loser's redrive is dropped, stranding the job. Require the status
+      // to be sustained for a short grace window before treating it as genuinely parked.
+      if (status === 'awaiting_ship_review') {
+        awaitingSince ??= Date.now();
+        if (!shipApproved && Date.now() - awaitingSince > 250) {
+          shipApproved = true;
+          await driver.resolveShipApprovalDurably(jobId, 'auto-test');
+        }
+      } else {
+        awaitingSince = null;
       }
       await new Promise((r) => setTimeout(r, 25));
     }
@@ -575,8 +589,8 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
 
   it(
     'drives planning→build×2→master_review→post_build→ci: a builder handoff rotates a 2nd builder into the ' +
-      'SAME thread group sharing tasks (2a); review children are thread-group-scoped + run once (2b); ship spawns post_build ' +
-      'and openPrAtShip fires with its thread id (2d); the recorded PR spawns a ci thread group (2e)',
+      'SAME thread group sharing tasks (2a); review children are thread-group-scoped + run once (2b); the ship-review gate ' +
+      'spawns post_build (2d); ship() spawns ci and openPrAtShip fires with the ci thread id (2e)',
     async () => {
       const seed = await seedPlan();
 
@@ -664,25 +678,44 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
       expect(executeStepIds).toContain(leg2.id); // the fresh rotated leg drove its own turn
       expect(executeStepIds).toContain(seed.frontendBuilderId);
 
-      // ── 2d: ship approval spawned a post_build thread group; openPrAtShip fired with ITS thread id ────
+      // ── 2d: the ship-review GATE (right after master review, before/independent of ship approval)
+      // spawned a post_build thread-group thread — it does NOT open the PR ──────────────────────────────
       const threadGroupsAfter = await store.threadGroupsForJob(seed.jobId);
-      const postBuildThreadGroup = threadGroupsAfter.find((s) => s.kind === 'post_build');
+      const postBuildThreadGroup = threadGroupsAfter.find(
+        (s) => s.kind === 'post_build',
+      );
       expect(postBuildThreadGroup).toBeTruthy();
-      const [postBuildThread] = await store.threadsForThreadGroup(postBuildThreadGroup!.id);
+      const [postBuildThread] = await store.threadsForThreadGroup(
+        postBuildThreadGroup!.id,
+      );
       expect(postBuildThread.role).toBe('post_build');
-      expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
-      expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
+
+      // The gate delivers the post_build session's opening turn (the build summary + preview offer) via
+      // `BrainGateway.seedPostBuildGate`, targeted at the freshly-spawned post_build thread — the live
+      // proof that Thread 4's wiring (parkForShipReview → postBuildThreadId → seedPostBuildGate) actually
+      // fires when the driver parks a real job at the ship-review gate.
+      expect(brainGateway.seedPostBuildGate).toHaveBeenCalledTimes(1);
+      expect(brainGateway.seedPostBuildGate).toHaveBeenCalledWith(
         expect.objectContaining({
           jobId: seed.jobId,
           threadId: postBuildThread.id,
         }),
       );
 
-      // ── 2e: the recorded PR (setPrReady) spawned a ci thread group ───────────────────────────────────
+      // ── 2e: ship() spawned a ci thread-group thread and openPrAtShip fired with ITS (ci) thread id — PR
+      // creation moved to ci, so it must NOT be the post_build thread's id ────────────────────────────
       const ciThreadGroup = threadGroupsAfter.find((s) => s.kind === 'ci');
       expect(ciThreadGroup).toBeTruthy();
       const [ciThread] = await store.threadsForThreadGroup(ciThreadGroup!.id);
       expect(ciThread.role).toBe('ci');
+      expect(ciThread.id).not.toBe(postBuildThread.id);
+      expect(brainGateway.openPrAtShip).toHaveBeenCalledTimes(1);
+      expect(brainGateway.openPrAtShip).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: seed.jobId,
+          threadId: ciThread.id,
+        }),
+      );
 
       const finalJob = await jobs.findOneOrFail({ where: { id: seed.jobId } });
       expect(finalJob.status).toBe('done');

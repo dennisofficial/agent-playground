@@ -35,7 +35,7 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     // The job brain / operator conversation. A first-class row for the tree, but its runtime is the
     // AgentSessionManager session (`job_sandboxes.session_id`) — the driver NEVER executes it.
     kind: 'planning',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.PLANNING,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
@@ -132,11 +132,11 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'execute-turn',
   },
   {
-    // The ship/amend thread group (d11/d14): takes over `openPrAtShip` from Main once all build thread groups +
-    // master_review complete. Reuses the brain's prompting + a minimal "ship now" seed — no new per-thread-group
-    // prompt engineering in this job (d14).
+    // The ship-review GATE thread-group thread: the ATLAS_MAIN brain exploded into its own context-fresh,
+    // isolated-session persona — build summary + preview proposal + the amend loop, on a lean prompt that
+    // strips the planning apparatus (grilling, decision-record, plan authoring). Does not open the PR.
     kind: 'post_build',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.POST_BUILD,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',
@@ -148,10 +148,11 @@ export const THREAD_KIND_SPECS: readonly ThreadKindSpec[] = [
     runner: 'session-backed',
   },
   {
-    // The post-ship CI thread group (d14): takes over CI handling from Main, reusing the existing CI prompt
-    // surface (d14) — no new per-thread-group prompt engineering in this job.
+    // The post-ship PR-lifecycle thread-group thread: the ATLAS_MAIN brain exploded into its own context-fresh,
+    // isolated-session persona — PR creation, the authoritative base reconcile, and ongoing PR maintenance
+    // (failing checks / review comments / conflicts), on a lean prompt that strips the planning apparatus.
     kind: 'ci',
-    agent: Agent.ATLAS_MAIN,
+    agent: Agent.CI,
     engine: 'claude',
     mode: 'conversational',
     execution: 'render-only',

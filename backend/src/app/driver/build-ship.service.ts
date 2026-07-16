@@ -100,11 +100,11 @@ export class BuildShipService {
     const shipSandbox: FeatureSandbox = { ...sandbox, branch: shipBranch };
     const prTitle = job.title?.trim() || shipBranch;
 
-    // OPEN THE PR — as a seeded turn on the job-brain session. The brain reconciles the branch against its
-    // base, pushes, authors the body, and `gh pr create`s, all with its own authenticated git + `gh`. This
-    // AWAITS the brain turn to completion. No host "opening the PR" system
-    // message here — the seeded turn renders on Main with its own "Opening the pull request." pill.
-    const postBuild = await this.store.ensurePostBuildThread({
+    // OPEN THE PR — enqueue a seed onto the fresh `ci` session (spawned here, before the seed). The brain
+    // reconciles the branch against its base, pushes, authors the body, and `gh pr create`s, all with its own
+    // authenticated git + `gh`. This ENQUEUES and returns immediately (durable pump); the open-PR turn runs
+    // asynchronously and is latched by the reconciler, so `latchPr` below usually finds no PR yet on this pass.
+    const ci = await this.store.ensureCiThread({
       jobId: job.id,
       orgId: job.orgId,
       decisionRecordId: job.decisionRecordId ?? null,
@@ -116,18 +116,20 @@ export class BuildShipService {
       branch: shipBranch,
       defaultBranch: repo.defaultBranch,
       title: prTitle,
-      threadId: postBuild.threadId,
+      threadId: ci.threadId,
     });
 
     const confirmed = await this.latchPr(job, repo, shipSandbox);
-    return confirmed
-      ? {
-          opened: true,
-          prConfirmed: true,
-          url: confirmed.url,
-          number: confirmed.number,
-        }
-      : { opened: true, prConfirmed: false };
+    if (confirmed) {
+      if (!job.prUrl) await notify(`:tada: PR ready: ${confirmed.url}`);
+      return {
+        opened: true,
+        prConfirmed: true,
+        url: confirmed.url,
+        number: confirmed.number,
+      };
+    }
+    return { opened: true, prConfirmed: false };
   }
 
   /**

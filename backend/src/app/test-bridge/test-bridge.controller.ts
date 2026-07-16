@@ -29,13 +29,13 @@ import { JobBootstrapService } from '../job-bootstrap';
 import { laneFor } from '../surface';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
   JobEntity,
   OrganizationEntity,
   ThreadEntity,
   ActiveTurnEntity,
-  StimulusEntity,
+  InboundMessageEntity,
 } from '../persistence/entities';
 import type {
   ApproveRequest,
@@ -93,14 +93,14 @@ export class TestBridgeController {
     private readonly repos: Repository<RepoEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectRepository(ThreadEntity, DB_CONNECTION)
     private readonly threads: Repository<ThreadEntity>,
     @InjectRepository(ActiveTurnEntity, DB_CONNECTION)
     private readonly turns: Repository<ActiveTurnEntity>,
-    @InjectRepository(StimulusEntity, DB_CONNECTION)
-    private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(InboundMessageEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<InboundMessageEntity>,
     // Bootstraps a freshly-created job's ONE planning thread group + thread (d7: `thread_group_id` is never null). From
     // the @Global JobBootstrapModule. @Optional (trailing), same reason as the other ambient deps here.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,

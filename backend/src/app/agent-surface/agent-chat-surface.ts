@@ -64,7 +64,7 @@ const DEFAULT_AUTHOR_NAME = 'Dennis';
  *
  * It is symmetrical to the web surface (`WebSurface`):
  *  - INBOUND (toward Atlas): `sendFromHuman(channel, text, { threadTs })` injects a human message onto
- *    `inbound$` exactly as if Dennis typed it — the chat bridge maps it to a `ChatStimulus`. Threading
+ *    `inbound$` exactly as if Dennis typed it — the chat bridge maps it to a typed `Message`. Threading
  *    is honored: pass the root ts (the first post's ts) as `threadTs` to continue a job's thread.
  *  - OUTBOUND (from Atlas): `post()` records the message into an inspectable, awaitable log and emits it
  *    on `outbound$`, returning a synthetic ts (the thread handle). `waitForReply(predicate)` lets a

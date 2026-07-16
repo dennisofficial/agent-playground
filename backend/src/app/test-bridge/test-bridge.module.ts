@@ -3,13 +3,13 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobBootstrapModule } from '../job-bootstrap';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
   JobEntity,
   OrganizationEntity,
   ThreadEntity,
   ActiveTurnEntity,
-  StimulusEntity,
+  InboundMessageEntity,
 } from '../persistence/entities';
 import { TestBridgeController } from './test-bridge.controller';
 
@@ -30,10 +30,10 @@ import { TestBridgeController } from './test-bridge.controller';
         OrganizationEntity,
         RepoEntity,
         JobEntity,
-        MessageEntity,
+        TranscriptMessageEntity,
         ThreadEntity,
         ActiveTurnEntity,
-        StimulusEntity,
+        InboundMessageEntity,
       ],
       DB_CONNECTION,
     ),

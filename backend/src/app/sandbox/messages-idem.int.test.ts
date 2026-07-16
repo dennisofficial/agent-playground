@@ -98,7 +98,7 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
   afterAll(async () => {
     if (dataSource) {
       await dataSource.query(
-        `DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
+        `DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)`,
         [TEAM_ID],
       );
       await dataSource.query(`DELETE FROM jobs WHERE org_id = $1`, [TEAM_ID]);
@@ -130,7 +130,7 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     }); // repeat write ⇒ no-op
 
     const rows = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND idem_key = $2`,
       [jobA, key],
     );
     expect(rows[0].n).toBe(1);
@@ -145,13 +145,13 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     });
 
     const row2 = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND idem_key = $2`,
       [jobA, key2],
     );
     expect(row2[0].n).toBe(1);
 
     const totalByText = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
       [jobA, text],
     );
     expect(totalByText[0].n).toBe(2);
@@ -186,13 +186,13 @@ describe('keyed-upsert dedupe on messages (live Postgres ON CONFLICT DO NOTHING)
     await b.finish();
 
     const rows = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
       [jobA, text],
     );
     expect(rows[0].n).toBe(1);
 
     const keyRows = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND idem_key = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND idem_key = $2`,
       [jobA, `${turnId}:0`],
     );
     expect(keyRows[0].n).toBe(1);

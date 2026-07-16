@@ -19,12 +19,12 @@ import { JobBootstrapModule } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   TaskEntity,
   RepoEntity,
   ThreadEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
@@ -105,8 +105,8 @@ const BUILD_LANE_SWEEP_INTERVAL = 'driver:build-lane-sweep';
         JobEntity,
         RepoEntity,
         JobSandboxEntity,
-        MessageEntity,
-        StimulusEntity,
+        TranscriptMessageEntity,
+        InboundMessageEntity,
       ],
       DB_CONNECTION,
     ),

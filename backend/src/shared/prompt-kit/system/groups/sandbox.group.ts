@@ -6,7 +6,7 @@
  * (short), plus the normal-brain runtime blocks. Orders follow the source block sequence (non-contiguous is
  * fine — `order` is a global sort key, the group is just code organization).
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import {
@@ -53,7 +53,7 @@ export class SandboxGroup {
    *  brain-specific additions (the `/playground` pointer, the phone/no-checkout framing, the concrete
    *  impossible-request examples, and the request_secret/request_file/ask_question routing). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1010,
     condition: notOnboarding,
   })
@@ -72,7 +72,7 @@ export class SandboxGroup {
 
   /** The sandbox filesystem map (mount split: what git sees vs infra mounts). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1011,
     condition: notOnboarding,
   })
@@ -82,7 +82,7 @@ export class SandboxGroup {
 
   /** The sandbox OS + the pre-baked toolkit (also shown in onboarding, below). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1012,
     condition: notOnboarding,
   })
@@ -92,7 +92,7 @@ export class SandboxGroup {
 
   /** You are the sole author of the checkout (no phantom outside/concurrent editor). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1015,
     condition: notOnboarding,
   })
@@ -102,7 +102,7 @@ export class SandboxGroup {
 
   /** You own git in the sandbox. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1020,
     condition: notOnboarding,
   })
@@ -121,7 +121,7 @@ export class SandboxGroup {
 
   /** The host watches your PR and relays CI/conflict/review events. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1030,
     condition: notOnboarding,
   })
@@ -139,7 +139,7 @@ export class SandboxGroup {
   /** The /playground scratch space: the shared core (PLAYGROUND_NOTE) plus the brain-specific additions
    *  (durable across restarts, shared across the job's build lanes, and the `/.atlas` engine-dir warning). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1160,
     condition: notOnboarding,
   })
@@ -154,7 +154,7 @@ export class SandboxGroup {
 
   /** The atlas-svc runtime + shared-machine frugality. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1260,
     condition: notOnboarding,
   })
@@ -186,7 +186,7 @@ export class SandboxGroup {
    *  vars are injected). A build-brain concern — a review job never boots its own branch, so it gates
    *  `isBuildBrain`. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1262,
     condition: isBuildBrain,
   })
@@ -199,7 +199,7 @@ export class SandboxGroup {
    *  reachable + hydrated through the preview proxy on the FIRST live test. Onboarding-only (isOnboarding);
    *  ordered right after the bring-up Loop (2020) + dev-logins (2040) so it reads as the next step. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2045,
     condition: isOnboarding,
   })
@@ -259,7 +259,7 @@ export class SandboxGroup {
 
   /** Reading build/brain lane transcripts via atlas-tx (the wake-orientation "means"). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1265,
     condition: notOnboarding,
   })
@@ -284,7 +284,7 @@ export class SandboxGroup {
 
   /** Where you run — the cloud sandbox (short framing). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2010,
     condition: isOnboarding,
   })
@@ -302,7 +302,7 @@ export class SandboxGroup {
 
   /** Same OS + pre-baked toolkit note, so onboarding does not reinstall built-ins. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2012,
     condition: isOnboarding,
   })

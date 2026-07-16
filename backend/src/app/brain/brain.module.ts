@@ -7,11 +7,11 @@ import { MemoryModule } from '../memory';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   RepoEntity,
   ThreadEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
@@ -58,11 +58,11 @@ import { TurnRecoveryService } from './turn-recovery.service';
     TypeOrmModule.forFeature(
       [
         JobEntity,
-        MessageEntity,
+        TranscriptMessageEntity,
         ThreadGroupEntity,
         DecisionRecordEntity,
         ThreadEntity,
-        StimulusEntity,
+        InboundMessageEntity,
         RepoEntity,
         JobSandboxEntity,
       ],

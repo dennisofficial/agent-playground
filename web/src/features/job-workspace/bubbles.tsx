@@ -2,8 +2,31 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Check, ChevronRight, Loader2, RotateCw } from "lucide-react";
-import { toneOf, type SystemTone } from "./classify";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  CircleSlash,
+  CornerDownRight,
+  GitPullRequest,
+  Loader2,
+  MessageSquare,
+  Puzzle,
+  RefreshCw,
+  RotateCw,
+  Sparkles,
+  UserCheck,
+  Wrench,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  toneOf,
+  type EventKind,
+  type SeedType,
+  type SystemTone,
+} from "./classify";
 import { Markdown } from "./markdown";
 import { contextConvoNodeForHref } from "./node-registry";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
@@ -22,6 +45,7 @@ import {
   type LiveTurn,
 } from "@/lib/api/job-stream";
 import { formatClockTime, formatTokens } from "@/lib/org-display";
+import { assertNever } from "@/lib/assert";
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
@@ -442,16 +466,97 @@ export function CompactionSummaryPill({
   );
 }
 
+/** The known `meta.seedType` values — a runtime whitelist (not just the {@link SeedType} type) so an
+ *  untrusted/future/legacy value on the wire falls back to the generic pill instead of ever reaching the
+ *  exhaustive switch below (`assertNever` there is a compile-time guard, never a runtime one). Mirrors
+ *  {@link KNOWN_EVENT_KINDS}. */
+const KNOWN_SEED_TYPES = [
+  "reset_verify",
+  "compaction",
+  "work_owed_nudge",
+  "amend_approved_wake",
+  "ship_open_pr",
+  "request_changes",
+  "unblocked_job_wake",
+  "follow_up_job_seed",
+  "retry_resume_nudge",
+  "session_limit_reset_nudge",
+  "mcp_approved",
+  "mcp_removed",
+  "convention_attached",
+  "convention_edited",
+  "skill_approved",
+  "skill_edit_approved",
+  "skill_edit_gone",
+] as const;
+
+/** Per-{@link SeedType} icon/label/tone for {@link SystemNoticeRow}'s header pill — exhaustive, so a new
+ *  internal-seed type fails the build until it's given a presentation here. Mirrors
+ *  {@link eventKindPresentation}. */
+function seedTypePresentation(
+  seedType: SeedType,
+): { icon: LucideIcon; label: string; tone: SystemTone } {
+  switch (seedType) {
+    case "reset_verify":
+      return { icon: RotateCw, label: "Sandbox verified", tone: "neutral" };
+    case "compaction":
+      return { icon: Sparkles, label: "Compaction", tone: "accent" };
+    case "work_owed_nudge":
+      return { icon: AlertTriangle, label: "Work owed", tone: "accent" };
+    case "amend_approved_wake":
+      return { icon: UserCheck, label: "Amend approved", tone: "ok" };
+    case "ship_open_pr":
+      return { icon: GitPullRequest, label: "PR opened", tone: "accent" };
+    case "request_changes":
+      return { icon: MessageSquare, label: "Changes requested", tone: "accent" };
+    case "unblocked_job_wake":
+      return { icon: RefreshCw, label: "Unblocked", tone: "accent" };
+    case "follow_up_job_seed":
+      return { icon: CornerDownRight, label: "Follow-up job", tone: "accent" };
+    case "retry_resume_nudge":
+      return { icon: Loader2, label: "Retry resumed", tone: "accent" };
+    case "session_limit_reset_nudge":
+      return { icon: RotateCw, label: "Session limit reset", tone: "accent" };
+    case "mcp_approved":
+      return { icon: CheckCircle2, label: "MCP approved", tone: "ok" };
+    case "mcp_removed":
+      return { icon: CircleSlash, label: "MCP removed", tone: "neutral" };
+    case "convention_attached":
+      return { icon: Puzzle, label: "Convention attached", tone: "ok" };
+    case "convention_edited":
+      return { icon: Wrench, label: "Convention edited", tone: "accent" };
+    case "skill_approved":
+      return { icon: CheckCircle2, label: "Skill approved", tone: "ok" };
+    case "skill_edit_approved":
+      return { icon: CheckCircle2, label: "Skill edit approved", tone: "ok" };
+    case "skill_edit_gone":
+      return { icon: CircleSlash, label: "Skill edit discarded", tone: "neutral" };
+    default:
+      return assertNever(seedType);
+  }
+}
+
 /**
  * A harness-injected `system_notice` — a durable state change the brain was told about inline (sandbox
- * reset, secret/file confirmation). Renders as a collapsed one-line muted row (dot + truncated text);
+ * reset, secret/file confirmation, an internal-seed wake/nudge). Renders as a collapsed one-line row;
  * click to expand the full body (reset notices run several sentences). NOT an operator or Atlas bubble.
+ * A row stamped with a known `meta.seedType` (mirroring `meta.eventKind` on {@link EventBubble}) gets its
+ * own icon + label in place of the generic `system` chip; a legacy/unrecognized row keeps today's plain
+ * dot + `system` label.
  */
 export function SystemNoticeRow({ message }: { message: JobMessage }) {
   const [open, setOpen] = useState(false);
-  const tone = toneOf(message.text ?? "");
+  const meta = message.meta ?? {};
+  const seedType =
+    typeof meta.seedType === "string" &&
+    (KNOWN_SEED_TYPES as readonly string[]).includes(meta.seedType)
+      ? (meta.seedType as SeedType)
+      : null;
+  const presentation = seedType ? seedTypePresentation(seedType) : null;
+  const tone = presentation?.tone ?? toneOf(message.text ?? "");
   // The full raw payload delivered to Atlas, when the row stored one that differs from the label.
-  const fullBody = (message.meta?.fullBody as string | undefined) ?? message.text;
+  const fullBody = (meta.fullBody as string | undefined) ?? message.text;
+  const Icon = presentation?.icon ?? null;
   return (
     <div
       className="anim-fadeUp flex flex-col self-stretch rounded-md border"
@@ -466,12 +571,16 @@ export function SystemNoticeRow({ message }: { message: JobMessage }) {
         aria-expanded={open}
         className="flex items-center gap-2.5 px-3.5 py-1.5 text-left font-mono text-[10px] text-dim"
       >
-        <span
-          className="h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: TONE_COLOR[tone] }}
-        />
+        {Icon ? (
+          <Icon size={11} className="shrink-0" style={{ color: TONE_COLOR[tone] }} />
+        ) : (
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: TONE_COLOR[tone] }}
+          />
+        )}
         <span className="shrink-0 uppercase tracking-wide text-faint">
-          system
+          {presentation?.label ?? "system"}
         </span>
         <span className="min-w-0 flex-1 truncate">{message.text}</span>
         <ChevronRight
@@ -1066,17 +1175,98 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
   );
 }
 
+/** The known `meta.eventKind` values — a runtime whitelist (not just the {@link EventKind} type) so an
+ *  untrusted/future value on the wire falls back to the generic panel instead of ever reaching the
+ *  exhaustive switch below (`assertNever` there is a compile-time guard, never a runtime one). */
+const KNOWN_EVENT_KINDS = [
+  "ci_failure",
+  "review_changes_requested",
+  "review_approved",
+  "review_comment",
+] as const;
+
+/** Per-{@link EventKind} icon/label/tone for {@link EventBubble}'s header — exhaustive, so a new event kind
+ *  fails the build until it's given a presentation here. */
+function eventKindPresentation(
+  eventKind: EventKind,
+): { icon: LucideIcon; label: string; tone: SystemTone } {
+  switch (eventKind) {
+    case "ci_failure":
+      return { icon: XCircle, label: "CI failed", tone: "warn" };
+    case "review_changes_requested":
+      return { icon: AlertTriangle, label: "Changes requested", tone: "warn" };
+    case "review_approved":
+      return { icon: CheckCircle2, label: "Review approved", tone: "ok" };
+    case "review_comment":
+      return { icon: MessageSquare, label: "Review comment", tone: "accent" };
+    default:
+      return assertNever(eventKind);
+  }
+}
+
 /**
  * An automated NOTIFICATION that opened this thread (`source='system_event'`) — a GitHub/CI/webhook event
  * delivered to Atlas as a harness message and shown to the operator. Distinct from operator bubbles, Atlas
- * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel whose header names the
- * source + severity (read off `meta.eventSource` / `meta.severity`), so it reads as "not human-sent."
+ * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel. A row stamped with a
+ * known `meta.eventKind` (d12) gets a distinct icon/label/tone per kind; a legacy row without one (predating
+ * the stamp) falls back to today's generic panel keyed off `meta.eventSource`/`meta.severity`.
  */
 export function EventBubble({ message }: { message: JobMessage }) {
   const meta = message.meta ?? {};
-  const source =
-    typeof meta.eventSource === "string" ? meta.eventSource : "event";
-  const severity = typeof meta.severity === "string" ? meta.severity : null;
+  const eventKind =
+    typeof meta.eventKind === "string" &&
+    (KNOWN_EVENT_KINDS as readonly string[]).includes(meta.eventKind)
+      ? (meta.eventKind as EventKind)
+      : null;
+
+  if (eventKind === null) {
+    // Generic fallback — unstamped legacy rows (and any future/unrecognized eventKind), unchanged.
+    const source =
+      typeof meta.eventSource === "string" ? meta.eventSource : "event";
+    const severity = typeof meta.severity === "string" ? meta.severity : null;
+    return (
+      <div
+        className="anim-fadeUp rounded-[9px] border"
+        style={{
+          borderColor: "var(--accent-line)",
+          background: "var(--accent-soft)",
+        }}
+      >
+        {/* Header strip */}
+        <div
+          className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
+          style={{
+            borderBottom: "1px solid var(--accent-line)",
+            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
+          >
+            ◈
+          </span>
+          <span
+            className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
+            style={{ color: "var(--accent)" }}
+          >
+            Event · {source}
+          </span>
+          <span className="flex-1" />
+          {severity ? (
+            <span className="font-mono text-[10px] text-faint">{severity}</span>
+          ) : null}
+        </div>
+        {/* Markdown body */}
+        <div className="px-3.5 py-3">
+          <Markdown>{message.text}</Markdown>
+        </div>
+      </div>
+    );
+  }
+
+  const { icon: Icon, label, tone } = eventKindPresentation(eventKind);
+  const color = TONE_COLOR[tone];
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -1093,22 +1283,13 @@ export function EventBubble({ message }: { message: JobMessage }) {
           background: "color-mix(in srgb, var(--accent) 10%, transparent)",
         }}
       >
-        <span
-          aria-hidden
-          style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
-        >
-          ◈
-        </span>
+        <Icon size={12} style={{ color }} />
         <span
           className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ color: "var(--accent)" }}
+          style={{ color }}
         >
-          Event · {source}
+          {label}
         </span>
-        <span className="flex-1" />
-        {severity ? (
-          <span className="font-mono text-[10px] text-faint">{severity}</span>
-        ) : null}
       </div>
       {/* Markdown body */}
       <div className="px-3.5 py-3">

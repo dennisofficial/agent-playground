@@ -4,7 +4,7 @@
  *
  * TOPIC bucket: orientation / doing-the-work.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
 import {
@@ -17,7 +17,7 @@ import {
 export class OrientationGroup {
   /** Investigate first / docs before grep / delegate / other subagents / web access. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1080,
     condition: notOnboarding,
   })
@@ -58,7 +58,7 @@ export class OrientationGroup {
 
   /** The onboarding grounding gate + bring-up Loop. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2020,
     condition: isOnboarding,
   })
@@ -72,8 +72,9 @@ export class OrientationGroup {
       'GROUNDING GATE — DO THIS FIRST, AND STOP. A full bring-up is long and token-expensive, so never dive',
       'straight into installing, booting, or requesting secrets. Begin with a QUICK, READ-ONLY grounding pass',
       'and nothing more:',
-      '  0. READ your way to a map of the repo from ITS OWN docs — package.json scripts, README, CLAUDE.md,',
-      '     AGENTS.md, compose files, .env.example, infra/ dirs. Do not invent; re-derive. Do NOT install deps,',
+      '  0. READ your way to a map of the repo from ITS OWN docs — package.json scripts, README, AGENTS.md,',
+      '     compose files, .env.example, infra/ dirs (any CLAUDE.md memory auto-loads at session start, so you',
+      '     already have it). Do not invent; re-derive. Do NOT install deps,',
       '     boot anything, run builds, or call request_secret/request_file yet — this pass is cheap, keep it',
       '     that way. From what you read, draft the FLEET INVENTORY: EVERY runnable thing the repo defines —',
       '     every backend app/API, every frontend, every worker/daemon/queue processor/cron, every infra',
@@ -144,7 +145,7 @@ export class OrientationGroup {
 
   /** Dev logins for validation. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2040,
     condition: isOnboarding,
   })

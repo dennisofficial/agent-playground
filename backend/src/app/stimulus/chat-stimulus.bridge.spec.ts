@@ -2,10 +2,43 @@ import { describe, expect, it, vi } from 'vitest';
 import { Subject } from 'rxjs';
 import type { Repository } from 'typeorm';
 import type { JobEntity } from '../persistence/entities';
-import type { ChatSurface, InboundChatMessage } from '../surface';
+import type {
+  ChatSurface,
+  InboundChatMessage,
+} from '../surface/chat-surface.port';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
-import type { ChatStimulus } from '@shared/domain';
+import type { EventMessage, Message, SeedRow } from '@shared/domain';
+
+type IntakeCall = {
+  message: Exclude<Message, EventMessage>;
+  transport: {
+    author: { id: string; displayName: string };
+    replyRoute: { surfaceId: string; jobRef: string };
+  };
+};
+
+type LegacySeedCall = {
+  input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+    body: string;
+    seedRow?: SeedRow;
+    seedQuestionId?: string;
+    seedFileId?: string;
+    seedSecretId?: string;
+    seedQuestionIds?: string[];
+    seedFileIds?: string[];
+    seedSecretIds?: string[];
+    priority?: 'now' | 'queue' | 'later';
+    card?: Record<string, unknown>;
+  };
+  transport: {
+    author: { id: string; displayName: string };
+    replyRoute: { surfaceId: string; jobRef: string };
+  };
+};
 
 function fakeThreads(initial: JobEntity[]): {
   repo: Repository<JobEntity>;
@@ -28,12 +61,25 @@ function fakeThreads(initial: JobEntity[]): {
 
 function makeBridge(threads: JobEntity[]): {
   bridge: ChatStimulusBridge;
-  intaken: ChatStimulus[];
+  calls: IntakeCall[];
+  legacySeedCalls: LegacySeedCall[];
   threadRows: JobEntity[];
 } {
-  const intaken: ChatStimulus[] = [];
+  const calls: IntakeCall[] = [];
+  const legacySeedCalls: LegacySeedCall[] = [];
   const intake = {
-    intakeChat: vi.fn(async (s: ChatStimulus) => void intaken.push(s)),
+    intakeChat: vi.fn(
+      async (
+        message: IntakeCall['message'],
+        transport: IntakeCall['transport'],
+      ) => void calls.push({ message, transport }),
+    ),
+    intakeLegacySeed: vi.fn(
+      async (
+        input: LegacySeedCall['input'],
+        transport: LegacySeedCall['transport'],
+      ) => void legacySeedCalls.push({ input, transport }),
+    ),
   } as unknown as StimulusIntake;
   const inbound$ = new Subject<InboundChatMessage>();
   const surface = {
@@ -43,7 +89,7 @@ function makeBridge(threads: JobEntity[]): {
   } as unknown as ChatSurface;
   const { repo, rows } = fakeThreads(threads);
   const bridge = new ChatStimulusBridge(surface, intake, repo);
-  return { bridge, intaken, threadRows: rows };
+  return { bridge, calls, legacySeedCalls, threadRows: rows };
 }
 
 const msg = (over: Partial<InboundChatMessage> = {}): InboundChatMessage => ({
@@ -57,25 +103,25 @@ const msg = (over: Partial<InboundChatMessage> = {}): InboundChatMessage => ({
   ...over,
 });
 
-describe('ChatStimulusBridge → ChatStimulus', () => {
+describe('ChatStimulusBridge → Message', () => {
   it('ignores a message with no org/repo coordinate', async () => {
-    const { bridge, intaken } = makeBridge([]);
+    const { bridge, calls } = makeBridge([]);
     await bridge.onInbound(msg({ orgId: '', channel: '' }));
-    expect(intaken).toHaveLength(0);
+    expect(calls).toHaveLength(0);
   });
 
   it('an unaddressed message OPENS a chat-origin thread on the repo', async () => {
-    const { bridge, intaken, threadRows } = makeBridge([]);
+    const { bridge, calls, threadRows } = makeBridge([]);
     await bridge.onInbound(msg({})); // no threadTs
     expect(threadRows).toHaveLength(1);
     expect(threadRows[0]).toMatchObject({ origin: 'chat', repo_id: 'web' });
-    expect(intaken[0]).toMatchObject({
-      kind: 'chat',
+    expect(calls[0].message).toMatchObject({
+      type: 'user',
       trust: 'trusted',
       repoId: 'web',
       author: { id: 'U1', displayName: 'Dennis' },
     });
-    expect(intaken[0].replyRoute).toEqual({
+    expect(calls[0].transport.replyRoute).toEqual({
       surfaceId: 'web',
       jobRef: threadRows[0].id,
     });
@@ -90,17 +136,52 @@ describe('ChatStimulusBridge → ChatStimulus', () => {
       surface_thread_ref: null,
       title: null,
     } as JobEntity;
-    const { bridge, intaken, threadRows } = makeBridge([existing]);
+    const { bridge, calls, threadRows } = makeBridge([existing]);
 
-    await bridge.onInbound(
-      msg({ threadTs: 'thread-7', text: "I'm on it", priority: 'queue' }),
-    );
+    await bridge.onInbound(msg({ threadTs: 'thread-7', text: "I'm on it" }));
     expect(threadRows).toHaveLength(1); // no new thread created
-    expect(intaken[0]).toMatchObject({
+    expect(calls[0].message).toMatchObject({
+      type: 'user',
       jobId: 'thread-7',
       body: "I'm on it",
-      priority: 'queue',
     });
-    expect(intaken[0].replyRoute.jobRef).toBe('thread-7');
+    expect(calls[0].transport.replyRoute.jobRef).toBe('thread-7');
+  });
+
+  it('a seed inbound routes through the legacy generic-seed intake path', async () => {
+    const existing = {
+      id: 'thread-7',
+      org_id: 'T1',
+      repo_id: 'web',
+      origin: 'event',
+      surface_thread_ref: null,
+      title: null,
+    } as JobEntity;
+    const { bridge, calls, legacySeedCalls } = makeBridge([existing]);
+
+    const seedRow = {
+      label: 'Question answered',
+      chunkKey: 'seed:q:thread-7:q1',
+    };
+    await bridge.onInbound(
+      msg({
+        threadTs: 'thread-7',
+        text: 'answer',
+        seed: true,
+        seedQuestionId: 'q1',
+        seedRow,
+      }),
+    );
+    expect(calls).toHaveLength(0); // seed inbound bypasses intakeChat entirely
+    expect(legacySeedCalls[0].input).toMatchObject({
+      jobId: 'thread-7',
+      body: 'answer',
+      seedRow,
+      seedQuestionId: 'q1',
+    });
+    expect(legacySeedCalls[0].transport.replyRoute).toEqual({
+      surfaceId: 'web',
+      jobRef: 'thread-7',
+    });
   });
 });

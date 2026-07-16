@@ -30,8 +30,8 @@ export type ThreadRole =
   | 'review_agent' // one post-build review lens over a builder's diff. Driven as a CHILD of the builder.
   | 'review_fix' // the fix pass that applies a builder's deduped lens findings. Driven as a CHILD.
   | 'master_review' // the ship-time Codex whole-diff review-&-fix. Top-level executable, runs last.
-  | 'post_build' // the ship/amend thread group (d11/d14) — takes over `openPrAtShip` from Main.
-  | 'ci'; // the post-ship CI thread group (d14) — takes over CI handling from Main.
+  | 'post_build' // the ship-gate thread-group thread: build summary, preview proposal, and amend loop.
+  | 'ci'; // the post-ship PR-lifecycle thread-group thread: PR creation, CI handling, review comments, conflicts.
 
 /**
  * How the DRIVER treats a role:

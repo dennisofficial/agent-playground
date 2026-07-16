@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { MessageEntity } from '../persistence/entities';
+import type { TranscriptMessageEntity } from '../persistence/entities';
 import { parseSessionTranscriptTurns } from './session-transcript';
 import { backfillThreadFromTurns } from './turn-backfill';
 
 const line = (o: Record<string, unknown>): string => JSON.stringify(o);
-type Row = Partial<MessageEntity>;
+type Row = Partial<TranscriptMessageEntity>;
 
 /** A turn: prompt → text → a PAIRED tool → an UNPAIRED (interrupted) tool. `T*` timestamps let us assert
  *  created_at ordering. No end_turn — back-fill doesn't gate on it (the caller decides which turns to pass). */
@@ -110,7 +110,7 @@ function makeMessages(seed: Row[] = []) {
       };
       return qb;
     },
-  } as unknown as Repository<MessageEntity>;
+  } as unknown as Repository<TranscriptMessageEntity>;
   return { repo, saved };
 }
 

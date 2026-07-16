@@ -26,7 +26,7 @@ import {
   ENTITIES,
   ThreadEntity,
   JobEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
@@ -58,7 +58,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let store: DriverStoreService;
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
-  let messages: Repository<MessageEntity>;
+  let messages: Repository<TranscriptMessageEntity>;
   let repoId: string;
 
   beforeAll(async () => {
@@ -80,7 +80,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
-    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
 
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
@@ -976,6 +976,8 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       job.id,
       card as unknown as Record<string, unknown>,
       'Amend verified.',
+      ORG_ID,
+      null,
     );
     expect(parked).toBe(true);
 
@@ -987,6 +989,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       where: { job_id: job.id, ts: `ship-review:${job.id}`, kind: 'card' },
     });
     expect(cardRow).toBeTruthy();
+
+    // The gate now spawns the post_build session as part of the park, so preview/amend taps have a
+    // session to land on before the operator can act.
+    expect(await store.postBuildThreadId(job.id)).toBeTruthy();
   });
 
   it('retractShip does not act on a job in a DIFFERENT status', async () => {

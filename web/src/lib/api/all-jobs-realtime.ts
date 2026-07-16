@@ -44,6 +44,10 @@ interface RealtimeRow {
   ciCounts?: CiCounts | null;
   /** Sidebar port badge tri-state (`jobs.port_state`) — a pure display field on the WAL row. */
   portState?: "exposed" | "internal" | null;
+  /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`). */
+  buildStagesDone?: number | null;
+  /** Total build/direct_build thread groups in the job's plan (`jobs.build_stages_total`). */
+  buildStagesTotal?: number | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
   shipping?: boolean;
   /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
@@ -160,6 +164,8 @@ export function useAllJobsRealtime(): void {
           // Pure display field — the badge doesn't gate any detail refresh, and thread 1 always maps it,
           // so set it explicitly rather than relying on the spread to preserve a prior value.
           portState: row.portState ?? null,
+          buildStagesDone: row.buildStagesDone ?? null,
+          buildStagesTotal: row.buildStagesTotal ?? null,
           halt,
         };
         return next;

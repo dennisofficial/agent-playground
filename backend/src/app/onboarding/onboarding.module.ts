@@ -11,7 +11,7 @@ import {
   OrgWorkspaceSecretFileEntity,
   OrgWorkspaceMountEntity,
   RepoEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
@@ -62,7 +62,7 @@ import { WorkspaceSecretsController } from './workspace-secrets.controller';
         OrganizationEntity,
         RepoEntity,
         JobEntity,
-        StimulusEntity,
+        InboundMessageEntity,
         DecisionRecordEntity,
         JobSandboxEntity,
       ],

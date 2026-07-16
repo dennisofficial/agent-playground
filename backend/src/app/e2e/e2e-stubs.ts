@@ -93,6 +93,17 @@ export class FakeEngineRunner {
       };
     }
     // execute — a deterministic no-op "did the work" report (git is faked, no real file needed offline).
+    await args.toolBridge?.tools?.['complete_thread']?.({
+      summary: '(e2e fake) completed the requested change.',
+      verification: [
+        {
+          kind: 'test',
+          command: 'pnpm test',
+          exitCode: 0,
+          outputTail: 'ok',
+        },
+      ],
+    });
     return {
       result: '(e2e fake) execute turn complete — change applied.',
       sessionId,

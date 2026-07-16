@@ -25,6 +25,7 @@ const ALL_SURFACES = ['brain', 'build', 'review'];
 function makeController(card: unknown, ctxRoot: string) {
   const m = {
     seedSystemNotification: vi.fn(() => 'ts-1'),
+    intakeChat: vi.fn(async () => undefined),
     getSkillProposalCard: vi.fn(async () => card),
     markSkillProposalApproved: vi.fn(async () => undefined),
     write: vi.fn(async () => undefined),
@@ -77,6 +78,7 @@ function makeController(card: unknown, ctxRoot: string) {
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
     {} as never, // moduleRef (ModuleRef)
+    { intakeChat: m.intakeChat } as never, // intake (StimulusIntake)
   );
   return { controller, m };
 }

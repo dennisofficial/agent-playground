@@ -4,7 +4,7 @@
  * reconciles the branch against its base, pushes, AUTHORS a Claude-Code-style PR body from the real diff +
  * its `/context/evidence/` bundle(s), and opens the PR with its own authenticated git + `gh`.
  *
- * Task-ONLY: the brain turn always runs under the `ATLAS_MAIN` system prompt, so this turn carries no
+ * Task-ONLY: the brain turn always runs under the `CI` system prompt, so this turn carries no
  * `system` string — the reconcile / PR-body / git-safety guidance is folded into the body below. The host
  * learns the PR by BRANCH DISCOVERY after the turn (`findOpenPullByHead` → `setPrReady`, backstopped by the
  * git-state reconciler), so there is NO `report_pr_opened` tool to call — the brain just opens the PR.

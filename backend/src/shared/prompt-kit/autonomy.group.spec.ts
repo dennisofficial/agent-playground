@@ -13,7 +13,7 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   it.each(['plan', 'ship', 'both'] as const)(
     'injects the marker for ATLAS_MAIN when autoApproveMode is %s',
     (mode) => {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      const out = renderAgentPrompt(Agent.PLANNING, {
         settings: { autoApproveMode: mode },
       });
       expect(out).toContain(MARKER);
@@ -21,8 +21,8 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   );
 
   it('emits NOTHING (byte-identical) for ATLAS_MAIN when autoApproveMode is off', () => {
-    const baseline = renderAgentPrompt(Agent.ATLAS_MAIN);
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const baseline = renderAgentPrompt(Agent.PLANNING);
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'off' },
     });
     expect(out).not.toContain(MARKER);
@@ -31,7 +31,7 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   });
 
   it('is absent when autoApproveMode is unset (no settings at all)', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN);
+    const out = renderAgentPrompt(Agent.PLANNING);
     expect(out).not.toContain(MARKER);
   });
 
@@ -43,7 +43,7 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   });
 
   it('"both" mentions BOTH the plan-approval and ship-review gates advancing without a human', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'both' },
     });
     expect(out).toContain('plan-approval and ship-review gates advance');
@@ -51,7 +51,7 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   });
 
   it('"plan" uses the plan-gate-only header and says the ship-review gate is UNCHANGED', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'plan' },
     });
     expect(out).toContain('AUTONOMOUS MODE (plan gate only)');
@@ -59,7 +59,7 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   });
 
   it('"ship" uses the ship-gate-only header and says the plan-approval gate is UNCHANGED', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const out = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'ship' },
     });
     expect(out).toContain('AUTONOMOUS MODE (ship gate only)');
@@ -67,13 +67,13 @@ describe('autonomy.group — autonomous-mode announcement', () => {
   });
 
   it('the copy differs across plan / ship / both (distinct, not shared boilerplate)', () => {
-    const plan = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const plan = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'plan' },
     });
-    const ship = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const ship = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'ship' },
     });
-    const both = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const both = renderAgentPrompt(Agent.PLANNING, {
       settings: { autoApproveMode: 'both' },
     });
     expect(plan).not.toBe(ship);

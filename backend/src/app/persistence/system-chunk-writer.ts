@@ -1,5 +1,5 @@
 import type { Repository } from 'typeorm';
-import type { MessageEntity } from './entities/message.entity';
+import type { TranscriptMessageEntity } from './entities/transcript-message.entity';
 import type { AgentMessage } from '@shared/prompt-kit/message';
 
 /**
@@ -21,6 +21,9 @@ export interface SystemChunkInput {
   fullBody?: AgentMessage;
   framing?: string;
   createdAt?: Date;
+  /** The internal-seed `Message` type behind this row (`meta.seedType`) — the frontend's per-seed-type pill
+   *  discriminant, mirroring `meta.eventKind` on an event row. Absent for a plain notice/reminder chunk. */
+  seedType?: string;
 }
 
 /** The build-lane coordinate the driver tags its rows with; absent on the brain's main-lane chunks. */
@@ -36,7 +39,7 @@ export interface SystemChunkBuildContext {
  * between them.
  */
 export async function writeSystemChunk(
-  repo: Repository<MessageEntity>,
+  repo: Repository<TranscriptMessageEntity>,
   input: SystemChunkInput,
   buildCtx?: SystemChunkBuildContext,
 ): Promise<void> {
@@ -70,6 +73,7 @@ export async function writeSystemChunk(
         ...(input.severity ? { severity: input.severity } : {}),
         ...(input.fullBody ? { fullBody: input.fullBody } : {}),
         ...(input.framing ? { framing: input.framing } : {}),
+        ...(input.seedType ? { seedType: input.seedType } : {}),
       },
       ...(input.createdAt ? { created_at: input.createdAt } : {}),
     }),

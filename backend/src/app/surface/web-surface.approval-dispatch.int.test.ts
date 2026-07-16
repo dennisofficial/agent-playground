@@ -61,7 +61,7 @@ import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { WebSurface } from './web-surface';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import type { InboundChatMessage } from './chat-surface.port';
-import type { SeedRow } from '@shared/domain/stimulus';
+import type { SeedRow } from '@shared/domain/seed-row';
 
 /** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
 type SeedRowObject = Exclude<SeedRow, 'skip'>;
@@ -112,7 +112,7 @@ async function purge(): Promise<void> {
     ])
     .catch(() => undefined);
   await ds
-    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
       [PLAN_JOB, DIRECT_JOB],
     ])
     .catch(() => undefined);
@@ -213,8 +213,6 @@ beforeAll(async () => {
       dispatch: dispatchSpy,
       retry: vi.fn(async () => undefined),
       redriveThread: vi.fn(async () => undefined),
-      deliverOwedHaltWakes: vi.fn(async () => undefined),
-      deliverOwedDoneWakes: vi.fn(async () => undefined),
     })
     .overrideProvider(CredentialResolver)
     .useValue(fakeCreds)
@@ -269,7 +267,7 @@ beforeEach(async () => {
   await ds.query(`DELETE FROM decision_records WHERE id = ANY($1)`, [
     [PLAN_DR, DIRECT_DR],
   ]);
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+  await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [PLAN_JOB, DIRECT_JOB],
   ]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [

@@ -68,7 +68,7 @@ function dbOpts() {
   };
 }
 
-const ORG_ID = '61111111-1111-4111-8111-111111111111';
+const ORG_ID = '62222222-2222-4222-8222-222222222222';
 const BASE_BRANCH = 'main';
 const OPERATOR = { id: 'operator-1', displayName: 'Dennis' };
 const SEED_AUTHOR = {
@@ -109,7 +109,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     await ds.query(
       `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
-      [ORG_ID, 'Card Gate Race Org', 'card-gate-race-org'],
+      [ORG_ID, 'Card Gate Race Org', 'card-gate-race-org-2'],
     );
     const repoRows = await ds.query(
       `INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
@@ -121,12 +121,24 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   });
 
   afterAll(async () => {
+    await purgeOwnRows().catch(() => undefined);
     await mod?.close();
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
+
+  async function purgeOwnRows(): Promise<void> {
+    if (!ds?.isInitialized) return;
+    await ds.query('DELETE FROM inbound_messages WHERE org_id = $1', [ORG_ID]);
+    await ds.query(
+      'DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      [ORG_ID],
+    );
+    await ds.query('DELETE FROM active_turns WHERE org_id = $1', [ORG_ID]);
+    await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);
+  }
 
   // Several pump paths end their turn by firing a fire-and-forget re-pump that re-queries the REAL pending
   // table. Give any stray in-flight query a beat to land before the next test TRUNCATEs the table out from
@@ -191,7 +203,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     id: string,
   ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
     const rows = await ds.query(
-      'SELECT delivered_at, attempted_at FROM stimuli WHERE id = $1',
+      'SELECT delivered_at, attempted_at FROM inbound_messages WHERE id = $1',
       [id],
     );
     return rows[0];
@@ -199,7 +211,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
-    await ds.query('UPDATE stimuli SET attempted_at = NULL WHERE job_id = $1', [
+    await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [
       jobId,
     ]);
   }
@@ -213,7 +225,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   function makeManager(opts: { live?: boolean; leader?: boolean } = {}) {
     let liveTurn: string | null = opts.live ? 'turn-live-1' : null;
     const runningBrainTurn = vi.fn(async () =>
-      liveTurn ? { turn_id: liveTurn } : null,
+      liveTurn ? { turn_id: liveTurn, lane: 'main' } : null,
     );
     const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
 

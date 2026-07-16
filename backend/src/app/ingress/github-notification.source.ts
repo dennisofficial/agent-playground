@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
   CiSyncDelta,
+  EventKind,
   EventSeverity,
   IngressResult,
   NotificationSource,
@@ -29,7 +30,7 @@ import { ProjectRoutingService } from '../stimulus';
  *  - ROUTING: `repository.full_name` (owner/repo) → `ProjectRoutingService.routeGithubRepo` →
  *    `repos` → its 1:1 channel. Unknown repo → `unroutable`.
  *
- * Output is ONLY a `ParsedEvent` (→ `EventStimulus`, `trust:'untrusted'`); everything downstream
+ * Output is ONLY a `ParsedEvent` (→ `EventMessage`, `trust:'untrusted'`); everything downstream
  * (filter, seed, triage) is gateway-agnostic. Zero v1 imports — the HMAC shape is rewritten from v1's
  * Slack guard, not imported.
  */
@@ -105,6 +106,7 @@ export class GithubNotificationSource implements NotificationSource {
         raw.headers['x-github-delivery'],
       ),
       severity: summary.severity,
+      eventKind: summary.eventKind,
       body: summary.body,
       ...(summary.correlation ? { correlation: summary.correlation } : {}),
     };
@@ -345,6 +347,7 @@ interface GithubWebhookBody {
 /** A triage summary + the correlation hint that routes it to the owning job (branch/PR). */
 interface EventSummary {
   severity: EventSeverity;
+  eventKind: EventKind;
   body: string;
   correlation?: { branch?: string | null; prNumber?: number | null };
 }
@@ -379,6 +382,7 @@ function summarizeGithubEvent(
     if (run.conclusion === 'failure' || run.conclusion === 'timed_out') {
       return {
         severity: 'critical',
+        eventKind: 'ci_failure',
         body: `GitHub Actions workflow "${run.name ?? 'unknown'}" ${run.conclusion} in ${repo}.\n${run.html_url ?? ''}`.trim(),
         correlation: {
           branch: run.head_branch ?? null,
@@ -394,6 +398,7 @@ function summarizeGithubEvent(
     if (check.conclusion === 'failure' || check.conclusion === 'timed_out') {
       return {
         severity: 'critical',
+        eventKind: 'ci_failure',
         body: `GitHub check "${check.name ?? 'unknown'}" ${check.conclusion} in ${repo}.\n${check.html_url ?? ''}`.trim(),
         correlation: {
           branch: checkRunBranch(check),
@@ -409,6 +414,7 @@ function summarizeGithubEvent(
     if (suite.conclusion === 'failure') {
       return {
         severity: 'critical',
+        eventKind: 'ci_failure',
         body: `GitHub check suite failed on branch "${suite.head_branch ?? '?'}" in ${repo}.`,
         correlation: {
           branch: suite.head_branch ?? null,
@@ -427,8 +433,15 @@ function summarizeGithubEvent(
     const hasBody = !!review?.body?.trim();
     if (state !== 'CHANGES_REQUESTED' && !hasBody) return null;
     const who = review?.user?.login ?? 'a reviewer';
+    const reviewEventKind: EventKind =
+      state === 'CHANGES_REQUESTED'
+        ? 'review_changes_requested'
+        : state === 'APPROVED'
+          ? 'review_approved'
+          : 'review_comment';
     return {
       severity: state === 'CHANGES_REQUESTED' ? 'critical' : 'warning',
+      eventKind: reviewEventKind,
       body: `${who} ${state === 'CHANGES_REQUESTED' ? 'requested changes on' : 'reviewed'} PR #${body.pull_request?.number} in ${repo}.\n${review?.body ?? ''}\n${review?.html_url ?? ''}`.trim(),
       correlation: {
         branch: body.pull_request?.head?.ref ?? null,
@@ -441,6 +454,7 @@ function summarizeGithubEvent(
     const who = body.comment?.user?.login ?? 'a reviewer';
     return {
       severity: 'warning',
+      eventKind: 'review_comment',
       body: `${who} left a review comment on PR #${body.pull_request?.number} in ${repo}.\n${body.comment?.body ?? ''}\n${body.comment?.html_url ?? ''}`.trim(),
       correlation: {
         branch: body.pull_request?.head?.ref ?? null,
@@ -454,6 +468,7 @@ function summarizeGithubEvent(
     const who = body.comment?.user?.login ?? 'someone';
     return {
       severity: 'warning',
+      eventKind: 'review_comment',
       body: `${who} commented on PR #${body.issue?.number} in ${repo}.\n${body.comment?.body ?? ''}\n${body.comment?.html_url ?? ''}`.trim(),
       correlation: { prNumber: body.issue?.number ?? null },
     };

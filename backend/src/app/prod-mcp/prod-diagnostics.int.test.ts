@@ -42,12 +42,12 @@ import {
 import {
   ENTITIES,
   JobEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ProdMaintenanceWriteEntity,
   ThreadEntity,
 } from '../persistence/entities';
 import { CHAT_SURFACE } from '../surface/chat-surface.port';
-import type { ChatStimulus } from '@shared/domain/stimulus';
+import type { Message, TurnEnvelope } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { ProdDiagnosticsService } from './prod-diagnostics.service';
 
@@ -101,7 +101,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
   let ds: DataSource;
   let svc: ProdDiagnosticsService;
   let ledger: Repository<ProdMaintenanceWriteEntity>;
-  let messages: Repository<MessageEntity>;
+  let messages: Repository<TranscriptMessageEntity>;
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
   const surface = {
@@ -117,7 +117,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
         TypeOrmModule.forRoot(readerOpts()),
         TypeOrmModule.forRoot(writerOpts()),
         TypeOrmModule.forFeature(
-          [ProdMaintenanceWriteEntity, MessageEntity, JobEntity, ThreadEntity],
+          [ProdMaintenanceWriteEntity, TranscriptMessageEntity, JobEntity, ThreadEntity],
           DB_CONNECTION,
         ),
       ],
@@ -142,7 +142,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     ledger = mod.get(
       getRepositoryToken(ProdMaintenanceWriteEntity, DB_CONNECTION),
     );
-    messages = mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION));
+    messages = mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
 
@@ -168,7 +168,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     surface.post.mockClear();
     surface.seedSystemNotification.mockClear();
     await ds.query(
-      'TRUNCATE prod_maintenance_write, messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE prod_maintenance_write, transcript_messages, tasks, threads, thread_groups, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -205,11 +205,17 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
     return { jobId: job.id, threadId: thread.id };
   }
 
-  function stimulusFor(jobId: string): ChatStimulus {
+  function stimulusFor(jobId: string): TurnEnvelope {
     return {
+      message: {
+        id: 'sess-propose-1',
+        orgId: ORG_ID,
+        repoId,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        type: 'user',
+      } as unknown as Message,
       id: 'sess-propose-1',
-      kind: 'chat',
-      trust: 'trusted',
       orgId: ORG_ID,
       repoId,
       jobId,
@@ -217,7 +223,7 @@ describe('ProdDiagnosticsService — gated write pipeline (live Postgres, real m
       receivedAt: new Date(),
       author: { id: 'atlas', displayName: 'Atlas' },
       replyRoute: { surfaceId: 'web', jobRef: jobId },
-    } as ChatStimulus;
+    };
   }
 
   it('propose → pending ledger row + durable card, target row UNCHANGED (writer untouched pre-approval)', async () => {

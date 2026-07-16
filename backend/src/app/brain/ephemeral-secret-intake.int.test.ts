@@ -69,6 +69,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
   let app: NestExpressApplication;
   let controller: WebSurfaceController;
   let store: BrainStoreService;
+  let bootstrap: JobBootstrapService;
   let secrets: WorkspaceSecretFileStore;
   let ds: DataSource;
   let provider: FakeSandboxProvider;
@@ -102,6 +103,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
 
     controller = app.get(WebSurfaceController);
     store = app.get(BrainStoreService);
+    bootstrap = app.get(JobBootstrapService);
     secrets = app.get(WorkspaceSecretFileStore);
     ds = app.get<DataSource>(getDataSourceToken(DB_CONNECTION));
 
@@ -121,8 +123,6 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
       [ORG_ID, repoId],
     );
     jobId = thread.id;
-
-    const bootstrap = app.get(JobBootstrapService);
     await bootstrap.ensurePlanningThreadGroup(jobId, ORG_ID);
   });
 
@@ -178,7 +178,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
 
     // LEAK ASSERTION: the code appears in NO message row (card text, card jsonb, seeded confirmation).
     const rows = await ds.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${CODE_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);
@@ -217,7 +217,7 @@ describe('ephemeral secret lane — delivered, never persisted (live Postgres)',
     expect(await store.awaitingSecretId(jobId)).toBeNull();
     expect(await secrets.read(ORG_ID, repoId, DELIVER_TO)).toBeNull();
     const rows = await ds.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND (text LIKE $2 OR card::text LIKE $2)`,
       [jobId, `%${CODE_VALUE}%`],
     );
     expect(rows[0].n).toBe(0);

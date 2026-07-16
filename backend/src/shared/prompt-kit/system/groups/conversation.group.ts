@@ -5,7 +5,7 @@
  *
  * TOPIC bucket: the planning conversation. Interpolates `DECISION_CLASS_IDS` exactly as the source did.
  */
-import { Agent } from '../agent';
+import { Agent, ENGINEERING_STAGES } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, notOnboarding } from '../conditions';
 import { DECISION_CLASS_IDS } from '../../../domain';
@@ -15,7 +15,7 @@ export class ConversationGroup {
   /** How to read harness-injected XML tags — emitted right AFTER the identity in BOTH modes (normal
    *  identity is order 1000, onboarding identity 2000), so the prompt still opens with "You are Atlas". */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: ENGINEERING_STAGES,
     order: 1005,
     condition: notOnboarding,
   })
@@ -24,7 +24,7 @@ export class ConversationGroup {
   }
 
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 2005,
     condition: isOnboarding,
   })
@@ -50,7 +50,7 @@ export class ConversationGroup {
 
   /** Why you grill — the plan is a handoff. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1090,
     condition: isBuildBrain,
   })
@@ -68,7 +68,7 @@ export class ConversationGroup {
 
   /** Calibrate the interview to the work. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1100,
     condition: isBuildBrain,
   })
@@ -85,7 +85,7 @@ export class ConversationGroup {
 
   /** The grilling protocol (always-ask classes). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1110,
     condition: isBuildBrain,
   })
@@ -100,7 +100,7 @@ export class ConversationGroup {
 
   /** Grill against the domain (the four moves). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1120,
     condition: isBuildBrain,
   })
@@ -134,7 +134,7 @@ export class ConversationGroup {
 
   /** Recommend ≠ decide + one decision per call. */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1130,
     condition: isBuildBrain,
   })
@@ -156,7 +156,7 @@ export class ConversationGroup {
 
   /** Ask via the tool + lock each decision (interpolates DECISION_CLASS_IDS). */
   @Fragment({
-    usedBy: [Agent.ATLAS_MAIN],
+    usedBy: [Agent.PLANNING],
     order: 1140,
     condition: isBuildBrain,
   })

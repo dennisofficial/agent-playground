@@ -20,7 +20,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
@@ -34,10 +34,12 @@ import type {
 } from '../persistence/entities';
 import type { ReviewFinding } from '../autofix';
 import {
+  coerceThreadRole,
   coerceThreadType,
   laneDefaultFooter,
   threadKindSpec,
 } from '../thread-kind';
+import type { ThreadRole } from '../thread-kind';
 import { laneFor } from '../surface/thread-registry';
 import type { WebQuestionCard } from '../surface/web-question-card';
 import {
@@ -108,8 +110,8 @@ export class DriverStoreService {
     private readonly tasks: Repository<TaskEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly jobDeps: JobDependencyService,
@@ -163,7 +165,7 @@ export class DriverStoreService {
     };
     const threadId = await this.planningThreadId(jobId);
     await this.dataSource.transaction(async (m) => {
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       await messages.save(
         messages.create({
           job_id: jobId,
@@ -247,7 +249,9 @@ export class DriverStoreService {
       where: {
         status: 'running',
         halt: IsNull(),
-        session_resume_at: Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`),
+        session_resume_at: Raw(
+          (alias) => `(${alias} IS NULL OR ${alias} <= now())`,
+        ),
       },
     });
     return rows.map(toJob);
@@ -261,6 +265,48 @@ export class DriverStoreService {
    *  boundary writer, mirroring the brain's turn writer. */
   async setActivity(jobId: string, activity: JobActivity): Promise<void> {
     await this.jobs.update({ id: jobId }, { activity });
+  }
+
+  /** Recompute the job's build-stage progress and write it change-gated onto the jobs row so the flat
+   *  realtime projection carries it live. A build/direct_build thread group is "done" when it has >=1
+   *  builder thread and all its builder threads have finished building — status 'done' or 'auto_fixing'
+   *  (the review-window affordance). Review is NOT required, and 'auto_fixing' prevents the count
+   *  regressing while a just-finished builder is being reviewed. Scoped to the job's ACTIVE plan
+   *  revision (`jobs.decision_record_id`), same as {@link threadsForJob} — a mid-build re-plan keeps the
+   *  prior revision's build thread groups around as immutable history, and without this filter they'd
+   *  keep being counted alongside the new plan's groups forever. */
+  async recomputeBuildStageProgress(jobId: string): Promise<void> {
+    const job = await this.jobs.findOne({ where: { id: jobId } });
+    const activeRecordId = job?.decision_record_id ?? null;
+    const groups = await this.threadGroups.find({ where: { job_id: jobId } });
+    const buildGroups = groups.filter(
+      (g) =>
+        (g.kind === 'build' || g.kind === 'direct_build') &&
+        (activeRecordId
+          ? g.decision_record_id === activeRecordId
+          : g.decision_record_id == null),
+    );
+    const total = buildGroups.length;
+    const builderFinished = (s: string) => s === 'done' || s === 'auto_fixing';
+    let done = 0;
+    for (const g of buildGroups) {
+      const builders = await this.threads.find({
+        where: { thread_group_id: g.id, role: 'builder' },
+        select: { id: true, status: true },
+      });
+      if (builders.length > 0 && builders.every((t) => builderFinished(t.status)))
+        done += 1;
+    }
+    await this.jobs
+      .createQueryBuilder()
+      .update()
+      .set({ build_stages_done: done, build_stages_total: total })
+      .where(
+        'id = :id AND (build_stages_done IS DISTINCT FROM :done OR build_stages_total IS DISTINCT FROM :total)',
+        { id: jobId, done, total },
+      )
+      .execute()
+      .catch(() => undefined);
   }
 
   /** Record a phase-preserving job HALT (see {@link JobHalt}) — the status/phase is left untouched. Named
@@ -361,8 +407,10 @@ export class DriverStoreService {
     jobId: string,
     card: Record<string, unknown>,
     summary: string,
+    orgId: string,
+    decisionRecordId: string | null,
   ): Promise<boolean> {
-    return this.dataSource.transaction(async (m) => {
+    const parked = await this.dataSource.transaction(async (m) => {
       const res = await m
         .getRepository(JobEntity)
         .createQueryBuilder()
@@ -372,7 +420,7 @@ export class DriverStoreService {
         .andWhere("status IN ('running', 'amending')")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       await messages.save(
         messages.create({
           job_id: jobId,
@@ -388,6 +436,12 @@ export class DriverStoreService {
       );
       return true;
     });
+    // Spawn the post_build session at the GATE (idempotent) so preview/amend taps have a session to land
+    // on before the operator can act — only when THIS call actually transitioned the job.
+    if (parked) {
+      await this.ensurePostBuildThread({ jobId, orgId, decisionRecordId });
+    }
+    return parked;
   }
 
   /**
@@ -424,7 +478,7 @@ export class DriverStoreService {
         .andWhere("status = 'awaiting_ship_review'")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const rows = await messages.find({
         where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
       });
@@ -459,7 +513,7 @@ export class DriverStoreService {
     });
     const res = await this.messages
       .createQueryBuilder()
-      .update(MessageEntity)
+      .update(TranscriptMessageEntity)
       .set({ card: () => 'card || :patch::jsonb' })
       .where('job_id = :jobId', { jobId })
       .andWhere('ts = :ts', { ts: `ship-review:${jobId}` })
@@ -493,7 +547,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .findOne({ where: { id: jobId } });
       if (!job || job.status !== 'awaiting_ship_review') return 'not-parked';
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const existing = await messages.find({
         where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
       });
@@ -1054,11 +1108,17 @@ export class DriverStoreService {
    *  `auth_retry_attempts` iff still below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}`
    *  on success, else `{ok:false, used:cap}` (budget exhausted). Durable so a restart/crash-loop can't
    *  re-grant a fresh budget. */
-  async claimAuthRetryAttempt(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimAuthRetryAttempt(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ auth_retry_attempts: () => 'auth_retry_attempts + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        auth_retry_attempts: () => 'auth_retry_attempts + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('auth_retry_attempts < :cap', { cap })
       .returning('auth_retry_attempts')
@@ -1069,11 +1129,17 @@ export class DriverStoreService {
 
   /** CAS-claim one host-transport transient-error auto-retry attempt (driver lane). Same shape as
    *  {@link claimAuthRetryAttempt} against `driver_transient_retries`. */
-  async claimDriverTransientRetry(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimDriverTransientRetry(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ driver_transient_retries: () => 'driver_transient_retries + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        driver_transient_retries: () => 'driver_transient_retries + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('driver_transient_retries < :cap', { cap })
       .returning('driver_transient_retries')
@@ -1113,12 +1179,21 @@ export class DriverStoreService {
   /** Read back the durable driver-transient-retry state (count + last-attempt timestamp) so a boot
    *  re-entry into `runJobWithTransientRetry` can honor an in-flight cooldown instead of re-driving
    *  immediately after a restart. */
-  async driverTransientRetryState(jobId: string): Promise<{ count: number; lastAttemptAt: Date | null }> {
+  async driverTransientRetryState(
+    jobId: string,
+  ): Promise<{ count: number; lastAttemptAt: Date | null }> {
     const row = await this.jobs.findOne({
       where: { id: jobId },
-      select: { id: true, driver_transient_retries: true, retry_last_attempt_at: true },
+      select: {
+        id: true,
+        driver_transient_retries: true,
+        retry_last_attempt_at: true,
+      },
     });
-    return { count: row?.driver_transient_retries ?? 0, lastAttemptAt: row?.retry_last_attempt_at ?? null };
+    return {
+      count: row?.driver_transient_retries ?? 0,
+      lastAttemptAt: row?.retry_last_attempt_at ?? null,
+    };
   }
 
 
@@ -1629,11 +1704,10 @@ export class DriverStoreService {
   }
 
   /**
-   * Find (or lazily create) the job's `post_build` thread group — the isolated, fresh session the ship step
-   * runs its open-PR turn on, off the planning brain's session (d14/d15). Idempotent/reusable: `ship()` may
-   * run several times when the PR doesn't latch on the first pass, so a matching thread group is re-looked-up rather
-   * than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM` so the nullable FK matches by value
-   * (plain SQL equality drops NULL rows).
+   * Find (or lazily create) the job's `post_build` thread group — the isolated, fresh ship-gate session that
+   * summarizes the build, proposes preview, and owns amend work off the planning brain's session. Idempotent/reusable:
+   * a matching thread group is re-looked-up rather than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM`
+   * so the nullable FK matches by value (plain SQL equality drops NULL rows).
    */
   async ensurePostBuildThread(input: {
     jobId: string;
@@ -1668,7 +1742,7 @@ export class DriverStoreService {
       jobId: input.jobId,
       orgId: input.orgId,
       role: 'post_build',
-      brief: 'Ship — open the PR',
+      brief: 'Ship gate — review and amend',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
     return { threadGroupId: created.id, threadId: thread.id };
@@ -1737,6 +1811,27 @@ export class DriverStoreService {
   /** Persist a thread's live engine session id (d5). */
   async setThreadSessionId(threadId: string, sessionId: string): Promise<void> {
     await this.threads.update({ id: threadId }, { session_id: sessionId });
+  }
+
+  /** Read-only lookup of the job's `post_build` thread-group thread id (the re-homed session for preview/amend
+   *  seeds), or null when the gate hasn't spawned it yet. Latest by ordinal, mirroring `ciThreadId`. */
+  async postBuildThreadId(jobId: string): Promise<string | null> {
+    const row = await this.threads.findOne({
+      where: { job_id: jobId, role: 'post_build' },
+      order: { ordinal: 'DESC' },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
+
+  /** The thread's role (registry-backed `ThreadRole`), or null if the thread is gone. The turn seam uses
+   *  this to resolve WHICH stage persona (`threadKindSpec(role).agent`) a re-homed turn runs as. */
+  async threadRole(threadId: string): Promise<ThreadRole | null> {
+    const row = await this.threads.findOne({
+      where: { id: threadId },
+      select: { id: true, role: true },
+    });
+    return row ? coerceThreadRole(row.role) : null;
   }
 
   /** Insert a TASK into a thread group's checklist. Dense-numbers the ordinal (which doubles as the short

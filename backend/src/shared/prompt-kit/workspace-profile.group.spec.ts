@@ -15,7 +15,7 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
   it.each(['feature', 'onboarding'] as const)(
     'names the area + lists all seven upkeep tools for jobKind=%s',
     (jobKind) => {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind });
+      const out = renderAgentPrompt(Agent.PLANNING, { jobKind });
       expect(out).toContain(NAME_MARKER);
       // Each dimension's upkeep tool is named so the brain knows how to maintain it.
       for (const tool of [
@@ -34,7 +34,7 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
   it.each(['feature', 'onboarding'] as const)(
     'prints the live snapshot when present (jobKind=%s)',
     (jobKind) => {
-      const out = renderAgentPrompt(Agent.ATLAS_MAIN, {
+      const out = renderAgentPrompt(Agent.PLANNING, {
         jobKind,
         settings: { workspaceProfile: SNAPSHOT },
       });
@@ -44,21 +44,21 @@ describe('workspace-profile.group — the named provisioning umbrella', () => {
   );
 
   it('says "nothing recorded yet" when the snapshot is empty', () => {
-    const out = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const out = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(out).toContain('nothing recorded yet');
   });
 
   it('frames onboarding as the bulk pass and a normal job as incremental upkeep', () => {
-    const onboarding = renderAgentPrompt(Agent.ATLAS_MAIN, {
+    const onboarding = renderAgentPrompt(Agent.PLANNING, {
       jobKind: 'onboarding',
     });
-    const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const normal = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(onboarding).toContain('FIRST, BULK pass');
     expect(normal).toContain('KEEPING IT CURRENT IS YOUR JOB TOO');
   });
 
   it('surfaces org vs repo scope for skills + MCP in a NORMAL job (not just onboarding)', () => {
-    const normal = renderAgentPrompt(Agent.ATLAS_MAIN, { jobKind: 'feature' });
+    const normal = renderAgentPrompt(Agent.PLANNING, { jobKind: 'feature' });
     expect(normal).toContain(
       'the skill tools (propose_skill_install / propose_skill / propose_skill_removal)',
     );

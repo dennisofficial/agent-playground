@@ -18,6 +18,36 @@ import type { JobMessage } from "@/lib/api/job-api";
  */
 export type SystemTone = "ok" | "warn" | "accent" | "neutral";
 
+/** The `system_event` render kind's semantic subtype (`meta.eventKind`), stamped server-side from the raw
+ *  GitHub/webhook event — drives {@link EventBubble}'s per-kind icon/label/style. */
+export type EventKind =
+  | "ci_failure"
+  | "review_changes_requested"
+  | "review_approved"
+  | "review_comment";
+
+/** The internal-seed `Message` type behind a `system_notice` row (`meta.seedType`), stamped server-side
+ *  from the typed `InternalSeedMessage` discriminant (`domain/message.ts`). Drives {@link SystemNoticeRow}'s
+ *  per-type icon/label pill, mirroring {@link EventKind}. */
+export type SeedType =
+  | "reset_verify"
+  | "compaction"
+  | "work_owed_nudge"
+  | "amend_approved_wake"
+  | "ship_open_pr"
+  | "request_changes"
+  | "unblocked_job_wake"
+  | "follow_up_job_seed"
+  | "retry_resume_nudge"
+  | "session_limit_reset_nudge"
+  | "mcp_approved"
+  | "mcp_removed"
+  | "convention_attached"
+  | "convention_edited"
+  | "skill_approved"
+  | "skill_edit_approved"
+  | "skill_edit_gone";
+
 export type ClassifiedMessage =
   | { kind: "user"; message: JobMessage }
   | { kind: "claude"; message: JobMessage }
@@ -61,7 +91,10 @@ export type ClassifiedMessage =
   /** Harness context that rode alongside a turn (pipeline awareness, open-questions). Chip on the next user bubble. */
   | { kind: "system_reminder"; message: JobMessage }
   /** Untrusted external data folded into a turn (event body, halted-thread record). Its own "untrusted" pill. */
-  | { kind: "untrusted"; message: JobMessage };
+  | { kind: "untrusted"; message: JobMessage }
+  /** A build-thread anchor row (`kind: 'build_anchor'`) — driver bookkeeping with no operator-facing content.
+   *  Explicitly excluded from rendering (see the render-kind dispatch's no-op case). */
+  | { kind: "build_anchor"; message: JobMessage };
 
 const WARN_RE = /\b(paused|halt|failed|error|blocked|credential|expired)\b/i;
 const OK_RE = /\b(resumed|done|completed|merged|approved|opened|landed)\b/i;
@@ -113,6 +146,7 @@ export function classifyMessage(message: JobMessage): ClassifiedMessage {
   // Structured transcript blocks (from the in-sandbox session) — classified by `kind`, not by regex.
   if (message.kind === "thinking") return { kind: "thinking", message };
   if (message.kind === "tool") return { kind: "tool", message };
+  if (message.kind === "build_anchor") return { kind: "build_anchor", message };
 
   if (message.card?.type === "approval_card") {
     return { kind: "approval", message, card: message.card };

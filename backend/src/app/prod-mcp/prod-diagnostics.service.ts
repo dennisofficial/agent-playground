@@ -3,7 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { EnvService } from '@core/config/env/env.service';
 import { atlasAgentHomeBase } from '@shared/engine/engine-home';
-import type { ChatStimulus } from '@shared/domain/stimulus';
+import type { TurnEnvelope } from '@shared/domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import {
   DB_CONNECTION,
@@ -11,7 +11,7 @@ import {
   MCP_WRITER_CONNECTION,
 } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   ProdMaintenanceWriteEntity,
   type ProdMaintenanceWriteDryRun,
   type ProdMaintenanceWriteResult,
@@ -55,8 +55,8 @@ export class ProdDiagnosticsService {
     private readonly writer: DataSource | undefined,
     @InjectRepository(ProdMaintenanceWriteEntity, DB_CONNECTION)
     private readonly ledger: Repository<ProdMaintenanceWriteEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @Inject(CHAT_SURFACE)
     private readonly surface: ChatSurface,
     private readonly env: EnvService,
@@ -161,7 +161,7 @@ export class ProdDiagnosticsService {
    * happens ONLY via `executeApproved`, triggered solely by the operator's approval click.
    */
   async proposeWrite(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     sql: string,
   ): Promise<{ ok: true; writeId: string; message: string }> {
     const stmt = assertSingleWriteStatement(sql);
