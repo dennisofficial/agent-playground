@@ -239,6 +239,7 @@ function makeStore(state: StoreState): {
     setActivity: vi.fn(async (_id: string, activity: Job['activity']) => {
       state.job.activity = activity;
     }),
+    recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
     setJobHalt: vi.fn(async (_id: string, halt: Job['halt']) => {
       state.job.halt = halt;
       state.job.activity = 'idle';

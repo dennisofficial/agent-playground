@@ -1519,6 +1519,7 @@ export class ThreadDriver implements JobDispatcher {
     }
     // The driver now owns this job's work — mark it building (system-owned; suppresses the needs-you dot).
     await this.store.setActivity(jobId, 'build').catch(() => undefined);
+    await this.store.recomputeBuildStageProgress(jobId).catch(() => undefined);
     // CAP (MAX_SECTIONS): bound the number of BUILD thread groups driven per run, but NEVER drop a
     // master_review thread group (it rides last). I cap BUILD THREAD GROUPS rather than builder threads —
     // a build thread group's rotated legs are its own budget (MAX_LEGS_PER_THREAD_GROUP), so the pipeline
@@ -1694,6 +1695,10 @@ export class ThreadDriver implements JobDispatcher {
       }
       handoff = res.handoff;
     }
+
+    // Builder chain genuinely finished — advance the sidebar's build-stage count now (before review), so a
+    // just-finished builder counts immediately and the 'auto_fixing' review window doesn't hold it back.
+    await this.store.recomputeBuildStageProgress(job.id).catch(() => undefined);
 
     // REVIEW ONCE PER THREAD GROUP (d13): after the LAST builder leg is genuinely done, run the review
     // over the thread group's CUMULATIVE diff (the FIRST leg's `start_sha`..HEAD — HEAD already carries
