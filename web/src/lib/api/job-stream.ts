@@ -59,6 +59,14 @@ export type LiveBlock =
        * to decide "running". Carried across reconnect via the snapshot block spread.
        */
       bgSettled?: boolean;
+      /**
+       * Set on the ANCHOR tool block from the `bg_task 'started'` frame — the authoritative signal that this
+       * Task was launched in the background, INDEPENDENT of `input.run_in_background` (which is absent when the
+       * caller relies on the default-background behavior). The subagent card reads this (not the input field)
+       * to know it must track settlement rather than the launch-ack `done`. Carried across reconnect via the
+       * snapshot block spread.
+       */
+      bgStarted?: boolean;
       parentToolUseId?: string;
       emittedAt: number;
     };
@@ -358,19 +366,23 @@ class ThreadStreamStore {
         break;
       }
       case "bg_task": {
-        // Settlement of a backgrounded Task subagent — mark its anchor tool block settled so the subagent
-        // card stops showing "running" (the anchor's `done` was only the immediate launch ack). The event's
-        // `parentToolUseId` == the spawning Task id == the anchor block's `toolId`. `started`/`capped` (and
-        // untagged bare-Bash bg tasks) carry no anchor id → no-op.
+        // Lifecycle of a backgrounded Task subagent, tagged with `parentToolUseId` == the spawning Task id ==
+        // the anchor block's `toolId`. `'started'` marks the anchor backgrounded (so the card tracks
+        // settlement rather than the launch-ack `done` — the launch-ack flips `done:true` immediately even
+        // though the subagent is still streaming). `completed|failed|stopped` marks it settled so the card
+        // stops showing "running". A bare bg-Bash task carries no `parentToolUseId` → no-op.
         const st = ev.status;
-        if (
-          pid &&
-          (st === "completed" || st === "failed" || st === "stopped")
-        ) {
+        const settled =
+          st === "completed" || st === "failed" || st === "stopped";
+        if (pid && (st === "started" || settled)) {
           for (let i = blocks.length - 1; i >= 0; i--) {
             const b = blocks[i];
             if (b.kind === "tool" && b.toolId === pid) {
-              blocks[i] = { ...b, bgSettled: true };
+              blocks[i] = {
+                ...b,
+                ...(st === "started" ? { bgStarted: true } : {}),
+                ...(settled ? { bgSettled: true } : {}),
+              };
               break;
             }
           }

@@ -52,6 +52,7 @@ function makeController(orgDefaults: OrgDefaults) {
     jobs as never,
     {} as never, // messages
     repos as never,
+    {} as never, // subagents
     threadTitle as never,
     {} as never, // usageBus
     {} as never, // realtime
