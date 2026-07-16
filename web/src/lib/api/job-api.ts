@@ -144,6 +144,11 @@ export interface RawThreadMessage {
    */
   meta?: Record<string, unknown> | null;
   postedAt: string;
+  /** The delivery stimulus id stamped once the message row exists server-side, or absent for a row with no
+   *  delivery lifecycle. Paired with {@link deliveredAt} to derive the send state (staged/sending/landed). */
+  stimulusId?: string;
+  /** ISO time the row was actually delivered (taken by the SDK/engine), or absent while still in flight. */
+  deliveredAt?: string;
 }
 
 /** UI message shape — normalized so the conversation classifier can read it uniformly. */
@@ -188,6 +193,10 @@ export interface JobMessage {
   postedAt: string;
   /** Client-only: an optimistic post not yet echoed by history. */
   local?: boolean;
+  /** See {@link RawThreadMessage.stimulusId} — carried through `normalizeMessage` unchanged. */
+  stimulusId?: string;
+  /** See {@link RawThreadMessage.deliveredAt} — carried through `normalizeMessage` unchanged. */
+  deliveredAt?: string;
 }
 
 export function normalizeMessage(r: RawThreadMessage): JobMessage {
@@ -206,6 +215,8 @@ export function normalizeMessage(r: RawThreadMessage): JobMessage {
     card: r.card ?? undefined,
     meta: r.meta ?? undefined,
     postedAt: r.postedAt,
+    stimulusId: r.stimulusId,
+    deliveredAt: r.deliveredAt,
   };
 }
 

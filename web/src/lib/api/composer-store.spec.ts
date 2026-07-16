@@ -406,5 +406,56 @@ describe("composerStore", () => {
         questionAnswer,
       ]);
     });
+
+    describe("markSubmitting", () => {
+      it("sets submitting=true on just the matching cardIds", () => {
+        const ref = refFor("job-mark-submitting");
+        composerStore.stageAnswer(ref, questionAnswer);
+        composerStore.stageAnswer(ref, fileAnswer);
+        composerStore.markSubmitting(ref, [questionAnswer.cardId], true);
+        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+          { ...questionAnswer, submitting: true },
+          fileAnswer,
+        ]);
+      });
+
+      it("reverts submitting back to false (the onError restore path)", () => {
+        const ref = refFor("job-mark-submitting-revert");
+        composerStore.stageAnswer(ref, secretAnswer);
+        composerStore.markSubmitting(ref, [secretAnswer.cardId], true);
+        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+          { ...secretAnswer, submitting: true },
+        ]);
+        composerStore.markSubmitting(ref, [secretAnswer.cardId], false);
+        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+          { ...secretAnswer, submitting: false },
+        ]);
+      });
+
+      it("is a no-op for a cardId with no matching staged answer", () => {
+        const ref = refFor("job-mark-submitting-no-match");
+        composerStore.stageAnswer(ref, questionAnswer);
+        composerStore.markSubmitting(ref, ["not-a-real-card"], true);
+        expect(composerStore.getDraft(ref.jobId).stagedAnswers).toEqual([
+          questionAnswer,
+        ]);
+      });
+
+      it("leaves a submitting entry in stagedAnswers — StagedAnswersTray filters it out itself, not the store", () => {
+        // `StagedAnswersTray` renders `useComposerStagedAnswers(ref).filter((a) => !a.submitting)` — the
+        // store keeps the entry (so `pruneStagedAnswers` can still find it once the card lands) and only
+        // its `submitting` flag flips.
+        const ref = refFor("job-tray-filters-submitting");
+        composerStore.stageAnswer(ref, questionAnswer);
+        composerStore.stageAnswer(ref, fileAnswer);
+        composerStore.markSubmitting(ref, [questionAnswer.cardId], true);
+
+        const all = composerStore.getDraft(ref.jobId).stagedAnswers;
+        expect(all).toHaveLength(2);
+
+        const trayVisible = all.filter((a) => !a.submitting);
+        expect(trayVisible).toEqual([fileAnswer]);
+      });
+    });
   });
 });

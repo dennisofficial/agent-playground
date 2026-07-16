@@ -90,4 +90,40 @@ describe('composeTurn', () => {
       ].join('\n'),
     );
   });
+
+  it('renders `at` on a `system_notice`/`untrusted` prefix chunk when present, and omits it when absent (back-compat: existing callers never set it)', () => {
+    const withAt = composeTurn({
+      prefixChunks: [
+        {
+          kind: 'system_notice',
+          body: 'a timestamped notice',
+          attrs: { at: '2026-07-04T00:00:00.000Z' },
+        },
+        {
+          kind: 'untrusted',
+          body: 'external payload',
+          attrs: { source: 'github', at: '2026-07-04T00:00:01.000Z' },
+        },
+      ],
+      userChunks: [userChunk('Dennis', 'hi', '2026-07-04T00:00:02.000Z')],
+    });
+    expect(withAt).toBe(
+      [
+        '<system_notice at="2026-07-04T00:00:00.000Z">a timestamped notice</system_notice>',
+        '<untrusted source="github" at="2026-07-04T00:00:01.000Z">external payload</untrusted>',
+        '<user name="Dennis" at="2026-07-04T00:00:02.000Z">hi</user>',
+      ].join('\n'),
+    );
+
+    const withoutAt = composeTurn({
+      prefixChunks: [{ kind: 'system_notice', body: 'a plain notice' }],
+      userChunks: [userChunk('Dennis', 'hi', '2026-07-04T00:00:00.000Z')],
+    });
+    expect(withoutAt).toBe(
+      [
+        '<system_notice>a plain notice</system_notice>',
+        '<user name="Dennis" at="2026-07-04T00:00:00.000Z">hi</user>',
+      ].join('\n'),
+    );
+  });
 });

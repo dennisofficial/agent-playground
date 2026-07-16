@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
@@ -18,8 +18,18 @@ import {
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
+import {
+  MESSAGE_CHANGE_NOTIFIER,
+  type MessageChangeNotifier,
+} from '../surface/message-change-notifier.port';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import {
+  chunkKey,
+  renderBornBlockedProvenanceNote,
+  renderMidFlightBlockedNote,
+} from '../prompt-kit/harness';
+import type { JobProvenance } from '@shared/domain/job';
 
 /**
  * `reply_route` jsonb widened LOCALLY with the seed-stamp piggyback keys (mirroring how `priority`
@@ -35,6 +45,12 @@ type ReplyRouteJson = NonNullable<InboundMessageEntity['reply_route']> & {
   seedQuestionIds?: string[];
   seedSecretIds?: string[];
   seedFileIds?: string[];
+  /** Block/unblock DEDUPE stamps — mark a queued born-blocked provenance note, mid-flight "blocked" note,
+   *  or unblock note so `hasChatStimulusForSeedTarget` can find the one pending row and never stack a second
+   *  (same jsonb piggyback as the `seed*Id` keys — no schema change). */
+  bornBlockedSeed?: boolean;
+  blockNote?: boolean;
+  unblockNote?: boolean;
 };
 
 /** Raised when the unique (team, project, source, dedupe_key) index rejects a live duplicate insert. */
@@ -84,6 +100,12 @@ export class StimulusStoreService {
     // @Optional (trailing) so the existing direct-construction unit tests (positional args) keep compiling
     // without a trailing argument.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
+    // Best-effort realtime signal that a job's message log changed (send-persist + delivery-stamp) so SSE
+    // clients refetch. @Optional (trailing) matching `jobBootstrap` above — positional unit tests omit it;
+    // the @Global SurfaceModule supplies it live.
+    @Optional()
+    @Inject(MESSAGE_CHANGE_NOTIFIER)
+    private readonly notifier?: MessageChangeNotifier,
   ) {}
 
   /** The job's planning thread group thread id — the anchor a job-level message row is stamped onto
@@ -126,7 +148,10 @@ export class StimulusStoreService {
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
     // would render forever with the brain never consuming it. One transaction makes it both-or-neither.
-    await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
+    await this.jobBootstrap?.ensurePlanningThreadGroup(
+      input.jobId,
+      input.orgId,
+    );
     const ciThreadId =
       (await this.jobBootstrap?.ciThreadId(input.jobId)) ?? null;
     const threadId = ciThreadId ?? (await this.planningThreadId(input.jobId));
@@ -263,6 +288,22 @@ export class StimulusStoreService {
      * behavior — the plain bubble is written).
      */
     systemChunk?: SeedRow;
+    /**
+     * CASE-3 OPERATOR BUBBLE — the operator's own note text when it rides in the SAME submit as answered
+     * cards (a composed turn). When present it lands as a plain OPERATOR bubble (author = the operator, not
+     * a bot) rendering ONLY this note, and NO "…+ a message" pill is written for the send. Distinct from
+     * `systemChunk` (a curated pill) and from the plain `input.body` bubble. `inbound_messages.body` stays
+     * the FULL composed turn (`input.body`) regardless — only the rendered bubble text differs.
+     */
+    operatorBubbleText?: string;
+    /**
+     * CASE-3 BUBBLE AUTHOR OVERRIDE — the real operator identity to stamp on the `operatorBubbleText` row
+     * when `input.author` (the STIMULUS/turn author) is deliberately a non-operator scope (e.g.
+     * `SYSTEM_SEED_AUTHOR`, so the composed turn keeps taking the non-operator-authored turn-composition
+     * path — see `isOperatorAuthored` in agent-session-manager.service.ts). Absent = the bubble uses
+     * `input.author`, same as before.
+     */
+    bubbleAuthor?: { id: string; displayName: string };
     /** DELIVERY SEED — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedQuestionId`). */
     seedQuestionId?: string;
     /** DELIVERY SEED (secret variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedSecretId`). */
@@ -273,6 +314,11 @@ export class StimulusStoreService {
     seedQuestionIds?: string[];
     seedSecretIds?: string[];
     seedFileIds?: string[];
+    /** BLOCK/UNBLOCK DEDUPE stamps — piggybacked into `reply_route` jsonb so `hasChatStimulusForSeedTarget`
+     *  can locate the one pending born-blocked provenance note / mid-flight "blocked" note / unblock note. */
+    bornBlockedSeed?: boolean;
+    blockNote?: boolean;
+    unblockNote?: boolean;
   }): Promise<TurnEnvelope> {
     // ATOMIC: the operator-visible row (a plain bubble, a curated pill, or nothing) and the `stimuli` row
     // that DRIVES the brain turn must commit together. Two separate saves let a crash between them (e.g. a
@@ -299,20 +345,46 @@ export class StimulusStoreService {
         ? { seedSecretIds: input.seedSecretIds }
         : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
+      ...(input.bornBlockedSeed ? { bornBlockedSeed: input.bornBlockedSeed } : {}),
+      ...(input.blockNote ? { blockNote: input.blockNote } : {}),
+      ...(input.unblockNote ? { unblockNote: input.unblockNote } : {}),
     };
 
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
     // that thread, everything else (including the brain's default `'main'`) on the job's planning thread.
     if (!input.lane?.startsWith('thread:')) {
-      await this.jobBootstrap?.ensurePlanningThreadGroup(input.jobId, input.orgId);
+      await this.jobBootstrap?.ensurePlanningThreadGroup(
+        input.jobId,
+        input.orgId,
+      );
     }
     const threadId = input.lane?.startsWith('thread:')
       ? input.lane.slice('thread:'.length)
       : await this.planningThreadId(input.jobId);
 
     const row = await this.dataSource.transaction(async (m) => {
-      if (input.systemChunk === undefined) {
-        await m.save(
+      // The operator chat bubble this send renders (operator-bubble or plain-bubble branch) — captured so it
+      // can be correlated with the delivery-ledger row below. A pill/skip send leaves it undefined.
+      let bubbleRow: TranscriptMessageEntity | undefined;
+      if (input.operatorBubbleText !== undefined) {
+        // CASE 3 (note sent WITH answered cards): the note lands as its own durable operator bubble rendering
+        // ONLY the note text — NOT a "…+ a message" pill. The full composed turn still rides `inbound.body`.
+        // The bubble's author is `bubbleAuthor` when given (the real operator) — independent of `input.author`,
+        // which may deliberately be a non-operator scope so the turn-composition path stays non-operator-authored.
+        const bubbleAuthor = input.bubbleAuthor ?? input.author;
+        bubbleRow = await m.save(
+          m.create(TranscriptMessageEntity, {
+            job_id: input.jobId,
+            thread_id: threadId,
+            author: bubbleAuthor.displayName,
+            author_id: bubbleAuthor.id,
+            author_bot_id: null,
+            text: input.operatorBubbleText,
+            card: input.card ?? null,
+          }),
+        );
+      } else if (input.systemChunk === undefined) {
+        bubbleRow = await m.save(
           m.create(TranscriptMessageEntity, {
             job_id: input.jobId,
             thread_id: threadId,
@@ -352,7 +424,7 @@ export class StimulusStoreService {
       }
       // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
 
-      return m.save(
+      const inbound = await m.save(
         m.create(InboundMessageEntity, {
           org_id: input.orgId,
           repo_id: input.repoId,
@@ -370,7 +442,19 @@ export class StimulusStoreService {
           ...(input.lane ? { lane: input.lane } : {}),
         }),
       );
+
+      // Correlate the operator bubble with its delivery-ledger row so send/delivery state stamps on both.
+      // Only a genuine operator chat turn ('user') carries the link — never a pill, seed, or system row.
+      if (bubbleRow && type === 'user') {
+        await m.update(TranscriptMessageEntity, bubbleRow.id, {
+          stimulus_id: inbound.id,
+        });
+      }
+      return inbound;
     });
+
+    // Best-effort realtime nudge (txn already committed): a send persisted → connected clients refetch.
+    this.notifier?.emitMessagesChanged(input.repoId, input.jobId);
 
     const resumeThreadId = resumeThreadIdFromLane(input.lane);
     const deliveredQuestionIds = collapseDeliveredIds(
@@ -409,6 +493,141 @@ export class StimulusStoreService {
       ...(input.card ? { card: input.card } : {}),
       ...(resumeThreadId ? { resumeThreadId } : {}),
     };
+  }
+
+  /**
+   * BORN-BLOCKED: record the creation-time provenance note + the opening brief as TWO undelivered
+   * `main`-lane chat stimuli (author System), recorded ONCE — a re-driven block edge finds the pending
+   * provenance row and no-ops. Held, never enqueued: the `isJobBlocked` guard would hold them anyway, and
+   * the wake funnel's pump coalesces them with the JIT unblock note into ONE timestamped turn. Oldest-first
+   * (provenance, then brief) so the drained turn reads in order. The provenance note gets a curated pill; the
+   * brief is a plain System bubble carrying the operator's opening body verbatim.
+   */
+  async recordBornBlockedSeedsIfAbsent(input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+    brief: string;
+    createdBy: JobProvenance | null;
+  }): Promise<void> {
+    if (
+      await this.hasChatStimulusForSeedTarget(input.jobId, {
+        bornBlockedSeed: true,
+      })
+    ) {
+      return;
+    }
+    const author = {
+      id: SYSTEM_SEED_AUTHOR.id,
+      displayName: SYSTEM_SEED_AUTHOR.name,
+    };
+    const replyRoute = { surfaceId: 'web', jobRef: input.jobId };
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author,
+      replyRoute,
+      type: 'follow_up_job_seed',
+      body: renderBornBlockedProvenanceNote(input.createdBy),
+      lane: 'main',
+      bornBlockedSeed: true,
+      systemChunk: {
+        label: 'Queued — starts when unblocked',
+        chunkKey: chunkKey.bornBlockedSeed(input.jobId),
+      },
+    });
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author,
+      replyRoute,
+      type: 'follow_up_job_seed',
+      body: input.brief,
+      lane: 'main',
+    });
+  }
+
+  /**
+   * MID-FLIGHT block: record ONE undelivered `main`-lane "you've been blocked" note (author System),
+   * recorded ONCE. Held for the wake funnel's pump to coalesce with the JIT unblock note.
+   */
+  async recordBlockedNoteIfAbsent(input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+  }): Promise<void> {
+    if (
+      await this.hasChatStimulusForSeedTarget(input.jobId, { blockNote: true })
+    ) {
+      return;
+    }
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: renderMidFlightBlockedNote(),
+      lane: 'main',
+      blockNote: true,
+      systemChunk: {
+        label: 'Blocked',
+        chunkKey: chunkKey.blockNote(input.jobId),
+      },
+    });
+  }
+
+  /**
+   * The blocked-overlay preview body for ONE job (the DTO source that replaced `jobs.blocked_seed_message`):
+   * the pending born-blocked BRIEF body when the job was created blocked, or the "blocked" note body when it
+   * was blocked mid-flight; null when neither is queued. Read only while the job is `blocked` (the caller
+   * gates on status).
+   */
+  async pendingBlockedPreview(jobId: string): Promise<string | null> {
+    const rows = await this.pendingBlockedRows([jobId]);
+    return pickBlockedPreview(rows);
+  }
+
+  /**
+   * Batched {@link pendingBlockedPreview} for the list DTOs — one query for many jobs (models on
+   * `JobDependencyService.blockersOfManyBlocked` to avoid N+1). Returns jobId → its preview (or null).
+   */
+  async pendingLockedPreviews(
+    jobIds: string[],
+  ): Promise<Map<string, string | null>> {
+    const map = new Map<string, string | null>();
+    if (jobIds.length === 0) return map;
+    const rows = await this.pendingBlockedRows(jobIds);
+    const byJob = new Map<string, InboundMessageEntity[]>();
+    for (const r of rows) {
+      const list = byJob.get(r.job_id as string) ?? [];
+      list.push(r);
+      byJob.set(r.job_id as string, list);
+    }
+    for (const jobId of jobIds) {
+      map.set(jobId, pickBlockedPreview(byJob.get(jobId) ?? []));
+    }
+    return map;
+  }
+
+  /** The undelivered `main`-lane chat stimuli for the given jobs, oldest-first — the raw rows both preview
+   *  lookups pick the born-blocked brief / mid-flight note out of. */
+  private async pendingBlockedRows(
+    jobIds: string[],
+  ): Promise<InboundMessageEntity[]> {
+    return this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id IN (:...ids)', { ids: jobIds })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere("COALESCE(s.lane, 'main') = 'main'")
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
   }
 
   /**
@@ -536,12 +755,30 @@ export class StimulusStoreService {
     return (res.raw as Array<{ id: string }>).map((r) => r.id);
   }
 
-  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
+  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). Folds in the correlated
+   *  operator bubble's `delivered_at` and a best-effort realtime nudge, so the transcript reflects "landed"
+   *  the moment the SDK accepts the turn. A no-op (no second stamp, no emit) when already delivered/missing. */
   async markChatDelivered(id: string): Promise<void> {
-    await this.stimuli.update(
-      { id, delivered_at: IsNull() },
-      { delivered_at: new Date() },
-    );
+    const row = await this.dataSource.transaction(async (m) => {
+      const deliveredAt = new Date();
+      const res = await m.update(
+        InboundMessageEntity,
+        { id, delivered_at: IsNull() },
+        { delivered_at: deliveredAt },
+      );
+      if (!res.affected) return null; // already delivered or missing — idempotent no-op.
+      const delivered = await m.findOne(InboundMessageEntity, {
+        where: { id },
+      });
+      await m.update(
+        TranscriptMessageEntity,
+        { stimulus_id: id, delivered_at: IsNull() },
+        { delivered_at: deliveredAt },
+      );
+      return delivered;
+    });
+    if (row)
+      this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
   }
 
   /**
@@ -597,6 +834,9 @@ export class StimulusStoreService {
       seedQuestionId?: string;
       seedSecretId?: string;
       seedFileId?: string;
+      bornBlockedSeed?: boolean;
+      blockNote?: boolean;
+      unblockNote?: boolean;
     },
   ): Promise<boolean> {
     const qb = this.stimuli
@@ -628,6 +868,18 @@ export class StimulusStoreService {
         "(s.reply_route ->> 'seedFileId' = :f OR jsonb_exists(s.reply_route -> 'seedFileIds', :f))",
         { f: target.seedFileId },
       );
+      hasTarget = true;
+    }
+    if (target.bornBlockedSeed) {
+      qb.andWhere("s.reply_route ->> 'bornBlockedSeed' = 'true'");
+      hasTarget = true;
+    }
+    if (target.blockNote) {
+      qb.andWhere("s.reply_route ->> 'blockNote' = 'true'");
+      hasTarget = true;
+    }
+    if (target.unblockNote) {
+      qb.andWhere("s.reply_route ->> 'unblockNote' = 'true'");
       hasTarget = true;
     }
     if (!hasTarget) return false;
@@ -875,6 +1127,25 @@ function resumeThreadIdFromLane(
   lane: string | null | undefined,
 ): string | undefined {
   return lane?.startsWith('thread:') ? lane.slice('thread:'.length) : undefined;
+}
+
+/**
+ * Pick the blocked-overlay preview out of a job's undelivered `main`-lane rows (oldest-first): the opening
+ * BRIEF when a born-blocked provenance note is queued (the brief is its flag-less `follow_up_job_seed`
+ * sibling), else the mid-flight "blocked" note body, else null.
+ */
+function pickBlockedPreview(rows: InboundMessageEntity[]): string | null {
+  const flag = (r: InboundMessageEntity): ReplyRouteJson | null =>
+    r.reply_route as ReplyRouteJson | null;
+  const bornBlocked = rows.some((r) => flag(r)?.bornBlockedSeed);
+  if (bornBlocked) {
+    const brief = rows.find(
+      (r) => r.type === 'follow_up_job_seed' && !flag(r)?.bornBlockedSeed,
+    );
+    return brief?.body ?? null;
+  }
+  const blockNote = rows.find((r) => flag(r)?.blockNote);
+  return blockNote?.body ?? null;
 }
 
 function isUniqueViolation(err: unknown): boolean {

@@ -78,6 +78,19 @@ function fakeDataSource(
         staged.push({ Entity: __entity, saved });
         return saved;
       },
+      // Correlation write (transcript row ← its delivery-ledger row): patch the staged row in place so a
+      // committed row reflects the update, mirroring a real transaction's UPDATE-then-commit.
+      update: async (
+        Entity: unknown,
+        id: string,
+        patch: Record<string, unknown>,
+      ) => {
+        const target = staged.find(
+          (s) => s.Entity === Entity && s.saved.id === id,
+        );
+        if (target) Object.assign(target.saved, patch);
+        return { affected: target ? 1 : 0 };
+      },
     };
     const result = await cb(manager); // a throw inside cb skips the flush below → rollback
     for (const { Entity, saved } of staged) rowsFor(Entity).push(saved);

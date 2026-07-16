@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { EventMessage, Message, ParsedEvent, SeedRow } from '@shared/domain';
+import type {
+  EventMessage,
+  Message,
+  ParsedEvent,
+  SeedRow,
+} from '@shared/domain';
 import { assertNever } from '@shared/domain';
 import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
@@ -269,7 +274,8 @@ export class StimulusIntake {
    * single submit, already framed into one pre-rendered `renderTurn(...)` body. This is NOT a `Message`
    * domain variant (see `/context/specs/data-model.md`'s "tricky corner"): it persists as `type: 'user'`
    * because the turn is operator-authored and user-last, even though its body mixes card notices with the
-   * operator's chunk. The `seedRow` renders the combined delivery as one curated pill.
+   * operator's chunk. The operator's note lands as its own durable operator bubble (`operatorBubbleText`),
+   * NOT a "…+ a message" pill; the FULL composed turn still rides `inbound_messages.body` for the brain.
    */
   async intakeComposedSeed(
     input: {
@@ -277,13 +283,19 @@ export class StimulusIntake {
       repoId: string;
       jobId: string;
       body: string;
-      seedRow: SeedRow;
+      operatorBubbleText: string;
+      /** Optional render-only card payload for the operator bubble (e.g. composer attachments). */
+      card?: Record<string, unknown>;
       deliveredQuestionIds?: string[];
       deliveredFileIds?: string[];
       deliveredSecretIds?: string[];
     },
     transport: {
       author: { id: string; displayName: string };
+      /** The real operator identity to stamp on the `operatorBubbleText` row — independent of `author`,
+       *  which stays a non-operator scope (`SYSTEM_SEED_AUTHOR`) so the composed turn keeps taking the
+       *  non-operator-authored turn-composition path (see `isOperatorAuthored`). */
+      bubbleAuthor: { id: string; displayName: string };
       replyRoute: { surfaceId: string; jobRef: string };
     },
   ): Promise<void> {
@@ -292,9 +304,11 @@ export class StimulusIntake {
       repoId: input.repoId,
       jobId: input.jobId,
       author: transport.author,
+      bubbleAuthor: transport.bubbleAuthor,
       replyRoute: transport.replyRoute,
       body: input.body,
-      systemChunk: input.seedRow,
+      operatorBubbleText: input.operatorBubbleText,
+      card: input.card,
       seedQuestionIds: input.deliveredQuestionIds,
       seedFileIds: input.deliveredFileIds,
       seedSecretIds: input.deliveredSecretIds,
