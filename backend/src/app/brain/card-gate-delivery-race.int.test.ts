@@ -48,7 +48,10 @@ import type {
   EngineRunResult,
   RunEngineArgs,
 } from '@shared/engine/engine.types';
-import type { TurnRegistry } from '../sandbox/turn-registry.service';
+import {
+  BrainTurnAlreadyRunningError,
+  type TurnRegistry,
+} from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 
 function dbOpts() {
@@ -785,5 +788,387 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
         seedQuestionId: 'q-2',
       }),
     ).toBe(false);
+  });
+});
+
+describe('atomic stimulus claim (d2): kills the delivery self-race', () => {
+  let mod: TestingModule;
+  let ds: DataSource;
+  let stimulusStore: StimulusStoreService;
+  let bootstrap: JobBootstrapService;
+  let jobs: Repository<JobEntity>;
+  let repoId: string;
+
+  beforeAll(async () => {
+    mod = await Test.createTestingModule({
+      imports: [
+        TypeOrmModule.forRoot(dbOpts()),
+        TypeOrmModule.forFeature(ENTITIES, DB_CONNECTION),
+      ],
+      providers: [JobBootstrapService, StimulusStoreService],
+    }).compile();
+
+    stimulusStore = mod.get(StimulusStoreService);
+    bootstrap = mod.get(JobBootstrapService);
+    ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
+    jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
+
+    await ds.query(
+      `INSERT INTO organizations (id, name, slug, status) VALUES ($1, $2, $3, 'active')
+       ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+      [ORG_ID, 'Card Gate Race Org', 'card-gate-race-org-2'],
+    );
+    const repoRows = await ds.query(
+      `INSERT INTO repos (org_id, slug, name, git_url, default_branch, token_name, access_ok)
+       VALUES ($1, 'card-gate-race-repo', 'Card Gate Race Repo', 'https://github.com/x/y.git', $2, NULL, true)
+       ON CONFLICT (org_id, slug) DO UPDATE SET git_url = EXCLUDED.git_url RETURNING id`,
+      [ORG_ID, BASE_BRANCH],
+    );
+    repoId = repoRows[0].id;
+  });
+
+  afterAll(async () => {
+    await purgeOwnRows().catch(() => undefined);
+    await mod?.close();
+  });
+
+  beforeEach(async () => {
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
+  });
+
+  async function purgeOwnRows(): Promise<void> {
+    if (!ds?.isInitialized) return;
+    await ds.query('DELETE FROM inbound_messages WHERE org_id = $1', [ORG_ID]);
+    await ds.query(
+      'DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      [ORG_ID],
+    );
+    await ds.query('DELETE FROM active_turns WHERE org_id = $1', [ORG_ID]);
+    await ds.query('DELETE FROM jobs WHERE org_id = $1', [ORG_ID]);
+  }
+
+  afterEach(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+
+  async function makeThread(title: string): Promise<JobEntity> {
+    return jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'chat',
+        kind: 'feature',
+        title,
+      }),
+    );
+  }
+
+  /** Real `stimuli` row state for one stimulus id (the durable at-least-once ledger). */
+  async function rowState(
+    id: string,
+  ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
+    const rows = await ds.query(
+      'SELECT delivered_at, attempted_at FROM inbound_messages WHERE id = $1',
+      [id],
+    );
+    return rows[0];
+  }
+
+  /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
+  async function expireLease(jobId: string): Promise<void> {
+    await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [
+      jobId,
+    ]);
+  }
+
+  /**
+   * The `onRegistered` stamp (`drainFreshTurn`) is deliberately fire-and-forget — `void markChatDelivered(id)`
+   * — so a turn's registration never blocks on the durable stamp landing. Poll briefly instead of asserting
+   * the instant `pumpThread` resolves.
+   */
+  async function waitForDelivered(id: string): Promise<void> {
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      if ((await rowState(id)).delivered_at !== null) return;
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  async function recordOperator(jobId: string, body: string) {
+    return stimulusStore.recordChatStimulus({
+      orgId: ORG_ID,
+      repoId,
+      jobId,
+      author: OPERATOR,
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
+      body,
+    });
+  }
+
+  /**
+   * Build a fresh `AgentSessionManager` wired to the REAL `stimulusStore`. Copied verbatim from the outer
+   * describe block's `makeManager` — this block needs its OWN instance since it's a separate top-level
+   * `describe` (no access to the outer block's closures).
+   */
+  function makeManager(opts: { live?: boolean; leader?: boolean } = {}) {
+    let liveTurn: string | null = opts.live ? 'turn-live-1' : null;
+    const runningBrainTurn = vi.fn(async () =>
+      liveTurn ? { turn_id: liveTurn, lane: 'main' } : null,
+    );
+    const turnRegistry = { runningBrainTurn } as unknown as TurnRegistry;
+
+    let capturedTask: string | undefined;
+    let runImpl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null =
+      null;
+    const run = vi.fn((args: RunEngineArgs): Promise<EngineRunResult> => {
+      capturedTask = args.task;
+      if (runImpl) return runImpl(args);
+      args.onTurnRegistered?.('turn-fresh-1');
+      args.onEvent?.({
+        kind: 'session',
+        sessionId: 'sess-1',
+      } satisfies EngineEvent);
+      return Promise.resolve({ result: 'ok' });
+    });
+    const steer = vi.fn().mockResolvedValue(undefined);
+    const reattach = vi.fn().mockResolvedValue({ result: 'ok' });
+    const tryClaimAttach = vi.fn().mockReturnValue(true);
+    const engineRunner = {
+      run,
+      steer,
+      reattach,
+      tryClaimAttach,
+    } as unknown as EngineRunnerPort;
+
+    const jobRow = {
+      id: 'unused',
+      orgId: ORG_ID,
+      repoId,
+      status: 'open',
+      kind: 'feature',
+      halt: null,
+      featureBranch: null,
+    };
+    const store = {
+      loadJob: vi.fn().mockResolvedValue(jobRow),
+      setActivity: vi.fn().mockResolvedValue(undefined),
+      setHalted: vi.fn().mockResolvedValue(undefined),
+      endTurnActivity: vi.fn().mockResolvedValue(undefined),
+      clearBrainRetryCounters: vi.fn().mockResolvedValue(undefined),
+      clearRetrySessionResume: vi.fn().mockResolvedValue(undefined),
+      awaitingSecretId: vi.fn().mockResolvedValue(null),
+      getSecretCard: vi.fn().mockResolvedValue(null),
+      getQuestionCard: vi.fn().mockResolvedValue(null),
+      getFileCard: vi.fn().mockResolvedValue(null),
+      appendSystemEvent: vi.fn().mockResolvedValue(undefined),
+      route: vi.fn().mockResolvedValue({ channel: 'main', threadTs: 'x' }),
+      openQuestionCards: vi.fn().mockResolvedValue([]),
+      openFileCards: vi.fn().mockResolvedValue([]),
+      jobTitle: vi.fn().mockResolvedValue(null),
+      markQuestionDelivered: vi.fn().mockResolvedValue(undefined),
+      markSecretDelivered: vi.fn().mockResolvedValue(undefined),
+      clearAwaitingSecret: vi.fn().mockResolvedValue(undefined),
+      markFileDelivered: vi.fn().mockResolvedValue(undefined),
+      hasRecentSystemOperatorNotice: vi.fn().mockResolvedValue(false),
+      appendSystemOperatorMessage: vi.fn().mockResolvedValue(undefined),
+      appendAtlasMessage: vi.fn().mockResolvedValue(undefined),
+      appendSystemNotice: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const lifecycle = {
+      ensureProvisioned: vi.fn().mockResolvedValue(true),
+      ensureContainer: vi.fn().mockResolvedValue({
+        sandbox: { worktreePath: '/tmp', containerId: 'c1' },
+        wasReset: false,
+      }),
+      findSandbox: vi.fn().mockResolvedValue({ id: 'sbx-1' }),
+    };
+
+    const sandboxRows = { findOne: vi.fn().mockResolvedValue(null) };
+    const creds = { engineAuth: vi.fn().mockResolvedValue(undefined) };
+    const mcp = { resolveForTurn: vi.fn().mockResolvedValue([]) };
+    const prompts = { generate: () => 'SYSTEM' };
+    const turnHarness = {
+      create: () => ({
+        onEvent: vi.fn(),
+        emitPrompt: vi.fn().mockResolvedValue(undefined),
+        finish: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+        discard: vi.fn().mockResolvedValue(undefined),
+      }),
+      resetLane: vi.fn(),
+    };
+    const election = {
+      getState: () => (opts.leader ? 'leader' : 'follower'),
+    } as unknown as LeaderElectionService;
+    const git = { currentBranch: vi.fn().mockResolvedValue(null) };
+    const usage = { getResetAt: () => undefined };
+
+    const inert = {} as never;
+    const autoMerge = { maybeAutoMerge: vi.fn().mockResolvedValue(undefined) };
+    const selfSufficiency = {
+      buildTools: () => ({
+        request_secret: vi.fn(),
+        request_file: vi.fn(),
+        recall: vi.fn(),
+        remember: vi.fn(),
+      }),
+    };
+    const manager = new AgentSessionManager(
+      store as never, // store (1)
+      inert, // driverStore (2)
+      autoMerge as never, // autoMerge (3)
+      inert, // memory (4)
+      inert, // approvals (5)
+      lifecycle as never, // lifecycle (6)
+      engineRunner, // engineRunner (7)
+      turnRegistry, // turnRegistry (8)
+      inert, // planReview (9)
+      inert, // dispatcher (10)
+      inert, // surface (11)
+      sandboxRows as never, // sandboxRows (12)
+      inert, // stimulusRows (13)
+      stimulusStore, // stimulusStore (14) — REAL, bound to Postgres
+      turnHarness as never, // turnHarness (15)
+      inert, // classifier (16)
+      inert, // ship (17)
+      inert, // repos (18)
+      inert, // awareness (19)
+      inert, // jobDeps (20)
+      creds as never, // creds (21)
+      mcp as never, // mcp (22)
+      election, // election (23)
+      inert, // turnRecovery (24)
+      inert, // secretStore (25)
+      inert, // configStore (26)
+      git as never, // git (27)
+      prompts as never, // prompts (28)
+      inert, // threadInput (29)
+      inert, // liveVerificationJudge (30)
+      usage as never, // usage (31)
+      selfSufficiency as never, // selfSufficiency (32)
+      undefined, // usageProjector (33)
+      undefined, // env (34)
+      undefined, // conventions (35)
+      undefined, // workspaceProfile (36)
+      undefined, // skills (37)
+      undefined, // skillStore (38)
+      undefined, // skillFiles (39)
+      undefined, // skillInstaller (40)
+      undefined, // mcpStore (41)
+      undefined, // scheduler (42)
+      undefined, // brainGateway (43)
+      undefined, // reattachRegistry (44)
+      undefined, // jit (45)
+      undefined, // prodDiagnostics (46)
+      undefined, // repoRows (47)
+      undefined, // liveTurns (48)
+      bootstrap, // jobBootstrap (49)
+    );
+
+    return {
+      manager,
+      run,
+      steer,
+      store,
+      getCapturedTask: () => capturedTask,
+      setLive: (turnId: string | null) => {
+        liveTurn = turnId;
+      },
+      setRunImpl: (
+        impl: ((args: RunEngineArgs) => Promise<EngineRunResult>) | null,
+      ) => {
+        runImpl = impl;
+      },
+    };
+  }
+
+  it('claimChatStimuli: exactly one concurrent claimer wins, and the loser gets []', async () => {
+    const thread = await makeThread('atomic claim thread');
+    const stimulus = await recordOperator(thread.id, 'race me for delivery');
+
+    const [a, b] = await Promise.all([
+      stimulusStore.claimChatStimuli([stimulus.id], 60_000),
+      stimulusStore.claimChatStimuli([stimulus.id], 60_000),
+    ]);
+    const winners = [a, b].filter((r) => r.length > 0);
+    expect(winners).toHaveLength(1);
+    expect(winners[0]).toEqual([stimulus.id]);
+
+    // The winner's claim stamped the lease; the row is still undelivered (claiming ≠ delivering).
+    const claimed = await rowState(stimulus.id);
+    expect(claimed.attempted_at).not.toBeNull();
+    expect(claimed.delivered_at).toBeNull();
+
+    // Sweep-recovery of an expired lease is preserved: once the lease clears, a fresh claim wins again.
+    await expireLease(thread.id);
+    const reclaimed = await stimulusStore.claimChatStimuli([stimulus.id], 60_000);
+    expect(reclaimed).toEqual([stimulus.id]);
+  });
+
+  it('regression: two concurrent pumpThread callers on the same pending message never both drive a turn (no self-steer)', async () => {
+    const thread = await makeThread('cross-process claim race thread');
+    const h1 = makeManager({ live: false, leader: true });
+    const h2 = makeManager({ live: false, leader: true });
+
+    const stimulus = await recordOperator(thread.id, 'one message, two callers');
+
+    await Promise.all([
+      h1.manager.pumpThread(thread.id, ORG_ID, repoId),
+      h2.manager.pumpThread(thread.id, ORG_ID, repoId),
+    ]);
+
+    // Exactly one caller's engine ran a turn for this message; the other's `drainFreshTurn` bailed at
+    // zero-won and never reached `runChatTurn`/`run` at all.
+    const h1Ran = h1.run.mock.calls.length > 0;
+    const h2Ran = h2.run.mock.calls.length > 0;
+    expect(h1Ran).not.toBe(h2Ran);
+    if (h1Ran) {
+      expect(h1.run).toHaveBeenCalledOnce();
+      expect(h2.run).not.toHaveBeenCalled();
+    } else {
+      expect(h2.run).toHaveBeenCalledOnce();
+      expect(h1.run).not.toHaveBeenCalled();
+    }
+
+    // THE KEY REGRESSION: before the fix, the loser's `runner.run` would throw `BrainTurnAlreadyRunningError`
+    // and fall into `steerIntoLiveBrainTurn` — a self-steer into the very turn racing it. After the fix, the
+    // loser never even calls `run`, so neither caller ever steers.
+    expect(h1.steer).not.toHaveBeenCalled();
+    expect(h2.steer).not.toHaveBeenCalled();
+
+    await waitForDelivered(stimulus.id);
+    expect((await rowState(stimulus.id)).delivered_at).not.toBeNull();
+  });
+
+  it('coalesced-batch registration-loss ack: each claimed member is steered + acked individually, not once under the combined id', async () => {
+    const thread = await makeThread('coalesced registration-loss thread');
+    const h = makeManager({ live: false, leader: true });
+    const { manager, steer } = h;
+
+    const s1 = await recordOperator(thread.id, 'message one');
+    const s2 = await recordOperator(thread.id, 'message two');
+
+    // Simulate an unrelated live turn winning REGISTRATION after this caller already atomically claimed both
+    // stimuli: `run` flips the live-turn holder (so `steerIntoLiveBrainTurn`'s lookup finds it) then throws
+    // `BrainTurnAlreadyRunningError`, exactly like a concurrent reattach/turn winning the registration race.
+    h.setRunImpl(() => {
+      h.setLive('turn-live-1');
+      return Promise.reject(new BrainTurnAlreadyRunningError(thread.id));
+    });
+    // For THIS test only, simulate a real ack on steer (the shared `makeManager` default steer mock does
+    // nothing, which other tests in this file rely on).
+    steer.mockImplementation(async (_turnId: string, id: string) => {
+      await stimulusStore.markChatDelivered(id);
+    });
+
+    await manager.pumpThread(thread.id, ORG_ID, repoId);
+
+    // Two members coalesced into one turn → two individual steers (one per stimulus id), not one steer under
+    // the combined turn's head id.
+    expect(steer).toHaveBeenCalledTimes(2);
+    expect((await rowState(s1.id)).delivered_at).not.toBeNull();
+    expect((await rowState(s2.id)).delivered_at).not.toBeNull();
   });
 });

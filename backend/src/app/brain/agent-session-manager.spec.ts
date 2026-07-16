@@ -5950,6 +5950,11 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
       undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      // Atomic claim: this fake always wins everything it's asked to claim (mirrors the old
+      // always-succeeds `leaseChatStimuli` fake) — these tests aren't exercising the cross-caller race
+      // itself (that's covered by the real-Postgres `card-gate-delivery-race.int.test.ts`), just the
+      // single-caller pump/steer/fresh-turn plumbing.
+      claimChatStimuli: vi.fn().mockImplementation(async (ids: string[]) => ids),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatLanes: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
@@ -6034,7 +6039,10 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
     // Leased BEFORE steering (so a concurrent sweep can't re-take these rows mid-flight).
-    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['s1', 's2']);
+    expect(stimulusStore.claimChatStimuli).toHaveBeenCalledWith(
+      ['s1', 's2'],
+      expect.any(Number),
+    );
     expect(steer).toHaveBeenCalledTimes(2);
     expect(steer).toHaveBeenNthCalledWith(
       1,
