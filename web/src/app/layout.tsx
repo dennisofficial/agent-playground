@@ -40,7 +40,6 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      data-theme="daylight"
       suppressHydrationWarning
       className={`${display.variable} ${ui.variable} ${mono.variable} h-full`}
     >
