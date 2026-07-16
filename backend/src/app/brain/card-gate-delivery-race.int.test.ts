@@ -476,8 +476,8 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
   });
 
-  it('regression: an operator message + a pending seed answer → the seed delivers SOLO, framed, operator untouched', async () => {
-    const thread = await makeThread('seed-solo-vs-operator thread');
+  it('generalized coalescing: an operator message + a pending seed answer drain as ONE turn, both delivered', async () => {
+    const thread = await makeThread('seed-plus-operator coalesce thread');
     const { manager, run, store, getCapturedTask } = makeManager({
       live: false,
       leader: true,
@@ -488,10 +488,11 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     });
 
     const framed = '<system_notice>your question was answered</system_notice>';
-    // Seed is the OLDER (head) row; a seed head delivers solo (never coalesced into a `<user>` batch).
+    // Seed is the OLDER (head) row, `now`-priority (default) — it alone is enough to WAKE the lane.
     const seed = await recordSeed(thread.id, framed, { seedQuestionId: 'q-1' });
-    // A `later` operator reply stays deterministically pending: the seed's turn-end re-pump won't wake a
-    // later-only remainder, so the operator row is provably untouched (no lease, no stamp).
+    // A `later` operator reply never wakes a turn on its own, but once the seed wakes the lane the drain
+    // takes the WHOLE eligible batch — `later` only gates STARTING a turn, not whether a row rides along
+    // once one starts. So this row coalesces into the SAME turn as the seed.
     const operator = await stimulusStore.recordChatStimulus({
       orgId: ORG_ID,
       repoId,
@@ -504,24 +505,29 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
     await manager.pumpThread(thread.id, ORG_ID, repoId);
 
-    // The seed delivered SOLO: one fresh turn, the RAW framed body in the task, never wrapped as a `<user>`.
+    // ONE coalesced turn: the seed's already-framed body passes through verbatim (never re-wrapped as a
+    // `<user>`), and the operator reply is framed as a `<user>` chunk in the SAME task, ordered after it
+    // (canonical kind order: passthrough before user).
     expect(run).toHaveBeenCalledOnce();
     const task = getCapturedTask();
     expect(task).toBeDefined();
     expect(task).toContain(framed);
     expect(task).not.toContain('<user name="System"');
-    expect(task).not.toContain('a normal operator reply');
+    expect(task).toContain('a normal operator reply');
+    expect(task).toContain('<user name="Dennis"');
+    expect(task!.indexOf(framed)).toBeLessThan(
+      task!.indexOf('a normal operator reply'),
+    );
 
-    // The seed's durable row is stamped (success tail); the operator row is UNAFFECTED — still pending.
+    // Both durable rows land delivered together — the plain operator row on registration, the card-bearing
+    // seed row on the success tail — so the coalescing extends to the delivery ledger too.
     expect((await rowState(seed.id)).delivered_at).not.toBeNull();
-    expect((await rowState(operator.id)).delivered_at).toBeNull();
+    expect((await rowState(operator.id)).delivered_at).not.toBeNull();
     const stillPending = await stimulusStore.eligiblePendingChat(
       thread.id,
       60_000,
     );
-    expect(stillPending.map((p) => p.body)).toContain(
-      'a normal operator reply',
-    );
+    expect(stillPending).toHaveLength(0);
   });
 
   it('secret parity (Codex wedge): a provided-secret steered mid-turn is NOT stamped; the sweep clears the gate', async () => {
@@ -694,7 +700,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
             author: SEED_AUTHOR,
             body: '<system_notice>reattached seed</system_notice>',
             seed: true,
-            deliveryStimulusId: seed.id,
+            deliveryStimulusIds: [seed.id],
             ...v.target,
           },
         };

@@ -16,6 +16,7 @@ import type {
   JobHalt,
 } from '@shared/domain';
 import { JobDependencyService } from '../job-deps';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
@@ -125,6 +126,9 @@ export class DriverStoreService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly jobDeps: JobDependencyService,
+    // The blocked-overlay preview source — the queued born-blocked brief / mid-flight "blocked" note that
+    // replaced the `jobs.blocked_seed_message` column.
+    private readonly stimulusStore: StimulusStoreService,
   ) {}
 
   // ── operator-input cards (the orchestrate build turn's `request_operator_input`) ─────────────────
@@ -1427,10 +1431,13 @@ export class DriverStoreService {
     if (!job) return { status: 'no_job' };
     const blockedBy =
       job.status === 'blocked' ? await this.jobDeps.blockersOf(jobId) : [];
-    // The pending seed message a born-blocked job will start on when it unblocks (jobs.blocked_seed_message,
-    // cleared on wake). Surfaced only while blocked so the web can preview it in the blocked overlay.
+    // The pending body a born-blocked job will start on when it unblocks (its queued opening BRIEF), or the
+    // "blocked" note for a mid-flight block — read from the held `main`-lane seed queue, drained on wake.
+    // Surfaced only while blocked so the web can preview it in the blocked overlay.
     const blockedSeedMessage =
-      job.status === 'blocked' ? (job.blocked_seed_message ?? null) : null;
+      job.status === 'blocked'
+        ? await this.stimulusStore.pendingBlockedPreview(jobId)
+        : null;
     // An `open` job (chatting/planning, never entered the build lifecycle) has no pipeline — but its brain can
     // already be keeping a task list on its (always-present) planning thread group, and the navigator's Main row shows
     // it. Ride the no_job payload so the web isn't blind to it before a plan exists.

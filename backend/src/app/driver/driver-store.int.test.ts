@@ -29,6 +29,8 @@ import {
   TranscriptMessageEntity,
 } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
+import { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { DriverStoreService } from './driver-store.service';
 import { webShipReviewCard } from '../surface/web-approval-card';
 
@@ -56,6 +58,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
   let mod: TestingModule;
   let ds: DataSource;
   let store: DriverStoreService;
+  let stimulusStore: StimulusStoreService;
   let jobs: Repository<JobEntity>;
   let threads: Repository<ThreadEntity>;
   let messages: Repository<TranscriptMessageEntity>;
@@ -69,6 +72,10 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       ],
       providers: [
         DriverStoreService,
+        // The REAL stimulus store (+ its bootstrap) so a blocked job's `blockedSeedMessage` preview is
+        // sourced from the genuinely-queued born-blocked brief, not a column.
+        StimulusStoreService,
+        JobBootstrapService,
         {
           provide: JobDependencyService,
           useValue: { blockersOf: async () => [] },
@@ -77,6 +84,7 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
     }).compile();
 
     store = mod.get(DriverStoreService);
+    stimulusStore = mod.get(StimulusStoreService);
     ds = mod.get<DataSource>(getDataSourceToken(DB_CONNECTION));
     jobs = mod.get(getRepositoryToken(JobEntity, DB_CONNECTION));
     threads = mod.get(getRepositoryToken(ThreadEntity, DB_CONNECTION));
@@ -530,6 +538,33 @@ describe('DriverStoreService.getPipelineState (live Postgres)', () => {
       blockedBy: [],
       blockedSeedMessage: null,
     });
+  });
+
+  it('sources blockedSeedMessage from the queued born-blocked brief for a blocked job', async () => {
+    const job = await jobs.save(
+      jobs.create({
+        org_id: ORG_ID,
+        repo_id: repoId,
+        origin: 'control',
+        title: 'born blocked',
+        status: 'blocked',
+        base_branch: BASE_BRANCH,
+      }),
+    );
+    // Queue the born-blocked provenance note + brief the same way `addDependency` does.
+    await stimulusStore.recordBornBlockedSeedsIfAbsent({
+      orgId: ORG_ID,
+      repoId,
+      jobId: job.id,
+      brief: 'the queued opening brief',
+      createdBy: null,
+    });
+
+    const state = (await store.getPipelineState(job.id, ORG_ID)) as {
+      blockedSeedMessage: string | null;
+    };
+    // The preview is the BRIEF (not the provenance note), read live from the held `main`-lane queue.
+    expect(state.blockedSeedMessage).toBe('the queued opening brief');
   });
 
   it('nests thread groups → threads → review children + tasks (the full pipeline read shape)', async () => {
