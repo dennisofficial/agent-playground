@@ -1670,12 +1670,14 @@ export class ThreadDriver implements JobDispatcher {
       const builders = (
         await this.store.driverThreadsForThreadGroup(threadGroup.id)
       ).filter((t) => t.kind === 'builder');
-      // Carry the newest already-done builder's handoff forward — covers both a resume (legs done before
-      // this drive) and the post-run state (the leg we just finished). A rotated leg overrides this with
-      // its own `handoff_in` below.
-      const lastDone = [...builders].reverse().find((t) => t.status === 'done');
-      if (lastDone?.handoffOut) handoff = lastDone.handoffOut;
-      const next = builders.find((t) => t.status !== 'done');
+      const builderFinished = (t: DriverThread) =>
+        t.status === 'done' || t.status === 'auto_fixing';
+      // Carry the newest finished builder's handoff forward — covers both a resume (including the
+      // `auto_fixing` review window) and the post-run state (the leg we just finished). A rotated leg
+      // overrides this with its own `handoff_in` below.
+      const lastFinished = [...builders].reverse().find(builderFinished);
+      if (lastFinished?.handoffOut) handoff = lastFinished.handoffOut;
+      const next = builders.find((t) => !builderFinished(t));
       if (!next) break; // builder chain genuinely finished
       const res = await this.runThread(
         job,
