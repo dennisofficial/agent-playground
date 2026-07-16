@@ -2,8 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Check, ChevronRight, Loader2, RotateCw } from "lucide-react";
-import { toneOf, type SystemTone } from "./classify";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Loader2,
+  MessageSquare,
+  RotateCw,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
+import { toneOf, type EventKind, type SystemTone } from "./classify";
 import { Markdown } from "./markdown";
 import { contextConvoNodeForHref } from "./node-registry";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
@@ -22,6 +32,7 @@ import {
   type LiveTurn,
 } from "@/lib/api/job-stream";
 import { formatClockTime, formatTokens } from "@/lib/org-display";
+import { assertNever } from "@/lib/assert";
 
 /** Per-type tone for {@link MessageTime} — distinct colors so the operator can tell turn boundaries from
  *  in-turn blocks at a glance (the user wants to eyeball density/color before we tune it down). */
@@ -1066,17 +1077,98 @@ export function HarnessBubble({ message }: { message: JobMessage }) {
   );
 }
 
+/** The known `meta.eventKind` values — a runtime whitelist (not just the {@link EventKind} type) so an
+ *  untrusted/future value on the wire falls back to the generic panel instead of ever reaching the
+ *  exhaustive switch below (`assertNever` there is a compile-time guard, never a runtime one). */
+const KNOWN_EVENT_KINDS = [
+  "ci_failure",
+  "review_changes_requested",
+  "review_approved",
+  "review_comment",
+] as const;
+
+/** Per-{@link EventKind} icon/label/tone for {@link EventBubble}'s header — exhaustive, so a new event kind
+ *  fails the build until it's given a presentation here. */
+function eventKindPresentation(
+  eventKind: EventKind,
+): { icon: LucideIcon; label: string; tone: SystemTone } {
+  switch (eventKind) {
+    case "ci_failure":
+      return { icon: XCircle, label: "CI failed", tone: "warn" };
+    case "review_changes_requested":
+      return { icon: AlertTriangle, label: "Changes requested", tone: "warn" };
+    case "review_approved":
+      return { icon: CheckCircle2, label: "Review approved", tone: "ok" };
+    case "review_comment":
+      return { icon: MessageSquare, label: "Review comment", tone: "accent" };
+    default:
+      return assertNever(eventKind);
+  }
+}
+
 /**
  * An automated NOTIFICATION that opened this thread (`source='system_event'`) — a GitHub/CI/webhook event
  * delivered to Atlas as a harness message and shown to the operator. Distinct from operator bubbles, Atlas
- * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel whose header names the
- * source + severity (read off `meta.eventSource` / `meta.severity`), so it reads as "not human-sent."
+ * prose, and the (neutral) Codex `HarnessBubble`: a full-width accent-toned panel. A row stamped with a
+ * known `meta.eventKind` (d12) gets a distinct icon/label/tone per kind; a legacy row without one (predating
+ * the stamp) falls back to today's generic panel keyed off `meta.eventSource`/`meta.severity`.
  */
 export function EventBubble({ message }: { message: JobMessage }) {
   const meta = message.meta ?? {};
-  const source =
-    typeof meta.eventSource === "string" ? meta.eventSource : "event";
-  const severity = typeof meta.severity === "string" ? meta.severity : null;
+  const eventKind =
+    typeof meta.eventKind === "string" &&
+    (KNOWN_EVENT_KINDS as readonly string[]).includes(meta.eventKind)
+      ? (meta.eventKind as EventKind)
+      : null;
+
+  if (eventKind === null) {
+    // Generic fallback — unstamped legacy rows (and any future/unrecognized eventKind), unchanged.
+    const source =
+      typeof meta.eventSource === "string" ? meta.eventSource : "event";
+    const severity = typeof meta.severity === "string" ? meta.severity : null;
+    return (
+      <div
+        className="anim-fadeUp rounded-[9px] border"
+        style={{
+          borderColor: "var(--accent-line)",
+          background: "var(--accent-soft)",
+        }}
+      >
+        {/* Header strip */}
+        <div
+          className="flex items-center gap-2 rounded-t-[8px] px-3.5 py-2"
+          style={{
+            borderBottom: "1px solid var(--accent-line)",
+            background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
+          >
+            ◈
+          </span>
+          <span
+            className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
+            style={{ color: "var(--accent)" }}
+          >
+            Event · {source}
+          </span>
+          <span className="flex-1" />
+          {severity ? (
+            <span className="font-mono text-[10px] text-faint">{severity}</span>
+          ) : null}
+        </div>
+        {/* Markdown body */}
+        <div className="px-3.5 py-3">
+          <Markdown>{message.text}</Markdown>
+        </div>
+      </div>
+    );
+  }
+
+  const { icon: Icon, label, tone } = eventKindPresentation(eventKind);
+  const color = TONE_COLOR[tone];
   return (
     <div
       className="anim-fadeUp rounded-[9px] border"
@@ -1093,22 +1185,13 @@ export function EventBubble({ message }: { message: JobMessage }) {
           background: "color-mix(in srgb, var(--accent) 10%, transparent)",
         }}
       >
-        <span
-          aria-hidden
-          style={{ color: "var(--accent)", fontSize: 11, lineHeight: 1 }}
-        >
-          ◈
-        </span>
+        <Icon size={12} style={{ color }} />
         <span
           className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ color: "var(--accent)" }}
+          style={{ color }}
         >
-          Event · {source}
+          {label}
         </span>
-        <span className="flex-1" />
-        {severity ? (
-          <span className="font-mono text-[10px] text-faint">{severity}</span>
-        ) : null}
       </div>
       {/* Markdown body */}
       <div className="px-3.5 py-3">

@@ -91,7 +91,7 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function makeThread(title: string): Promise<JobEntity> {
@@ -124,7 +124,7 @@ describe('delivery priority (now|queue|later) — live Postgres DB-query proof',
 
     // The RAW row: priority lives INSIDE reply_route jsonb, no dedicated column.
     const raw = await ds.query(
-      `SELECT reply_route, reply_route ->> 'priority' AS priority_text FROM stimuli WHERE id = $1`,
+      `SELECT reply_route, reply_route ->> 'priority' AS priority_text FROM inbound_messages WHERE id = $1`,
       [returned.id],
     );
     expect(raw).toHaveLength(1);

@@ -24,6 +24,7 @@ import {
   UserBubble,
 } from "./bubbles";
 import { ToolGroup, segmentToolRun, type ToolItem } from "./tool-calls";
+import { assertNever } from "@/lib/assert";
 import { ApprovalCardView, VerdictCardView } from "./approval-card";
 import { QuestionCardView } from "./question-card";
 import { SecretCardView } from "./secret-card";
@@ -1001,8 +1002,10 @@ function buildLogItems(
       case "untrusted":
         push(<UntrustedBlock key={message.ts} message={message} />);
         break;
+      case "build_anchor":
+        // Driver bookkeeping row — no operator-facing content, explicitly not rendered.
+        break;
       case "claude":
-      default:
         push(
           <ClaudeBubble
             key={message.ts}
@@ -1011,6 +1014,8 @@ function buildLogItems(
           />,
         );
         break;
+      default:
+        return assertNever(c);
     }
   }
   flush();

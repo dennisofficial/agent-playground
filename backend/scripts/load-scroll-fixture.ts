@@ -79,7 +79,9 @@ async function main(): Promise<void> {
   try {
     const rows = await readFixture();
     await ds.transaction(async (tx) => {
-      await tx.query('DELETE FROM messages WHERE job_id = $1', [RICH_JOB_ID]);
+      await tx.query('DELETE FROM transcript_messages WHERE job_id = $1', [
+        RICH_JOB_ID,
+      ]);
       const BATCH = 200;
       for (let i = 0; i < rows.length; i += BATCH) {
         const batch = rows.slice(i, i + BATCH);
@@ -106,7 +108,7 @@ async function main(): Promise<void> {
           return `(${cells.join(', ')})`;
         });
         await tx.query(
-          `INSERT INTO messages (${COLS.join(', ')}) VALUES ${tuples.join(', ')}`,
+          `INSERT INTO transcript_messages (${COLS.join(', ')}) VALUES ${tuples.join(', ')}`,
           values,
         );
       }

@@ -4,10 +4,11 @@ import type { CurrentOrgCtx } from '../org/current-org.decorator';
 import { WebSurfaceController } from './web-surface.controller';
 
 /**
- * `POST …/answer-batch` — the endpoint applies a batch of staged card answers (question/file/durable-secret)
- * as exactly ONE combined seed. These are pure unit tests: the controller is instantiated with mocked deps,
- * so they exercise the guard/validation/coalescing wiring without a DB or brain. See the delivery/stamp
- * integration proofs in `brain/card-gate-delivery-race.int.test.ts` for the one-turn + success-tail behavior.
+ * `POST …/message` — the endpoint applies a batch of staged card answers (question/file/durable-secret)
+ * plus an optional operator message. These are pure unit tests: the controller is instantiated with mocked
+ * deps, so they exercise the guard/validation/coalescing/dispatch wiring without a DB or brain. See the
+ * delivery/stamp integration proofs in `brain/card-gate-delivery-race.int.test.ts` for the one-turn +
+ * success-tail behavior.
  */
 
 /** A fresh set of open cards per test — cloned so a per-item `provided_at` stamp doesn't leak across tests. */
@@ -75,6 +76,7 @@ function makeController() {
   const threadLifecycle = { rehydrateThread: vi.fn(async () => undefined) };
   const seedCalls: Array<{ body: string; opts: Record<string, unknown> }> = [];
   const surface = {
+    name: 'web',
     seedSystemNotification: vi.fn(
       (
         _channel: string,
@@ -88,6 +90,12 @@ function makeController() {
     ),
   };
   const election = { isLeader: () => true };
+  const intakeCalls: Array<{ message: unknown; transport: unknown }> = [];
+  const intake = {
+    intakeChat: vi.fn(async (message: unknown, transport: unknown) => {
+      intakeCalls.push({ message, transport });
+    }),
+  };
 
   const controller = new WebSurfaceController(
     surface as never, // surface
@@ -116,6 +124,7 @@ function makeController() {
     {} as never, // git
     {} as never, // jobDeps
     {} as never, // moduleRef
+    intake as never, // intake (StimulusIntake)
   );
   return {
     controller,
@@ -124,6 +133,8 @@ function makeController() {
     secrets,
     surface,
     seedCalls,
+    intake,
+    intakeCalls,
     threadLifecycle,
   };
 }
@@ -131,21 +142,20 @@ function makeController() {
 const owner: CurrentOrgCtx = { id: 'org-1', role: 'owner' };
 const member: CurrentOrgCtx = { id: 'org-1', role: 'member' };
 
-describe('WebSurfaceController — answer-batch', () => {
+describe('WebSurfaceController — /message (card batch, no operator text)', () => {
   it('applies a 3-item batch (question + file + durable secret) as ONE combined seed carrying all three id arrays', async () => {
     const { controller, store, secrets, seedCalls } = makeController();
-    const res = await controller.answerBatch(owner, 'job-1', {
-      items: [
-        { kind: 'question', questionId: 'q-1', answer: 'Postgres' },
+    const res = await controller.postMessage(owner, {} as never, 'job-1', {
+      messages: [
+        { type: 'answer_question', questionId: 'q-1', answer: 'Postgres' },
         {
-          kind: 'file',
+          type: 'file_answered',
           requestId: 'f-1',
           filename: 'keys.env',
           content: 'A=1',
         },
-        { kind: 'secret', requestId: 's-1', value: 'sk-live-123' },
+        { type: 'secret_provided', requestId: 's-1', value: 'sk-live-123' },
       ],
-      message: 'thanks!',
     });
 
     expect(res.ok).toBe(true);
@@ -166,33 +176,32 @@ describe('WebSurfaceController — answer-batch', () => {
       deliveredFileIds: ['f-1'],
       deliveredSecretIds: ['s-1'],
     });
-    // The combined body carries every notice plus the operator note.
     expect(seedCalls[0].body).toContain('Postgres');
     expect(seedCalls[0].body).toContain('.env.keys');
     expect(seedCalls[0].body).toContain('API_KEY');
-    expect(seedCalls[0].body).toContain('The operator also added a note:');
-    expect(seedCalls[0].body).toContain('thanks!');
   });
 
-  it('rejects an empty items array with 400', async () => {
+  it('rejects an empty messages array with 400', async () => {
     const { controller } = makeController();
     await expect(
-      controller.answerBatch(owner, 'job-1', { items: [] }),
+      controller.postMessage(owner, {} as never, 'job-1', { messages: [] }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects malformed batch items before any per-card write', async () => {
     const { controller, store, secrets } = makeController();
     await expect(
-      controller.answerBatch(owner, 'job-1', {
-        items: [{ kind: 'question', questionId: 'q-1', answer: '   ' }],
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: [
+          { type: 'answer_question', questionId: 'q-1', answer: '   ' },
+        ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      controller.answerBatch(owner, 'job-1', {
-        items: [
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: [
           {
-            kind: 'file',
+            type: 'file_answered',
             requestId: 'f-1',
             filename: 'empty.env',
             content: '',
@@ -201,8 +210,10 @@ describe('WebSurfaceController — answer-batch', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      controller.answerBatch(owner, 'job-1', {
-        items: [{ kind: 'bogus', requestId: 'f-1', content: 'A=1' } as never],
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: [
+          { type: 'bogus', requestId: 'f-1', content: 'A=1' } as never,
+        ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
@@ -213,47 +224,58 @@ describe('WebSurfaceController — answer-batch', () => {
   it('a NON-owner member can submit a question-only batch, but is 403d on a batch containing a file or secret item', async () => {
     const { controller, seedCalls } = makeController();
     // Question-only — membership suffices, no 403.
-    const ok = await controller.answerBatch(member, 'job-1', {
-      items: [{ kind: 'question', questionId: 'q-1', answer: 'Postgres' }],
+    const ok = await controller.postMessage(member, {} as never, 'job-1', {
+      messages: [
+        { type: 'answer_question', questionId: 'q-1', answer: 'Postgres' },
+      ],
     });
     expect(ok.ok).toBe(true);
     expect(seedCalls).toHaveLength(1);
 
     // A secret item requires owner.
     await expect(
-      controller.answerBatch(member, 'job-1', {
-        items: [{ kind: 'secret', requestId: 's-1', value: 'x' }],
+      controller.postMessage(member, {} as never, 'job-1', {
+        messages: [
+          { type: 'secret_provided', requestId: 's-1', value: 'x' },
+        ],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     // A file item requires owner.
     await expect(
-      controller.answerBatch(member, 'job-1', {
-        items: [
-          { kind: 'file', requestId: 'f-1', filename: 'k', content: 'A=1' },
+      controller.postMessage(member, {} as never, 'job-1', {
+        messages: [
+          {
+            type: 'file_answered',
+            requestId: 'f-1',
+            filename: 'k',
+            content: 'A=1',
+          },
         ],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('refuses an EPHEMERAL secret item: applySecretProvide returns noop — it never reaches the store or the seed', async () => {
+  it('an EPHEMERAL-only secret submit applies as a noop and, with nothing else to deliver, 400s rather than seeding an empty turn', async () => {
     const { controller, store, secrets, seedCalls } = makeController();
-    const res = await controller.answerBatch(owner, 'job-1', {
-      items: [{ kind: 'secret', requestId: 's-eph', value: '123456' }],
-    });
-    expect(res.results).toEqual([{ id: 's-eph', status: 'noop' }]);
-    // Never written, never seeded (no applied card and no note → deliverBatchSeed sends nothing).
+    await expect(
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: [
+          { type: 'secret_provided', requestId: 's-eph', value: '123456' },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    // Never written, never seeded.
     expect(store.markSecretProvidedPerCard).not.toHaveBeenCalled();
     expect(secrets.write).not.toHaveBeenCalled();
     expect(seedCalls).toHaveLength(0);
-    expect(res.ts).toBe('');
   });
 
   it('rejects a batch with too many items before any write', async () => {
     const { controller, store, secrets } = makeController();
     await expect(
-      controller.answerBatch(owner, 'job-1', {
-        items: Array.from({ length: 51 }, () => ({
-          kind: 'question' as const,
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: Array.from({ length: 51 }, () => ({
+          type: 'answer_question' as const,
           questionId: 'q-1',
           answer: 'Postgres',
         })),
@@ -267,13 +289,78 @@ describe('WebSurfaceController — answer-batch', () => {
     const { controller, secrets } = makeController();
     const tooBig = 'a'.repeat(4 * 1024 * 1024 + 1);
     await expect(
-      controller.answerBatch(owner, 'job-1', {
-        items: [
-          { kind: 'file', requestId: 'f-1', filename: 'big', content: tooBig },
+      controller.postMessage(owner, {} as never, 'job-1', {
+        messages: [
+          {
+            type: 'file_answered',
+            requestId: 'f-1',
+            filename: 'big',
+            content: tooBig,
+          },
         ],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     // Rejected before any write.
     expect(secrets.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebSurfaceController — /message (mixed: answered cards + an operator message)', () => {
+  it('composes ONE pre-framed seed turn (answer notices + the operator message, user-last) and delivers it via StimulusIntake', async () => {
+    const { controller, store, secrets, seedCalls, intake, intakeCalls } =
+      makeController();
+    const user = { id: 'u-1', displayName: 'Dennis', name: 'Dennis' };
+    const res = await controller.postMessage(owner, user as never, 'job-1', {
+      messages: [
+        {
+          type: 'answer_question',
+          questionId: 'q-1',
+          answer: 'Postgres',
+        },
+        {
+          type: 'file_answered',
+          requestId: 'f-1',
+          filename: 'keys.env',
+          content: 'A=1',
+        },
+        { type: 'secret_provided', requestId: 's-1', value: 'sk-live-123' },
+        { type: 'user', text: 'thanks!' },
+      ],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(res.results).toEqual([
+      { id: 'q-1', status: 'applied' },
+      { id: 'f-1', status: 'applied' },
+      { id: 's-1', status: 'applied' },
+    ]);
+    expect(store.markQuestionAnswered).toHaveBeenCalledOnce();
+    expect(secrets.write).toHaveBeenCalledTimes(2);
+
+    // The mixed case bypasses `surface.seedSystemNotification` entirely (no double-wrap) — it goes
+    // through the `StimulusIntake` seam instead.
+    expect(seedCalls).toHaveLength(0);
+    expect(intake.intakeChat).toHaveBeenCalledOnce();
+
+    const { message: seedMessage, transport } = intakeCalls[0];
+    expect(seedMessage).toMatchObject({
+      type: 'seed',
+      trust: 'system',
+      deliveredQuestionIds: ['q-1'],
+      deliveredFileIds: ['f-1'],
+      deliveredSecretIds: ['s-1'],
+    });
+    const body = (seedMessage as { body: string }).body;
+    // Answer notices frame as `<system_notice>` chunks; the operator message is the trailing `<user>`
+    // chunk (renderTurn's canonical ordering — user always last).
+    expect(body).toContain('Postgres');
+    expect(body).toContain('.env.keys');
+    expect(body).toContain('API_KEY');
+    expect(body.indexOf('thanks!')).toBeGreaterThan(body.indexOf('API_KEY'));
+    expect(body).toMatch(/<user[^>]*>[\s\S]*thanks!/);
+
+    expect(transport).toMatchObject({
+      replyRoute: { surfaceId: 'web', jobRef: 'job-1' },
+    });
   });
 });

@@ -105,6 +105,7 @@ export class BaseMoveMergeabilitySync {
           source: 'github',
           dedupeKey: `conflict:${result.number}:${result.headSha}`,
           severity: 'critical',
+          eventKind: 'ci_failure',
           body:
             `Your PR #${result.number} has a merge conflict against its base branch. ` +
             `Fetch the base, resolve the conflicts in the sandbox, and push the fix.${

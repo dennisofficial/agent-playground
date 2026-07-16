@@ -22,7 +22,7 @@ import {
   OrganizationEntity,
   OrgCredentialsEntity,
   RepoEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
@@ -148,8 +148,8 @@ export class OnboardingService {
     private readonly orgCreds: Repository<OrgCredentialsEntity>,
     @InjectRepository(JobEntity, DB_CONNECTION)
     private readonly jobs: Repository<JobEntity>,
-    @InjectRepository(StimulusEntity, DB_CONNECTION)
-    private readonly stimuli: Repository<StimulusEntity>,
+    @InjectRepository(InboundMessageEntity, DB_CONNECTION)
+    private readonly stimuli: Repository<InboundMessageEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly decisionRecords: Repository<DecisionRecordEntity>,
     @InjectRepository(JobSandboxEntity, DB_CONNECTION)

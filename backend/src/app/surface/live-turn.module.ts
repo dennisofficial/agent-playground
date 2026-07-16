@@ -2,7 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   SubagentEntity,
   TaskEntity,
@@ -33,7 +33,7 @@ import {
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [MessageEntity, ThreadEntity, ThreadGroupEntity, TaskEntity, SubagentEntity],
+      [TranscriptMessageEntity, ThreadEntity, ThreadGroupEntity, TaskEntity, SubagentEntity],
       DB_CONNECTION,
     ),
   ],

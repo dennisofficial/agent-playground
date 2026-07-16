@@ -201,7 +201,7 @@ export interface WebQuestionOption {
 
 /**
  * A formal question the brain posed via `ask_question` — rendered as a card with one button per option
- * (+ optional free-text "Other"). The operator's pick POSTs to `…/threads/:jobId/answer-question`.
+ * (+ optional free-text "Other"). The operator's pick POSTs an `answer_question` item to `…/threads/:jobId/message`.
  * When `answer` is set the card renders the compact answered state. Mirrors the backend `WebQuestionCard`.
  */
 export interface WebQuestionCard {
@@ -259,9 +259,9 @@ export interface WebSecretInputCard {
 
 /**
  * A secure FILE request the onboarding brain posed via `request_file` — rendered as a file picker. The
- * operator's file is read as text and POSTs to `…/threads/:jobId/provide-file`, which stores the contents
- * ENCRYPTED + grants them; the contents are NEVER part of this card. When `provided_at` is set the card
- * renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
+ * operator's file is read as text and POSTs a `file_answered` item to `…/threads/:jobId/message`, which stores
+ * the contents ENCRYPTED + grants them; the contents are NEVER part of this card. When `provided_at` is set the
+ * card renders a compact "uploaded" state. Mirrors the backend `WebFileRequestCard` (deliberately value-free).
  */
 export interface WebFileRequestCard {
   type: "file_request_card";

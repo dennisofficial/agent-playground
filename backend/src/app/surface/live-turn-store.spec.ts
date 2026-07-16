@@ -413,6 +413,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
       {} as never, // git (LocalGitService)
       {} as never, // jobDeps (JobDependencyService)
       {} as never, // moduleRef (ModuleRef)
+      {} as never, // intake (StimulusIntake)
     );
   }
 

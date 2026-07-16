@@ -958,7 +958,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       author_bot_id: string | null;
       meta: Record<string, unknown>;
     }> = await dataSource.query(
-      `SELECT text, kind, author_bot_id, meta FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
+      `SELECT text, kind, author_bot_id, meta FROM transcript_messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
       [jobId],
     );
     expect(rows).toHaveLength(1);
@@ -983,7 +983,7 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
       createdAt: new Date(at.getTime() - 2),
     });
     const dupCount: Array<{ n: string }> = await dataSource.query(
-      `SELECT COUNT(*)::text AS n FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
+      `SELECT COUNT(*)::text AS n FROM transcript_messages WHERE job_id = $1 AND meta->>'source' = 'system_reminder'`,
       [jobId],
     );
     expect(Number(dupCount[0].n)).toBe(1);
@@ -1031,12 +1031,12 @@ describe('BrainStoreService re-propose (live Postgres)', () => {
 
     const withRow: Array<{ meta: Record<string, unknown> }> =
       await dataSource.query(
-        `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+        `SELECT meta FROM transcript_messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
         [jobId, `seed:fullbody:${jobId}:with`],
       );
     const withoutRow: Array<{ meta: Record<string, unknown> }> =
       await dataSource.query(
-        `SELECT meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+        `SELECT meta FROM transcript_messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
         [jobId, `seed:fullbody:${jobId}:without`],
       );
     expect(withRow[0].meta.fullBody).toBe(rawPayload);
@@ -1412,7 +1412,7 @@ async function insertUserMessage(
 ): Promise<void> {
   const threadId = await ensurePlanningThread(ds, jobId, TEAM_ID);
   await ds.query(
-    `INSERT INTO messages (job_id, thread_id, author, author_id, text, kind, created_at, updated_at)
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, text, kind, created_at, updated_at)
        VALUES ($1, $2, 'Operator', 'op', $3, 'chat', $4, $4)`,
     [jobId, threadId, text, createdAt.toISOString()],
   );
@@ -1437,7 +1437,7 @@ async function loadMessageRow(
     text: string;
     meta: Record<string, unknown> | null;
   }> = await ds.query(
-    `SELECT author, author_id, author_bot_id, text, meta FROM messages
+    `SELECT author, author_id, author_bot_id, text, meta FROM transcript_messages
        WHERE job_id = $1 ORDER BY created_at DESC LIMIT 1`,
     [jobId],
   );
@@ -1446,7 +1446,7 @@ async function loadMessageRow(
 
 async function messageTexts(ds: DataSource, jobId: string): Promise<string[]> {
   const rows: Array<{ text: string }> = await ds.query(
-    `SELECT text FROM messages WHERE job_id = $1 ORDER BY created_at ASC`,
+    `SELECT text FROM transcript_messages WHERE job_id = $1 ORDER BY created_at ASC`,
     [jobId],
   );
   return rows.map((r) => r.text);

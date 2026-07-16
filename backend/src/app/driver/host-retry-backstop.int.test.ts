@@ -31,7 +31,7 @@ import {
   JobEntity,
   ThreadEntity,
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
 } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
 import { DriverStoreService } from './driver-store.service';
@@ -357,11 +357,11 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
           retryFrames.push({ lane: f.lane, ...event });
         }
       });
-      // REAL block sink — the actual `MessageEntity` repository, so the durable retry notice lands in
+      // REAL block sink — the actual `TranscriptMessageEntity` repository, so the durable retry notice lands in
       // live Postgres `messages`.
       const version = { sha: 'dev' } as unknown as AppVersionService;
       const blockSink = new MessageBlockSink(
-        mod.get(getRepositoryToken(MessageEntity, DB_CONNECTION)),
+        mod.get(getRepositoryToken(TranscriptMessageEntity, DB_CONNECTION)),
         version,
       );
       const taskSink = {
@@ -546,7 +546,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
 
       // The durable quiet `system_notice` rows — the real backstop deliverable, read back from Postgres.
       const noticeRows: Array<{ text: string }> = await ds.query(
-        `SELECT text FROM messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
+        `SELECT text FROM transcript_messages WHERE job_id = $1 AND meta->>'source' = 'system_notice' ORDER BY created_at`,
         [job.id],
       );
       expect(noticeRows.length).toBeGreaterThanOrEqual(3);

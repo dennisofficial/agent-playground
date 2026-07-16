@@ -45,12 +45,12 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   ActiveTurnEntity,
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   OrgCredentialsEntity,
   OrganizationEntity,
   RepoEntity,
   ThreadEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
   ToolExecutionEntity,
@@ -250,10 +250,10 @@ beforeEach(async () => {
           JobEntity,
           JobSandboxEntity,
           OrgCredentialsEntity,
-          MessageEntity,
+          TranscriptMessageEntity,
           ThreadEntity,
           DecisionRecordEntity,
-          StimulusEntity,
+          InboundMessageEntity,
         ],
         DB_CONNECTION,
       ),
@@ -528,7 +528,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       [jobId, FAKE_TEAM_ID, threadGroup.id],
     );
     await ds.query(
-      `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
+      `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
       [jobId, thread.id],
     );
     await ds.query(
@@ -536,7 +536,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       [FAKE_TEAM_ID, repoId, jobId],
     );
     await ds.query(
-      `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+      `INSERT INTO inbound_messages (org_id, repo_id, kind, type, trust, body, job_id) VALUES ($1, $2, 'chat', 'user', 'trusted', 'b', $3)`,
       [FAKE_TEAM_ID, repoId, jobId],
     );
 
@@ -552,11 +552,11 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
         )[0].count,
       );
     expect(await count('jobs', 'id')).toBe(0);
-    expect(await count('messages')).toBe(0);
+    expect(await count('transcript_messages')).toBe(0);
     expect(await count('threads')).toBe(0);
     expect(await count('thread_groups')).toBe(0);
     expect(await count('decision_records')).toBe(0);
-    expect(await count('stimuli')).toBe(0);
+    expect(await count('inbound_messages')).toBe(0);
     expect(await count('job_sandboxes')).toBe(0);
   });
 
@@ -755,10 +755,10 @@ describe('R2 gate — detachContainer finalizes active_turns (real TurnRegistry,
             JobEntity,
             JobSandboxEntity,
             OrgCredentialsEntity,
-            MessageEntity,
+            TranscriptMessageEntity,
             ThreadEntity,
             DecisionRecordEntity,
-            StimulusEntity,
+            InboundMessageEntity,
             ActiveTurnEntity,
             ToolExecutionEntity,
           ],
