@@ -12,6 +12,7 @@ import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobDependencyEntity, JobEntity } from '../persistence/entities';
 import { TurnRegistry } from '../sandbox/turn-registry.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 
 // A job can be BLOCKED only from a pre-build conversational state; 'blocked' is included so a
 // multi-blocker create_job can add its edges one at a time (the first live blocker parks it; adding
@@ -57,7 +58,6 @@ export type DependentJobRow = {
   org_id: string;
   repo_id: string;
   status: string;
-  blocked_seed_message: string | null;
 };
 
 /** A repo's job as surfaced by {@link JobDependencyService.listJobs} for peer-dependency discovery. */
@@ -79,10 +79,12 @@ export type JobListRow = {
  * dependsOn); both share the same guard/park/wake semantics, so the rule lives ONCE.
  *
  * A dependency is a LIVE block only while its blocker hasn't reached a terminal outcome
- * (`isTerminalBlocker`). Once every blocker on a `blocked` job is terminal, the job is unparked and its
- * brain is woken — either replaying its stored born-blocked seed, or resuming its existing session with
- * a synthetic wake stimulus. See `onBlockerResolved` for the funnel and `addDependency`/`removeDependency`
- * for the two ways an edge's live-block state changes.
+ * (`isTerminalBlocker`). The block CONTEXT is modeled as ordinary queued `main`-lane seeds recorded when the
+ * edge is wired (a born-blocked provenance note + brief, or a mid-flight "blocked" note) and HELD while the
+ * job is blocked. Once every blocker on a `blocked` job is terminal, the funnel records a JIT "unblocked by
+ * X, Y" note (while still blocked, so the pump guard holds it too), flips the job open, then pumps — so the
+ * whole held backlog drains as ONE coalesced turn. See `onBlockerResolved` for the funnel and
+ * `addDependency`/`removeDependency` for the two ways an edge's live-block state changes.
  */
 @Injectable()
 export class JobDependencyService {
@@ -96,6 +98,7 @@ export class JobDependencyService {
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly brainGateway: BrainGateway,
+    private readonly stimulusStore: StimulusStoreService,
     @Optional()
     private readonly turnRegistry?: TurnRegistry,
   ) {}
@@ -267,11 +270,28 @@ export class JobDependencyService {
       return { blocked: dependent.status === 'blocked' };
     }
 
-    const patch: Partial<JobEntity> = { status: 'blocked' };
-    // Born-blocked seed: a manual/link block of an already-running job passes no seed, so it resumes
-    // its existing session on wake instead of replaying a first message that was never its own.
-    if (args.seed != null) patch.blocked_seed_message = args.seed;
-    await this.jobs.update({ id: jobId }, patch);
+    await this.jobs.update({ id: jobId }, { status: 'blocked' });
+    // Record the block CONTEXT as ordinary queued `main`-lane seeds (held while blocked, drained as one
+    // coalesced turn on wake) instead of a `blocked_seed_message` column. A born-blocked edge (seed present)
+    // queues a provenance note + the opening brief; a manual/link block of an already-running job (no seed)
+    // queues a single "you've been blocked" note only when this edge is the transition into `blocked`.
+    // Adding another live edge to an already-blocked job is not a new mid-flight block event (and for a
+    // born-blocked job would be false context), so it only records the edge.
+    if (args.seed != null) {
+      await this.stimulusStore.recordBornBlockedSeedsIfAbsent({
+        orgId,
+        repoId,
+        jobId,
+        brief: args.seed,
+        createdBy: dependent.created_by,
+      });
+    } else if (dependent.status !== 'blocked') {
+      await this.stimulusStore.recordBlockedNoteIfAbsent({
+        orgId,
+        repoId,
+        jobId,
+      });
+    }
     return { blocked: true };
   }
 
@@ -367,7 +387,7 @@ export class JobDependencyService {
   /** The dependent (blocked) jobs of `blockerJobId` — jobs that depend ON it. */
   async dependentsOf(blockerJobId: string): Promise<DependentJobRow[]> {
     const rows: DependentJobRow[] = await this.dataSource.query(
-      `SELECT j.id, j.org_id, j.repo_id, j.status, j.blocked_seed_message
+      `SELECT j.id, j.org_id, j.repo_id, j.status
          FROM job_dependencies d
          JOIN jobs j ON j.id = d.job_id
         WHERE d.depends_on_job_id = $1`,
@@ -416,48 +436,85 @@ export class JobDependencyService {
     );
     if (!allTerminal) return; // a still-open sibling blocker keeps it parked.
 
-    const upd = await this.jobs
-      .createQueryBuilder()
-      .update()
-      .set({ status: 'open' })
-      .where('id = :id AND status = :blocked', {
-        id: dependent.id,
-        blocked: 'blocked',
-      })
-      .execute();
-    if (!upd.affected) return; // lost the race — already unblocked.
-
     const blockerInfos = this.resolvedBlockerInfos(
       blockers,
       blockerJobId,
       resolution,
     );
+    await this.recordUnblockNoteThenPump(
+      dependent.id,
+      dependent.org_id,
+      dependent.repo_id,
+      blockerInfos,
+    );
+  }
+
+  /**
+   * The shared unblock DISPATCH, in the order the wake-race fix requires: record the JIT unblock note FIRST
+   * (while the job is still `blocked`, so the pump guard holds it with the rest of the backlog), THEN attempt
+   * the conditional `blocked→open` flip. A lost flip race means another caller already unblocked + pumped, so
+   * we return without pumping (the winner recorded the note and pumps). The note write and status flip are
+   * protected by a row lock on the dependent job: without that, a losing concurrent wake can read
+   * `status='blocked'`, wait until the winner drains/delivers its note, then append a second stale unblock
+   * note after the job is already open. On a successful flip we prompt the drain; if that pump throws we
+   * re-park so the JobUnblockSweep re-drives — the held seed rows (note included) persist undelivered, so
+   * at-least-once now rides the stimulus `delivered_at`, not a column. Returns whether this call actually
+   * unblocked the job.
+   *
+   * Re-checks the job's CURRENT status immediately before writing anything — every caller
+   * (`wakeDependentIfAllTerminal`'s direct call, and `unblockAndWake` for `removeDependency`/
+   * `reconcileBlockedJob`) may be working off a status snapshot that's gone stale (a manual edge removal
+   * on a job that was never actually parked — e.g. an edge to an already-terminal blocker recorded "for
+   * history" by `addDependency` — or a concurrent wake racing another caller on the same job). Without this,
+   * the note write below is unconditional and lands a bogus/duplicate "unblocked" system note in a job that
+   * was never (or is no longer) blocked.
+   */
+  private async recordUnblockNoteThenPump(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+    blockers: UnblockBlockerInfo[],
+  ): Promise<boolean> {
+    const unblocked = await this.dataSource.transaction(async (m) => {
+      const current = await m
+        .getRepository(JobEntity)
+        .createQueryBuilder('j')
+        .setLock('pessimistic_write')
+        .where('j.id = :id', { id: jobId })
+        .getOne();
+      if (current?.status !== 'blocked') return false; // not (or no longer) parked — nothing to wake.
+
+      await this.brainGateway.recordUnblockNote(jobId, orgId, repoId, {
+        blockers,
+      });
+
+      const upd = await m
+        .createQueryBuilder()
+        .update(JobEntity)
+        .set({ status: 'open' })
+        .where('id = :id AND status = :blocked', {
+          id: jobId,
+          blocked: 'blocked',
+        })
+        .execute();
+      return (upd.affected ?? 0) > 0;
+    });
+    if (!unblocked) return false; // lost the race — the winner recorded the note and pumps.
+
     try {
-      await this.brainGateway.wakeUnblockedJob(
-        dependent.id,
-        dependent.org_id,
-        dependent.repo_id,
-        {
-          seed: dependent.blocked_seed_message,
-          blockers: blockerInfos,
-        },
-      );
-      // Only drop the seed once the wake is confirmed dispatched — otherwise a sweep-driven retry would
-      // have nothing to replay.
-      await this.jobs.update(
-        { id: dependent.id },
-        { blocked_seed_message: null },
-      );
+      await this.brainGateway.pumpUnblockedJob(jobId, orgId, repoId);
+      return true;
     } catch (err) {
-      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it. Guarded on `open`
-      // so we never clobber a status the just-started wake already advanced past.
+      // The pump dropped — re-park so the JobUnblockSweep re-drives it (recordUnblockNote dedupes on retry).
+      // Guarded on `open` so we never clobber a status the drain already advanced past.
       this.logger.warn(
-        `wakeUnblockedJob failed for job=${dependent.id}; re-parking for sweep: ${err}`,
+        `pumpUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`,
       );
       await this.jobs.update(
-        { id: dependent.id, status: 'open' },
+        { id: jobId, status: 'open' },
         { status: 'blocked' },
       );
+      return false;
     }
   }
 
@@ -510,40 +567,16 @@ export class JobDependencyService {
     jobId: string,
     blockers: UnblockBlockerInfo[],
   ): Promise<boolean> {
-    const upd = await this.jobs
-      .createQueryBuilder()
-      .update()
-      .set({ status: 'open' })
-      .where('id = :id AND status = :blocked', {
-        id: jobId,
-        blocked: 'blocked',
-      })
-      .execute();
-    if (!upd.affected) return false;
-
+    // Resolve org/repo up front — the JIT unblock note must be recorded while the job is still `blocked`
+    // (before the flip), so we need the routing coordinates before touching the status.
     const job = await this.jobs.findOne({ where: { id: jobId } });
-    if (!job) return true;
-    try {
-      await this.brainGateway.wakeUnblockedJob(jobId, job.org_id, job.repo_id, {
-        seed: job.blocked_seed_message,
-        blockers,
-      });
-      // Only drop the seed once the wake is confirmed dispatched.
-      await this.jobs.update({ id: jobId }, { blocked_seed_message: null });
-      return true;
-    } catch (err) {
-      // The wake dropped — re-park (seed intact) so the JobUnblockSweep re-drives it, and report
-      // "not unblocked" so the sweep keeps this job eligible. Guarded on `open` to avoid clobbering a
-      // status the just-started wake already advanced past.
-      this.logger.warn(
-        `wakeUnblockedJob failed for job=${jobId}; re-parking for sweep: ${err}`,
-      );
-      await this.jobs.update(
-        { id: jobId, status: 'open' },
-        { status: 'blocked' },
-      );
-      return false;
-    }
+    if (!job) return false;
+    return this.recordUnblockNoteThenPump(
+      jobId,
+      job.org_id,
+      job.repo_id,
+      blockers,
+    );
   }
 
   /**

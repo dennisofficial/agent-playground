@@ -241,9 +241,7 @@ describe('WebSurfaceController — /message (card batch, no operator text)', () 
     // A secret item requires owner.
     await expect(
       controller.postMessage(member, {} as never, 'job-1', {
-        messages: [
-          { type: 'secret_provided', requestId: 's-1', value: 'x' },
-        ],
+        messages: [{ type: 'secret_provided', requestId: 's-1', value: 'x' }],
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     // A file item requires owner.
@@ -350,6 +348,7 @@ describe('WebSurfaceController — /message (mixed: answered cards + an operator
 
     const { input, transport } = composedCalls[0];
     expect(input).toMatchObject({
+      operatorBubbleText: 'thanks!',
       deliveredQuestionIds: ['q-1'],
       deliveredFileIds: ['f-1'],
       deliveredSecretIds: ['s-1'],
@@ -364,6 +363,7 @@ describe('WebSurfaceController — /message (mixed: answered cards + an operator
     expect(body).toMatch(/<user[^>]*>[\s\S]*thanks!/);
 
     expect(transport).toMatchObject({
+      bubbleAuthor: { id: 'u-1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'web', jobRef: 'job-1' },
     });
   });

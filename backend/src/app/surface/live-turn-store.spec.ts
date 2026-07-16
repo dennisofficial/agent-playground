@@ -376,6 +376,7 @@ describe('SSE resume — a late subscriber (reconnect mid-turn) catches up via s
         jobId: string;
         title: string;
       }>(),
+      messagesChanged$: new Subject<{ channel: string; jobId: string }>(),
     };
     return new WebSurfaceController(
       surface as never, // surface (outbound$ + threadMeta$)

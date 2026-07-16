@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Message, TurnEnvelope } from '@shared/domain';
+import type { TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import type { EngineRunnerPort } from '@shared/engine/engine.types';
 import type { LeaderElectionService } from '../cluster';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -78,6 +79,7 @@ function operatorRow(id: string, receivedAt: Date): TurnEnvelope {
 function makeManager(pending: TurnEnvelope[]) {
   const stimulusStore = {
     eligiblePendingChat: vi.fn().mockResolvedValue(pending),
+    markChatDelivered: vi.fn().mockResolvedValue(undefined),
   };
   const turnRegistry = {} as unknown as TurnRegistry;
   const engineRunner = { run: vi.fn() } as unknown as EngineRunnerPort;
@@ -85,7 +87,7 @@ function makeManager(pending: TurnEnvelope[]) {
     getState: () => 'follower',
   } as unknown as LeaderElectionService;
   const inert = {} as never;
-  return new AgentSessionManager(
+  const manager = new AgentSessionManager(
     inert,
     inert,
     inert,
@@ -119,6 +121,7 @@ function makeManager(pending: TurnEnvelope[]) {
     { getResetAt: () => undefined } as never, // usage (OauthUsageService)
     inert, // selfSufficiency
   );
+  return { manager, stimulusStore };
 }
 
 describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection, d18)', () => {
@@ -131,7 +134,7 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
       pendingRow('b', 'later', t1),
       pendingRow('c', 'queue', t2),
     ];
-    const manager = makeManager(pending);
+    const { manager } = makeManager(pending);
 
     const collected = await (
       manager as unknown as {
@@ -151,7 +154,7 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
     const pending = [
       pendingRow('only-later', 'later', new Date('2026-07-02T12:00:00Z')),
     ];
-    const manager = makeManager(pending);
+    const { manager } = makeManager(pending);
 
     const collected = await (
       manager as unknown as {
@@ -165,7 +168,7 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
   });
 
   it('no pending rows: returns null', async () => {
-    const manager = makeManager([]);
+    const { manager } = makeManager([]);
 
     const collected = await (
       manager as unknown as {
@@ -177,12 +180,12 @@ describe('AgentSessionManager.collectPendingForTurn (owned coalescing selection,
   });
 });
 
-describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition)', () => {
-  it('a seed HEAD delivers SOLO, leaving a trailing operator row pending', async () => {
+describe('AgentSessionManager.collectPendingForTurn (message-agnostic coalescing: seed + operator mix as ONE batch)', () => {
+  it('a seed HEAD coalesces WITH a trailing operator row — the whole batch, not a solo seed', async () => {
     const t0 = new Date('2026-07-02T12:00:00Z');
     const t1 = new Date('2026-07-02T12:00:01Z');
     const pending = [seedRow('s1', t0), operatorRow('op', t1)];
-    const manager = makeManager(pending);
+    const { manager } = makeManager(pending);
 
     const collected = await (
       manager as unknown as {
@@ -191,10 +194,10 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
-    expect(collected!.ids).toEqual(['s1']);
+    expect(collected!.ids).toEqual(['s1', 'op']);
   });
 
-  it('an operator HEAD coalesces the leading operator run but STOPS at a trailing seed', async () => {
+  it('an operator HEAD coalesces the leading operator run AND a trailing seed — the whole batch', async () => {
     const t0 = new Date('2026-07-02T12:00:00Z');
     const t1 = new Date('2026-07-02T12:00:01Z');
     const t2 = new Date('2026-07-02T12:00:02Z');
@@ -203,7 +206,7 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
       operatorRow('b', t1),
       seedRow('s', t2),
     ];
-    const manager = makeManager(pending);
+    const { manager } = makeManager(pending);
 
     const collected = await (
       manager as unknown as {
@@ -212,19 +215,47 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
     ).collectPendingForTurn(JOB_ID);
 
     expect(collected).not.toBeNull();
-    expect(collected!.ids).toEqual(['a', 'b']);
+    expect(collected!.ids).toEqual(['a', 'b', 's']);
   });
 
-  it('engineBody never wraps a seed body as a `<user>` chunk — it passes it through raw', () => {
+  it('engineBody renders a mixed seed+operator batch as one turn: seed passes through raw, operator becomes a `<user>` chunk, seed ordered first', () => {
     const seed = seedRow('s1', new Date('2026-07-02T12:00:00Z'));
     seed.body = '<system_notice>hi</system_notice>';
-    const manager = makeManager([seed]);
+    const operator = operatorRow('op', new Date('2026-07-02T12:00:01Z'));
+    const { manager } = makeManager([seed, operator]);
+    const m = manager as unknown as {
+      pendingRowToChunk: (p: TurnEnvelope) => TurnChunk;
+      engineBody: (s: TurnEnvelope) => string;
+    };
 
-    const body = (
-      manager as unknown as { engineBody: (s: TurnEnvelope) => string }
-    ).engineBody(seed);
+    const chunks = [m.pendingRowToChunk(seed), m.pendingRowToChunk(operator)];
+    const combined: TurnEnvelope = { ...seed, chunks };
 
-    expect(body).toBe(seed.body);
-    expect(body).not.toContain('<user');
+    const body = m.engineBody(combined);
+
+    // The seed's already-framed body passes through VERBATIM — no `<passthrough>` wrapper tag (it's untagged).
+    expect(body).toContain(seed.body);
+    expect(body).not.toContain('<passthrough');
+    // The operator row is framed as a real `<user>` chunk.
+    expect(body).toContain('<user name="Dennis"');
+    // Canonical kind order: passthrough (3) precedes user (4).
+    expect(body.indexOf(seed.body)).toBeLessThan(body.indexOf('<user name="Dennis"'));
+  });
+
+  it('stampBatchOnRegistered stamps a plain row immediately but defers a card-bearing seed row', () => {
+    const t0 = new Date('2026-07-02T12:00:00Z');
+    const t1 = new Date('2026-07-02T12:00:01Z');
+    const seed = seedRow('card1', t0); // deliveredQuestionIds set → isSeedCardDelivery === true
+    const operator = operatorRow('op1', t1);
+    const { manager, stimulusStore } = makeManager([seed, operator]);
+
+    (
+      manager as unknown as {
+        stampBatchOnRegistered: (p: TurnEnvelope[]) => void;
+      }
+    ).stampBatchOnRegistered([seed, operator]);
+
+    expect(stimulusStore.markChatDelivered).toHaveBeenCalledWith('op1');
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalledWith('card1');
   });
 });
