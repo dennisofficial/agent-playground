@@ -38,10 +38,10 @@ export class TurnRunner {
   constructor(private readonly transport: TurnTransport) {}
 
   async run(turnId: string): Promise<void> {
-    const spec = await this.transport.readSpec(turnId);
-    this.transport.startHeartbeat(turnId);
-
     try {
+      const spec = await this.transport.readSpec(turnId);
+      this.transport.startHeartbeat(turnId);
+
       const claudeSdk = await import('@anthropic-ai/claude-agent-sdk');
       const codexSdk = await import('@openai/codex-sdk');
       const core = new EngineCore(claudeSdk, codexSdk, {
