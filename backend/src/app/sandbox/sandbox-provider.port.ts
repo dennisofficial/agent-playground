@@ -123,6 +123,12 @@ export interface SandboxProvider {
    */
   playgroundDirHost(orgId: string, jobId: string): string;
   /**
+   * The HOST path of a job's per-user draft-attachment staging dir — a SIBLING of `contexts/`/
+   * `playgrounds/`, deliberately NEVER bind-mounted into the container (draft attachment bytes must stay
+   * invisible to the sandbox/brain until a later thread promotes the file into `/context/uploads/` on send).
+   */
+  draftUploadsDirHost(orgId: string, jobId: string, userId: string): string;
+  /**
    * The HOST path of a thread BRAIN session's Claude transcript root (`<brainHome>/claude/projects`),
    * located by `jobId`. Survives container reaping (host side of the agent-home bind), so crash
    * recovery can read a turn that completed in the container but was never persisted to `messages`.

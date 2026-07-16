@@ -169,6 +169,14 @@ export class JobLifecycleService {
   }
 
   /**
+   * The HOST path of the job's per-user draft-attachment staging dir (never bind-mounted into the
+   * sandbox). Pure path derivation — no I/O.
+   */
+  draftUploadsDirHost(jobId: string, orgId: string, userId: string): string {
+    return this.sandboxProvider.draftUploadsDirHost(orgId, jobId, userId);
+  }
+
+  /**
    * The HOST path of the thread's `atlas-svc` supervisor dir (markers + logs for processes the agent
    * started via `atlas-svc run`). Null when the thread has no sandbox home on disk yet (never
    * provisioned, or a fresh worktree with no supervised process started).
