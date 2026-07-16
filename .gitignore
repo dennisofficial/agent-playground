@@ -32,6 +32,9 @@ backend/gh-app-private-key.pem
 # Cloudflare Registrar API token — operator-supplied secret rendered to a raw path; never committed
 infra/.cloudflare-registrar-token
 
+# Prod-box SSH access — dedicated private key (ATLAS_BOX_SSH_KEY) rendered to .ssh/atlas-box; never committed
+.ssh/
+
 # Cloud / build local dirs (gcloud ADC, docker context)
 /.gcloud/
 /.docker/

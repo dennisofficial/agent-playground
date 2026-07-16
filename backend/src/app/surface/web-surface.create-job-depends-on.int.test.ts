@@ -30,6 +30,7 @@ import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '@shared/engine';
+import type { UnblockBlockerInfo } from '@shared/domain';
 import { GithubPrService, LocalGitService } from '../git';
 import { AppModule } from '../app.module';
 import { BrainGateway } from '../brain-gateway';
@@ -69,7 +70,7 @@ type WakeCall = {
   orgId: string;
   repoId: string;
   seed: string | null;
-  note: string | null;
+  blockers: UnblockBlockerInfo[];
 };
 
 let app: NestExpressApplication;
@@ -190,14 +191,14 @@ beforeAll(async () => {
         jobId: string,
         orgId: string,
         repoId: string,
-        input: { seed: string | null; note: string | null },
+        input: { seed: string | null; blockers: UnblockBlockerInfo[] },
       ) => {
         wakes.push({
           jobId,
           orgId,
           repoId,
           seed: input.seed,
-          note: input.note,
+          blockers: input.blockers,
         });
       },
     })
@@ -419,7 +420,13 @@ describe('POST .../jobs — dependsOn (born-blocked create)', () => {
     expect(wakes[0]).toMatchObject({
       jobId: dependent,
       seed: 'multi-blocked follow-up',
-      note: null,
     });
+    expect(wakes[0].blockers).toHaveLength(2);
+    expect(wakes[0].blockers.map((bl) => ({ jobId: bl.jobId, how: bl.how }))).toEqual(
+      expect.arrayContaining([
+        { jobId: a, how: 'merged' },
+        { jobId: b, how: 'merged' },
+      ]),
+    );
   });
 });

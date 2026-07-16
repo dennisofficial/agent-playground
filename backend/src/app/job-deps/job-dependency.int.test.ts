@@ -2,15 +2,17 @@
  * JobDependencyService + JobUnblockSweep — the "blocked by" edge model and the wake funnel, proven
  * against live Postgres (atlas_test schema; no fakes on the persistence side). The only stubbed
  * collaborator is BrainGateway — replaced with a capture double so we can assert exactly which jobs are
- * woken, with which replayed seed and which "didn't land" note, without booting the brain.
+ * woken, with which replayed seed and which blocker roster (name + how each resolved), without booting the
+ * brain. (The rendered wake-message text for each blocker roster is unit-tested in seed-catalog.spec.ts.)
  *
  * Covers the spec Validation scenarios (02-backend-dependencies-wake.md §Validation, a–f):
  *  (a) addDependency rejects a cycle and a cross-repo edge;
  *  (b) a born-blocked edge parks the dependent with its seed and does NOT wake it;
- *  (c) onBlockerResolved('merged') unblocks, clears the seed, and dispatches a wake (no note);
+ *  (c) onBlockerResolved('merged') unblocks, clears the seed, and dispatches a wake (blocker: merged);
  *  (d) a multi-blocker dependent stays blocked until the LAST blocker resolves;
- *  (e) each non-merge resolution (closed_unmerged / cancelled / deleted) unblocks WITH a "didn't land" note;
- *  (f) JobUnblockSweep unblocks a job whose blocker row is absent (a dropped-event backstop).
+ *  (e) each non-merge resolution (closed_unmerged / cancelled / deleted) is reported in the blocker roster;
+ *  (f) JobUnblockSweep unblocks a job whose blocker row is absent (a dropped-event backstop);
+ *  (g) removeDependency manually lifts an edge and reports it as `removed` in the roster.
  */
 
 import { Test, type TestingModule } from '@nestjs/testing';
@@ -22,6 +24,7 @@ import {
 import { DataSource, Repository } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import type { UnblockBlockerInfo } from '@shared/domain';
 import { CustomNamingStrategy } from '../../_lib/database/custom-naming.strategy';
 import { BrainGateway } from '../brain-gateway';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -54,7 +57,7 @@ interface WakeCall {
   orgId: string;
   repoId: string;
   seed: string | null;
-  note: string | null;
+  blockers: UnblockBlockerInfo[];
 }
 
 describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
@@ -83,14 +86,14 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
               jobId: string,
               orgId: string,
               repoId: string,
-              input: { seed: string | null; note: string | null },
+              input: { seed: string | null; blockers: UnblockBlockerInfo[] },
             ) => {
               wakes.push({
                 jobId,
                 orgId,
                 repoId,
                 seed: input.seed,
-                note: input.note,
+                blockers: input.blockers,
               });
             },
           },
@@ -228,8 +231,8 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  // ── (c) merge → unblock + clear seed + wake (no note) ─────────────────────────────────────────
-  it('(c) onBlockerResolved(merged) unblocks, clears the seed, and wakes with no "didn\'t land" note', async () => {
+  // ── (c) merge → unblock + clear seed + wake (blocker roster: merged) ──────────────────────────
+  it('(c) onBlockerResolved(merged) unblocks, clears the seed, and wakes with the blocker reported as merged', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
     await service.addDependency({
@@ -254,8 +257,10 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect(wakes[0]).toMatchObject({
       jobId: dependent.id,
       seed: 'build the follow-up',
-      note: null,
     });
+    expect(wakes[0].blockers).toEqual([
+      { jobId: blocker.id, title: 'A job', how: 'merged' },
+    ]);
   });
 
   // ── (d) multi-blocker: stays blocked until the LAST blocker resolves ───────────────────────────
@@ -291,11 +296,11 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       'open',
     );
     expect(wakes).toHaveLength(1);
-    expect(wakes[0].note).toBeNull(); // both merged cleanly
+    expect(wakes[0].blockers.map((b) => b.how)).toEqual(['merged', 'merged']); // both merged cleanly
   });
 
-  // ── (e) non-merge resolutions unblock WITH a "didn't land" note ────────────────────────────────
-  it('(e) closed-unmerged unblocks with a "PR closed without merging" note', async () => {
+  // ── (e) non-merge resolutions are reported in the blocker roster ───────────────────────────────
+  it('(e) closed-unmerged is reported with how="closed_unmerged"', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob({ title: 'downstream' });
     await service.addDependency({
@@ -315,11 +320,12 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       'open',
     );
     expect(wakes).toHaveLength(1);
-    expect(wakes[0].note).toContain('did NOT merge');
-    expect(wakes[0].note).toContain('PR closed without merging');
+    expect(wakes[0].blockers).toEqual([
+      { jobId: blocker.id, title: 'A job', how: 'closed_unmerged' },
+    ]);
   });
 
-  it('(e) a cancelled blocker unblocks with a "job cancelled" note', async () => {
+  it('(e) a cancelled blocker is reported with how="cancelled"', async () => {
     const blocker = await makeJob({ status: 'running', title: 'the blocker' });
     const dependent = await makeJob();
     await service.addDependency({
@@ -335,10 +341,12 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
       'open',
     );
-    expect(wakes[0].note).toContain('job cancelled');
+    expect(wakes[0].blockers).toEqual([
+      { jobId: blocker.id, title: 'the blocker', how: 'cancelled' },
+    ]);
   });
 
-  it('(e) a deleted blocker (row still present at call time) unblocks with a "job deleted" note', async () => {
+  it('(e) a deleted blocker (row still present at call time) is reported with how="deleted"', async () => {
     const blocker = await makeJob({ status: 'running' });
     const dependent = await makeJob();
     await service.addDependency({
@@ -355,10 +363,12 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
     expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
       'open',
     );
-    expect(wakes[0].note).toContain('job deleted');
+    expect(wakes[0].blockers).toEqual([
+      { jobId: blocker.id, title: 'A job', how: 'deleted' },
+    ]);
   });
 
-  it('treats an already-deleting sibling blocker as terminal and labels it deleted', async () => {
+  it('reports an already-deleting sibling blocker as deleted alongside the resolving one', async () => {
     const deleting = await makeJob({
       status: 'running',
       title: 'teardown blocker',
@@ -392,9 +402,10 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       'open',
     );
     expect(wakes).toHaveLength(1);
-    expect(wakes[0].note).toContain('job deleted');
-    expect(wakes[0].note).toContain('PR closed without merging');
-    expect(wakes[0].note).not.toContain('job cancelled');
+    const hows = wakes[0].blockers.map((b) => b.how);
+    expect(hows).toContain('deleted');
+    expect(hows).toContain('closed_unmerged');
+    expect(hows).not.toContain('cancelled');
   });
 
   // ── (f) JobUnblockSweep unblocks a job whose blocker row is absent ─────────────────────────────
@@ -421,7 +432,37 @@ describe('JobDependencyService + JobUnblockSweep (live Postgres)', () => {
       'open',
     );
     expect(wakes).toHaveLength(1);
-    expect(wakes[0].note).toBeNull(); // the sweep is a backstop; the event path composes any note
+    expect(wakes[0].blockers).toEqual([]); // the blocker row vanished, so there is nothing to name
+  });
+
+  // ── (g) removeDependency manually lifts an edge, reported as `removed` ─────────────────────────
+  it('(g) removeDependency wakes the dependent and reports the lifted edge as "removed"', async () => {
+    const blocker = await makeJob({ status: 'running', title: 'the blocker' });
+    const dependent = await makeJob();
+    await service.addDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'blocked',
+    );
+
+    await service.removeDependency({
+      orgId: ORG_ID,
+      repoId,
+      jobId: dependent.id,
+      dependsOnJobId: blocker.id,
+    });
+
+    expect((await jobs.findOneByOrFail({ id: dependent.id })).status).toBe(
+      'open',
+    );
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0].blockers).toEqual([
+      { jobId: blocker.id, title: 'the blocker', how: 'removed' },
+    ]);
   });
 
   // ── listJobs — repo-scoped discovery + the terminal-blocker default filter ─────────────────────

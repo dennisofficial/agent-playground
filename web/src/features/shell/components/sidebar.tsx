@@ -713,6 +713,13 @@ function ThreadRow({
   section: JobSection;
   active: boolean;
 }) {
+  const showBuildStages =
+    section === "building" && thread.buildStagesTotal != null;
+  const hasTrailingMeta =
+    thread.portState != null ||
+    thread.pr?.number != null ||
+    thread.needsYou ||
+    showBuildStages;
   return (
     <Link
       href={threadHref({ orgId, repoId: thread.repo.id, jobId: thread.id })}
@@ -757,45 +764,49 @@ function ThreadRow({
           {thread.title}
         </span>
       </span>
-      {thread.portState ? (
-        <span
-          className="mt-px flex-none"
-          title={
-            thread.portState === "exposed"
-              ? "Exposed port — reachable preview URL"
-              : "Service running (not exposed)"
-          }
-          aria-label={
-            thread.portState === "exposed"
-              ? "Exposed port"
-              : "Service running, not exposed"
-          }
-        >
-          {thread.portState === "exposed" ? (
-            <Globe size={11} style={{ color: "var(--blue)" }} />
-          ) : (
-            <Server size={11} style={{ color: "var(--faint)" }} />
-          )}
-        </span>
-      ) : null}
-      {thread.pr?.number != null ? (
-        <span className="mt-px flex-none font-mono text-[10px] text-faint">
-          #{thread.pr.number}
-        </span>
-      ) : null}
-      {thread.needsYou ? (
-        <span
-          className="mt-1 h-1.5 w-1.5 flex-none rounded-full"
-          style={{ background: "var(--accent)" }}
-          aria-hidden
-        />
-      ) : section === "building" && thread.buildStagesTotal != null ? (
-        <span
-          className="mt-px flex-none font-mono text-[10px] text-faint"
-          title="Builder stages completed"
-          aria-label={`${thread.buildStagesDone ?? 0} of ${thread.buildStagesTotal} builder stages completed`}
-        >
-          {thread.buildStagesDone ?? 0}/{thread.buildStagesTotal}
+      {hasTrailingMeta ? (
+        <span className="flex h-[1.32em] flex-none items-center gap-1.5 text-[12px]">
+          {thread.portState ? (
+            <span
+              className="flex-none"
+              title={
+                thread.portState === "exposed"
+                  ? "Exposed port — reachable preview URL"
+                  : "Service running (not exposed)"
+              }
+              aria-label={
+                thread.portState === "exposed"
+                  ? "Exposed port"
+                  : "Service running, not exposed"
+              }
+            >
+              {thread.portState === "exposed" ? (
+                <Globe size={11} style={{ color: "var(--blue)" }} />
+              ) : (
+                <Server size={11} style={{ color: "var(--faint)" }} />
+              )}
+            </span>
+          ) : null}
+          {thread.pr?.number != null ? (
+            <span className="flex-none font-mono text-[10px] leading-none text-faint">
+              #{thread.pr.number}
+            </span>
+          ) : null}
+          {thread.needsYou ? (
+            <span
+              className="h-1.5 w-1.5 flex-none rounded-full"
+              style={{ background: "var(--accent)" }}
+              aria-hidden
+            />
+          ) : showBuildStages ? (
+            <span
+              className="flex-none font-mono text-[10px] leading-none text-faint"
+              title="Builder stages completed"
+              aria-label={`${thread.buildStagesDone ?? 0} of ${thread.buildStagesTotal} builder stages completed`}
+            >
+              {thread.buildStagesDone ?? 0}/{thread.buildStagesTotal}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </Link>

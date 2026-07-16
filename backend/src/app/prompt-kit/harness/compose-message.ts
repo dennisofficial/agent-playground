@@ -41,7 +41,7 @@ import {
   skillEditApproved,
   skillEditGone,
   wakeForAmendApprovedBody,
-  wakeUnblockedJobBody,
+  wakeUnblockedRunningJobBody,
 } from './seed-catalog';
 
 type ComposedBody = { body: AgentMessage; seedRow?: SeedRow };
@@ -139,7 +139,7 @@ export function composeMessageBody(
         body: agentMessage(
           renderChunk({
             kind: 'system_notice',
-            body: wakeUnblockedJobBody(m.note),
+            body: wakeUnblockedRunningJobBody(m.blockers),
           }),
         ),
         seedRow: {

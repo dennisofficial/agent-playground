@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
 import {
   EngineAuthError,
+  isEngineDetachedError,
+  type EngineEvent,
   type EngineRunnerPort,
   type RunEngineArgs,
 } from '@shared/engine';
@@ -332,5 +334,59 @@ describe('TurnRunnerService — provenance threading', () => {
     });
 
     expect(usage.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a concurrent second reattach of the same turn (double-attach → single delivery)', async () => {
+    const { repo } = fakeSteps();
+    // Mirror RedisEngineRunner's real per-process attach Set so `tryClaimAttach` has genuine check-and-add
+    // semantics: the guard must win synchronously, before the second attach can start a duplicate tail loop.
+    const attached = new Set<string>();
+    const deliveries: string[] = [];
+    let releaseFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      tryClaimAttach: (t: string) =>
+        attached.has(t) ? false : (attached.add(t), true),
+      releaseAttach: (t: string) => {
+        attached.delete(t);
+      },
+      reattach: vi.fn(
+        async (
+          turnId: string,
+          _containerId: string,
+          args: { onEvent?: (e: EngineEvent) => void },
+        ) => {
+          // Deliver one event, then stay "live" until the test releases us — so the SECOND reattach
+          // genuinely overlaps a still-attached first loop (the exact double-delivery hazard).
+          args.onEvent?.({ kind: 'text', text: `evt-${turnId}` });
+          deliveries.push(turnId);
+          await firstInFlight;
+          return { result: 'ok', sessionId: 's1' };
+        },
+      ),
+    };
+    const svc = new TurnRunnerService(engine, repo);
+    const input = { turnId: 'turn-1', containerId: 'ctr-1', jobId: 'job-1' };
+
+    // First reattach claims the slot synchronously, then blocks inside the (fake) engine loop.
+    const first = svc.reattach(input);
+    // The concurrent second attach must be refused BEFORE engine.reattach runs a second time.
+    const secondErr = await svc.reattach(input).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(isEngineDetachedError(secondErr)).toBe(true);
+
+    releaseFirst();
+    await first;
+
+    // Exactly one attach loop ran, and its event was delivered exactly once — no doubling.
+    expect(engine.reattach).toHaveBeenCalledTimes(1);
+    expect(deliveries).toEqual(['turn-1']);
+    // The winning attacher released its slot on completion, so a later, non-overlapping reattach can proceed.
+    expect(attached.has('turn-1')).toBe(false);
   });
 });

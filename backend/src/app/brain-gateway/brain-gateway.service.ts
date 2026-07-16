@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { UnblockBlockerInfo } from '@shared/domain/message';
 
 /**
  * The typed contract the DRIVER uses to reach the BRAIN. It is implemented by the concrete brain
@@ -42,7 +43,7 @@ export interface BrainGatewayHandler {
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; note: string | null },
+    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
   ): Promise<void>;
 }
 
@@ -107,7 +108,7 @@ export class BrainGateway implements BrainGatewayHandler {
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; note: string | null },
+    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
   ): Promise<void> {
     return this.require().wakeUnblockedJob(jobId, orgId, repoId, input);
   }

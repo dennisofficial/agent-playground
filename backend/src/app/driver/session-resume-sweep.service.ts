@@ -80,16 +80,18 @@ export class SessionResumeSweep {
       const resumeNudge = isRetry
         ? retryResumeNudge(job.title ?? undefined)
         : sessionLimitResetNudge(job.title ?? undefined);
+      // A retry re-drive is SILENT (`'skip'`: drives the turn, renders no pill) — it mirrors the in-process
+      // host-retry timer's silent seed, and the operator already saw the "Reconnecting to Claude — auto-retry
+      // n/N…" notice. A session-limit auto-resume keeps its informative pill (the operator wants to know the
+      // lane un-parked after the limit reset).
       this.surface.seedSystemNotification?.(job.repo_id, job.id, resumeNudge, {
         orgId: job.org_id,
-        seedRow: {
-          label: isRetry
-            ? 'Reconnecting to Claude…'
-            : 'Auto-resuming after the session limit reset.',
-          chunkKey: isRetry
-            ? `seed:retry:${job.id}:${Date.now()}`
-            : `seed:sessionlimit:${job.id}:${Date.now()}`,
-        },
+        seedRow: isRetry
+          ? 'skip'
+          : {
+              label: 'Auto-resuming after the session limit reset.',
+              chunkKey: `seed:sessionlimit:${job.id}:${Date.now()}`,
+            },
       });
       // The Main lane has no halt — the clock is the only park marker, so clear it here (unlike the build lane,
       // where resumePaused already cleared it).
