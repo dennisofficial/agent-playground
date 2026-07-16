@@ -195,6 +195,12 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     firstMessage: z.string(),
     title: z.string().optional(),
     dependsOn: z.union([z.string(), z.array(z.string())]).optional(),
+    autoMode: z
+      .object({
+        approveMode: z.enum(['off', 'plan', 'ship']).optional(),
+        merge: z.boolean().optional(),
+      })
+      .optional(),
   },
   list_jobs: {
     status: z.string().optional(), // a specific status, or 'all' to include terminal jobs
@@ -460,7 +466,8 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   start_direct_build:
     'Start a direct build with a summary, change outline, and decisions.',
   create_job:
-    'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge.',
+    'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge. ' +
+    "Optionally autoMode: { approveMode?, merge? } to pre-arm the new job's automation; omitted fields inherit the org's defaults.",
   list_jobs:
     "List this repo's jobs (newest first) so you can discover sibling job ids to wire peer dependencies. " +
     'Defaults to in-flight jobs; pass status to filter (or "all" to include finished ones), query for a title substring, limit to cap results.',

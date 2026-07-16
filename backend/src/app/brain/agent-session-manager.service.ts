@@ -15,6 +15,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { Subscription } from 'rxjs';
 import { modeApprovesPlan } from '@workspace/shared';
+import type { AutoApproveMode } from '@workspace/shared';
 import { LeaderElectionService } from '../cluster';
 import type {
   EventMessage,
@@ -4640,6 +4641,13 @@ export class AgentSessionManager
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
+        // Always forwarded (even when the caller omitted it, as `{}`) so an agent-spawned follow-up
+        // resolves the org's default_auto_approve_mode/default_auto_merge instead of hard-defaulting to
+        // off/false — onboarding's own createFollowUpJob call sites never pass this key and stay untouched.
+        const autoMode =
+          (args['autoMode'] as
+            | { approveMode?: AutoApproveMode; merge?: boolean }
+            | undefined) ?? {};
         const newJobId = await this.store.createFollowUpJob({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
@@ -4647,6 +4655,7 @@ export class AgentSessionManager
           baseBranch: current.baseBranch,
           createdByJobId: stimulus.jobId,
           createdByTitle: current.title,
+          autoMode,
         });
 
         let anyBlocked = false;

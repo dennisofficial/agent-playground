@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import type { Decision, Job, JobActivity, JobKind, JobStatus } from '@shared/domain';
 import { nextDecisionId } from '@shared/domain';
+import type { AutoApproveMode } from '@workspace/shared';
 import type {
   WebConventionEditProposalCard,
   WebConventionProposalCard,
@@ -40,6 +41,7 @@ import {
   ThreadEntity,
   InboundMessageEntity,
   JobEntity,
+  OrganizationEntity,
 } from '../persistence/entities';
 import { JobTitler } from '../titling';
 import type { TranscriptLine } from './brain.types';
@@ -110,6 +112,8 @@ export class BrainStoreService {
     private readonly dataSource: DataSource,
     private readonly titler: JobTitler,
     private readonly jobDeps: JobDependencyService,
+    @InjectRepository(OrganizationEntity, DB_CONNECTION)
+    private readonly organizations: Repository<OrganizationEntity>,
     // The planning thread group bootstrap now lives in `JobBootstrapService` (every job-creation seam, not just
     // this brain-module one, needs it — see its module doc for the cycle it avoids). `ensurePlanningThreadGroup`
     // below thin-delegates to it. @Optional (trailing) so the existing direct-construction unit tests
@@ -2255,6 +2259,10 @@ export class BrainStoreService {
     createdByJobId?: string | null;
     /** The spawning job's current title, snapshotted immutably. */
     createdByTitle?: string | null;
+    /** Agent-facing `create_job` auto-mode override. Present (even `{}`) only when the caller wants to
+     *  resolve auto-approve/auto-merge against the org's defaults; undefined (onboarding's call sites)
+     *  leaves the auto_* columns at their entity defaults, unchanged from before this option existed. */
+    autoMode?: { approveMode?: AutoApproveMode; merge?: boolean };
   }): Promise<string> {
     // Route a provided title through the shared titler so the new thread is born with a short, scannable
     // sidebar label (fail-soft). A null title (no seed text) stays null. An onboarding thread keeps its
@@ -2263,6 +2271,23 @@ export class BrainStoreService {
       input.title && input.kind !== 'onboarding'
         ? await this.titler.titleFor(input.title, input.orgId)
         : input.title;
+    // Present-but-empty `{}` still resolves against the org's defaults (the create_job host-tool bug fix):
+    // omitted fields fall back to default_auto_approve_mode/default_auto_merge; present fields override.
+    let autoCols: Partial<JobEntity> = {};
+    if (input.autoMode) {
+      const org = await this.organizations.findOne({
+        where: { id: input.orgId },
+      });
+      const approveMode =
+        input.autoMode.approveMode ?? org?.default_auto_approve_mode ?? 'off';
+      const merge = input.autoMode.merge ?? org?.default_auto_merge ?? false;
+      autoCols = {
+        auto_approve_mode: approveMode,
+        auto_approve_by: null,
+        auto_merge: merge,
+        auto_merge_by: null,
+      };
+    }
     const row = await this.jobs.save(
       this.jobs.create({
         org_id: input.orgId,
@@ -2276,6 +2301,7 @@ export class BrainStoreService {
         created_by: input.createdByJobId
           ? { jobId: input.createdByJobId, title: input.createdByTitle ?? null }
           : null,
+        ...autoCols,
       }),
     );
     // Bootstrap the job's one planning thread group + thread up front (d7) so its card/message anchor resolves from

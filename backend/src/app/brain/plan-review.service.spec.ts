@@ -633,6 +633,7 @@ function makeBrainStore(opts: {
     {
       onBlockerResolved: vi.fn().mockResolvedValue(undefined),
     } as unknown as JobDependencyService,
+    stub, // organizations
   );
 }
 
