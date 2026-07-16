@@ -17,8 +17,11 @@ import {
   RepoEntity,
   JobEntity,
   SubagentEntity,
+  ComposerDraftEntity,
+  ComposerDraftAttachmentEntity,
 } from '../persistence/entities';
 import { WebSurface } from './web-surface';
+import { ComposerDraftService } from './composer-draft.service';
 import {
   AMEND_APPROVE_ACTION_ID,
   AMEND_DISMISS_ACTION_ID,
@@ -57,7 +60,14 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [JobEntity, TranscriptMessageEntity, RepoEntity, SubagentEntity],
+      [
+        JobEntity,
+        TranscriptMessageEntity,
+        RepoEntity,
+        SubagentEntity,
+        ComposerDraftEntity,
+        ComposerDraftAttachmentEntity,
+      ],
       DB_CONNECTION,
     ),
     // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not
@@ -73,6 +83,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
     WebSurface,
     // `JobTitleService` injects `JOB_TITLE_CHAIN`, now provided by the `@Global` `TitlingModule`.
     JobTitleService,
+    ComposerDraftService,
   ],
   controllers: [WebSurfaceController],
   exports: [WebSurface],
