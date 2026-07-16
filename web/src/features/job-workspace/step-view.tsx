@@ -1037,7 +1037,7 @@ function HtmlFileBody({
       src={contextRawUrl(jobRef, file.path)}
       title={file.name}
       sandbox="allow-scripts"
-      className="h-full w-full flex-1 border-0 bg-white"
+      className="h-full w-full flex-1 border-0 bg-surface"
     />
   );
 }

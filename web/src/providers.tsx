@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
+import { ThemeProvider } from "next-themes";
 import { AuthInitializer } from "@/features/auth/components/auth-initializer";
 
 /**
@@ -27,9 +28,17 @@ export function Providers({ children }: { children: ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthInitializer />
-      {children}
-    </QueryClientProvider>
+    <ThemeProvider
+      attribute="data-theme"
+      defaultTheme="system"
+      enableSystem
+      value={{ light: "daylight", dark: "night" }}
+      disableTransitionOnChange
+    >
+      <QueryClientProvider client={queryClient}>
+        <AuthInitializer />
+        {children}
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

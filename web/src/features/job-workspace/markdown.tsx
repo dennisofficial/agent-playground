@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -166,40 +167,91 @@ function JsonBlock({ value }: { value: object }) {
 
 // ── Mermaid (lazy) ─────────────────────────────────────────────────────────────────────────────────
 // Inline ```mermaid fences render as real diagrams. mermaid is heavy + DOM-only, so it's dynamically
-// imported (kept out of the main bundle) and initialized ONCE, client-side, pulling its palette from the
-// live CSS tokens so diagrams match the design system. securityLevel 'strict' DOMPurify-sanitizes the SVG
-// (diagrams are agent-authored), which makes the dangerouslySetInnerHTML below safe.
+// imported (kept out of the main bundle), client-side, pulling its palette from the live CSS tokens so
+// diagrams match the design system (and re-match it live on a theme switch — see the theme store below).
+// securityLevel 'strict' DOMPurify-sanitizes the SVG (diagrams are agent-authored), which makes the
+// dangerouslySetInnerHTML below safe.
 let mermaidReady: Promise<typeof import("mermaid").default> | null = null;
+/** Import-only — memoized so the heavy module is fetched once regardless of theme. */
 function loadMermaid() {
-  if (!mermaidReady) {
-    mermaidReady = import("mermaid").then((mod) => {
-      const mermaid = mod.default;
-      const css = getComputedStyle(document.documentElement);
-      const v = (name: string, fallback: string) =>
-        css.getPropertyValue(name).trim() || fallback;
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        // We catch render errors and show our own inline fallback; without this, mermaid ALSO
-        // injects its default "bomb" error SVG into the DOM. Suppress it so only our UI shows.
-        suppressErrorRendering: true,
-        theme: "base",
-        fontFamily: v("--f-mono", "ui-monospace, monospace"),
-        themeVariables: {
-          background: "transparent",
-          primaryColor: v("--surface-2", "#f6f6f3"),
-          primaryTextColor: v("--text", "#1a1d23"),
-          primaryBorderColor: v("--border-2", "#d3d3cc"),
-          secondaryColor: v("--surface-3", "#eeeee9"),
-          tertiaryColor: v("--surface", "#ffffff"),
-          lineColor: v("--dim", "#5c6573"),
-          textColor: v("--text", "#1a1d23"),
-        },
-      });
-      return mermaid;
-    });
-  }
+  if (!mermaidReady) mermaidReady = import("mermaid").then((mod) => mod.default);
   return mermaidReady;
+}
+
+/** (Re-)initialize mermaid from the CURRENTLY live CSS custom properties, so the diagram palette tracks
+ *  whichever theme is active at call time rather than whatever was live the first time mermaid loaded. */
+function applyMermaidTheme(mermaid: Awaited<ReturnType<typeof loadMermaid>>) {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name: string, fallback: string) =>
+    css.getPropertyValue(name).trim() || fallback;
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    // We catch render errors and show our own inline fallback; without this, mermaid ALSO
+    // injects its default "bomb" error SVG into the DOM. Suppress it so only our UI shows.
+    suppressErrorRendering: true,
+    theme: "base",
+    fontFamily: v("--f-mono", "ui-monospace, monospace"),
+    themeVariables: {
+      background: "transparent",
+      primaryColor: v("--surface-2", "#f6f6f3"),
+      primaryTextColor: v("--text", "#1a1d23"),
+      primaryBorderColor: v("--border-2", "#d3d3cc"),
+      secondaryColor: v("--surface-3", "#eeeee9"),
+      tertiaryColor: v("--surface", "#ffffff"),
+      lineColor: v("--dim", "#5c6573"),
+      textColor: v("--text", "#1a1d23"),
+    },
+  });
+}
+
+// ── Theme-reactive re-init ────────────────────────────────────────────────────────────────────────
+// next-themes applies `data-theme` on <html> from its OWN useEffect, and React 19 flushes CHILD passive
+// effects before PARENT ones — so a naive "read data-theme inside the Mermaid component's effect" can run
+// before next-themes has actually applied the new attribute. Reacting to a MutationObserver on the
+// attribute instead is ordering-independent: it only fires once the attribute (and the CSS vars it
+// controls) are truly live.
+let appliedMermaidTheme: string | null = null;
+let themeVersion = 0;
+const themeListeners = new Set<() => void>();
+let themeObserver: MutationObserver | null = null;
+
+function currentThemeKey() {
+  return document.documentElement.getAttribute("data-theme") || "daylight";
+}
+function ensureThemeObserver() {
+  if (themeObserver || typeof document === "undefined") return;
+  themeObserver = new MutationObserver(() => {
+    if (currentThemeKey() === appliedMermaidTheme) return; // unrelated attribute write
+    appliedMermaidTheme = null; // force re-init (with now-live CSS vars) on next ensureMermaid
+    mermaidCache.clear(); // cached SVGs bake in the old palette — drop them
+    themeVersion++;
+    themeListeners.forEach((l) => l());
+  });
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+}
+function subscribeTheme(cb: () => void) {
+  ensureThemeObserver();
+  themeListeners.add(cb);
+  return () => themeListeners.delete(cb);
+}
+function getThemeVersion() {
+  return themeVersion;
+}
+
+/** Load mermaid and (re-)apply its theme if the live data-theme has changed since the last init. */
+async function ensureMermaid() {
+  const mermaid = await loadMermaid();
+  const key = currentThemeKey();
+  if (appliedMermaidTheme !== key) {
+    applyMermaidTheme(mermaid);
+    appliedMermaidTheme = key;
+    mermaidCache.clear();
+  }
+  return mermaid;
 }
 
 /** Flatten code-block children to plain text (string, number, or nested markdown nodes). */
@@ -253,7 +305,7 @@ export async function warmMermaidDiagrams(sources: string[]): Promise<void> {
   if (todo.length === 0) return;
   let mermaid: Awaited<ReturnType<typeof loadMermaid>>;
   try {
-    mermaid = await loadMermaid();
+    mermaid = await ensureMermaid();
   } catch {
     return; // module failed to load (e.g. a transient chunk-load error) — nothing to warm this pass
   }
@@ -368,11 +420,15 @@ function Mermaid({ chart }: { chart: string }) {
   const [sent, setSent] = useState(false);
   const [copied, copy] = useCopied();
   const actions = useContext(MarkdownActionsContext);
+  // Re-runs the render effect below on a live theme switch (see the MutationObserver-driven store
+  // above `Mermaid`) — independent of next-themes/useTheme, and of React 19's child-before-parent
+  // passive-effect ordering, since it only fires once the new data-theme attribute is truly live.
+  const themeVersion = useSyncExternalStore(subscribeTheme, getThemeVersion, () => 0);
 
   useEffect(() => {
     let cancelled = false;
-    // Mermaid render is pure in its source (theme is fixed at module init), so a previously-rendered
-    // diagram can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
+    // Mermaid render is pure in its source + theme, so a previously-rendered diagram (in the CURRENT
+    // theme) can reuse its cached SVG instead of replaying the placeholder→SVG transition — this is what
     // makes a diagram seen once elsewhere in the transcript mount at its FINAL size immediately.
     const cached = mermaidCache.get(chart.trim());
     if (cached) {
@@ -380,9 +436,11 @@ function Mermaid({ chart }: { chart: string }) {
       setError(null);
       return;
     }
-    setResult(null);
+    // Don't clear an already-rendered SVG here — e.g. on a theme switch the cache was just dropped, but
+    // the old-themed diagram stays visible until the freshly re-rendered one replaces it, so re-render
+    // never flashes back to the loading placeholder.
     setError(null);
-    loadMermaid()
+    ensureMermaid()
       .then(async (mermaid) => {
         // Validate BEFORE rendering: parse() throws on bad syntax but injects nothing, so mermaid's
         // default "bomb" error SVG never lands in the DOM — independent of whether suppressErrorRendering
@@ -404,7 +462,7 @@ function Mermaid({ chart }: { chart: string }) {
     return () => {
       cancelled = true;
     };
-  }, [chart, renderId]);
+  }, [chart, renderId, themeVersion]);
 
   const copyButton = (
     <FrameBtn title="Copy mermaid source" onClick={() => copy(chart)}>
