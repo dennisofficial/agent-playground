@@ -23,7 +23,7 @@ const BLOCKABLE_STATUSES = new Set([
   'awaiting_approval',
   'blocked',
 ]);
-const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting'];
+const TERMINAL_BLOCKER_STATUSES = ['cancelled', 'deleting', 'archived'];
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -38,7 +38,8 @@ export type BlockerResolution =
   | 'merged'
   | 'closed_unmerged'
   | 'cancelled'
-  | 'deleted';
+  | 'deleted'
+  | 'archived';
 
 /** A non-terminal-safe classification of a blocker (excludes the in-flight `merged` case). */
 type NonLandedResolution = Exclude<BlockerResolution, 'merged'>;
@@ -470,6 +471,7 @@ export class JobDependencyService {
     if (prState === 'merged') return 'merged';
     if (prState === 'closed') return 'closed_unmerged';
     if (status === 'deleting') return 'deleted';
+    if (status === 'archived') return 'archived';
     return 'cancelled';
   }
 

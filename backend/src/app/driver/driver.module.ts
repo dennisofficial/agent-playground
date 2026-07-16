@@ -247,6 +247,9 @@ export class DriverModule
         await this.lifecycle.reconcileOnBoot();
         // Finish any job stranded in `deleting` (crash between the delete claim and teardown completing).
         await this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
+        // Self-heal any archived job whose filesystem reclaim was interrupted (status flipped, but the
+        // worktree/container teardown never finished) — the archive analog of the `deleting` reconcile.
+        await this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
         // Reclaim leaked `-net`/`-dind` artifacts BEFORE resuming jobs — a resumed drive calls `ensureContainer`
         // → `ensureNetwork`, which fails ("all predefined address pools have been fully subnetted") if the pool
         // is still exhausted by networks orphaned across prior restarts. `reconcileOnBoot` above nulled DB
@@ -297,8 +300,8 @@ export class DriverModule
   }
 
   /**
-   * The slow housekeeping sweep: close threads whose PR has merged/closed (reclaims container + worktree),
-   * re-drive stranded jobs, GC merged-job disk, and reclaim orphaned Docker artifacts. unref so it never
+   * The slow housekeeping sweep: record terminal PR states, re-drive stranded jobs, auto-archive idle
+   * merged/closed jobs (+ self-heal interrupted reclaims), and reclaim orphaned Docker artifacts. unref so it never
    * keeps the process alive. Idle-reap is NOT here — it rides its own fast `startReapIdleTimer` (1 min) so a
    * quiet container is reclaimed promptly; the GitHub PR-state observation rides the fast `startPollTimer`
    * heartbeat. This timer keeps only the `pollPrClosures` merge/close-teardown backstop (teardown is already
@@ -317,9 +320,13 @@ export class DriverModule
       void this.driver.resume().catch(() => undefined);
       void this.lifecycle.pollPrClosures().catch(() => undefined);
       void this.lifecycle.reconcileDeletingJobs().catch(() => undefined);
-      // Disk GC: reclaim the worktree + scratch dirs of merged/closed jobs whose sandbox has sat detached
-      // past the TTL (RAM was freed at merge; this bounds the worktree growth detach leaves behind).
-      void this.lifecycle.reapMergedSandboxes().catch(() => undefined);
+      // Auto-archive: reclaim the worktree + container + /playground of merged/closed jobs idle past the TTL
+      // (last transcript activity, default 3d) — the row + transcript + /context survive. Replaces the old
+      // 7-day merged-sandbox disk GC and drains the detached-worktree backlog over its first sweeps.
+      void this.lifecycle.archiveInactiveJobs().catch(() => undefined);
+      // Self-heal an interrupted archive reclaim: re-run the (idempotent) physical teardown for any archived
+      // job whose sandbox never reached `closed` (a crash between the status flip and the reclaim finishing).
+      void this.lifecycle.reconcileArchivedSandboxes().catch(() => undefined);
       // Reclaim leaked per-sandbox `-net`/`-dind` artifacts so Docker's address pool can't be exhausted by
       // networks orphaned across restarts/crashes.
       void this.lifecycle.reapOrphanedSandboxArtifacts().catch(() => undefined);

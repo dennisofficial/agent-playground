@@ -156,6 +156,7 @@ const BLOCKER_HOW_LABEL: Record<UnblockBlockerInfo['how'], string> = {
   closed_unmerged: 'PR closed without merging',
   cancelled: 'job cancelled',
   deleted: 'job deleted',
+  archived: 'job archived',
   removed: 'block lifted by the operator',
 };
 
@@ -173,7 +174,11 @@ function renderBlockerContext(blockers: UnblockBlockerInfo[]): string {
     .map((b) => `  • "${b.title ?? b.jobId}" (${BLOCKER_HOW_LABEL[b.how]}) — job ${b.jobId}`)
     .join('\n');
   const notLanded = blockers.filter(
-    (b) => b.how === 'closed_unmerged' || b.how === 'cancelled' || b.how === 'deleted',
+    (b) =>
+      b.how === 'closed_unmerged' ||
+      b.how === 'cancelled' ||
+      b.how === 'deleted' ||
+      b.how === 'archived',
   );
   const caveat =
     notLanded.length > 0

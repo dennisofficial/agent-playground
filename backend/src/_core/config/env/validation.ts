@@ -179,6 +179,9 @@ export interface IEnvConfig {
   DRIVER_TRANSIENT_RETRY_MS?: number;
   TURN_STALE_MS?: number;
   TURN_STREAM_REAP_IDLE_MS?: number;
+  // ARCHIVE_INACTIVITY_TTL_MS: idle window (last transcript activity) after which a merged/closed job
+  // auto-archives (default 3 days). Env-configurable; default lives in the JobLifecycleService getter.
+  ARCHIVE_INACTIVITY_TTL_MS?: number;
 
   // Dev/test tooling (never live in prod). TEST_BRIDGE: 'off' opts a non-prod env out of the `/test/*`
   // bridge (gating is NODE_ENV-driven; hard-off in prod). DISABLE_RESUME: skip the driver's boot
@@ -301,6 +304,7 @@ export const envConfigValidation = Joi.object<IEnvConfig, true>({
   DRIVER_TRANSIENT_RETRY_MS: Joi.number().integer().min(0).optional(),
   TURN_STALE_MS: Joi.number().integer().min(1).optional(),
   TURN_STREAM_REAP_IDLE_MS: Joi.number().integer().min(1).optional(),
+  ARCHIVE_INACTIVITY_TTL_MS: Joi.number().integer().min(1).optional(),
 
   // Dev/test tooling (never prod)
   TEST_BRIDGE: Joi.string().valid('on', 'off').optional(),

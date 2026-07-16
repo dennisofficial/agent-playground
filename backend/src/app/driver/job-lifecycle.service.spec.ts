@@ -574,39 +574,43 @@ describe('JobLifecycleService.applyGithubPrState', () => {
     expect(svc.detachJobContainer).not.toHaveBeenCalled();
   });
 
-  it("state='merged' writes pr_state=merged, then DETACHES (frees RAM, keeps worktree) — in that order", async () => {
+  it("state='merged' writes pr_state=merged but NO LONGER tears anything down (decision d5 — merged stays interactive)", async () => {
     const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'merged');
-    expect(result).toBe('closed');
+    expect(result).toBe('noop');
     expect(jobs.update).toHaveBeenCalledWith(
       { id: 'job-1' },
       { pr_state: 'merged' },
     );
-    expect(order).toEqual(['update:merged', 'detach']);
+    // Only the pr_state write — merge no longer detaches (that happens at archive now).
+    expect(order).toEqual(['update:merged']);
+    expect(svc.detachJobContainer).not.toHaveBeenCalled();
     expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'merged');
   });
 
-  it("state='closed' writes pr_state=closed, then detaches", async () => {
+  it("state='closed' writes pr_state=closed, no teardown", async () => {
     const { svc, jobs, order, neutralizeMergeCard } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'closed');
-    expect(result).toBe('closed');
+    expect(result).toBe('noop');
     expect(jobs.update).toHaveBeenCalledWith(
       { id: 'job-1' },
       { pr_state: 'closed' },
     );
-    expect(order).toEqual(['update:closed', 'detach']);
+    expect(order).toEqual(['update:closed']);
+    expect(svc.detachJobContainer).not.toHaveBeenCalled();
     expect(neutralizeMergeCard).toHaveBeenCalledWith('job-1', 'not-ready');
   });
 
-  it("state='gone' folds to pr_state=closed and still detaches the job", async () => {
+  it("state='gone' folds to pr_state=closed, no teardown", async () => {
     const { svc, jobs, order } = makeServiceForApply();
     const result = await svc.applyGithubPrState(job, 'gone');
-    expect(result).toBe('closed');
+    expect(result).toBe('noop');
     expect(jobs.update).toHaveBeenCalledWith(
       { id: 'job-1' },
       { pr_state: 'closed' },
     );
-    expect(order).toEqual(['update:closed', 'detach']);
+    expect(order).toEqual(['update:closed']);
+    expect(svc.detachJobContainer).not.toHaveBeenCalled();
   });
 });
 
@@ -975,28 +979,86 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
     await svc.pollPrClosures();
     expect(getPullState).toHaveBeenCalledTimes(1);
   });
+});
 
-  // ── reapMergedSandboxes: reclaim disk (worktree + scratch) for long-detached terminal jobs ──────────
-  function makeServiceForGc(
-    jobs: Array<{ id: string; org_id: string }>,
-    sandboxByJob: Record<string, JobSandboxEntity | null>,
+describe('JobLifecycleService — archive lifecycle', () => {
+  /**
+   * Build a service wired for the archive paths: a `jobs` repo whose conditional `update` returns a queued
+   * `affected` (for the single-flight claim), a query builder whose `getMany` returns the eligible set (for
+   * the sweep) and records its predicate calls, plus the sandbox/git/provider/deps mocks the reclaim +
+   * archiveJobDeep touch. `row` is the sandbox `findOne` returns.
+   */
+  function makeArchiveService(
+    opts: {
+      updateAffected?: number[];
+      eligible?: Array<{ id: string; org_id: string }>;
+      row?: JobSandboxEntity | null;
+    } = {},
   ) {
+    const affectedQueue = [...(opts.updateAffected ?? [])];
+    const update = vi.fn(async (_where: unknown, _patch: unknown) => ({
+      affected: affectedQueue.length ? affectedQueue.shift() : 1,
+    }));
+    const predicates: string[] = [];
+    const qb = {
+      select: vi.fn(() => qb),
+      where: vi.fn((clause: string) => {
+        predicates.push(clause);
+        return qb;
+      }),
+      andWhere: vi.fn((clause: string) => {
+        predicates.push(clause);
+        return qb;
+      }),
+      innerJoin: vi.fn(() => qb),
+      getMany: vi.fn(async () => opts.eligible ?? []),
+    };
+    const jobs = {
+      update,
+      createQueryBuilder: vi.fn(() => qb),
+      findOne: vi.fn().mockResolvedValue({
+        id: 'job-1',
+        feature_branch: 'atlas/f',
+        base_branch: 'main',
+      }),
+    } as unknown as Repository<JobEntity>;
+
+    const sandboxUpdate = vi.fn().mockResolvedValue({ affected: 1 });
+    const sandboxes = {
+      findOne: vi
+        .fn()
+        .mockResolvedValue(opts.row === undefined ? null : opts.row),
+      update: sandboxUpdate,
+      save: vi.fn(),
+      create: vi.fn(),
+    } as unknown as Repository<JobSandboxEntity>;
+
+    const removeSandbox = vi.fn().mockResolvedValue(undefined);
+    const ensureRepo = vi.fn().mockResolvedValue({ localPath: '/repos/proj' });
+    const teardownByIdentity = vi.fn().mockResolvedValue(undefined);
+    const onBlockerResolved = vi.fn().mockResolvedValue(undefined);
+    const playgroundDirHost = vi.fn(() => '/pg');
+    const contextDirHost = vi.fn(() => '/ctx');
+    const brainTranscriptProjectsDir = vi.fn(() => null);
+    const projectsUpdate = vi.fn().mockResolvedValue({ affected: 1 });
+
     const svc = new JobLifecycleService(
+      jobs,
+      sandboxes,
       {
-        find: vi.fn().mockResolvedValue(jobs),
-      } as unknown as Repository<JobEntity>,
-      {
-        findOne: vi.fn(
-          async ({ where }: { where: { job_id: string } }) =>
-            sandboxByJob[where.job_id] ?? null,
-        ),
-      } as unknown as Repository<JobSandboxEntity>,
-      { findOne: vi.fn() } as unknown as Repository<RepoEntity>,
-      {} as unknown as LocalGitService,
+        findOne: vi.fn().mockResolvedValue({
+          id: 'repo-uuid-1',
+          slug: 'proj',
+          default_branch: 'main',
+          git_url: 'https://github.com/a/b',
+        }),
+        update: projectsUpdate,
+      } as unknown as Repository<RepoEntity>,
+      { removeSandbox, ensureRepo } as unknown as LocalGitService,
       { getPullState: vi.fn() } as unknown as GithubPrService,
       {
         githubToken: vi.fn(),
-        hostGithubToken: vi.fn(),
+        hostGithubToken: vi.fn().mockResolvedValue('tok'),
       } as unknown as CredentialResolver,
       { get: vi.fn() } as unknown as EnvService,
       new SandboxActivityRegistry(),
@@ -1004,12 +1066,13 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
       {
         attach: vi.fn(),
         teardown: vi.fn(),
-        teardownByIdentity: vi.fn(),
+        teardownByIdentity,
+        playgroundDirHost,
+        contextDirHost,
+        brainTranscriptProjectsDir,
       } as unknown as SandboxProvider,
       { provisionAndAttach: vi.fn() } as unknown as WorktreeProvisioner,
-      {
-        onBlockerResolved: vi.fn().mockResolvedValue(undefined),
-      } as unknown as JobDependencyService,
+      { onBlockerResolved } as unknown as JobDependencyService,
       {
         failRunningForJob: vi.fn().mockResolvedValue(0),
       } as unknown as TurnRegistry,
@@ -1020,51 +1083,138 @@ describe('JobLifecycleService — merge detaches (keeps context) + stale-sandbox
         neutralizeMergeCard: vi.fn().mockResolvedValue(undefined),
       } as unknown as DriverStoreService,
     );
-    // Spy the two reclaim effects on the instance — we assert the DECISION, not closeJob/rmSync internals.
-    const closeJob = vi.fn().mockResolvedValue(undefined);
-    const removeScratch = vi.fn();
-    svc.closeJob = closeJob;
-    (
-      svc as unknown as { removeJobScratchDirs: (o: string, j: string) => void }
-    ).removeJobScratchDirs = removeScratch;
-    return { svc, closeJob, removeScratch };
+    return {
+      svc,
+      update,
+      sandboxUpdate,
+      predicates,
+      teardownByIdentity,
+      removeSandbox,
+      onBlockerResolved,
+      playgroundDirHost,
+      contextDirHost,
+      brainTranscriptProjectsDir,
+    };
   }
 
-  const DAY = 24 * 60 * 60 * 1000;
-
-  it('reapMergedSandboxes reclaims a detached + past-TTL row (worktree + scratch), leaving recent / attached / others alone', async () => {
-    const old = new Date(Date.now() - 8 * DAY); // past the 7-day TTL
-    const fresh = new Date();
-    const { svc, closeJob, removeScratch } = makeServiceForGc(
-      [
-        { id: 'stale', org_id: 'T1' },
-        { id: 'recent', org_id: 'T1' },
-        { id: 'attached', org_id: 'T1' },
-      ],
-      {
-        stale: makeRow({
-          job_id: 'stale',
-          lifecycle: 'detached',
-          updated_at: old,
-        }),
-        recent: makeRow({
-          job_id: 'recent',
-          lifecycle: 'detached',
-          updated_at: fresh,
-        }),
-        attached: makeRow({
-          job_id: 'attached',
-          lifecycle: 'attached',
-          updated_at: old,
-        }),
-      },
+  it('claimArchiveJob is single-flight — the first claim wins, a concurrent second matches 0 rows', async () => {
+    const { svc, update } = makeArchiveService({ updateAffected: [1, 0] });
+    expect(await svc.claimArchiveJob('job-1', 'T1')).toBe(true);
+    expect(await svc.claimArchiveJob('job-1', 'T1')).toBe(false);
+    // Guarded on `status <> 'archived'`, stamping both status + archived_at.
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'job-1', org_id: 'T1' }),
+      expect.objectContaining({ status: 'archived' }),
     );
+    const patch = update.mock.calls[0]![1] as { archived_at?: Date };
+    expect(patch.archived_at).toBeInstanceOf(Date);
+  });
 
-    const n = await svc.reapMergedSandboxes();
+  it('archiveJobDeep reclaims container+worktree + /playground + JSONL and wakes dependents, but KEEPS /context (decision d2)', async () => {
+    const { svc, onBlockerResolved } = makeArchiveService();
+    const reclaim = vi.fn().mockResolvedValue(true);
+    const removePlayground = vi.fn();
+    const removeContext = vi.fn();
+    const removeJsonl = vi.fn();
+    svc.reclaimJobArtifacts = reclaim;
+    (
+      svc as unknown as { removeJobPlaygroundDir: (o: string, j: string) => void }
+    ).removeJobPlaygroundDir = removePlayground;
+    (
+      svc as unknown as { removeJobContextDir: (o: string, j: string) => void }
+    ).removeJobContextDir = removeContext;
+    (
+      svc as unknown as { removeOnDiskSessionJsonl: (j: string) => void }
+    ).removeOnDiskSessionJsonl = removeJsonl;
 
-    expect(n).toBe(1);
-    expect(closeJob).toHaveBeenCalledTimes(1);
-    expect(closeJob).toHaveBeenCalledWith('stale', 'T1'); // worktree + container reclaimed
-    expect(removeScratch).toHaveBeenCalledWith('T1', 'stale'); // /context + /playground reclaimed too
+    await svc.archiveJobDeep('job-1', 'T1');
+
+    expect(reclaim).toHaveBeenCalledWith('job-1', 'T1');
+    expect(removePlayground).toHaveBeenCalledWith('T1', 'job-1');
+    expect(removeContext).not.toHaveBeenCalled(); // /context is RETAINED on archive
+    expect(removeJsonl).toHaveBeenCalledWith('job-1');
+    expect(onBlockerResolved).toHaveBeenCalledWith('job-1', 'archived');
+  });
+
+  it('reclaimJobArtifacts marks the sandbox closed when the worktree is genuinely gone', async () => {
+    const { svc, sandboxUpdate, teardownByIdentity } = makeArchiveService({
+      row: makeRow({ lifecycle: 'detached', worktree_path: '/definitely/gone' }),
+    });
+    expect(await svc.reclaimJobArtifacts('job-1', 'T1')).toBe(true);
+    expect(teardownByIdentity).toHaveBeenCalledTimes(1);
+    expect(sandboxUpdate).toHaveBeenCalledWith(
+      { id: 'sandbox-1' },
+      { container_id: null, lifecycle: 'closed' },
+    );
+  });
+
+  it('reclaimJobArtifacts returns false and does NOT mark closed when the worktree dir survives removal (swallowed failure)', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'atlas-arch-'));
+    try {
+      const { svc, sandboxUpdate } = makeArchiveService({
+        row: makeRow({ lifecycle: 'detached', worktree_path: wt }),
+      });
+      // removeSandbox is a no-op mock (mirrors LocalGitService swallowing failures), so the dir still exists.
+      expect(await svc.reclaimJobArtifacts('job-1', 'T1')).toBe(false);
+      expect(sandboxUpdate).not.toHaveBeenCalled(); // lifecycle stays non-closed → reconciler retries
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it('reclaimJobArtifacts is a no-op (true) for an already-closed sandbox (nothing owed)', async () => {
+    const { svc, teardownByIdentity, sandboxUpdate } = makeArchiveService({
+      row: makeRow({ lifecycle: 'closed' }),
+    });
+    expect(await svc.reclaimJobArtifacts('job-1', 'T1')).toBe(true);
+    expect(teardownByIdentity).not.toHaveBeenCalled();
+    expect(sandboxUpdate).not.toHaveBeenCalled();
+  });
+
+  it('archiveInactiveJobs claims + archives every eligible job and returns the count; the query anchors on last transcript activity', async () => {
+    const { svc, predicates } = makeArchiveService({
+      eligible: [
+        { id: 'a', org_id: 'T1' },
+        { id: 'b', org_id: 'T2' },
+      ],
+    });
+    const claim = vi.fn().mockResolvedValue(true);
+    const deep = vi.fn().mockResolvedValue(undefined);
+    svc.claimArchiveJob = claim;
+    svc.archiveJobDeep = deep;
+
+    const n = await svc.archiveInactiveJobs();
+
+    expect(n).toBe(2);
+    expect(claim).toHaveBeenCalledWith('a', 'T1');
+    expect(deep).toHaveBeenCalledWith('a', 'T1');
+    expect(claim).toHaveBeenCalledWith('b', 'T2');
+    // Eligibility: exclude already-archived, require a terminal PR state, and anchor idleness on
+    // MAX(transcript_messages.created_at) < cutoff — NOT jobs.updated_at. A NULL MAX (no transcript rows)
+    // fails the `<` predicate, so such a job is never auto-archived (enforced in SQL — see the int test).
+    const sql = predicates.join(' ');
+    expect(sql).toContain("status <> :arch");
+    expect(sql).toContain('pr_state IN');
+    expect(sql).toContain('MAX(m.created_at)');
+    expect(sql).toContain('< :cutoff');
+  });
+
+  it('archiveInactiveJobs skips a job it loses the archive claim for (archived concurrently)', async () => {
+    const { svc } = makeArchiveService({ eligible: [{ id: 'a', org_id: 'T1' }] });
+    svc.claimArchiveJob = vi.fn().mockResolvedValue(false);
+    const deep = vi.fn().mockResolvedValue(undefined);
+    svc.archiveJobDeep = deep;
+    expect(await svc.archiveInactiveJobs()).toBe(0);
+    expect(deep).not.toHaveBeenCalled();
+  });
+
+  it('reconcileArchivedSandboxes re-runs the idempotent archiveJobDeep for each archived job still not fully closed', async () => {
+    const { svc } = makeArchiveService({
+      eligible: [{ id: 'x', org_id: 'T1' }],
+    });
+    const deep = vi.fn().mockResolvedValue(undefined);
+    svc.archiveJobDeep = deep;
+    expect(await svc.reconcileArchivedSandboxes()).toBe(1);
+    expect(deep).toHaveBeenCalledWith('x', 'T1');
   });
 });

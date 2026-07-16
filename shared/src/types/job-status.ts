@@ -31,9 +31,13 @@ export type JobStatus =
   // plan_review. Cleared (→ 'open') by the wake path when every blocker reaches a terminal state.
   | 'done' // one PR opened, all tracks handed off
   | 'cancelled'
-  | 'deleting'; // terminal-bound: the operator deleted the job; container + worktree teardown is in
-// progress and the row is about to be removed. Transient (self-heals via boot/reap reconcilers) and
-// NOT a needs-you state — the job is going away, so it must never light the sidebar alert dot.
+  | 'deleting' // terminal-bound: the operator deleted the job; container + worktree teardown is in
+  // progress and the row is about to be removed. Transient (self-heals via boot/reap reconcilers) and
+  // NOT a needs-you state — the job is going away, so it must never light the sidebar alert dot.
+  | 'archived'; // TERMINAL: the job was archived — manually (web DELETE → archive) or by the merged/closed
+// idle sweep (>3d since last activity). Its worktree + container + /playground + redundant on-disk session
+// JSONL are reclaimed, but the row + transcript + analytics + /context survive. Read-only (mutations 409)
+// and excluded from active reads/realtime/pipeline/reapers. NOT a needs-you state — nothing to act on.
 
 /**
  * A job's HALT — the orthogonal failure/pause axis. `status` stays the pure build PHASE; when a job
