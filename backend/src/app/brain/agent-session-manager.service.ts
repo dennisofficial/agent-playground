@@ -1550,6 +1550,7 @@ export class AgentSessionManager
         cardBearingIds,
         stimulus.cardBearingIds ? undefined : stimulus,
       );
+      opts?.onRegistered?.();
       return;
     }
     opts?.onRegistered?.();
