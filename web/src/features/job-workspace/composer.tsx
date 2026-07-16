@@ -4,15 +4,13 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import {
   useJobMessages,
-  useSay,
-  useSayWithAttachments,
+  useMessage,
   useSendReviewComments,
   useStop,
-  useSubmitStagedAnswers,
 } from "@/lib/api/job-queries";
 import {
   ThreadApiError,
-  type AnswerBatchItem,
+  type MessageInput,
   type JobRef,
 } from "@/lib/api/job-api";
 import type { PendingAttachment } from "@/lib/api/job-queries";
@@ -35,20 +33,20 @@ import { StagedAnswersTray } from "./staged-answers-tray";
 import { useReviewComments, type ReviewComment } from "./review-comments";
 import { formatEffort, formatModelLabel } from "@/lib/format";
 
-/** Map one staged answer to the wire shape `answer-batch` expects (drops the chip-only `label`). */
-function toAnswerBatchItem(a: StagedAnswer): AnswerBatchItem {
+/** Map one staged answer to the wire shape `/message` expects (drops the chip-only `label`). */
+function toMessageItem(a: StagedAnswer): MessageInput {
   if (a.kind === "question") {
-    return { kind: "question", questionId: a.cardId, answer: a.answer };
+    return { type: "answer_question", questionId: a.cardId, answer: a.answer };
   }
   if (a.kind === "file") {
     return {
-      kind: "file",
+      type: "file_answered",
       requestId: a.cardId,
       filename: a.filename,
       content: a.content,
     };
   }
-  return { kind: "secret", requestId: a.cardId, value: a.value };
+  return { type: "secret_provided", requestId: a.cardId, value: a.value };
 }
 
 /** The lane's live footer data — the model/effort/engine that ran + its context occupancy. */
@@ -60,7 +58,7 @@ export interface ComposerFooter {
 }
 
 /**
- * The conversation composer — talks to the thread's brain. Posts to `…/jobs/:jobId/say`. Typed
+ * The conversation composer — talks to the thread's brain. Posts to `…/jobs/:jobId/message`. Typed
  * ops ("pause", "approve", "resume", "simplify the rest"…) run the same operations as the buttons; the
  * brain interprets the text, so the composer just sends it. Enter sends; Shift+Enter newlines.
  *
@@ -71,7 +69,7 @@ export interface ComposerFooter {
  * The `＋` attach button is wired: it opens a file picker, and the operator can also PASTE images straight
  * into the textarea OR drag-and-drop files anywhere onto the conversation pane (the drop target lives in
  * {@link TranscriptView}, which owns the attachment tray and passes it in via `attach`). Attachments preview
- * in a tray (local blob URLs — no base64) and send as a multipart `say`; the backend writes them to the
+ * in a tray (local blob URLs — no base64) and send as a multipart `/message`; the backend writes them to the
  * sandbox and the brain reads them with its Read tool. The `Plan ▾`
  * mode pill remains a static design affordance for now. The model · effort label and the context ring ARE
  * live: they thread the lane's latest `turn_meta` (via the `footer` prop), so they change per lane.
@@ -129,11 +127,9 @@ export function Composer({
   // A blocked job's composer is inert for the same reasons a read-only lane's is: no input, no Send, no
   // attach/paste — the only difference is the placeholder copy (and that the operator unblocks above).
   const inert = readOnly || blocked;
-  const say = useSay(jobRef);
-  const sayWithAttachments = useSayWithAttachments(jobRef);
+  const message = useMessage(jobRef);
   const stop = useStop(jobRef);
   const sendReviewComments = useSendReviewComments(jobRef);
-  const submitStagedAnswers = useSubmitStagedAnswers(jobRef);
   const stagedAnswers = useComposerStagedAnswers(jobRef);
   const { comments, clearComments } = useReviewComments();
   const connectivity = useConnectivity();
@@ -282,15 +278,6 @@ export function Composer({
       });
     };
 
-    if (stagedAnswers.length > 0) {
-      // No draft/tray clear here — `useSubmitStagedAnswers`'s `onSuccess` clears both, so a failed send
-      // leaves the tray and typed note intact for retry.
-      submitStagedAnswers.mutate({
-        items: stagedAnswers.map(toAnswerBatchItem),
-        message: trimmed || undefined,
-      });
-      return;
-    }
     if (comments.length > 0) {
       sendReviewComments.mutate(
         {
@@ -312,29 +299,31 @@ export function Composer({
       composerStore.clearDraft(jobRef.jobId);
       return;
     }
-    if (attachments.length > 0) {
-      // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
-      sayWithAttachments.mutate(
-        { text: trimmed, attachments, lane, threadId },
+
+    const hasText = trimmed.length > 0;
+    const hasAttachments = attachments.length > 0;
+    const hasStaged = stagedAnswers.length > 0;
+    if (hasStaged || hasText || hasAttachments) {
+      // No draft/tray clear here for the staged items themselves — `useMessage`'s `onSuccess` prunes only
+      // the ones the backend actually applied, so a failed send leaves the tray intact for retry.
+      const items: MessageInput[] = [
+        ...stagedAnswers.map(toMessageItem),
+        ...(hasText || hasAttachments
+          ? [{ type: "user" as const, text: trimmed, ...(lane ? { lane } : {}) }]
+          : []),
+      ];
+      message.mutate(
+        { messages: items, attachments, threadId },
         {
           onError: (e) =>
             reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
         },
       );
-      clearAttachments?.();
+      // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
+      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
+      if (hasAttachments) clearAttachments?.();
       composerStore.clearDraft(jobRef.jobId);
-      return;
     }
-    if (!trimmed) return;
-    say.mutate(
-      { text: trimmed, lane, threadId },
-      {
-        onError: (e) =>
-          reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments: [] }),
-      },
-    );
-    composerStore.clearDraft(jobRef.jobId);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -367,9 +356,9 @@ export function Composer({
             <CommentTray />
           </>
         )}
-        {!inert && !isSubagent && submitStagedAnswers.isError ? (
+        {!inert && !isSubagent && message.isError ? (
           <div className="mb-2 text-[11px] text-red">
-            Could not send — remove the failed item and try again.
+            Could not send — try again.
           </div>
         ) : null}
         <div
@@ -432,10 +421,8 @@ export function Composer({
                     comments.length === 0 &&
                     attachments.length === 0 &&
                     stagedAnswers.length === 0) ||
-                  say.isPending ||
-                  sayWithAttachments.isPending ||
-                  sendReviewComments.isPending ||
-                  submitStagedAnswers.isPending
+                  message.isPending ||
+                  sendReviewComments.isPending
                 }
                 className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
                 aria-label="Send"

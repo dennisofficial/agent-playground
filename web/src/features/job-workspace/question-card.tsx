@@ -5,7 +5,7 @@ import { CheckCircle2, Clock, HelpCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { Markdown } from "./markdown";
-import { useAnswerQuestion } from "@/lib/api/job-queries";
+import { useMessage } from "@/lib/api/job-queries";
 import type { JobRef } from "@/lib/api/job-api";
 import type { WebQuestionCard } from "@/lib/api/types";
 import { isSubmitCombo } from "@/lib/keyboard";
@@ -15,12 +15,10 @@ import {
   type StagedAnswer,
 } from "@/lib/api/composer-store";
 
-const ANSWERED_BY = "U-OPERATOR";
-
 /**
  * A formal question the brain posed via `ask_question`. Renders one button per option (+ optional
  * free-text "Other"). A `build`-origin question (the driver's onboarding/build-flow asks) still POSTs
- * immediately to `…/threads/:jobId/answer-question`; every other question STAGES the pick into the
+ * immediately (an `answer_question` message on its own); every other question STAGES the pick into the
  * composer's tray instead — nothing hits the backend until the operator's batched Send. Once
  * `card.answer` is set, renders the compact answered state (so a reload still shows what was asked +
  * chosen); that fires either immediately (build-origin) or after the batch send settles.
@@ -32,7 +30,7 @@ export function QuestionCardView({
   card: WebQuestionCard;
   jobRef: JobRef;
 }) {
-  const answer = useAnswerQuestion(jobRef);
+  const answer = useMessage(jobRef);
   const [other, setOther] = useState("");
   const [showOther, setShowOther] = useState(false);
   const pending = answer.isPending;
@@ -46,9 +44,9 @@ export function QuestionCardView({
     if (!trimmed) return;
     if (card.origin === "build") {
       answer.mutate({
-        questionId: card.questionId,
-        answer: trimmed,
-        answeredBy: ANSWERED_BY,
+        messages: [
+          { type: "answer_question", questionId: card.questionId, answer: trimmed },
+        ],
       });
       return;
     }
