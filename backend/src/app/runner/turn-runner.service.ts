@@ -5,6 +5,7 @@ import type { SessionEngine, SessionMode, SessionRef } from '@shared/domain';
 import {
   ENGINE_RUNNER,
   EngineAuthError,
+  EngineDetachedError,
   EngineSessionLimitError,
   SANDBOX_RESET_NOTICE,
   pickKeys,
@@ -510,72 +511,98 @@ export class TurnRunnerService {
       );
     }
     const { turnId, containerId, stepId } = input;
-    const onEvent = (e: EngineEvent): void => {
-      if (e.kind === 'session' && stepId && e.sessionId) {
-        void this.threads
-          .update({ id: stepId }, { session_id: e.sessionId })
+    // DOUBLE-ATTACH GUARD (mirror of the brain's `reattachOne`). The engine's realtime/tools/events consumer
+    // groups use DETERMINISTIC per-turn consumer names + `claimStale({ minIdleMs: 0 })`, and `runAttached`
+    // adds to its per-process attach Set UNCONDITIONALLY — so a second attach loop for the SAME turn steals
+    // not-yet-acked entries from a still-live first attacher and delivers every event twice. Atomically claim
+    // the in-process attach slot (check-and-add ⇒ no TOCTOU) before attaching; if another loop in this
+    // process already owns it, refuse rather than start a duplicate. The `?? true` keeps non-Redis runners
+    // (which don't implement the claim) working unchanged. Defense-in-depth for same-process concurrency —
+    // the cross-process race needs a distributed lease and is out of scope.
+    const claimedAttach = this.engine.tryClaimAttach?.(turnId) ?? true;
+    if (!claimedAttach) {
+      this.logger.warn(
+        `Re-attach turn=${turnId}: already attached in this process — refusing to double-attach`,
+      );
+      // Reuse EngineDetachedError as the propagation vehicle: the driver's `reattachBatchTurn` already treats
+      // a detached throw as "leave the live turn alone" — propagate WITHOUT re-kicking a live engine or
+      // finalizing the row — which is exactly what we want when another attach loop already owns this turn.
+      throw new EngineDetachedError(
+        `turn ${turnId} already attached in this process`,
+      );
+    }
+    try {
+      const onEvent = (e: EngineEvent): void => {
+        if (e.kind === 'session' && stepId && e.sessionId) {
+          void this.threads
+            .update({ id: stepId }, { session_id: e.sessionId })
+            .catch(() => undefined);
+        }
+        input.onEvent?.(e);
+      };
+      this.logger.log(
+        `Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`,
+      );
+      const result = await this.engine.reattach(turnId, containerId, {
+        onEvent,
+        ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.credentialId ? { credentialId: input.credentialId } : {}),
+        ...(input.liveRoute ? { liveRoute: input.liveRoute } : {}),
+      });
+      if (stepId && result.sessionId) {
+        await this.threads
+          .update({ id: stepId }, { session_id: result.sessionId })
           .catch(() => undefined);
       }
-      input.onEvent?.(e);
-    };
-    this.logger.log(
-      `Re-attach turn=${turnId} container=${containerId} step=${stepId ?? '-'}`,
-    );
-    const result = await this.engine.reattach(turnId, containerId, {
-      onEvent,
-      ...(input.toolBridge ? { toolBridge: input.toolBridge } : {}),
-      ...(input.signal ? { signal: input.signal } : {}),
-      ...(input.credentialId ? { credentialId: input.credentialId } : {}),
-      ...(input.liveRoute ? { liveRoute: input.liveRoute } : {}),
-    });
-    if (stepId && result.sessionId) {
-      await this.threads
-        .update({ id: stepId }, { session_id: result.sessionId })
-        .catch(() => undefined);
-    }
-    if (result.sessionLimit) {
-      const { resetAt, rateLimitType, source } = result.sessionLimit;
-      const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
-      throw new EngineSessionLimitError(
-        message,
-        resetAt,
-        rateLimitType,
-        result.sessionId,
-        input.credentialId,
-        source ?? 'structured',
-      );
-    }
-    const credentialId = result.credentialId ?? input.credentialId ?? null;
-    if (result.claimed !== false) {
-      void this.usage?.record(
-        {
+      if (result.sessionLimit) {
+        const { resetAt, rateLimitType, source } = result.sessionLimit;
+        const message = `Claude session limit${rateLimitType ? ` (${rateLimitType})` : ''}${resetAt ? `; resets ${resetAt}` : ''}`;
+        throw new EngineSessionLimitError(
+          message,
+          resetAt,
+          rateLimitType,
+          result.sessionId,
+          input.credentialId,
+          source ?? 'structured',
+        );
+      }
+      const credentialId = result.credentialId ?? input.credentialId ?? null;
+      if (result.claimed !== false) {
+        void this.usage?.record(
+          {
+            jobId: input.jobId,
+            orgId: input.orgId,
+            lane: input.lane ?? 'main',
+            kind: input.kind ?? 'step',
+            engine: input.engine ?? 'claude',
+            credentialId,
+            ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
+          },
+          result.usage,
+        );
+      }
+      return {
+        report: result.result,
+        ...(result.planText ? { planText: result.planText } : {}),
+        ...(result.usage ? { usage: result.usage } : {}),
+        ...(credentialId ? { credentialId } : {}),
+        ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
+        // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
+        session: {
+          id: result.sessionId ?? '',
           jobId: input.jobId,
-          orgId: input.orgId,
-          lane: input.lane ?? 'main',
-          kind: input.kind ?? 'step',
-          engine: input.engine ?? 'claude',
-          credentialId,
-          ...(stepId ? { metaTag: { phaseId: stepId } } : {}),
+          stepId: stepId ?? null,
+          engine: 'claude',
+          mode: 'execute',
+          branch: '',
+          worktreePath: '',
         },
-        result.usage,
-      );
+      };
+    } finally {
+      // Release the slot we claimed above. `runAttached`'s own finally already deletes it once attached;
+      // this idempotent release covers the bail-around-attach paths (e.g. a throw before/after the loop).
+      this.engine.releaseAttach?.(turnId);
     }
-    return {
-      report: result.result,
-      ...(result.planText ? { planText: result.planText } : {}),
-      ...(result.usage ? { usage: result.usage } : {}),
-      ...(credentialId ? { credentialId } : {}),
-      ...(result.sessionLimit ? { sessionLimit: result.sessionLimit } : {}),
-      // The driver's reattach continuation only reads `report`; the SessionRef is the legacy return shape.
-      session: {
-        id: result.sessionId ?? '',
-        jobId: input.jobId,
-        stepId: stepId ?? null,
-        engine: 'claude',
-        mode: 'execute',
-        branch: '',
-        worktreePath: '',
-      },
-    };
   }
 }

@@ -408,6 +408,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
           resolveForTurn: async () => [],
           resolveReviewSkillsForThread: async () => [],
         } as never,
+        { select: async () => [] } as never,
         {
           ensureContainer: async () => ({
             sandbox: {
