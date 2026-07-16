@@ -1,5 +1,5 @@
 import type { Observable } from 'rxjs';
-import type { SeedRow } from '../domain/stimulus';
+import type { SeedRow } from '../domain/seed-row';
 import type { AgentMessage } from '../prompt-kit/message';
 
 import { renderChunk } from '../stimulus/chunk-vocabulary';
@@ -72,7 +72,7 @@ export interface InboundChatMessage {
   seedQuestionIds?: string[];
   seedFileIds?: string[];
   seedSecretIds?: string[];
-  /** SEED RENDER COMMAND — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
+  /** SEED RENDER COMMAND — how this seed shows in the transcript (see `TurnEnvelope.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
   priority?: 'now' | 'queue' | 'later';

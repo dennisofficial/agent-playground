@@ -8,10 +8,32 @@ import type {
 } from '../surface/chat-surface.port';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
-import type { EventMessage, Message } from '../domain';
+import type { EventMessage, Message, SeedRow } from '../domain';
 
 type IntakeCall = {
   message: Exclude<Message, EventMessage>;
+  transport: {
+    author: { id: string; displayName: string };
+    replyRoute: { surfaceId: string; jobRef: string };
+  };
+};
+
+type LegacySeedCall = {
+  input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+    body: string;
+    seedRow?: SeedRow;
+    seedQuestionId?: string;
+    seedFileId?: string;
+    seedSecretId?: string;
+    seedQuestionIds?: string[];
+    seedFileIds?: string[];
+    seedSecretIds?: string[];
+    priority?: 'now' | 'queue' | 'later';
+    card?: Record<string, unknown>;
+  };
   transport: {
     author: { id: string; displayName: string };
     replyRoute: { surfaceId: string; jobRef: string };
@@ -40,15 +62,23 @@ function fakeThreads(initial: JobEntity[]): {
 function makeBridge(threads: JobEntity[]): {
   bridge: ChatStimulusBridge;
   calls: IntakeCall[];
+  legacySeedCalls: LegacySeedCall[];
   threadRows: JobEntity[];
 } {
   const calls: IntakeCall[] = [];
+  const legacySeedCalls: LegacySeedCall[] = [];
   const intake = {
     intakeChat: vi.fn(
       async (
         message: IntakeCall['message'],
         transport: IntakeCall['transport'],
       ) => void calls.push({ message, transport }),
+    ),
+    intakeLegacySeed: vi.fn(
+      async (
+        input: LegacySeedCall['input'],
+        transport: LegacySeedCall['transport'],
+      ) => void legacySeedCalls.push({ input, transport }),
     ),
   } as unknown as StimulusIntake;
   const inbound$ = new Subject<InboundChatMessage>();
@@ -59,7 +89,7 @@ function makeBridge(threads: JobEntity[]): {
   } as unknown as ChatSurface;
   const { repo, rows } = fakeThreads(threads);
   const bridge = new ChatStimulusBridge(surface, intake, repo);
-  return { bridge, calls, threadRows: rows };
+  return { bridge, calls, legacySeedCalls, threadRows: rows };
 }
 
 const msg = (over: Partial<InboundChatMessage> = {}): InboundChatMessage => ({
@@ -118,7 +148,7 @@ describe('ChatStimulusBridge → Message', () => {
     expect(calls[0].transport.replyRoute.jobRef).toBe('thread-7');
   });
 
-  it('a seed inbound maps to a SeedMessage, wrapping a singular delivered id into an array', async () => {
+  it('a seed inbound routes through the legacy generic-seed intake path', async () => {
     const existing = {
       id: 'thread-7',
       org_id: 'T1',
@@ -127,7 +157,7 @@ describe('ChatStimulusBridge → Message', () => {
       surface_thread_ref: null,
       title: null,
     } as JobEntity;
-    const { bridge, calls } = makeBridge([existing]);
+    const { bridge, calls, legacySeedCalls } = makeBridge([existing]);
 
     const seedRow = {
       label: 'Question answered',
@@ -142,13 +172,16 @@ describe('ChatStimulusBridge → Message', () => {
         seedRow,
       }),
     );
-    expect(calls[0].message).toMatchObject({
-      type: 'seed',
-      trust: 'system',
+    expect(calls).toHaveLength(0); // seed inbound bypasses intakeChat entirely
+    expect(legacySeedCalls[0].input).toMatchObject({
       jobId: 'thread-7',
       body: 'answer',
       seedRow,
-      deliveredQuestionIds: ['q1'],
+      seedQuestionId: 'q1',
+    });
+    expect(legacySeedCalls[0].transport.replyRoute).toEqual({
+      surfaceId: 'web',
+      jobRef: 'thread-7',
     });
   });
 });

@@ -5,7 +5,7 @@ import type {
   InboundChatMessage,
   PostOptions,
 } from './chat-surface.port';
-import type { SeedRow } from '../domain/stimulus';
+import type { SeedRow } from '../domain/seed-row';
 import type { AgentMessage } from '../prompt-kit/message';
 import {
   SYSTEM_SEED_AUTHOR,
@@ -53,7 +53,7 @@ export interface WebInboundOptions {
   seedQuestionIds?: string[];
   seedFileIds?: string[];
   seedSecretIds?: string[];
-  /** Seed render command — how this seed shows in the transcript (see `ChatStimulus.seedRow`). */
+  /** Seed render command — how this seed shows in the transcript (see `TurnEnvelope.seedRow`). */
   seedRow?: SeedRow;
   /** Delivery priority for the durable queue. Absent preserves the default `now` behavior. */
   priority?: 'now' | 'queue' | 'later';
@@ -230,7 +230,7 @@ export class WebSurface implements ChatSurface {
       deliveredQuestionIds?: string[];
       deliveredFileIds?: string[];
       deliveredSecretIds?: string[];
-      /** How this seed renders as a visible transcript row (see `ChatStimulus.seedRow`). */
+      /** How this seed renders as a visible transcript row (see `TurnEnvelope.seedRow`). */
       seedRow?: SeedRow;
       /** Routing coordinate; `'main'` (or absent) is the brain — the only lane this surface seeds. A build
        *  lane is dispatched by the caller (`JitHostExecutor`), never here (see the port doc). */

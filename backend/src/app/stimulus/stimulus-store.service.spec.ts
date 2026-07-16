@@ -87,96 +87,6 @@ function fakeDataSource(
 }
 
 describe('StimulusStoreService — notification-seeds-a-thread', () => {
-  it('seedEventThread opens a thread (origin event), persists message + event stimulus', async () => {
-    const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<TranscriptMessageEntity>('msg');
-    const stimuli = fakeRepo<InboundMessageEntity>('stim');
-    const ds = fakeDataSource(() => []);
-    const store = new StimulusStoreService(
-      threads.repo,
-      messages.repo,
-      stimuli.repo,
-      ds,
-      makeBootstrap(),
-    );
-
-    const seeded = await store.seedEventThread({
-      orgId: 'T1',
-      repoId: 'web',
-      source: 'github',
-      dedupeKey: 'run:1',
-      severity: 'critical',
-      eventKind: 'ci_failure',
-      body: 'CI failed',
-      title: '[github] CI failed',
-    });
-
-    expect(seeded.thread).toMatchObject({
-      origin: 'event',
-      org_id: 'T1',
-      repo_id: 'web',
-      surface_thread_ref: null,
-    });
-    expect(seeded.message).toMatchObject({
-      job_id: seeded.thread.id,
-      text: 'CI failed',
-      author: 'github',
-    });
-    expect(seeded.stimulus).toMatchObject({
-      kind: 'event',
-      trust: 'untrusted',
-      source: 'github',
-      dedupeKey: 'run:1',
-      severity: 'critical',
-      orgId: 'T1',
-      repoId: 'web',
-    });
-    expect(seeded.stimulus.id).toBeTruthy();
-  });
-
-  it('rolls back the thread + message and throws DuplicateStimulusError on a unique violation', async () => {
-    const threads = fakeRepo<JobEntity>('thread');
-    const messages = fakeRepo<TranscriptMessageEntity>('msg');
-    const stimuli = fakeRepo<InboundMessageEntity>('stim');
-    // The stimulus insert hits the partial-unique index.
-    const uniqueErr = new QueryFailedError(
-      'insert',
-      [],
-      new Error('dup'),
-    ) as QueryFailedError & {
-      code?: string;
-    };
-    uniqueErr.code = '23505';
-    (stimuli.repo.save as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      uniqueErr,
-    );
-
-    const ds = fakeDataSource(() => []);
-    const store = new StimulusStoreService(
-      threads.repo,
-      messages.repo,
-      stimuli.repo,
-      ds,
-      makeBootstrap(),
-    );
-    await expect(
-      store.seedEventThread({
-        orgId: 'T1',
-        repoId: 'web',
-        source: 'github',
-        dedupeKey: 'run:1',
-        severity: 'info',
-        eventKind: 'ci_failure',
-        body: 'dup',
-        title: 't',
-      }),
-    ).rejects.toBeInstanceOf(DuplicateStimulusError);
-
-    // The orphaned thread + message were cleaned up.
-    expect(threads.deleted).toHaveLength(1);
-    expect(messages.deleted).toHaveLength(1);
-  });
-
   it('attachEventToJob persists the system_event card + event stimulus atomically on an existing job', async () => {
     const threads = fakeRepo<JobEntity>('thread');
     const messages = fakeRepo<TranscriptMessageEntity>('msg');
@@ -223,7 +133,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       dedupe_key: 'ci:abc',
     });
     expect(event).toMatchObject({
-      kind: 'event',
+      type: 'event',
       trust: 'untrusted',
       jobId: 'job-7',
       source: 'github',
@@ -386,10 +296,9 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       body: 'hey',
     });
     expect(chat).toMatchObject({
-      kind: 'chat',
-      trust: 'trusted',
       jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
+      message: { type: 'user' },
     });
     expect(chat.replyRoute).toEqual({ surfaceId: 'slack', jobRef: '100.1' });
   });
@@ -550,12 +459,14 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(messageRows[0].text).toBe(seedRow.label);
     expect(messageRows[0].card).toBeUndefined();
 
-    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata.
+    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata as
+    // the envelope's collapsed delivered-id array. No explicit `type` was passed, so a host-seed author
+    // falls through to the persistence-only `'seed'` discriminant (unchanged behavior).
     expect(chat).toMatchObject({
       jobId: 'job-9',
-      seedQuestionId: 'q1',
-      seed: true,
+      deliveredQuestionIds: ['q1'],
     });
+    expect(chat.message.type).toBe('seed');
   });
 
   it('the curated pill is DEDUPED on chunkKey — a second seed with the same key writes NO additional message row', async () => {
@@ -635,10 +546,9 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(chat).toMatchObject({
       id: 'stim-42',
       jobId: 'thread-9',
-      seedQuestionId: 'q1',
-      seedSecretId: 's1',
-      seedFileId: 'f1',
-      seed: true,
+      deliveredQuestionIds: ['q1'],
+      deliveredSecretIds: ['s1'],
+      deliveredFileIds: ['f1'],
     });
   });
 
@@ -671,9 +581,10 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
     const chat = await store.findChatStimulusById('stim-43');
 
-    expect(chat?.seed).toBeUndefined();
-    expect(chat?.seedQuestionId).toBeUndefined();
-    expect(chat?.seedSecretId).toBeUndefined();
-    expect(chat?.seedFileId).toBeUndefined();
+    expect(chat?.deliveredQuestionIds).toBeUndefined();
+    expect(chat?.deliveredSecretIds).toBeUndefined();
+    expect(chat?.deliveredFileIds).toBeUndefined();
+    // A plain operator row round-trips as a `'user'` envelope (author != host-seed scope).
+    expect(chat?.message.type).toBe('user');
   });
 });

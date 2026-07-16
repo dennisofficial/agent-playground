@@ -74,7 +74,6 @@ import {
 import { LeaderElectionService } from '../cluster';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
 import { renderTurn, type TurnChunk } from '../stimulus/chunk-vocabulary';
-import type { Message } from '../domain';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
   closeTailFd,
@@ -155,21 +154,9 @@ import {
   answeredQuestionBody,
   batchAnswerBody,
   chunkKey,
-  conventionAttached,
-  conventionEdited,
   fileUploaded,
-  mcpApproved,
-  mcpRemoved,
-  mcpSecretOauthRefused,
   mcpSecretStored,
-  mcpSecretStoreFailed,
-  retryResumeNudge,
-  secretEphemeralDelivered,
-  secretEphemeralUndelivered,
   secretStored,
-  skillApproved,
-  skillEditApproved,
-  skillEditGone,
 } from '../prompt-kit/harness';
 import { UsageEventBus } from '../onboarding/usage-event-bus';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
@@ -629,10 +616,11 @@ interface ApplyResult {
   notice?: AgentMessage;
   seedId?: string;
   kind?: 'question' | 'file' | 'secret';
-  /** The single-endpoint per-card pill key (the batch uses one `chunkKey.batch` pill instead). */
-  chunkKey?: string;
   /** True when an APPLIED write needs the worktree store rendered into the sandbox (durable secret / file). */
   rehydrate?: boolean;
+  /** Which mcp-terminal-failure a `withdrawn` return is — the single endpoint maps it to the
+   *  `SecretProvidedMessage.outcome` its confirmation renders. */
+  withdrawnReason?: 'oauth_refused' | 'store_failed';
 }
 
 /** Operator-visible message provenance, by AUDIENCE. See the `/messages` mapping for the full rationale. */
@@ -1464,39 +1452,37 @@ export class WebSurfaceController {
           attrs: { name: author.authorName, at: new Date().toISOString() },
         },
       ];
-      const seedMessage: Extract<Message, { type: 'seed' }> = {
-        type: 'seed',
-        trust: 'system',
-        id: randomUUID(),
-        orgId: org.id,
-        repoId: thread.repo_id,
-        jobId,
-        receivedAt: new Date().toISOString(),
-        body: renderTurn(chunks),
-        seedRow: {
-          label: `The operator sent ${applied.length} answer(s) + a message`,
-          chunkKey: chunkKey.batch(
-            jobId,
-            applied.map((a) => a.id),
-          ),
+      await this.intake.intakeComposedSeed(
+        {
+          orgId: org.id,
+          repoId: thread.repo_id,
+          jobId,
+          body: renderTurn(chunks),
+          seedRow: {
+            label: `The operator sent ${applied.length} answer(s) + a message`,
+            chunkKey: chunkKey.batch(
+              jobId,
+              applied.map((a) => a.id),
+            ),
+          },
+          deliveredQuestionIds: applied
+            .filter((a) => a.kind === 'question')
+            .map((a) => a.id),
+          deliveredFileIds: applied
+            .filter((a) => a.kind === 'file')
+            .map((a) => a.id),
+          deliveredSecretIds: applied
+            .filter((a) => a.kind === 'secret')
+            .map((a) => a.id),
         },
-        deliveredQuestionIds: applied
-          .filter((a) => a.kind === 'question')
-          .map((a) => a.id),
-        deliveredFileIds: applied
-          .filter((a) => a.kind === 'file')
-          .map((a) => a.id),
-        deliveredSecretIds: applied
-          .filter((a) => a.kind === 'secret')
-          .map((a) => a.id),
-      };
-      await this.intake.intakeChat(seedMessage, {
-        author: {
-          id: SYSTEM_SEED_AUTHOR.id,
-          displayName: SYSTEM_SEED_AUTHOR.name,
+        {
+          author: {
+            id: SYSTEM_SEED_AUTHOR.id,
+            displayName: SYSTEM_SEED_AUTHOR.name,
+          },
+          replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
-        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
-      });
+      );
       return { ok: true, ts: new Date().toISOString(), results };
     }
 
@@ -1908,14 +1894,25 @@ export class WebSurfaceController {
     }
     // Name the task in the resume nudge — a bare "Please continue." on a cold re-attach can leave the brain
     // disoriented (it re-asks what to continue). The title gives the resumed turn its bearings.
-    const resumeNudge = retryResumeNudge(thread.title ?? undefined);
-    this.surface.seedSystemNotification(thread.repo_id, jobId, resumeNudge, {
-      orgId: org.id,
-      seedRow: {
-        label: 'Resuming the turn after a transient engine error.',
-        chunkKey: chunkKey.retry(jobId, Date.now()),
+    await this.intake.intakeChat(
+      {
+        type: 'retry_resume_nudge',
+        trust: 'system',
+        id: randomUUID(),
+        orgId: org.id,
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        title: thread.title ?? undefined,
       },
-    });
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
+        },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
+      },
+    );
     // Force-resume of a Main-lane session-limit park: clear the durable auto-resume clock so the leader sweep
     // never re-fires the resume it has now been done early. Harmless when the thread wasn't parked (no-op update).
     await this.store.setSessionResume(jobId, null, null);
@@ -1978,7 +1975,6 @@ export class WebSurfaceController {
       notice: answeredQuestionBody(question, answer),
       seedId: questionId,
       kind: 'question',
-      chunkKey: chunkKey.qa(jobId, questionId),
     };
   }
 
@@ -2081,11 +2077,7 @@ export class WebSurfaceController {
           requestId,
           'MCP server uses OAuth — not a fillable secret slot',
         );
-        return {
-          status: 'withdrawn',
-          notice: mcpSecretOauthRefused(server),
-          chunkKey: chunkKey.mcpSecret(jobId, server, key, 'oauth'),
-        };
+        return { status: 'withdrawn', withdrawnReason: 'oauth_refused' };
       }
       const wrote = await this.mcpStore.setSecret(
         orgId,
@@ -2102,11 +2094,7 @@ export class WebSurfaceController {
           requestId,
           'MCP server row is gone',
         );
-        return {
-          status: 'withdrawn',
-          notice: mcpSecretStoreFailed(key, server),
-          chunkKey: chunkKey.mcpSecret(jobId, server, key, 'fail'),
-        };
+        return { status: 'withdrawn', withdrawnReason: 'store_failed' };
       }
       // Best-effort validation so the confirmation says whether it connected (remote only; stdio spawns
       // in-sandbox). Never throws — a failure is persisted as the server's validation state.
@@ -2127,7 +2115,6 @@ export class WebSurfaceController {
         notice: mcpSecretStored(key, server, slot),
         seedId: requestId,
         kind: 'secret',
-        chunkKey: chunkKey.mcpSecret(jobId, server, key),
       };
     }
 
@@ -2147,7 +2134,6 @@ export class WebSurfaceController {
       notice: secretStored(payload.name, payload.path),
       seedId: requestId,
       kind: 'secret',
-      chunkKey: chunkKey.secret(jobId, payload.name),
       rehydrate: true,
     };
   }
@@ -2173,6 +2159,10 @@ export class WebSurfaceController {
     if (!card || payload?.type !== 'secret_input_card') {
       throw new BadRequestException('no such secret request on this thread');
     }
+    const seedTransport = {
+      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
+    };
 
     // EPHEMERAL lane — a one-time value (an OAuth code, a 2FA code) piped STRAIGHT into the running process
     // and NEVER stored: single-slot, immediate, NEVER batched (so it stays inline here, not in the shared
@@ -2205,23 +2195,24 @@ export class WebSurfaceController {
         // The reader is gone / not reading — this card is dead. Clear the single-slot gate so the brain can
         // re-run the login, and seed a turn telling it to.
         await this.store.clearAwaitingSecret(jobId, body.requestId);
-        const notice = secretEphemeralUndelivered(
-          payload.name,
-          delivered.reason ?? 'the target process is not reading',
-        );
-        const ts = this.surface.seedSystemNotification(
-          thread.repo_id,
-          jobId,
-          notice,
+        await this.intake.intakeChat(
           {
+            type: 'secret_provided',
+            trust: 'system',
+            id: randomUUID(),
             orgId: org.id,
-            seedRow: {
-              label: notice,
-              chunkKey: chunkKey.secret(jobId, payload.name, { fail: true }),
-            },
+            repoId: thread.repo_id,
+            jobId,
+            receivedAt: new Date().toISOString(),
+            requestId: body.requestId,
+            secretKind: 'ephemeral',
+            name: payload.name,
+            outcome: 'undelivered',
+            reason: delivered.reason ?? 'the target process is not reading',
           },
+          seedTransport,
         );
-        return { ok: false, ts };
+        return { ok: false, ts: new Date().toISOString() };
       }
       // Delivered — stamp the card provided (no value) + hand the brain a masked confirmation. The gate clears
       // on the delivery turn's success tail (same at-least-once path as a durable secret).
@@ -2230,21 +2221,23 @@ export class WebSurfaceController {
         provided_at: new Date().toISOString(),
       };
       await this.messages.save(card);
-      const notice = secretEphemeralDelivered(payload.name);
-      const ts = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        notice,
+      await this.intake.intakeChat(
         {
+          type: 'secret_provided',
+          trust: 'system',
+          id: randomUUID(),
           orgId: org.id,
-          deliveredSecretId: body.requestId,
-          seedRow: {
-            label: notice,
-            chunkKey: chunkKey.secret(jobId, payload.name),
-          },
+          repoId: thread.repo_id,
+          jobId,
+          receivedAt: new Date().toISOString(),
+          requestId: body.requestId,
+          secretKind: 'ephemeral',
+          name: payload.name,
+          outcome: 'delivered',
         },
+        seedTransport,
       );
-      return { ok: true, ts };
+      return { ok: true, ts: new Date().toISOString() };
     }
 
     // DURABLE + MCP lanes — shared with the batch path via the apply helper.
@@ -2263,31 +2256,59 @@ export class WebSurfaceController {
           .rehydrateThread(jobId, org.id)
           .catch(() => undefined);
       }
-      const ts = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        r.notice!,
-        {
-          orgId: org.id,
-          deliveredSecretId: r.seedId!,
-          seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-        },
+      await this.intake.intakeChat(
+        payload.mcp
+          ? {
+              type: 'secret_provided',
+              trust: 'system',
+              id: randomUUID(),
+              orgId: org.id,
+              repoId: thread.repo_id,
+              jobId,
+              receivedAt: new Date().toISOString(),
+              requestId: body.requestId,
+              secretKind: 'mcp',
+              outcome: 'stored',
+              mcp: payload.mcp,
+            }
+          : {
+              type: 'secret_provided',
+              trust: 'system',
+              id: randomUUID(),
+              orgId: org.id,
+              repoId: thread.repo_id,
+              jobId,
+              receivedAt: new Date().toISOString(),
+              requestId: body.requestId,
+              secretKind: 'durable',
+              outcome: 'stored',
+              name: payload.name,
+              path: payload.path,
+            },
+        seedTransport,
       );
-      return { ok: true, ts };
+      return { ok: true, ts: new Date().toISOString() };
     }
     // MCP terminal failure (oauth server / row gone): the helper already withdrew the card; seed its failure
-    // notice and report not-ok (byte-identical to the pre-refactor behavior).
-    if (r.status === 'withdrawn' && r.notice) {
-      const ts = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        r.notice,
+    // confirmation and report not-ok (byte-identical to the pre-refactor behavior).
+    if (r.status === 'withdrawn' && r.withdrawnReason) {
+      await this.intake.intakeChat(
         {
+          type: 'secret_provided',
+          trust: 'system',
+          id: randomUUID(),
           orgId: org.id,
-          seedRow: { label: r.notice, chunkKey: r.chunkKey! },
+          repoId: thread.repo_id,
+          jobId,
+          receivedAt: new Date().toISOString(),
+          requestId: body.requestId,
+          secretKind: 'mcp',
+          outcome: r.withdrawnReason,
+          mcp: payload.mcp,
         },
+        seedTransport,
       );
-      return { ok: false, ts };
+      return { ok: false, ts: new Date().toISOString() };
     }
     return { ok: r.status === 'noop', ts: '' };
   }
@@ -2333,20 +2354,28 @@ export class WebSurfaceController {
         removed.push(name);
       }
       await this.store.markMcpProposalApproved(jobId, requestId, removed);
-      const rmNotice = mcpRemoved(removed, card.scope);
-      const rmTs = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        rmNotice,
+      await this.intake.intakeChat(
         {
+          type: 'mcp_removed',
+          trust: 'system',
+          id: randomUUID(),
           orgId: org.id,
-          seedRow: {
-            label: rmNotice,
-            chunkKey: chunkKey.mcpRemove(jobId, requestId),
+          repoId: thread.repo_id,
+          jobId,
+          receivedAt: new Date().toISOString(),
+          requestId,
+          removed,
+          scope: card.scope,
+        },
+        {
+          author: {
+            id: SYSTEM_SEED_AUTHOR.id,
+            displayName: SYSTEM_SEED_AUTHOR.name,
           },
+          replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
-      return { ok: true, committed: removed, ts: rmTs };
+      return { ok: true, committed: removed, ts: new Date().toISOString() };
     }
 
     const committed: string[] = [];
@@ -2393,26 +2422,31 @@ export class WebSurfaceController {
       if (secretSlots.length === 0) readyStatic += 1;
     }
     await this.store.markMcpProposalApproved(jobId, requestId, committed);
-    const notice = mcpApproved({
-      committed,
-      scope: card.scope,
-      needSecrets,
-      needConnect,
-      readyStatic,
-    });
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      notice,
+    await this.intake.intakeChat(
       {
+        type: 'mcp_approved',
+        trust: 'system',
+        id: randomUUID(),
         orgId: org.id,
-        seedRow: {
-          label: notice,
-          chunkKey: chunkKey.mcpApprove(jobId, requestId),
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        requestId,
+        committed,
+        scope: card.scope,
+        needSecrets,
+        needConnect,
+        readyStatic,
+      },
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
         },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
-    return { ok: true, committed, ts };
+    return { ok: true, committed, ts: new Date().toISOString() };
   }
 
   /**
@@ -2444,20 +2478,27 @@ export class WebSurfaceController {
     // exists in the org (throws if the profile was deleted between propose and approve).
     await this.conventions.attach(org.id, thread.repo_id, card.slug);
     await this.store.markConventionProposalApproved(jobId, requestId);
-    const notice = conventionAttached(card.profileName);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      notice,
+    await this.intake.intakeChat(
       {
+        type: 'convention_attached',
+        trust: 'system',
+        id: randomUUID(),
         orgId: org.id,
-        seedRow: {
-          label: notice,
-          chunkKey: chunkKey.convApprove(jobId, requestId),
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        requestId,
+        profileName: card.profileName,
+      },
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
         },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
-    return { ok: true, slug: card.slug, ts };
+    return { ok: true, slug: card.slug, ts: new Date().toISOString() };
   }
 
   /**
@@ -2494,20 +2535,28 @@ export class WebSurfaceController {
       detectHint: card.detectHint,
     });
     await this.store.markConventionEditProposalApproved(jobId, requestId);
-    const notice = conventionEdited(card.mode, card.name);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      notice,
+    await this.intake.intakeChat(
       {
+        type: 'convention_edited',
+        trust: 'system',
+        id: randomUUID(),
         orgId: org.id,
-        seedRow: {
-          label: notice,
-          chunkKey: chunkKey.convEditApprove(jobId, requestId),
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        requestId,
+        mode: card.mode,
+        name: card.name,
+      },
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
         },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
-    return { ok: true, slug: card.slug, ts };
+    return { ok: true, slug: card.slug, ts: new Date().toISOString() };
   }
 
   /**
@@ -2585,20 +2634,29 @@ export class WebSurfaceController {
       );
     }
     await this.store.markSkillProposalApproved(jobId, requestId);
-    const notice = skillApproved(card.mode, card.name, card.scope);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      notice,
+    await this.intake.intakeChat(
       {
+        type: 'skill_approved',
+        trust: 'system',
+        id: randomUUID(),
         orgId: org.id,
-        seedRow: {
-          label: notice,
-          chunkKey: chunkKey.skillApprove(jobId, requestId),
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        requestId,
+        mode: card.mode,
+        name: card.name,
+        scope: card.scope,
+      },
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
         },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
-    return { ok: true, name: card.name, ts };
+    return { ok: true, name: card.name, ts: new Date().toISOString() };
   }
 
   /**
@@ -2638,20 +2696,27 @@ export class WebSurfaceController {
       // The skill was deleted/renamed since the request was posted — nothing to grant. Stamp approved
       // (the card is terminal either way) and tell the brain rather than silently wedging the request.
       await this.store.markSkillEditAccessApproved(jobId, requestId);
-      const gone = skillEditGone(card.name);
-      const goneTs = this.surface.seedSystemNotification(
-        thread.repo_id,
-        jobId,
-        gone,
+      await this.intake.intakeChat(
         {
+          type: 'skill_edit_gone',
+          trust: 'system',
+          id: randomUUID(),
           orgId: org.id,
-          seedRow: {
-            label: gone,
-            chunkKey: chunkKey.skillEditApprove(jobId, requestId),
+          repoId: thread.repo_id,
+          jobId,
+          receivedAt: new Date().toISOString(),
+          requestId,
+          name: card.name,
+        },
+        {
+          author: {
+            id: SYSTEM_SEED_AUTHOR.id,
+            displayName: SYSTEM_SEED_AUTHOR.name,
           },
+          replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
-      return { ok: true, name: card.name, ts: goneTs };
+      return { ok: true, name: card.name, ts: new Date().toISOString() };
     }
     // git → fork-to-custom (§P3): the original stays clean + updatable; the grant applies to the fork.
     const forkedTo =
@@ -2661,24 +2726,32 @@ export class WebSurfaceController {
     const grantName = forkedTo ?? card.name;
     this.brain.grantSkillEditAccess(jobId, grantName);
     await this.store.markSkillEditAccessApproved(jobId, requestId, forkedTo);
-    const notice = skillEditApproved(card.name, forkedTo);
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      notice,
+    await this.intake.intakeChat(
       {
+        type: 'skill_edit_approved',
+        trust: 'system',
+        id: randomUUID(),
         orgId: org.id,
-        seedRow: {
-          label: notice,
-          chunkKey: chunkKey.skillEditApprove(jobId, requestId),
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        requestId,
+        name: card.name,
+        ...(forkedTo ? { forkedTo } : {}),
+      },
+      {
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
         },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       },
     );
     return {
       ok: true,
       name: card.name,
       ...(forkedTo ? { grantedAs: forkedTo } : {}),
-      ts,
+      ts: new Date().toISOString(),
     };
   }
 
@@ -2790,7 +2863,6 @@ export class WebSurfaceController {
       notice: fileUploaded(payload.path),
       seedId: requestId,
       kind: 'file',
-      chunkKey: chunkKey.file(jobId, payload.path),
       rehydrate: true,
     };
   }

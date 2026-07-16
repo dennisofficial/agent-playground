@@ -3,7 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { EnvService } from '@core/config/env/env.service';
 import { atlasAgentHomeBase } from '../engine/engine-home';
-import type { ChatStimulus } from '../domain/stimulus';
+import type { TurnEnvelope } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import {
   DB_CONNECTION,
@@ -161,7 +161,7 @@ export class ProdDiagnosticsService {
    * happens ONLY via `executeApproved`, triggered solely by the operator's approval click.
    */
   async proposeWrite(
-    stimulus: ChatStimulus,
+    stimulus: TurnEnvelope,
     sql: string,
   ): Promise<{ ok: true; writeId: string; message: string }> {
     const stmt = assertSingleWriteStatement(sql);

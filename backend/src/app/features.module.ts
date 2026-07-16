@@ -37,7 +37,7 @@ import { ThreadGroupKindModule } from './thread-group-kind';
  *  - `MemoryModule` — the pgvector semantic-memory primitives;
  *  - `StimulusModule` (W2) — the intake seam: both edges (chat + notification) converge into one
  *    `Stimulus` currency here; mechanical dedup/rate-limit on events; notification-seeds-a-thread; the
- *    chat bridge (subscribes `CHAT_SURFACE.inbound$` → `ChatStimulus`). A logging no-op consumer is
+ *    chat bridge (subscribes `CHAT_SURFACE.inbound$` → a typed `Message`). A logging no-op consumer is
  *    bound until W3 plugs in real triage;
  *  - `IngressModule` (W2) — the GitHub webhook HTTP edge: `NotificationSource` adapter + controllers
  *    (`POST /webhooks/github/events` → route to owning job, `POST /webhooks/github/state` → silent PR-state sync).

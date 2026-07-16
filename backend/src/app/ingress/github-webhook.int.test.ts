@@ -36,7 +36,7 @@ import {
   InboundMessageEntity,
 } from '../persistence/entities';
 import { JobBootstrapService } from '../job-bootstrap';
-import type { EventStimulus } from '../domain';
+import type { EventMessage } from '../domain';
 import { EventFilterService } from '../stimulus/event-filter.service';
 import { ProjectRoutingService } from '../stimulus/project-routing.service';
 import { StimulusStoreService } from '../stimulus/stimulus-store.service';
@@ -117,7 +117,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
   let messages: Repository<TranscriptMessageEntity>;
   let stimuli: Repository<InboundMessageEntity>;
   let repoId: string;
-  const delivered: EventStimulus[] = [];
+  const delivered: EventMessage[] = [];
 
   beforeAll(async () => {
     mod = await Test.createTestingModule({
@@ -160,7 +160,7 @@ describe('GithubEventsWebhookController return-path (live Postgres)', () => {
         {
           provide: BRAIN_SINK,
           useValue: {
-            deliverEvent: async (s: EventStimulus) => void delivered.push(s),
+            deliverEvent: async (s: EventMessage) => void delivered.push(s),
             handleChat: async () => undefined,
             enqueueChat: async () => undefined,
           },

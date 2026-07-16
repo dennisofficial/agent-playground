@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { EventMessage, Message, ParsedEvent, SeedRow } from '../domain';
 import { assertNever } from '../domain';
+import { composeMessageBody } from '../prompt-kit/harness';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
 import {
@@ -23,11 +24,11 @@ export type IntakeOutcome =
  *
  *  - `intakeEvent(ParsedEvent)` — the `NotificationSource` path. Runs the mechanical dedup/rate-limit
  *    filter; on pass, ROUTES the event to the brain of the job that already OWNS its PR/branch (persists
- *    the event row, body fenced as untrusted, then hands the `EventStimulus` to the consumer). An event
+ *    the event row, body fenced as untrusted, then hands the `EventMessage` to the consumer). An event
  *    that nothing owns is DROPPED — repo activity never seeds a new job (decision d6). On a filter drop,
  *    a no-owner drop, OR a DB unique-violation backstop, nothing is consumed (the firehose pays no turn).
- *  - `intakeChat(ChatStimulus)` — the `ChatSurface` path. Persists the chat message + row (no filter —
- *    chat bypasses it), then hands the `ChatStimulus` to the brain.
+ *  - `intakeChat(Message)` — the `ChatSurface` path. Persists the chat message + row (no filter —
+ *    chat bypasses it), then hands the resulting `TurnEnvelope` to the brain.
  *
  * The downstream is the brain (`BRAIN_SINK`): chat → the thread's session (`handleChat`); event →
  * delivered to the seeded thread's brain as a harness message (`deliverEvent`). The untrusted-content
@@ -190,51 +191,66 @@ export class StimulusIntake {
       case 'user':
         input = { ...base, body: message.body, type: 'user' };
         break;
-      case 'seed':
-        input = {
-          ...base,
-          body: message.body,
-          systemChunk:
-            message.seedRow ??
-            genericSeedRow({ jobId: message.jobId, body: message.body }),
-          priority: message.priority,
-          card: message.card,
-          seedQuestionIds: message.deliveredQuestionIds,
-          seedFileIds: message.deliveredFileIds,
-          seedSecretIds: message.deliveredSecretIds,
-          type: 'seed',
-        };
-        break;
       case 'answer_question': {
-        const body = message.answer;
+        const { body, seedRow } = composeMessageBody(message);
         input = {
           ...base,
           body,
           seedQuestionId: message.questionId,
-          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'answer_question',
         };
         break;
       }
       case 'file_answered': {
-        const body = `File "${message.filename}" was uploaded.`;
+        const { body, seedRow } = composeMessageBody(message);
         input = {
           ...base,
           body,
           seedFileId: message.requestId,
-          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'file_answered',
         };
         break;
       }
       case 'secret_provided': {
-        const body = 'A secret was provided.';
+        const { body, seedRow } = composeMessageBody(message);
         input = {
           ...base,
           body,
           seedSecretId: message.requestId,
-          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
           type: 'secret_provided',
+        };
+        break;
+      }
+      case 'reset_verify':
+      case 'compaction':
+      case 'work_owed_nudge':
+      case 'amend_approved_wake':
+      case 'ship_open_pr':
+      case 'request_changes':
+      case 'unblocked_job_wake':
+      case 'follow_up_job_seed':
+      case 'retry_resume_nudge':
+      case 'session_limit_reset_nudge':
+      case 'mcp_approved':
+      case 'mcp_removed':
+      case 'convention_attached':
+      case 'convention_edited':
+      case 'skill_approved':
+      case 'skill_edit_approved':
+      case 'skill_edit_gone': {
+        const { body, seedRow } = composeMessageBody(message);
+        input = {
+          ...base,
+          body,
+          systemChunk:
+            seedRow ?? genericSeedRow({ jobId: message.jobId, body }),
+          type: message.type,
         };
         break;
       }
@@ -245,6 +261,95 @@ export class StimulusIntake {
     const recorded = await this.store.recordChatStimulus(input);
     // Durable hand-off: the row is persisted; the pump owns steer-vs-turn + the delivered/sweep guarantee.
     // `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
+    await this.sink.enqueueChat(recorded);
+  }
+
+  /**
+   * The ONE "composed multi-item send" case — an operator's own text plus the cards they answered in a
+   * single submit, already framed into one pre-rendered `renderTurn(...)` body. This is NOT a `Message`
+   * domain variant (see `/context/specs/data-model.md`'s "tricky corner"): it persists as `type: 'user'`
+   * because the turn is operator-authored and user-last, even though its body mixes card notices with the
+   * operator's chunk. The `seedRow` renders the combined delivery as one curated pill.
+   */
+  async intakeComposedSeed(
+    input: {
+      orgId: string;
+      repoId: string;
+      jobId: string;
+      body: string;
+      seedRow: SeedRow;
+      deliveredQuestionIds?: string[];
+      deliveredFileIds?: string[];
+      deliveredSecretIds?: string[];
+    },
+    transport: {
+      author: { id: string; displayName: string };
+      replyRoute: { surfaceId: string; jobRef: string };
+    },
+  ): Promise<void> {
+    const recorded = await this.store.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: transport.author,
+      replyRoute: transport.replyRoute,
+      body: input.body,
+      systemChunk: input.seedRow,
+      seedQuestionIds: input.deliveredQuestionIds,
+      seedFileIds: input.deliveredFileIds,
+      seedSecretIds: input.deliveredSecretIds,
+      type: 'user',
+    });
+    await this.sink.enqueueChat(recorded);
+  }
+
+  /**
+   * The LEGACY GENERIC SEED path — brain-side direct callers that already have a fully-rendered body and
+   * a `SeedRow` render descriptor on hand (retry/resume nudges, host-retry re-drives, prod-maintenance
+   * notices) and don't construct one of the 17 typed internal-seed variants. `type` is deliberately
+   * omitted so `recordChatStimulus` falls through to its own author-based `'seed'` fallback (see its
+   * comment) — this is the intended, still-live mechanism for this residual case, not a bypass of it.
+   */
+  async intakeLegacySeed(
+    input: {
+      orgId: string;
+      repoId: string;
+      jobId: string;
+      body: string;
+      seedRow?: SeedRow;
+      seedQuestionId?: string;
+      seedFileId?: string;
+      seedSecretId?: string;
+      seedQuestionIds?: string[];
+      seedFileIds?: string[];
+      seedSecretIds?: string[];
+      priority?: 'now' | 'queue' | 'later';
+      card?: Record<string, unknown>;
+    },
+    transport: {
+      author: { id: string; displayName: string };
+      replyRoute: { surfaceId: string; jobRef: string };
+    },
+  ): Promise<void> {
+    const recorded = await this.store.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: transport.author,
+      replyRoute: transport.replyRoute,
+      body: input.body,
+      systemChunk:
+        input.seedRow ??
+        genericSeedRow({ jobId: input.jobId, body: input.body }),
+      seedQuestionId: input.seedQuestionId,
+      seedFileId: input.seedFileId,
+      seedSecretId: input.seedSecretId,
+      seedQuestionIds: input.seedQuestionIds,
+      seedFileIds: input.seedFileIds,
+      seedSecretIds: input.seedSecretIds,
+      priority: input.priority,
+      card: input.card,
+    });
     await this.sink.enqueueChat(recorded);
   }
 }
