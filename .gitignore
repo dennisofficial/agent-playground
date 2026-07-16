@@ -3,6 +3,9 @@ dist
 *.log
 .DS_Store
 
+# Host-rendered workspace secret material (SSH keys, etc.) — never repo content.
+.ssh/
+
 # Per-worker git workspaces (one full-repo checkout per execute job) — see playground/src/workspace.ts
 .workspaces/
 
@@ -28,6 +31,9 @@ backend/gh-app-private-key.pem
 
 # Cloudflare Registrar API token — operator-supplied secret rendered to a raw path; never committed
 infra/.cloudflare-registrar-token
+
+# Prod-box SSH access — dedicated private key (ATLAS_BOX_SSH_KEY) rendered to .ssh/atlas-box; never committed
+.ssh/
 
 # Cloud / build local dirs (gcloud ADC, docker context)
 /.gcloud/

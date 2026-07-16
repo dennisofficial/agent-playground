@@ -896,6 +896,7 @@ export class WebSurfaceController {
         // Sidebar build-stage progress, precomputed by DriverStoreService.recomputeBuildStageProgress.
         buildStagesDone: t.build_stages_done,
         buildStagesTotal: t.build_stages_total,
+        sectionFirstEntered: t.section_first_entered ?? null,
         org: { id: t.org_id, slug: org?.slug, name: org?.name },
         repo: {
           id: t.repo_id,
