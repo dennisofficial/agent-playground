@@ -300,7 +300,26 @@ export function Composer({
           // attachments needs a follow-up empty-text `/message` send to promote + clear them. Without this
           // they'd sit staged server-side and silently reattach to whatever unrelated message sends next.
           onSuccess: hasAttachments
-            ? () => message.mutate({ messages: [{ type: "user", text: "" }], threadId })
+            ? () =>
+                message.mutate(
+                  { messages: [{ type: "user", text: "" }], threadId },
+                  {
+                    onError: (e) => {
+                      if (e instanceof ThreadApiError && e.status !== 503) return;
+                      // The comments already sent; only the attachment-promote follow-up failed. The local
+                      // tray/draft are already cleared (below), so re-enqueue an attachments-only outbox
+                      // item — otherwise these would sit staged server-side with no in-session recovery
+                      // path until they silently reattach to whatever unrelated message sends next.
+                      composerStore.enqueue(jobRef, {
+                        id: crypto.randomUUID(),
+                        createdAt: Date.now(),
+                        text: "",
+                        comments: [],
+                        hasAttachments: true,
+                      });
+                    },
+                  },
+                )
             : undefined,
           onError: (e) => {
             if (e instanceof ThreadApiError && e.status !== 503) return;

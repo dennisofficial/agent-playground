@@ -1,11 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  addDraftAttachment,
-  deleteDraftAttachment,
-  type JobRef,
-} from "@/lib/api/job-api";
+import { addDraftAttachment, type JobRef } from "@/lib/api/job-api";
 import type { DraftAttachment, PendingAttachment } from "@/lib/api/job-queries";
 import {
   composerStore,
@@ -120,7 +116,7 @@ export function useAttachments(
           .getDraft(jobRef.jobId)
           .attachments.some((a) => a.id === tempId);
         if (!present) {
-          void deleteDraftAttachment(jobRef, dto.id).catch(() => {});
+          composerStore.deleteAttachment(jobRef, dto.id);
           return;
         }
         composerStore.setAttachments(jobRef, (prev) =>
@@ -171,7 +167,7 @@ export function useAttachments(
       composerStore.setAttachments(ref, (prev) => prev.filter((_, i) => i !== idx));
       // A still-pending entry has only a client temp id — no server row to delete yet (the in-flight
       // upload's own resolve handler cleans up its row once it sees the entry is gone).
-      if (!a.pending) void deleteDraftAttachment(ref, a.id).catch(() => {});
+      if (!a.pending) composerStore.deleteAttachment(ref, a.id);
       return;
     }
     const revokeAt = (prev: PendingAttachment[]) => {

@@ -4,6 +4,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import {
   getDraft,
   putDraft,
+  deleteDraftAttachment,
   type JobMessage,
   type JobRef,
   type DraftPayloadWire,
@@ -80,6 +81,10 @@ interface Entry {
   lastLocalEditAt: number;
   /** A local edit is not yet confirmed by the server (a `putDraft` still owed) — re-sent on reconnect. */
   dirty: boolean;
+  /** Attachment ids whose server-side delete hasn't been confirmed yet (never attempted while offline, or
+   *  failed) — retried on reconnect, same as `dirty` retries the draft-body autosave. Prevents a failed/
+   *  offline DELETE from silently orphaning the row so it later reattaches to the next sent message. */
+  pendingDeletes: Set<string>;
 }
 
 /** Shared snapshot for an unknown jobId / SSR — a stable identity keeps `useSyncExternalStore` quiet. */
@@ -206,6 +211,7 @@ class ComposerStore {
       listeners: new Set(),
       lastLocalEditAt: 0,
       dirty: false,
+      pendingDeletes: new Set(),
     });
     this.hydrateFromServer(ref);
   }
@@ -230,6 +236,7 @@ class ComposerStore {
         listeners: new Set(),
         lastLocalEditAt: 0,
         dirty: false,
+        pendingDeletes: new Set(),
       };
       this.entries.set(jobId, entry);
     }
@@ -273,6 +280,26 @@ class ComposerStore {
     // Attachments upload on-add to the server (not via the debounced draft autosave), so no persist/
     // markEdited here — the array is a reflection of server rows, driven by `use-attachments`.
     this.replace(ref, { attachments: updater(prev) });
+  }
+
+  /** Delete one uploaded draft attachment. Tracked in `pendingDeletes` until confirmed so a failed request
+   *  (or one attempted while offline) is retried on reconnect instead of silently orphaning the server row
+   *  — mirrors `dirty`'s retry of the draft-body autosave. */
+  deleteAttachment(ref: JobRef, attachmentId: string): void {
+    this.ensure(ref);
+    this.entries.get(ref.jobId)?.pendingDeletes.add(attachmentId);
+    this.tryDeleteAttachment(ref, attachmentId);
+  }
+
+  private tryDeleteAttachment(ref: JobRef, attachmentId: string): void {
+    if (connectivity.getSnapshot() !== "online") return; // left pending — reconnect retries it
+    void deleteDraftAttachment(ref, attachmentId)
+      .then(() => {
+        this.entries.get(ref.jobId)?.pendingDeletes.delete(attachmentId);
+      })
+      .catch(() => {
+        // Transient failure — stays in `pendingDeletes` so the next reconnect retries.
+      });
   }
 
   setStagedAnswers(
@@ -413,20 +440,22 @@ class ComposerStore {
       jobId,
       setTimeout(() => {
         this.autosaveTimers.delete(jobId);
-        this.pushDraft(jobId);
+        void this.pushDraft(jobId);
       }, DRAFT_AUTOSAVE_MS),
     );
   }
 
   /** PUT the job's current draft body. While offline it's a no-op — the `dirty` flag holds and a reconnect
-   *  re-sends. Clears `dirty` only if no newer edit slipped in during the round-trip. */
-  private pushDraft(jobId: string): void {
+   *  re-sends. Clears `dirty` only if no newer edit slipped in during the round-trip. Returns a promise that
+   *  always resolves (never rejects) once the attempt has settled, so callers (e.g. `onReconnect`) can
+   *  sequence a follow-up GET after this PUT lands rather than racing it. */
+  private pushDraft(jobId: string): Promise<void> {
     const entry = this.entries.get(jobId);
-    if (!entry) return;
-    if (connectivity.getSnapshot() !== "online") return;
+    if (!entry) return Promise.resolve();
+    if (connectivity.getSnapshot() !== "online") return Promise.resolve();
     const { ref, text, stagedAnswers, comments } = entry.state;
     const stamp = entry.lastLocalEditAt;
-    void putDraft(ref, { text, stagedAnswers, comments })
+    return putDraft(ref, { text, stagedAnswers, comments })
       .then(() => {
         const cur = this.entries.get(jobId);
         if (cur && cur.lastLocalEditAt === stamp) cur.dirty = false;
@@ -517,8 +546,16 @@ class ComposerStore {
   private onReconnect(): void {
     for (const [jobId, entry] of this.entries) {
       if (!jobId) continue;
-      if (entry.dirty) this.pushDraft(jobId);
-      this.fetchAndReconcile(entry.state.ref);
+      for (const id of entry.pendingDeletes) this.tryDeleteAttachment(entry.state.ref, id);
+      if (entry.dirty) {
+        // Sequence the resync GET after the body PUT settles — firing both concurrently can let the GET's
+        // response land first and clobber the just-made edit with pre-edit server state (the PUT's own
+        // `dirty` clear would then wrongly stick since its clock check only guards against a NEWER local
+        // edit, not a reconciled-away one).
+        void this.pushDraft(jobId).then(() => this.fetchAndReconcile(entry.state.ref));
+      } else {
+        this.fetchAndReconcile(entry.state.ref);
+      }
     }
   }
 
