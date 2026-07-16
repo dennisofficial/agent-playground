@@ -162,6 +162,8 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   create_job: {
     firstMessage: 'Please fix the flaky test.',
     title: 'Fix flaky test',
+    dependsOn: ['j1', 'j2'],
+    autoMode: { approveMode: 'ship', merge: true },
   },
   list_jobs: { status: 'all', query: 'auth', limit: 10 },
   link_job_dependency: { jobId: 'j1', dependsOnJobId: 'j2' },
@@ -360,6 +362,25 @@ describe('host-tool-schemas — in-memory MCP roundtrip guard', () => {
     // handler must never have been invoked with the bad payload either way.
     expect(thrown != null || res?.isError === true).toBe(true);
     expect(captured['complete_thread']).toBe('(not called)');
+  });
+
+  it("rejects create_job autoMode.approveMode='both' before the handler ever sees it", async () => {
+    captured['create_job'] = '(not called)';
+    let res: Awaited<ReturnType<typeof client.callTool>> | undefined;
+    let thrown: unknown;
+    try {
+      res = await client.callTool({
+        name: 'create_job',
+        arguments: {
+          firstMessage: 'Please fix the flaky test.',
+          autoMode: { approveMode: 'both' },
+        },
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown != null || res?.isError === true).toBe(true);
+    expect(captured['create_job']).toBe('(not called)');
   });
 });
 
