@@ -184,13 +184,14 @@ export function JitPill({ count }: { count: number }) {
         border: "1px solid var(--blue)",
       }}
     >
-      {count > 1 ? `${count} context` : "context"}
+      {count}
     </span>
   );
 }
 
 /** Expanded-body panel listing each JIT injection that fired on this tool call: a rule label + the
- * verbatim injected text in a monospace block. Rendered ABOVE the normal input/result body. */
+ * verbatim injected text in a monospace block. Rendered AFTER the tool's own input/result body, so the
+ * tool card (e.g. the Bash terminal chrome) reads first and the injected context follows it. */
 export function JitContextPanel({
   items,
 }: {

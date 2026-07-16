@@ -165,9 +165,6 @@ function ToolRow({ tool }: { tool: ToolItem }) {
       </DisclosureRow>
       {open ? (
         <>
-          {tool.jitContext?.length ? (
-            <JitContextPanel items={tool.jitContext} />
-          ) : null}
           {Body ? (
             <Body tool={tool} />
           ) : (
@@ -177,6 +174,9 @@ function ToolRow({ tool }: { tool: ToolItem }) {
               isError={tool.isError}
             />
           )}
+          {tool.jitContext?.length ? (
+            <JitContextPanel items={tool.jitContext} />
+          ) : null}
         </>
       ) : null}
     </div>
