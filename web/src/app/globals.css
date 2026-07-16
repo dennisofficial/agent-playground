@@ -118,8 +118,8 @@
   --accent: #d68027;
   --accent-2: #c9700a;
   --accent-soft: rgba(214, 128, 39, 0.15);
-  --accent-line: rgba(214, 128, 39, 0.40);
-  --glow: rgba(214, 128, 39, 0.10);
+  --accent-line: rgba(214, 128, 39, 0.4);
+  --glow: rgba(214, 128, 39, 0.1);
   /* status — lightened to hold ~AA on dark; keep the -soft/-line alpha tints in step */
   --green: #67b992;
   --green-soft: rgba(103, 185, 146, 0.14);
@@ -127,7 +127,7 @@
   --blue-soft: rgba(125, 155, 224, 0.14);
   --red: #e08a80;
   --red-soft: rgba(224, 138, 128, 0.12);
-  --red-line: rgba(224, 138, 128, 0.30);
+  --red-line: rgba(224, 138, 128, 0.3);
   --amber: #e0a850;
   --amber-soft: rgba(224, 168, 80, 0.14);
   --slate: #a79fd0;
@@ -138,15 +138,15 @@
   --rose: #e06a92;
   /* diff-row chrome on the (now dark) conversation surface — was near-white in light */
   --add: #4ec98a;
-  --add-bg: rgba(63, 214, 139, 0.10);
-  --add-gut: rgba(63, 214, 139, 0.20);
+  --add-bg: rgba(63, 214, 139, 0.1);
+  --add-gut: rgba(63, 214, 139, 0.2);
   --del: #f0857d;
-  --del-bg: rgba(251, 111, 111, 0.10);
-  --del-gut: rgba(251, 111, 111, 0.20);
+  --del-bg: rgba(251, 111, 111, 0.1);
+  --del-gut: rgba(251, 111, 111, 0.2);
   /* shadows — deepen so cards read on dark (black-on-light values disappear on dark) */
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 14px 44px rgba(0, 0, 0, 0.50);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 44px rgba(0, 0, 0, 0.5);
   --shadow-menu: 0 18px 50px rgba(0, 0, 0, 0.55);
-  --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.70);
+  --shadow-palette: 0 30px 80px rgba(0, 0, 0, 0.7);
 }
 
 /* Map tokens to Tailwind utilities. `inline` keeps utilities referencing var(--x). */

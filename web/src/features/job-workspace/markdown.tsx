@@ -174,7 +174,8 @@ function JsonBlock({ value }: { value: object }) {
 let mermaidReady: Promise<typeof import("mermaid").default> | null = null;
 /** Import-only — memoized so the heavy module is fetched once regardless of theme. */
 function loadMermaid() {
-  if (!mermaidReady) mermaidReady = import("mermaid").then((mod) => mod.default);
+  if (!mermaidReady)
+    mermaidReady = import("mermaid").then((mod) => mod.default);
   return mermaidReady;
 }
 
@@ -217,7 +218,12 @@ const themeListeners = new Set<() => void>();
 let themeObserver: MutationObserver | null = null;
 
 function currentThemeKey() {
-  return document.documentElement.getAttribute("data-theme") || "daylight";
+  if (typeof document === "undefined") return "daylight";
+  const key = document.documentElement.getAttribute("data-theme");
+  // next-themes' pre-paint script writes raw light/dark before the runtime value map writes daylight/night.
+  if (key === "dark") return "night";
+  if (key === "light" || !key) return "daylight";
+  return key;
 }
 function ensureThemeObserver() {
   if (themeObserver || typeof document === "undefined") return;
@@ -303,7 +309,8 @@ function getCachedMermaid(chart: string) {
 export function extractMermaidSources(text: string): string[] {
   const out: string[] = [];
   const re = /```mermaid\n([\s\S]*?)```/g; // same shape as conversation.tsx MERMAID_FENCE
-  for (let m = re.exec(text); m; m = re.exec(text)) out.push(m[1].replace(/\n$/, "").trim());
+  for (let m = re.exec(text); m; m = re.exec(text))
+    out.push(m[1].replace(/\n$/, "").trim());
   return out;
 }
 
@@ -395,7 +402,10 @@ const MERMAID_RESERVE_MIN = 200;
 const MERMAID_RESERVE_MAX = 1600;
 
 function clampMermaidReserve(px: number): number {
-  return Math.min(Math.max(Math.round(px), MERMAID_RESERVE_MIN), MERMAID_RESERVE_MAX);
+  return Math.min(
+    Math.max(Math.round(px), MERMAID_RESERVE_MIN),
+    MERMAID_RESERVE_MAX,
+  );
 }
 
 /**
@@ -441,7 +451,11 @@ function Mermaid({ chart }: { chart: string }) {
   // Re-runs the render effect below on a live theme switch (see the MutationObserver-driven store
   // above `Mermaid`) — independent of next-themes/useTheme, and of React 19's child-before-parent
   // passive-effect ordering, since it only fires once the new data-theme attribute is truly live.
-  const themeVersion = useSyncExternalStore(subscribeTheme, getThemeVersion, () => 0);
+  const themeVersion = useSyncExternalStore(
+    subscribeTheme,
+    getThemeVersion,
+    () => 0,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -584,7 +598,9 @@ function Mermaid({ chart }: { chart: string }) {
             // instant `result` is known — one deterministic swap instead of waiting for the SVG (forced to
             // width:100%/height:auto above) to reflow internally.
             aspectRatio:
-              result.w > 0 && result.h > 0 ? `${result.w} / ${result.h}` : undefined,
+              result.w > 0 && result.h > 0
+                ? `${result.w} / ${result.h}`
+                : undefined,
           }}
           // eslint-disable-next-line react/no-danger -- mermaid SVG; securityLevel 'strict' sanitizes it
           dangerouslySetInnerHTML={{ __html: result.svg }}
@@ -1051,7 +1067,9 @@ function isRelativeHref(href: string | undefined): href is string {
  *  rejected by {@link isRelativeHref} (leading `/`) but must still reach the resolver so a conversation link
  *  to a spec/generated/artifact file opens it in the detail pane. */
 function isContextHref(href: string | undefined): href is string {
-  return !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href);
+  return (
+    !!href && /^\/context\/(specs|generated|artifacts|evidence)\//.test(href)
+  );
 }
 
 export const Markdown = memo(function Markdown({
