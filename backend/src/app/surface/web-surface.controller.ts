@@ -1206,6 +1206,11 @@ export class WebSurfaceController {
           }
         : {}),
       postedAt: m.created_at,
+      // Operator-bubble send state: `stimulusId` links this bubble to its delivery-ledger row and
+      // `deliveredAt` is null while sending, set once the SDK accepted the turn (both null for non-operator
+      // rows). The client renders a "sending…" affordance until `deliveredAt` lands.
+      stimulusId: m.stimulus_id,
+      deliveredAt: m.delivered_at,
     }));
   }
 
@@ -1457,8 +1462,9 @@ export class WebSurfaceController {
     }
 
     // CASE 3 — delivered cards AND an operator message in one submit: compose ONE turn where each card's
-    // notice frames as a `<system_notice>` chunk and the operator's message is the trailing `<user>` chunk,
-    // then deliver it through the `Message`-typed intake seam as a single system seed.
+    // notice frames as a `<system_notice>` chunk and the operator's message is the trailing `<user>` chunk
+    // (the FULL turn the brain reads), while the operator's note ALSO lands as its own durable operator
+    // bubble in the transcript — no "…+ a message" summary pill.
     if (applied.length > 0 && userItem) {
       const operatorText = userItem.text ?? '';
       const userBody = attach
@@ -1482,13 +1488,7 @@ export class WebSurfaceController {
           repoId: thread.repo_id,
           jobId,
           body: renderTurn(chunks),
-          seedRow: {
-            label: `The operator sent ${applied.length} answer(s) + a message`,
-            chunkKey: chunkKey.batch(
-              jobId,
-              applied.map((a) => a.id),
-            ),
-          },
+          operatorBubbleText: operatorText,
           deliveredQuestionIds: applied
             .filter((a) => a.kind === 'question')
             .map((a) => a.id),
@@ -1500,10 +1500,7 @@ export class WebSurfaceController {
             .map((a) => a.id),
         },
         {
-          author: {
-            id: SYSTEM_SEED_AUTHOR.id,
-            displayName: SYSTEM_SEED_AUTHOR.name,
-          },
+          author: { id: author.authorId, displayName: author.authorName },
           replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
@@ -1673,6 +1670,16 @@ export class WebSurfaceController {
         }),
       ),
     );
+    // A job's message log changed (send persisted, or a delivery landed) → the client refetches `/messages`
+    // so a "sending…" bubble flips to delivered in place without a full reload.
+    const messagesChanged$ = this.surface.messagesChanged$.pipe(
+      filter((m) => m.channel === repoId),
+      map(
+        (m): MessageEvent => ({
+          data: { type: 'messages_changed', channel: repoId, jobId: m.jobId },
+        }),
+      ),
+    );
     // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
@@ -1683,7 +1690,7 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$, usage$);
+    return merge(snapshot$, live$, messages$, meta$, messagesChanged$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */

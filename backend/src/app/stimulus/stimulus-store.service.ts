@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
@@ -18,6 +18,10 @@ import {
   JobEntity,
 } from '../persistence/entities';
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
+import {
+  MESSAGE_CHANGE_NOTIFIER,
+  type MessageChangeNotifier,
+} from '../surface/message-change-notifier.port';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 
@@ -84,6 +88,12 @@ export class StimulusStoreService {
     // @Optional (trailing) so the existing direct-construction unit tests (positional args) keep compiling
     // without a trailing argument.
     @Optional() private readonly jobBootstrap?: JobBootstrapService,
+    // Best-effort realtime signal that a job's message log changed (send-persist + delivery-stamp) so SSE
+    // clients refetch. @Optional (trailing) matching `jobBootstrap` above — positional unit tests omit it;
+    // the @Global SurfaceModule supplies it live.
+    @Optional()
+    @Inject(MESSAGE_CHANGE_NOTIFIER)
+    private readonly notifier?: MessageChangeNotifier,
   ) {}
 
   /** The job's planning thread group thread id — the anchor a job-level message row is stamped onto
@@ -263,6 +273,14 @@ export class StimulusStoreService {
      * behavior — the plain bubble is written).
      */
     systemChunk?: SeedRow;
+    /**
+     * CASE-3 OPERATOR BUBBLE — the operator's own note text when it rides in the SAME submit as answered
+     * cards (a composed turn). When present it lands as a plain OPERATOR bubble (author = the operator, not
+     * a bot) rendering ONLY this note, and NO "…+ a message" pill is written for the send. Distinct from
+     * `systemChunk` (a curated pill) and from the plain `input.body` bubble. `inbound_messages.body` stays
+     * the FULL composed turn (`input.body`) regardless — only the rendered bubble text differs.
+     */
+    operatorBubbleText?: string;
     /** DELIVERY SEED — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedQuestionId`). */
     seedQuestionId?: string;
     /** DELIVERY SEED (secret variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedSecretId`). */
@@ -311,8 +329,25 @@ export class StimulusStoreService {
       : await this.planningThreadId(input.jobId);
 
     const row = await this.dataSource.transaction(async (m) => {
-      if (input.systemChunk === undefined) {
-        await m.save(
+      // The operator chat bubble this send renders (operator-bubble or plain-bubble branch) — captured so it
+      // can be correlated with the delivery-ledger row below. A pill/skip send leaves it undefined.
+      let bubbleRow: TranscriptMessageEntity | undefined;
+      if (input.operatorBubbleText !== undefined) {
+        // CASE 3 (note sent WITH answered cards): the note lands as its own durable operator bubble rendering
+        // ONLY the note text — NOT a "…+ a message" pill. The full composed turn still rides `inbound.body`.
+        bubbleRow = await m.save(
+          m.create(TranscriptMessageEntity, {
+            job_id: input.jobId,
+            thread_id: threadId,
+            author: input.author.displayName,
+            author_id: input.author.id,
+            author_bot_id: null,
+            text: input.operatorBubbleText,
+            card: input.card ?? null,
+          }),
+        );
+      } else if (input.systemChunk === undefined) {
+        bubbleRow = await m.save(
           m.create(TranscriptMessageEntity, {
             job_id: input.jobId,
             thread_id: threadId,
@@ -352,7 +387,7 @@ export class StimulusStoreService {
       }
       // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
 
-      return m.save(
+      const inbound = await m.save(
         m.create(InboundMessageEntity, {
           org_id: input.orgId,
           repo_id: input.repoId,
@@ -370,7 +405,19 @@ export class StimulusStoreService {
           ...(input.lane ? { lane: input.lane } : {}),
         }),
       );
+
+      // Correlate the operator bubble with its delivery-ledger row so send/delivery state stamps on both.
+      // Only a genuine operator chat turn ('user') carries the link — never a pill, seed, or system row.
+      if (bubbleRow && type === 'user') {
+        await m.update(TranscriptMessageEntity, bubbleRow.id, {
+          stimulus_id: inbound.id,
+        });
+      }
+      return inbound;
     });
+
+    // Best-effort realtime nudge (txn already committed): a send persisted → connected clients refetch.
+    this.notifier?.emitMessagesChanged(input.repoId, input.jobId);
 
     const resumeThreadId = resumeThreadIdFromLane(input.lane);
     const deliveredQuestionIds = collapseDeliveredIds(
@@ -514,12 +561,21 @@ export class StimulusStoreService {
     await this.stimuli.update({ id: In(ids) }, { attempted_at: new Date() });
   }
 
-  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). */
+  /** Mark a chat stimulus delivered (idempotent — only stamps a still-null row). Folds in the correlated
+   *  operator bubble's `delivered_at` and a best-effort realtime nudge, so the transcript reflects "landed"
+   *  the moment the SDK accepts the turn. A no-op (no second stamp, no emit) when already delivered/missing. */
   async markChatDelivered(id: string): Promise<void> {
-    await this.stimuli.update(
+    const res = await this.stimuli.update(
       { id, delivered_at: IsNull() },
       { delivered_at: new Date() },
     );
+    if (!res.affected) return; // already delivered or missing — idempotent no-op.
+    const row = await this.stimuli.findOne({ where: { id } });
+    await this.messages.update(
+      { stimulus_id: id, delivered_at: IsNull() },
+      { delivered_at: new Date() },
+    );
+    if (row) this.notifier?.emitMessagesChanged(row.repo_id, row.job_id as string);
   }
 
   /**

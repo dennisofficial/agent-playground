@@ -269,7 +269,8 @@ export class StimulusIntake {
    * single submit, already framed into one pre-rendered `renderTurn(...)` body. This is NOT a `Message`
    * domain variant (see `/context/specs/data-model.md`'s "tricky corner"): it persists as `type: 'user'`
    * because the turn is operator-authored and user-last, even though its body mixes card notices with the
-   * operator's chunk. The `seedRow` renders the combined delivery as one curated pill.
+   * operator's chunk. The operator's note lands as its own durable operator bubble (`operatorBubbleText`),
+   * NOT a "…+ a message" pill; the FULL composed turn still rides `inbound_messages.body` for the brain.
    */
   async intakeComposedSeed(
     input: {
@@ -277,7 +278,7 @@ export class StimulusIntake {
       repoId: string;
       jobId: string;
       body: string;
-      seedRow: SeedRow;
+      operatorBubbleText: string;
       deliveredQuestionIds?: string[];
       deliveredFileIds?: string[];
       deliveredSecretIds?: string[];
@@ -294,7 +295,7 @@ export class StimulusIntake {
       author: transport.author,
       replyRoute: transport.replyRoute,
       body: input.body,
-      systemChunk: input.seedRow,
+      operatorBubbleText: input.operatorBubbleText,
       seedQuestionIds: input.deliveredQuestionIds,
       seedFileIds: input.deliveredFileIds,
       seedSecretIds: input.deliveredSecretIds,

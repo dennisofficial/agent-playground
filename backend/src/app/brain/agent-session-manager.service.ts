@@ -63,6 +63,10 @@ import {
   webSkillProposalCard,
   wrapSystemNotification,
 } from '../surface';
+import {
+  MESSAGE_CHANGE_NOTIFIER,
+  type MessageChangeNotifier,
+} from '../surface/message-change-notifier.port';
 import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { EnvService } from '@core/config/env/env.service';
@@ -506,6 +510,12 @@ export class AgentSessionManager
     // without reaching this param; DI (@Global LiveTurnModule) supplies the real EntityTaskEventSink live.
     @Inject(TASK_EVENT_SINK)
     private readonly taskSink: TaskEventSink = NOOP_TASK_EVENT_SINK,
+    // Best-effort realtime nudge that a job's message log changed — emitted from the LEGACY in-memory seed
+    // stamp path (which has no accompanying `markChatDelivered`, so it isn't covered by that method's own
+    // emit). @Optional matching this constructor's convention; the @Global SurfaceModule supplies it live.
+    @Optional()
+    @Inject(MESSAGE_CHANGE_NOTIFIER)
+    private readonly messageNotifier?: MessageChangeNotifier,
   ) {}
 
   /** The job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are stamped
@@ -1388,6 +1398,9 @@ export class AgentSessionManager
           );
       }
     }
+    // This legacy path stamps cards WITHOUT a `markChatDelivered` call, so its delivery-stamp emit isn't
+    // covered there — nudge clients directly (best-effort; the durable-row paths self-heal via the sweep).
+    this.messageNotifier?.emitMessagesChanged(stimulus.repoId, stimulus.jobId);
   }
 
   /**
