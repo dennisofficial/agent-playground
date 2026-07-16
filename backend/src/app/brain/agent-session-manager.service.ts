@@ -855,10 +855,11 @@ export class AgentSessionManager
           `Leader: re-driving undelivered operator message(s) across ${lanes.length} lane(s)`,
         );
         for (const t of lanes) {
-          void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch((err) =>
-            this.logger.warn(
-              `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
-            ),
+          void this.pumpThread(t.jobId, t.orgId, t.repoId, t.lane).catch(
+            (err) =>
+              this.logger.warn(
+                `boot chat re-drive failed for thread=${t.jobId}: ${err}`,
+              ),
           );
         }
       }
@@ -1039,13 +1040,14 @@ export class AgentSessionManager
     repoId: string;
     previewInstructions: string | null;
   }): Promise<void> {
+    const job = await this.store.loadJob(input.jobId).catch(() => null);
     const threadId =
       (await this.driverStore.postBuildThreadId(input.jobId)) ??
       (
         await this.driverStore.ensurePostBuildThread({
           jobId: input.jobId,
           orgId: input.orgId,
-          decisionRecordId: null,
+          decisionRecordId: job?.decisionRecordId ?? null,
         })
       ).threadId;
     const recorded = await this.stimulusStore.recordChatStimulus({
@@ -1279,7 +1281,8 @@ export class AgentSessionManager
     // `runningBrainTurn` returns the job's ONE live brain turn across all its lanes/sessions. Never cross-steer
     // a stimulus into a turn on a different lane (e.g. a `ci` seed into a live `post_build` turn) — leave the
     // durable row pending for that lane's own pump/sweep once this turn ends and the `active_turns` row clears.
-    if (live.lane !== this.laneForStimulus(stimulus)) return false;
+    if (this.activeTurnLane(live) !== this.laneForStimulus(stimulus))
+      return false;
     try {
       await this.engineRunner.steer(
         live.turn_id,
@@ -1691,6 +1694,11 @@ export class AgentSessionManager
       : 'main';
   }
 
+  /** Active turns created before lane metadata, or older test doubles, are the legacy main brain lane. */
+  private activeTurnLane(turn: { lane?: string | null }): string {
+    return turn.lane ?? 'main';
+  }
+
   /**
    * Deliver a thread's pending operator messages. FAST PATH: a running brain turn is steered directly
    * (outside the per-thread queue — that queue is HELD by the very turn we want to steer), so the model
@@ -1764,7 +1772,7 @@ export class AgentSessionManager
       lane,
       resolveLiveTurn: async () => {
         const live = await this.turnRegistry.runningBrainTurn(jobId);
-        return live && live.lane === lane ? live : null;
+        return live && this.activeTurnLane(live) === lane ? live : null;
       },
       canSteer: () => typeof this.engineRunner.steer === 'function',
       steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
@@ -1875,6 +1883,13 @@ export class AgentSessionManager
           nowOnly,
           this.logger,
         );
+      return;
+    }
+
+    const otherLive = await this.turnRegistry
+      .runningBrainTurn(lane.jobId)
+      .catch(() => null);
+    if (otherLive?.turn_id && this.activeTurnLane(otherLive) !== lane.lane) {
       return;
     }
 
@@ -2457,6 +2472,7 @@ export class AgentSessionManager
         stimulus.jobId,
         stimulus.orgId,
         stimulus.repoId,
+        this.laneForStimulus(stimulus),
       ).catch((err) =>
         this.logger.debug(`turn-end re-pump failed (sweep will retry): ${err}`),
       );
@@ -3514,7 +3530,8 @@ export class AgentSessionManager
           retryable: false,
           sessionLimit: true,
           category: 'session_limit',
-          summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+          summary:
+            "You've hit your Claude session limit — it auto-resumes at reset.",
           ...(resumeAt ? { resumeAt } : {}),
         },
       );
@@ -7665,12 +7682,13 @@ export class AgentSessionManager
   }
 
   /**
-   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn is steered (the event-row id is the
-   * steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn): a fresh turn framed
-   * by `renderEventDelivery` is queued on the per-thread turn queue and stamps delivery at its registration
-   * hand-off. Idempotent (skips an already-delivered row); lease-guarded so a concurrent sweep can't
-   * double-drive. Deliberately does NOT go through `handleChatTurn` — that method's seed steer fast-path
-   * (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the swallowed-steer race.
+   * Deliver ONE event to its job's brain. FAST PATH: a running brain turn on the SAME lane is steered (the
+   * event-row id is the steer id, so the engine's `input_ack` stamps THIS row). SLOW PATH (no running turn on
+   * this lane): a fresh turn framed by `renderEventDelivery` is queued on the per-thread turn queue and stamps
+   * delivery at its registration hand-off. Idempotent (skips an already-delivered row); lease-guarded so a
+   * concurrent sweep can't double-drive. Deliberately does NOT go through `handleChatTurn` — that method's
+   * seed steer fast-path (`steerIntoLiveBrainTurn`) reports "handled" on a bare XADD, which would re-open the
+   * swallowed-steer race.
    */
   async pumpEvent(stimulus: EventStimulus): Promise<void> {
     if (this.election.getState() === 'draining') return;
@@ -7680,10 +7698,15 @@ export class AgentSessionManager
     if (row?.delivered_at) return;
 
     const body = renderEventDelivery(stimulus);
+    const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    if (
+      live?.turn_id &&
+      this.activeTurnLane(live) === lane &&
+      typeof this.engineRunner.steer === 'function'
+    ) {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
     }
@@ -7727,14 +7750,22 @@ export class AgentSessionManager
     body: AgentMessage,
   ): Promise<void> {
     // A turn may have appeared since pumpEvent's check (a boot re-attach resumed one). Steer it instead of
-    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id).
+    // starting a SECOND turn on the same session (never two concurrent turns resuming one session id). If the
+    // one live brain turn is on a DIFFERENT lane, leave this event pending for its own lane's sweep/queue turn;
+    // never lease it or cross-steer it into the wrong stage session.
+    const lane = this.laneForStimulus(stimulus);
     const live = await this.turnRegistry
       .runningBrainTurn(stimulus.jobId)
       .catch(() => null);
-    if (live?.turn_id && typeof this.engineRunner.steer === 'function') {
+    if (
+      live?.turn_id &&
+      this.activeTurnLane(live) === lane &&
+      typeof this.engineRunner.steer === 'function'
+    ) {
       await this.steerEvent(live.turn_id, stimulus.id, body);
       return;
     }
+    if (live?.turn_id && this.activeTurnLane(live) !== lane) return;
 
     // Lease BEFORE dispatch (like the chat fresh path) so a concurrent sweep can't re-drive a duplicate
     // while this potentially-long turn runs.

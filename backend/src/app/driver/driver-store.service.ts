@@ -250,7 +250,9 @@ export class DriverStoreService {
       where: {
         status: 'running',
         halt: IsNull(),
-        session_resume_at: Raw((alias) => `(${alias} IS NULL OR ${alias} <= now())`),
+        session_resume_at: Raw(
+          (alias) => `(${alias} IS NULL OR ${alias} <= now())`,
+        ),
       },
     });
     return rows.map(toJob);
@@ -1219,11 +1221,17 @@ export class DriverStoreService {
    *  `auth_retry_attempts` iff still below `cap`, stamping `retry_last_attempt_at`. Returns `{ok:true, used}`
    *  on success, else `{ok:false, used:cap}` (budget exhausted). Durable so a restart/crash-loop can't
    *  re-grant a fresh budget. */
-  async claimAuthRetryAttempt(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimAuthRetryAttempt(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ auth_retry_attempts: () => 'auth_retry_attempts + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        auth_retry_attempts: () => 'auth_retry_attempts + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('auth_retry_attempts < :cap', { cap })
       .returning('auth_retry_attempts')
@@ -1234,11 +1242,17 @@ export class DriverStoreService {
 
   /** CAS-claim one host-transport transient-error auto-retry attempt (driver lane). Same shape as
    *  {@link claimAuthRetryAttempt} against `driver_transient_retries`. */
-  async claimDriverTransientRetry(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimDriverTransientRetry(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ driver_transient_retries: () => 'driver_transient_retries + 1', retry_last_attempt_at: () => 'now()' })
+      .set({
+        driver_transient_retries: () => 'driver_transient_retries + 1',
+        retry_last_attempt_at: () => 'now()',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('driver_transient_retries < :cap', { cap })
       .returning('driver_transient_retries')
@@ -1250,18 +1264,30 @@ export class DriverStoreService {
   /** Reset the driver's SESSION-scoped retry budgets to 0 on a clean drive. Does NOT touch
    *  `retry_last_attempt_at` nor the brain's own lane columns. */
   async clearDriverRetryCounters(jobId: string): Promise<void> {
-    await this.jobs.update({ id: jobId }, { auth_retry_attempts: 0, driver_transient_retries: 0 });
+    await this.jobs.update(
+      { id: jobId },
+      { auth_retry_attempts: 0, driver_transient_retries: 0 },
+    );
   }
 
   /** Read back the durable driver-transient-retry state (count + last-attempt timestamp) so a boot
    *  re-entry into `runJobWithTransientRetry` can honor an in-flight cooldown instead of re-driving
    *  immediately after a restart. */
-  async driverTransientRetryState(jobId: string): Promise<{ count: number; lastAttemptAt: Date | null }> {
+  async driverTransientRetryState(
+    jobId: string,
+  ): Promise<{ count: number; lastAttemptAt: Date | null }> {
     const row = await this.jobs.findOne({
       where: { id: jobId },
-      select: { id: true, driver_transient_retries: true, retry_last_attempt_at: true },
+      select: {
+        id: true,
+        driver_transient_retries: true,
+        retry_last_attempt_at: true,
+      },
     });
-    return { count: row?.driver_transient_retries ?? 0, lastAttemptAt: row?.retry_last_attempt_at ?? null };
+    return {
+      count: row?.driver_transient_retries ?? 0,
+      lastAttemptAt: row?.retry_last_attempt_at ?? null,
+    };
   }
 
   /** The thread's owed-halt outcome (`halt_outcome`), or null if no halt-wake has been persisted yet. Lets
@@ -1862,11 +1888,11 @@ export class DriverStoreService {
   }
 
   /**
-   * Find (or lazily create) the job's `post_build` stage-thread — the isolated, fresh session the ship step
-   * runs its open-PR turn on, off the planning brain's session (d14/d15). Idempotent/reusable: `ship()` may
-   * run several times when the PR doesn't latch on the first pass, so a matching stage is re-looked-up rather
-   * than duplicated. Scoped by `decision_record_id IS NOT DISTINCT FROM` so the nullable FK matches by value
-   * (plain SQL equality drops NULL rows).
+   * Find (or lazily create) the job's `post_build` stage-thread — the isolated, fresh ship-gate session that
+   * summarizes the build, proposes preview, and owns amend work off the planning brain's session. Idempotent:
+   * a matching stage is re-looked-up rather than duplicated. Scoped by
+   * `decision_record_id IS NOT DISTINCT FROM` so the nullable FK matches by value (plain SQL equality drops
+   * NULL rows).
    */
   async ensurePostBuildThread(input: {
     jobId: string;
@@ -1901,7 +1927,7 @@ export class DriverStoreService {
       jobId: input.jobId,
       orgId: input.orgId,
       role: 'post_build',
-      brief: 'Ship — open the PR',
+      brief: 'Ship gate — review and amend',
       ordinal: await this.nextRootThreadOrdinal(input.jobId),
     });
     return { stageId: created.id, threadId: thread.id };

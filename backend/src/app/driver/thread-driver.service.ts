@@ -291,6 +291,10 @@ export class ThreadDriver implements JobDispatcher {
   private readonly logger = new Logger(ThreadDriver.name);
   /** Jobs being driven right now — guards against a double dispatch / a resume racing a live drive. */
   private readonly active = new Set<string>();
+  private readonly driveAfterActiveTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
 
   constructor(
     private readonly store: DriverStoreService,
@@ -1074,9 +1078,11 @@ export class ThreadDriver implements JobDispatcher {
     // left of that cooldown window before driving again, so a boot resume can't fire off immediately after
     // a claim it never got to sleep out. A fresh entry (no prior claim, or one aged past the window) waits
     // zero.
-    const { count, lastAttemptAt } = await this.store.driverTransientRetryState(jobId);
+    const { count, lastAttemptAt } =
+      await this.store.driverTransientRetryState(jobId);
     if (count > 0 && lastAttemptAt) {
-      const remaining = HOST_RETRY_BACKOFF_MS - (Date.now() - lastAttemptAt.getTime());
+      const remaining =
+        HOST_RETRY_BACKOFF_MS - (Date.now() - lastAttemptAt.getTime());
       if (remaining > 0) {
         await new Promise((r) => setTimeout(r, remaining));
       }
@@ -1089,7 +1095,10 @@ export class ThreadDriver implements JobDispatcher {
         if (this.election.isDraining() || !isTransientDriveError(err)) {
           throw err;
         }
-        const { ok, used: n } = await this.store.claimDriverTransientRetry(jobId, maxRetries);
+        const { ok, used: n } = await this.store.claimDriverTransientRetry(
+          jobId,
+          maxRetries,
+        );
         if (!ok) {
           throw err;
         }
@@ -1134,7 +1143,10 @@ export class ThreadDriver implements JobDispatcher {
         ? await this.claudeCreds.getSelectedRefreshMeta(orgId).catch(() => null)
         : null;
     if (isTransientAuthError(err)) {
-      const { ok, used: n } = await this.store.claimAuthRetryAttempt(jobId, MAX_HOST_RETRIES);
+      const { ok, used: n } = await this.store.claimAuthRetryAttempt(
+        jobId,
+        MAX_HOST_RETRIES,
+      );
       if (ok) {
         // RETRY: no halt set (no paused banner) — a quiet durable notice + a best-effort live indicator, then
         // a precise 10s re-drive of the SAME engine session via the durable resume clock + in-process timer.
@@ -1356,7 +1368,12 @@ export class ThreadDriver implements JobDispatcher {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'warning', category: 'auth', summary },
+        meta: {
+          source: 'system_operator',
+          severity: 'warning',
+          category: 'auth',
+          summary,
+        },
       })
       .catch((e) =>
         this.logger.error(
@@ -1398,7 +1415,8 @@ export class ThreadDriver implements JobDispatcher {
             severity: 'warning',
             sessionLimit: true,
             category: 'session_limit',
-            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         })
@@ -1420,7 +1438,8 @@ export class ThreadDriver implements JobDispatcher {
             severity: 'warning',
             sessionLimit: true,
             category: 'session_limit',
-            summary: "You've hit your Claude session limit — it auto-resumes at reset.",
+            summary:
+              "You've hit your Claude session limit — it auto-resumes at reset.",
             ...(resumeAt ? { resumeAt } : {}),
           },
         });
@@ -1515,7 +1534,12 @@ export class ThreadDriver implements JobDispatcher {
         kind: 'chat',
         threadId,
         text,
-        meta: { source: 'system_operator', severity: 'error', category, summary },
+        meta: {
+          source: 'system_operator',
+          severity: 'error',
+          category,
+          summary,
+        },
       })
       .catch((e) =>
         this.logger.error(
@@ -1704,9 +1728,15 @@ export class ThreadDriver implements JobDispatcher {
     // marker INLINE and returns true — we fall through to finalizeBuild WITHIN this same drive rather than
     // re-driving (a re-entrant drive() would be dropped by the single-flight `active` guard, stalling the
     // ship until the next process boot). false → the job is parked awaiting the operator's click.
-    if (shipGateApplies(job) && job.shipReviewApprovedAt == null) {
-      const autoApproved = await this.parkForShipReview(job, route);
-      if (!autoApproved) return;
+    if (shipGateApplies(job)) {
+      const gateJob =
+        job.shipReviewApprovedAt == null
+          ? await this.store.loadJob(job.id).catch(() => job)
+          : job;
+      if (gateJob.shipReviewApprovedAt == null) {
+        const autoApproved = await this.parkForShipReview(job, route);
+        if (!autoApproved) return;
+      }
     }
     await this.finalizeBuild(job, record, route, repo, sandbox);
     // Build shipped — the system is done working this job; hand it back to idle.
@@ -1935,6 +1965,12 @@ export class ThreadDriver implements JobDispatcher {
     // running (the just-parked status makes its CAS succeed) + stamps the marker; we return true so runJob
     // falls through to finalizeBuild in THIS drive (a re-entrant drive() would hit the single-flight guard).
     const fresh = await this.store.loadJob(job.id).catch(() => job);
+    if (fresh.shipReviewApprovedAt != null) {
+      this.logger.log(
+        `job=${job.id} ship approval landed while gate was parking — shipping inline`,
+      );
+      return true;
+    }
     if (!modeApprovesShip(fresh.autoApproveMode)) return false;
     const approver = await this.resolveAutoApprover(fresh);
     const acted = await this.store.approveShip(job.id);
@@ -1981,12 +2017,39 @@ export class ThreadDriver implements JobDispatcher {
         meta: { source: 'system_operator' },
       })
       .catch(() => undefined);
-    void this.drive(jobId).catch((err) =>
-      this.logger.error(
-        `ship-approve drive job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
-      ),
-    );
+    this.driveAfterActive(jobId, 'ship-approve');
     return true;
+  }
+
+  private driveAfterActive(jobId: string, reason: string): void {
+    if (!this.active.has(jobId)) {
+      void this.drive(jobId).catch((err) =>
+        this.logger.error(
+          `${reason} drive job=${jobId} crashed: ${err instanceof Error ? err.stack : err}`,
+        ),
+      );
+      return;
+    }
+    if (this.driveAfterActiveTimers.has(jobId)) return;
+    const poll = (): void => {
+      if (this.active.has(jobId)) {
+        const next = setTimeout(poll, 25);
+        if (typeof next.unref === 'function') next.unref();
+        this.driveAfterActiveTimers.set(jobId, next);
+        return;
+      }
+      this.driveAfterActiveTimers.delete(jobId);
+      void this.drive(jobId).catch((err) =>
+        this.logger.error(
+          `${reason} deferred drive job=${jobId} crashed: ${
+            err instanceof Error ? err.stack : err
+          }`,
+        ),
+      );
+    };
+    const timer = setTimeout(poll, 25);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.driveAfterActiveTimers.set(jobId, timer);
   }
 
   /**

@@ -3790,16 +3790,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       });
       const turnStimulus: ChatStimulus = {
         ...stimulus,
-        ...(opts.resumeThreadId
-          ? { resumeThreadId: opts.resumeThreadId }
-          : {}),
+        ...(opts.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
       };
       return { ...built, run, turnStimulus };
     }
 
     function composedTask(dockerRunner: EngineRunnerPort): string {
-      return (dockerRunner.run as ReturnType<typeof vi.fn>).mock
-        .calls[0][0].task as string;
+      return (dockerRunner.run as ReturnType<typeof vi.fn>).mock.calls[0][0]
+        .task as string;
     }
 
     it('PLANNING (no resumeThreadId) renders the awareness + open-questions prefixes, never amending', async () => {
@@ -5518,6 +5516,53 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
     expect(stimulusRows.update).not.toHaveBeenCalled();
   });
 
+  it('a CI-routed event steers only into the matching CI lane', async () => {
+    const ciEvent: EventStimulus = {
+      ...eventStimulus,
+      id: 'stim-evt-ci',
+      resumeThreadId: 'thr-ci',
+    };
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-ci',
+      lane: 'thread:thr-ci',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.deliverEvent(ciEvent);
+
+    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith([
+      'stim-evt-ci',
+    ]);
+    expect(steer).toHaveBeenCalledWith(
+      'turn-ci',
+      'stim-evt-ci',
+      expect.stringContaining('CI job #42 failed'),
+    );
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it('a CI-routed event never cross-steers into a live non-CI lane', async () => {
+    const ciEvent: EventStimulus = {
+      ...eventStimulus,
+      id: 'stim-evt-ci',
+      resumeThreadId: 'thr-ci',
+    };
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager();
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-post-build',
+      lane: 'thread:thr-post-build',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.deliverEvent(ciEvent);
+
+    expect(steer).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
+    expect(stimulusStore.markChatDelivered).not.toHaveBeenCalled();
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
   it('SWALLOWED-STEER RACE: a live turn steered but no input_ack → the event stays UNDELIVERED (regression)', async () => {
     // The reported bug: an event steered into a just-finishing turn is swallowed, yet the old path stamped
     // delivered anyway. Now a bare steer NEVER stamps — only input_ack does — so the row stays null and the
@@ -5908,6 +5953,31 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       's1',
       userWrap('racy message', '2026-07-02T12:00:00.000Z'),
     );
+    expect(runChatTurnSpy).not.toHaveBeenCalled();
+  });
+
+  it('a different lane live turn leaves this lane pending unleased for its own retry', async () => {
+    const pending = [
+      pendingRow('s-ci', 'open the PR', new Date('2026-07-02T12:00:00Z')),
+    ];
+    const { manager, stimulusStore, runningBrainTurn, steer } = makeManager({
+      pending,
+    });
+    runningBrainTurn.mockResolvedValue({
+      turn_id: 'turn-post-build',
+      lane: 'thread:thr-post-build',
+    });
+    const runChatTurnSpy = vi.spyOn(manager as never, 'runChatTurn');
+
+    await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID, 'thread:thr-ci');
+
+    expect(stimulusStore.eligiblePendingChat).toHaveBeenCalledWith(
+      JOB_ID,
+      expect.any(Number),
+      'thread:thr-ci',
+    );
+    expect(steer).not.toHaveBeenCalled();
+    expect(stimulusStore.leaseChatStimuli).not.toHaveBeenCalled();
     expect(runChatTurnSpy).not.toHaveBeenCalled();
   });
 

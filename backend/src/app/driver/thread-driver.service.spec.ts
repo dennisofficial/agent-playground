@@ -1444,8 +1444,8 @@ function assemble(
       async (jobId: string) => {
         if (state.job.status !== 'running') return false;
         state.job.status = 'awaiting_ship_review';
-        // Fire the "Ship it" on a MACROtask (not a microtask): the parking drive must fully unwind and clear
-        // its `active` guard first, else the re-drive is dropped as a duplicate and the job wedges at running.
+        // Fire the "Ship it" on a MACROtask to preserve the historical operator-after-park shape for most
+        // tests. A dedicated regression below covers the tighter click-while-parking race.
         setTimeout(() => {
           void driver.resolveShipApprovalDurably(jobId, 'auto-test');
         }, 0);
@@ -5281,6 +5281,28 @@ describe('ThreadDriver — ship-review gate (human approval before the PR)', () 
     // The re-drive fast-forwarded the already-done threads — it did NOT re-execute or re-review them.
     expect(h.calls.filter((c) => c.mode === 'execute')).toHaveLength(2);
     expect(h.store.materializeReviewChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it('ships when the ship approval races the active drive that is parking the gate', async () => {
+    const state = baseState();
+    const h = assemble(state, { autoShipApprove: false });
+
+    (h.store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
+      async (jobId: string) => {
+        if (state.job.status !== 'running') return false;
+        state.job.status = 'awaiting_ship_review';
+        await h.driver.resolveShipApprovalDurably(jobId, 'dennis');
+        return true;
+      },
+    );
+
+    await h.driver.dispatch(state.job);
+    await flushUntil(() => state.job.status === 'done');
+
+    expect(state.job.shipReviewApprovedAt).toBeInstanceOf(Date);
+    expect(h.shipSeeds).toEqual([
+      { jobId: state.job.id, branch: 'atlas/feature-job-abcd' },
+    ]);
   });
 
   it('a second (stale/double) ship approval is a no-op once the job has shipped', async () => {
