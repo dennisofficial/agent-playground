@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
+import { isInterruptAbortResult } from '../brain/session-transcript';
 
 /**
  * One assembled block of an in-flight turn — the SAME shape the web client renders (so a snapshot maps
@@ -15,6 +16,10 @@ export interface LiveTurnBlock {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** True when `isError` is the SDK's own mid-turn-interrupt cancellation, not a genuine tool failure — the
+   *  live view renders this as a neutral "superseded" note instead of a red error. Mirrors the durable
+   *  `session-transcript.ts` tagging so the live and reload renders agree at the moment it matters most. */
+  superseded?: boolean;
   /** Edit/MultiEdit only: structured patch (real file offsets) for an accurate diff gutter on reconnect. */
   structuredPatch?: unknown;
   /**
@@ -449,11 +454,17 @@ export class LiveTurnStore {
       }
       case 'tool_result': {
         const id = typeof ev['id'] === 'string' ? (ev['id'] as string) : '';
+        const isError = Boolean(ev['isError']);
+        // Mirror the durable tagging (session-transcript.ts) so the live SSE frame carries `superseded` too —
+        // stamped back onto `ev` itself so the frame emitted below (a spread of `event`) picks it up.
+        const superseded = isError && isInterruptAbortResult(ev['result']);
+        if (superseded) ev['superseded'] = true;
         for (let i = blocks.length - 1; i >= 0; i--) {
           const b = blocks[i];
           if (b.kind === 'tool' && !b.done && (b.toolId === id || id === '')) {
             b.result = ev['result'];
-            b.isError = Boolean(ev['isError']);
+            b.isError = isError;
+            if (superseded) b.superseded = true;
             if (ev['structuredPatch'] !== undefined)
               b.structuredPatch = ev['structuredPatch'];
             b.done = true;
