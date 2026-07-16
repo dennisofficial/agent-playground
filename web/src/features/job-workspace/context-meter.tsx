@@ -144,7 +144,8 @@ function ClickableContextMeter({
       const naturalRight = rect.right - shiftX;
       let next = 0;
       if (naturalLeft < margin) next = margin - naturalLeft;
-      else if (naturalRight > window.innerWidth - margin) next = window.innerWidth - margin - naturalRight;
+      else if (naturalRight > window.innerWidth - margin)
+        next = window.innerWidth - margin - naturalRight;
       setShiftX(next);
     };
     measure();
@@ -182,7 +183,6 @@ function ClickableContextMeter({
             tokens={tokens}
             limit={limit}
             model={model}
-            onClose={() => setOpen(false)}
           />
         </div>
       ) : null}

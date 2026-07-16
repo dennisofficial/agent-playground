@@ -26,7 +26,9 @@ const TEST_KEY: EngineHomeKey = {
 const HOME_ROOT = join(tmpdir(), `atlas-context-breakdown-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
-const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
+const tick = (): Promise<void> => sleep(5);
 
 // ── Scripted SDK frames (only the fields the engine reads; shapes mirror @anthropic-ai/claude-agent-sdk). ──
 const initMsg = (): Record<string, unknown> => ({
@@ -158,7 +160,9 @@ describe('EngineCore — context breakdown capture', () => {
     const events: EngineEvent[] = [];
     const res = await runTurn(sdk, events);
 
-    const breakdownEvents = events.filter((e) => e.kind === 'context_breakdown');
+    const breakdownEvents = events.filter(
+      (e) => e.kind === 'context_breakdown',
+    );
     expect(breakdownEvents.length).toBeGreaterThan(0);
     expect(
       (breakdownEvents[0] as { breakdown: ContextBreakdown }).breakdown,
@@ -196,5 +200,52 @@ describe('EngineCore — context breakdown capture', () => {
     expect(res.result).toBe('hello');
     expect(events.some((e) => e.kind === 'context_breakdown')).toBe(false);
     expect(res.usage?.contextBreakdown).toBeUndefined();
+  });
+
+  it('serializes live/result context-usage control requests and emits no late live breakdown after return', async () => {
+    let calls = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const sdk = {
+      query: () => {
+        const gen = (async function* () {
+          yield initMsg();
+          await tick();
+          yield assistantWithUsage('hello');
+          await tick();
+          yield resultMsg('hello', 10, 5);
+        })();
+        (
+          gen as unknown as {
+            getContextUsage: () => Promise<SDKControlGetContextUsageResponse>;
+          }
+        ).getContextUsage = async () => {
+          calls += 1;
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          try {
+            if (calls === 1) await sleep(25);
+            return CANNED_RAW;
+          } finally {
+            inFlight -= 1;
+          }
+        };
+        return gen;
+      },
+    } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
+    const events: EngineEvent[] = [];
+    const res = await runTurn(sdk, events);
+    const breakdownEventsAtReturn = events.filter(
+      (e) => e.kind === 'context_breakdown',
+    ).length;
+
+    expect(res.usage?.contextBreakdown).toEqual(EXPECTED_BREAKDOWN);
+    expect(calls).toBe(2); // live request, then an authoritative result-frame request after the live one settles
+    expect(maxInFlight).toBe(1);
+
+    await sleep(40);
+    expect(events.filter((e) => e.kind === 'context_breakdown')).toHaveLength(
+      breakdownEventsAtReturn,
+    );
   });
 });

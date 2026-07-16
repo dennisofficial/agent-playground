@@ -673,10 +673,13 @@ export class EngineCore {
     let contextTokens: number | undefined;
     let contextModel: string | undefined;
     // The last normalized full breakdown (live mid-turn snapshot, superseded by the awaited end-of-turn
-    // fetch below) — rides onto `usage.contextBreakdown` at turn end (step f). `breakdownInFlight` guards
-    // the live fetch (step d) so a slow control round-trip never piles up mid-stream.
+    // fetch below) — rides onto `usage.contextBreakdown` at turn end. `breakdownRequest` serializes the SDK
+    // control round-trips so a slow `getContextUsage()` call never overlaps another one, and
+    // `allowLiveBreakdownEvents` prevents a late fire-and-forget live response from resurrecting a lane after
+    // the turn has already emitted `turn_end`.
     let lastBreakdown: ContextBreakdown | undefined;
-    let breakdownInFlight = false;
+    let breakdownRequest: Promise<void> | undefined;
+    let allowLiveBreakdownEvents = true;
 
     const options = buildClaudeOptions({
       cwd,
@@ -703,7 +706,12 @@ export class EngineCore {
       },
       getContextTokens: () => contextTokens,
       onJitInjection: (inj) =>
-        onEvent?.({ kind: 'jit_injection', id: inj.toolUseId, rule: inj.rule, text: inj.text }),
+        onEvent?.({
+          kind: 'jit_injection',
+          id: inj.toolUseId,
+          rule: inj.rule,
+          text: inj.text,
+        }),
     });
 
     let result = '';
@@ -718,6 +726,45 @@ export class EngineCore {
         prompt: channel.prompt,
         options,
       });
+      const waitForBreakdownRequest = async (
+        request: Promise<void> | undefined,
+      ): Promise<boolean> => {
+        if (!request) return true;
+        return new Promise<boolean>((resolve) => {
+          const timeout = setTimeout(
+            () => resolve(false),
+            CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS,
+          );
+          void request.then(() => {
+            clearTimeout(timeout);
+            resolve(true);
+          });
+        });
+      };
+      const startBreakdownRequest = (
+        emitLive: boolean,
+      ): Promise<void> | undefined => {
+        if (typeof claudeQuery.getContextUsage !== 'function') return undefined;
+        const request = claudeQuery
+          .getContextUsage()
+          .then((raw) => {
+            lastBreakdown = normalizeContextBreakdown(raw);
+            if (emitLive && allowLiveBreakdownEvents) {
+              onEvent?.({
+                kind: 'context_breakdown',
+                breakdown: lastBreakdown,
+              });
+            }
+          })
+          .catch(() => {
+            // Unsupported / transient control-channel error → keep scalar-only, no throw into the turn.
+          })
+          .finally(() => {
+            if (breakdownRequest === request) breakdownRequest = undefined;
+          });
+        breakdownRequest = request;
+        return request;
+      };
       for await (const message of claudeQuery) {
         // Model is actively producing (or a steer is being processed) → don't close input under it. Once
         // `capping` latches, a late task_progress/task_updated frame must NOT undo the forced close.
@@ -872,30 +919,10 @@ export class EngineCore {
               // LIVE full breakdown fetch — a SEPARATE control request from the scalar read above (which
               // reads the fields already carried on the SDK message that just arrived; this is a NEW async
               // control round-trip out to the CLI). Fire-and-forget + in-flight-guarded so it can never block
-              // or pile up mid-stream: a slow response just means THIS round-trip's breakdown is skipped, not
-              // queued behind the next one. Absent `getContextUsage` (an older CLI, or Codex-adjacent) is a
-              // silent no-op — the scalar occupancy above still works.
-              if (
-                !breakdownInFlight &&
-                typeof claudeQuery.getContextUsage === 'function'
-              ) {
-                breakdownInFlight = true;
-                void claudeQuery
-                  .getContextUsage()
-                  .then((raw) => {
-                    lastBreakdown = normalizeContextBreakdown(raw);
-                    onEvent?.({
-                      kind: 'context_breakdown',
-                      breakdown: lastBreakdown,
-                    });
-                  })
-                  .catch(() => {
-                    // Unsupported / transient control-channel error → keep scalar-only, no throw into the turn.
-                  })
-                  .finally(() => {
-                    breakdownInFlight = false;
-                  });
-              }
+              // or pile up mid-stream: while a slow response is pending, later assistant frames keep the
+              // scalar ring moving and skip starting another breakdown request. Absent `getContextUsage` (an
+              // older CLI, or Codex-adjacent) is a silent no-op — the scalar occupancy above still works.
+              if (!breakdownRequest) void startBreakdownRequest(true);
               // ENGINE-LOCAL Leg-rotation nudge: this main-agent round-trip's occupancy is the freshest signal,
               // and we're mid-stream (input open, streamingStarted true) — the SAFE moment to steer, so the nudge
               // lands like a manual steer instead of racing the post-`result` close. Level-latch (parity with the
@@ -1066,19 +1093,13 @@ export class EngineCore {
             // message-consuming loop, so an unbounded/never-resolving control round-trip on this
             // shipped-but-not-yet-documented SDK method would otherwise stall the whole turn.
             if (typeof claudeQuery.getContextUsage === 'function') {
-              try {
-                const raw = await Promise.race([
-                  claudeQuery.getContextUsage(),
-                  new Promise<null>((r) =>
-                    setTimeout(
-                      () => r(null),
-                      CONTEXT_BREAKDOWN_AUTHORITATIVE_TIMEOUT_MS,
-                    ),
-                  ),
-                ]);
-                if (raw) lastBreakdown = normalizeContextBreakdown(raw);
-              } catch {
-                // keep whatever the live path above already captured, if anything
+              // If the live request from the last assistant frame is still running, wait briefly for it
+              // rather than starting a second control request. Only issue the authoritative fetch once the
+              // control channel is idle; if the live call never settles, keep scalar-only/last-known
+              // breakdown and, importantly, do not overlap requests.
+              const idle = await waitForBreakdownRequest(breakdownRequest);
+              if (idle && !breakdownRequest) {
+                await waitForBreakdownRequest(startBreakdownRequest(false));
               }
             }
             onEvent?.({
@@ -1181,6 +1202,7 @@ export class EngineCore {
         throw err;
       }
     } finally {
+      allowLiveBreakdownEvents = false;
       // Stop feeding/consuming input so the detached steer consumer + entrypoint generator unwind.
       channel.markTurnEnded();
       channel.cancelEnd();
