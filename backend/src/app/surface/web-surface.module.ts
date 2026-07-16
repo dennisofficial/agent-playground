@@ -16,6 +16,7 @@ import {
   TranscriptMessageEntity,
   RepoEntity,
   JobEntity,
+  SubagentEntity,
 } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
@@ -56,7 +57,7 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature(
-      [JobEntity, TranscriptMessageEntity, RepoEntity],
+      [JobEntity, TranscriptMessageEntity, RepoEntity, SubagentEntity],
       DB_CONNECTION,
     ),
     // Repo-file endpoints need `LocalGitService` (git ls-files over the job worktree); GitModule is not

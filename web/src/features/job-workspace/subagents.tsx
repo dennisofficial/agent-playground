@@ -154,7 +154,14 @@ export function indexDurableSubagents(
       parentId: id,
       type: String(input.subagent_type ?? "agent"),
       background: Boolean(input.run_in_background),
-      running: m.meta?.result == null,
+      // Prefer the subagent's AUTHORITATIVE persisted status (joined onto the anchor by the backend) over the
+      // launch-ack cue: `meta.result` is set the moment a backgrounded Task's launch ack lands, NOT on real
+      // completion, so it would read "done" while the subagent is still working. Fall back to the legacy cue
+      // only for anchors with no subagent row (pre-join / backfilled rows).
+      running:
+        typeof m.subagentStatus === "string"
+          ? m.subagentStatus === "running"
+          : m.meta?.result == null,
       toolCount: kids.filter((k) => k.kind === "tool").length,
       summary: String(input.description || firstLine(input.prompt)),
       ...(typeof meta.subContextTokens === "number"
@@ -238,15 +245,20 @@ export function indexLiveSubagents(blocks: LiveBlock[]): LiveSubagentIndex {
     if (b.kind === "tool" && b.toolId && childParentIds.has(b.toolId)) {
       anchorKeys.add(b.key);
       const input = (b.input ?? {}) as Record<string, unknown>;
+      // A Task subagent runs in the background BY DEFAULT, so a caller that relies on that omits
+      // `run_in_background` from the tool input — leaving the input field an unreliable signal. The engine's
+      // `bg_task 'started'` frame (recorded as `bgStarted`) is the authoritative marker that this run was
+      // actually backgrounded. Trust either.
+      const background = Boolean(input.run_in_background) || Boolean(b.bgStarted);
       summaryById.set(b.toolId, {
         parentId: b.toolId,
         type: String(input.subagent_type ?? "agent"),
-        background: Boolean(input.run_in_background),
+        background,
         // A backgrounded Task's `done` flips on its immediate launch-ack `tool_result`, NOT on real
         // completion — so it would read "done" while the subagent is still streaming. For a background run,
         // track settlement (its `bg_task` completed/failed/stopped, recorded as `bgSettled`) instead. A
         // FOREGROUND subagent's `done` is its real completion, so it keeps `!done` unchanged.
-        running: Boolean(input.run_in_background) ? !b.bgSettled : !b.done,
+        running: background ? !b.bgSettled : !b.done,
         toolCount: childCountById.get(b.toolId) ?? 0,
         summary: String(input.description || firstLine(input.prompt)),
       });

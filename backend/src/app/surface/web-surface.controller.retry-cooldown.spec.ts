@@ -41,6 +41,7 @@ function makeController(opts: {
     opts.jobs as never, // jobs
     {} as never, // messages
     {} as never, // repos
+    {} as never, // subagents
     {} as never, // threadTitle
     {} as never, // usageBus
     {} as never, // realtime

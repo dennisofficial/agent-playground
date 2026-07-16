@@ -40,6 +40,7 @@ function makeController(threadOrgId: string) {
     threads as never,
     messages as never,
     {} as never, // repos
+    {} as never, // subagents
     {} as never, // threadTitle
     {} as never, // usageBus
     { available: false } as never, // realtime

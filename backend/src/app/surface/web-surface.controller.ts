@@ -135,6 +135,7 @@ import {
   RepoEntity,
   JobEntity,
   UserEntity,
+  SubagentEntity,
 } from '../persistence/entities';
 import { deriveNeedsYou } from '../domain/job';
 import type { JobKind } from '../domain/job';
@@ -743,6 +744,11 @@ export class WebSurfaceController {
     private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectRepository(RepoEntity, DB_CONNECTION)
     private readonly repos: Repository<RepoEntity>,
+    // Subagents (spawned Task runs) — the messages endpoint joins these to surface the AUTHORITATIVE
+    // run status on the anchor block, so the durable/reloaded card reflects real completion (not the
+    // launch-ack). Joined by `subagents.parent_message_id = messages.id`.
+    @InjectRepository(SubagentEntity, DB_CONNECTION)
+    private readonly subagents: Repository<SubagentEntity>,
     private readonly threadTitle: JobTitleService,
     private readonly usageBus: UsageEventBus,
     private readonly realtime: RealtimeService,
@@ -1154,6 +1160,14 @@ export class WebSurfaceController {
       where: { job_id: jobId },
       order: { created_at: 'ASC' },
     });
+    // Join the spawned subagents so each anchor (Task launching) message carries its subagent's AUTHORITATIVE
+    // status — the web keys the durable card's running/done off this instead of the launch-ack heuristic. The
+    // join is `subagents.parent_message_id = messages.id`; scoped by the threads present in this transcript.
+    const threadIds = [...new Set(rows.map((m) => m.thread_id))];
+    const subs = threadIds.length
+      ? await this.subagents.find({ where: { thread_id: In(threadIds) } })
+      : [];
+    const subByParentMsg = new Map(subs.map((s) => [s.parent_message_id, s]));
     return rows.map((m) => ({
       id: m.id,
       // The owning thread (d3) + optional subagent (d4) — the web filters a thread's transcript by
@@ -1181,6 +1195,16 @@ export class WebSurfaceController {
       kind: m.kind,
       ...(m.card ? { card: m.card } : {}),
       ...(m.meta ? { meta: m.meta } : {}),
+      // The spawned subagent's AUTHORITATIVE lifecycle status ('running'|'done'|'failed'), present only on the
+      // anchor (Task launching) message. The web reads this for the durable card's running/done state; absent
+      // on non-anchor messages and legacy anchors with no subagent row (web falls back to the meta.result cue).
+      ...(subByParentMsg.has(m.id)
+        ? {
+            subagentStatus: subByParentMsg.get(m.id)!.status,
+            subagentEndedAt:
+              subByParentMsg.get(m.id)!.ended_at?.toISOString() ?? null,
+          }
+        : {}),
       postedAt: m.created_at,
     }));
   }
