@@ -172,6 +172,49 @@ export function NewPill({
   );
 }
 
+/** Marks a tool row whose tool triggered a JIT PostToolUse additionalContext injection (svc-nudge /
+ * github-fetch-guard / install-awareness) — an info-toned pill distinct from NewPill's add-green. */
+export function JitPill({ count }: { count: number }) {
+  return (
+    <span
+      className="shrink-0 font-mono font-bold text-[9px] px-1.5 py-px rounded-[4px]"
+      style={{
+        color: "var(--blue)",
+        background: "var(--blue-soft)",
+        border: "1px solid var(--blue)",
+      }}
+    >
+      {count > 1 ? `${count} context` : "context"}
+    </span>
+  );
+}
+
+/** Expanded-body panel listing each JIT injection that fired on this tool call: a rule label + the
+ * verbatim injected text in a monospace block. Rendered ABOVE the normal input/result body. */
+export function JitContextPanel({
+  items,
+}: {
+  items: Array<{ rule: string; text: string }>;
+}) {
+  return (
+    <div
+      className="my-[3px] space-y-2 rounded-[7px] border px-[11px] py-[9px] font-mono text-[11px] leading-relaxed"
+      style={{ background: "var(--blue-soft)", borderColor: "var(--blue)" }}
+    >
+      {items.map((it, i) => (
+        <div key={i}>
+          <span className="font-bold" style={{ color: "var(--blue)" }}>
+            {it.rule}
+          </span>
+          <pre className="mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-dim">
+            {it.text}
+          </pre>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Right-aligned row badge: a `+N −N` diffstat (rendered as chip pills), an "N ln" count, or "error".
  * `size` scales the diffstat chips — `group` for the file-change group header, `row` per file.
