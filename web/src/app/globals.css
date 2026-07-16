@@ -228,7 +228,6 @@ body {
     46px 46px;
   color: var(--text);
   font-family: var(--f-ui), system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
 }
 
 /* ── Thin scrollbar — the global default for every scroll surface. ─────────────────────────── */
