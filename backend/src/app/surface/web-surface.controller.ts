@@ -73,6 +73,7 @@ import {
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
@@ -815,6 +816,11 @@ export class WebSurfaceController {
     // post_build session through it (durable pump). From the @Global BrainGatewayModule. @Optional (trailing),
     // same reason as `exposure`/`jit` above — keeps the positional-arg unit tests compiling.
     @Optional() private readonly brainGateway?: BrainGateway,
+    // The blocked-overlay preview source — the queued born-blocked brief / mid-flight "blocked" note that
+    // replaced the `jobs.blocked_seed_message` column (batched via `pendingLockedPreviews` to avoid N+1).
+    // From the (non-@Global) StimulusModule already imported for `intake`. @Optional (trailing), same reason
+    // as `exposure`/`jit` above — keeps the positional-arg unit tests compiling.
+    @Optional() private readonly stimulusStore?: StimulusStoreService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -847,6 +853,9 @@ export class WebSurfaceController {
       .filter((t) => t.status === 'blocked')
       .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
+    const blockedPreviews =
+      (await this.stimulusStore?.pendingLockedPreviews(blockedIds)) ??
+      new Map<string, string | null>();
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
@@ -866,8 +875,7 @@ export class WebSurfaceController {
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
-        blockedSeedMessage:
-          t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+        blockedSeedMessage: blockedPreviews.get(t.id) ?? null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -948,6 +956,9 @@ export class WebSurfaceController {
       .filter((t) => t.status === 'blocked')
       .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
+    const blockedPreviews =
+      (await this.stimulusStore?.pendingLockedPreviews(blockedIds)) ??
+      new Map<string, string | null>();
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -958,8 +969,7 @@ export class WebSurfaceController {
       halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
-      blockedSeedMessage:
-        t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+      blockedSeedMessage: blockedPreviews.get(t.id) ?? null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -1128,9 +1138,10 @@ export class WebSurfaceController {
           : {}),
       });
     }
-    // anyBlocked: the row is parked 'blocked' with bodyText stored as blocked_seed_message — the wake
-    // funnel (onBlockerResolved → wakeUnblockedJob → startFollowUpJob) replays it once every blocker
-    // resolves, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
+    // anyBlocked: the row is parked 'blocked' and `addDependency` queued bodyText as a held `main`-lane
+    // born-blocked seed (provenance note + brief). Once every blocker resolves the wake funnel
+    // (onBlockerResolved → recordUnblockNote → pumpUnblockedJob) drains the held backlog as one coalesced
+    // turn, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
 
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle

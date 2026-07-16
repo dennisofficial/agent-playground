@@ -20,6 +20,12 @@ import {
 import { SYSTEM_SEED_AUTHOR } from '../surface/chat-surface.port';
 import { fromExternal } from '@shared/prompt-kit/message';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
+import {
+  chunkKey,
+  renderBornBlockedProvenanceNote,
+  renderMidFlightBlockedNote,
+} from '../prompt-kit/harness';
+import type { JobProvenance } from '@shared/domain/job';
 
 /**
  * `reply_route` jsonb widened LOCALLY with the seed-stamp piggyback keys (mirroring how `priority`
@@ -35,6 +41,12 @@ type ReplyRouteJson = NonNullable<InboundMessageEntity['reply_route']> & {
   seedQuestionIds?: string[];
   seedSecretIds?: string[];
   seedFileIds?: string[];
+  /** Block/unblock DEDUPE stamps — mark a queued born-blocked provenance note, mid-flight "blocked" note,
+   *  or unblock note so `hasChatStimulusForSeedTarget` can find the one pending row and never stack a second
+   *  (same jsonb piggyback as the `seed*Id` keys — no schema change). */
+  bornBlockedSeed?: boolean;
+  blockNote?: boolean;
+  unblockNote?: boolean;
 };
 
 /** Raised when the unique (team, project, source, dedupe_key) index rejects a live duplicate insert. */
@@ -273,6 +285,11 @@ export class StimulusStoreService {
     seedQuestionIds?: string[];
     seedSecretIds?: string[];
     seedFileIds?: string[];
+    /** BLOCK/UNBLOCK DEDUPE stamps — piggybacked into `reply_route` jsonb so `hasChatStimulusForSeedTarget`
+     *  can locate the one pending born-blocked provenance note / mid-flight "blocked" note / unblock note. */
+    bornBlockedSeed?: boolean;
+    blockNote?: boolean;
+    unblockNote?: boolean;
   }): Promise<TurnEnvelope> {
     // ATOMIC: the operator-visible row (a plain bubble, a curated pill, or nothing) and the `stimuli` row
     // that DRIVES the brain turn must commit together. Two separate saves let a crash between them (e.g. a
@@ -299,6 +316,9 @@ export class StimulusStoreService {
         ? { seedSecretIds: input.seedSecretIds }
         : {}),
       ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
+      ...(input.bornBlockedSeed ? { bornBlockedSeed: input.bornBlockedSeed } : {}),
+      ...(input.blockNote ? { blockNote: input.blockNote } : {}),
+      ...(input.unblockNote ? { unblockNote: input.unblockNote } : {}),
     };
 
     // `lane` is the routing coordinate (`'main'` | `'thread:<threadId>'`) — a thread-lane message lands on
@@ -409,6 +429,141 @@ export class StimulusStoreService {
       ...(input.card ? { card: input.card } : {}),
       ...(resumeThreadId ? { resumeThreadId } : {}),
     };
+  }
+
+  /**
+   * BORN-BLOCKED: record the creation-time provenance note + the opening brief as TWO undelivered
+   * `main`-lane chat stimuli (author System), recorded ONCE — a re-driven block edge finds the pending
+   * provenance row and no-ops. Held, never enqueued: the `isJobBlocked` guard would hold them anyway, and
+   * the wake funnel's pump coalesces them with the JIT unblock note into ONE timestamped turn. Oldest-first
+   * (provenance, then brief) so the drained turn reads in order. The provenance note gets a curated pill; the
+   * brief is a plain System bubble carrying the operator's opening body verbatim.
+   */
+  async recordBornBlockedSeedsIfAbsent(input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+    brief: string;
+    createdBy: JobProvenance | null;
+  }): Promise<void> {
+    if (
+      await this.hasChatStimulusForSeedTarget(input.jobId, {
+        bornBlockedSeed: true,
+      })
+    ) {
+      return;
+    }
+    const author = {
+      id: SYSTEM_SEED_AUTHOR.id,
+      displayName: SYSTEM_SEED_AUTHOR.name,
+    };
+    const replyRoute = { surfaceId: 'web', jobRef: input.jobId };
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author,
+      replyRoute,
+      type: 'follow_up_job_seed',
+      body: renderBornBlockedProvenanceNote(input.createdBy),
+      lane: 'main',
+      bornBlockedSeed: true,
+      systemChunk: {
+        label: 'Queued — starts when unblocked',
+        chunkKey: chunkKey.bornBlockedSeed(input.jobId),
+      },
+    });
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author,
+      replyRoute,
+      type: 'follow_up_job_seed',
+      body: input.brief,
+      lane: 'main',
+    });
+  }
+
+  /**
+   * MID-FLIGHT block: record ONE undelivered `main`-lane "you've been blocked" note (author System),
+   * recorded ONCE. Held for the wake funnel's pump to coalesce with the JIT unblock note.
+   */
+  async recordBlockedNoteIfAbsent(input: {
+    orgId: string;
+    repoId: string;
+    jobId: string;
+  }): Promise<void> {
+    if (
+      await this.hasChatStimulusForSeedTarget(input.jobId, { blockNote: true })
+    ) {
+      return;
+    }
+    await this.recordChatStimulus({
+      orgId: input.orgId,
+      repoId: input.repoId,
+      jobId: input.jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
+      replyRoute: { surfaceId: 'web', jobRef: input.jobId },
+      body: renderMidFlightBlockedNote(),
+      lane: 'main',
+      blockNote: true,
+      systemChunk: {
+        label: 'Blocked',
+        chunkKey: chunkKey.blockNote(input.jobId),
+      },
+    });
+  }
+
+  /**
+   * The blocked-overlay preview body for ONE job (the DTO source that replaced `jobs.blocked_seed_message`):
+   * the pending born-blocked BRIEF body when the job was created blocked, or the "blocked" note body when it
+   * was blocked mid-flight; null when neither is queued. Read only while the job is `blocked` (the caller
+   * gates on status).
+   */
+  async pendingBlockedPreview(jobId: string): Promise<string | null> {
+    const rows = await this.pendingBlockedRows([jobId]);
+    return pickBlockedPreview(rows);
+  }
+
+  /**
+   * Batched {@link pendingBlockedPreview} for the list DTOs — one query for many jobs (models on
+   * `JobDependencyService.blockersOfManyBlocked` to avoid N+1). Returns jobId → its preview (or null).
+   */
+  async pendingLockedPreviews(
+    jobIds: string[],
+  ): Promise<Map<string, string | null>> {
+    const map = new Map<string, string | null>();
+    if (jobIds.length === 0) return map;
+    const rows = await this.pendingBlockedRows(jobIds);
+    const byJob = new Map<string, InboundMessageEntity[]>();
+    for (const r of rows) {
+      const list = byJob.get(r.job_id as string) ?? [];
+      list.push(r);
+      byJob.set(r.job_id as string, list);
+    }
+    for (const jobId of jobIds) {
+      map.set(jobId, pickBlockedPreview(byJob.get(jobId) ?? []));
+    }
+    return map;
+  }
+
+  /** The undelivered `main`-lane chat stimuli for the given jobs, oldest-first — the raw rows both preview
+   *  lookups pick the born-blocked brief / mid-flight note out of. */
+  private async pendingBlockedRows(
+    jobIds: string[],
+  ): Promise<InboundMessageEntity[]> {
+    return this.stimuli
+      .createQueryBuilder('s')
+      .where('s.kind = :k', { k: 'chat' })
+      .andWhere('s.job_id IN (:...ids)', { ids: jobIds })
+      .andWhere('s.delivered_at IS NULL')
+      .andWhere("COALESCE(s.lane, 'main') = 'main'")
+      .orderBy('s.created_at', 'ASC')
+      .getMany();
   }
 
   /**
@@ -575,6 +730,9 @@ export class StimulusStoreService {
       seedQuestionId?: string;
       seedSecretId?: string;
       seedFileId?: string;
+      bornBlockedSeed?: boolean;
+      blockNote?: boolean;
+      unblockNote?: boolean;
     },
   ): Promise<boolean> {
     const qb = this.stimuli
@@ -606,6 +764,18 @@ export class StimulusStoreService {
         "(s.reply_route ->> 'seedFileId' = :f OR jsonb_exists(s.reply_route -> 'seedFileIds', :f))",
         { f: target.seedFileId },
       );
+      hasTarget = true;
+    }
+    if (target.bornBlockedSeed) {
+      qb.andWhere("s.reply_route ->> 'bornBlockedSeed' = 'true'");
+      hasTarget = true;
+    }
+    if (target.blockNote) {
+      qb.andWhere("s.reply_route ->> 'blockNote' = 'true'");
+      hasTarget = true;
+    }
+    if (target.unblockNote) {
+      qb.andWhere("s.reply_route ->> 'unblockNote' = 'true'");
       hasTarget = true;
     }
     if (!hasTarget) return false;
@@ -853,6 +1023,25 @@ function resumeThreadIdFromLane(
   lane: string | null | undefined,
 ): string | undefined {
   return lane?.startsWith('thread:') ? lane.slice('thread:'.length) : undefined;
+}
+
+/**
+ * Pick the blocked-overlay preview out of a job's undelivered `main`-lane rows (oldest-first): the opening
+ * BRIEF when a born-blocked provenance note is queued (the brief is its flag-less `follow_up_job_seed`
+ * sibling), else the mid-flight "blocked" note body, else null.
+ */
+function pickBlockedPreview(rows: InboundMessageEntity[]): string | null {
+  const flag = (r: InboundMessageEntity): ReplyRouteJson | null =>
+    r.reply_route as ReplyRouteJson | null;
+  const bornBlocked = rows.some((r) => flag(r)?.bornBlockedSeed);
+  if (bornBlocked) {
+    const brief = rows.find(
+      (r) => r.type === 'follow_up_job_seed' && !flag(r)?.bornBlockedSeed,
+    );
+    return brief?.body ?? null;
+  }
+  const blockNote = rows.find((r) => flag(r)?.blockNote);
+  return blockNote?.body ?? null;
 }
 
 function isUniqueViolation(err: unknown): boolean {

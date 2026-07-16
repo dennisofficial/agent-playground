@@ -110,7 +110,7 @@ import {
   foldCompactionSeed,
   renderEventDelivery,
   renderFollowUpJobSeed,
-  renderBornBlockedUnblockPrefix,
+  renderUnblockedNote,
   frameAnswer,
   composeTurn,
   composeSeedTurn,
@@ -958,34 +958,58 @@ export class AgentSessionManager
   }
 
   /**
-   * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
-   * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
-   * was manually blocked while it already had a session resumes that session with a synthetic wake
-   * stimulus. `blockers` names each job that was holding this one (and how it resolved), so each variant can
-   * name them and reorient: the born-blocked seed gets a fresh-start prefix, the resumed session a
-   * rebase/re-scope nudge. Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via
-   * handleChatTurn/startFollowUpJob.
+   * Record the JIT "unblocked by X, Y" note the wake funnel appends the moment every blocker resolves.
+   * Called while the job is STILL blocked (BEFORE the `blocked→open` flip), so the `isJobBlocked` pump guard
+   * HOLDS this note with the rest of the backlog — whichever drain fires first (the explicit pump or the
+   * undelivered-chat sweep) then coalesces the WHOLE backlog, note included, into ONE timestamped turn (the
+   * ordering fix for the wake race). Deduped on the unblock pill so a sweep re-drive never stacks a second
+   * note. `blockers` names each job that was holding this one so the note can reorient the brain.
    */
-  async wakeUnblockedJob(
+  async recordUnblockNote(
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
+    input: { blockers: UnblockBlockerInfo[] },
   ): Promise<void> {
-    if (input.seed != null) {
-      const firstMessage =
-        input.blockers.length > 0
-          ? `${renderBornBlockedUnblockPrefix(input.blockers)}\n\n${input.seed}`
-          : input.seed;
-      await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
+    if (
+      await this.stimulusStore.hasChatStimulusForSeedTarget(jobId, {
+        unblockNote: true,
+      })
+    ) {
       return;
     }
-    const stimulus = seedEnvelope({
-      ...seedBase({ jobId, orgId, repoId }),
+    await this.stimulusStore.recordChatStimulus({
+      orgId,
+      repoId,
+      jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       type: 'unblocked_job_wake',
-      blockers: input.blockers,
+      body: renderUnblockedNote(input.blockers),
+      lane: 'main',
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
+      unblockNote: true,
+      systemChunk: {
+        label: 'All blocking jobs resolved — unblocked.',
+        chunkKey: chunkKey.unblock(jobId),
+      },
     });
-    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * Drain a just-unblocked job's `main` lane AFTER the funnel flips it `blocked→open`, so the pump coalesces
+   * the whole held backlog (born-blocked provenance note + brief, or the mid-flight "blocked" note, plus any
+   * operator chat, plus the JIT unblock note) into ONE timestamped turn. The undelivered-chat sweep is the
+   * at-least-once backstop if this prompt drain drops.
+   */
+  async pumpUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    await this.pumpThread(jobId, orgId, repoId, 'main');
   }
 
   /**

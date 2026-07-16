@@ -32,6 +32,7 @@ import {
   ThreadEntity,
 } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { DriverStoreService } from '../driver/driver-store.service';
 import { EntityTaskEventSink } from './turn-harness.service';
 import { makeTaskTools } from './task-tools';
@@ -90,6 +91,10 @@ describe('task_* host-bridge tools — per-stage #N CRUD (live Postgres)', () =>
       providers: [
         DriverStoreService,
         { provide: JobDependencyService, useValue: { blockersOf: async () => [] } },
+        {
+          provide: StimulusStoreService,
+          useValue: { pendingBlockedPreview: async () => null },
+        },
       ],
     }).compile();
 
