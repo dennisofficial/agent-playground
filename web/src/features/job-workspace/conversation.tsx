@@ -48,7 +48,7 @@ import type {
   LaneDefaultFooter,
   WireJobActivity,
 } from "@/lib/api/types";
-import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
 import { useComposerStagedAnswers } from "@/lib/api/composer-store";
 import { useAllJobs } from "@/lib/api/inbox";
 
@@ -284,6 +284,7 @@ export function TranscriptView({
             tokens: liveTurn.contextTokens,
             limit: liveTurn.contextLimit,
             model: liveTurn.contextModel,
+            contextBreakdown: liveTurn?.contextBreakdown,
           }
         : null;
     if (!liveContext) return base;
@@ -297,6 +298,7 @@ export function TranscriptView({
     liveTurn?.contextTokens,
     liveTurn?.contextLimit,
     liveTurn?.contextModel,
+    liveTurn?.contextBreakdown,
   ]);
 
   // The durable transcript, folded into one descriptor per top-level row (tool groups, subagent/phase
@@ -1118,6 +1120,7 @@ function laneFooterMeta(
     const meta = (m.meta ?? {}) as LaneMeta & {
       contextTokens?: number | null;
       contextLimit?: number | null;
+      contextBreakdown?: ContextBreakdown | null;
       usage?: {
         model?: string;
         contextModel?: string;
@@ -1145,6 +1148,16 @@ function laneFooterMeta(
         tokens: meta.contextTokens,
         limit: meta.contextLimit,
         model: u.contextModel ?? u.model,
+        contextBreakdown: meta.contextBreakdown,
+      };
+    } else if (!context && meta.contextBreakdown) {
+      // Fallback: this block's scalar occupancy is missing/invalid but it DOES carry a breakdown — let the
+      // ring mount from the breakdown's own totals rather than staying blank.
+      context = {
+        tokens: meta.contextBreakdown.totalTokens,
+        limit: meta.contextBreakdown.maxTokens,
+        model: meta.contextBreakdown.model,
+        contextBreakdown: meta.contextBreakdown,
       };
     }
     if ((model !== undefined || engine !== undefined) && context) break;

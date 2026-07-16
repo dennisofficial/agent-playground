@@ -23,7 +23,7 @@ import {
 } from "@/lib/api/composer-store";
 import type { AttachmentsApi } from "./use-attachments";
 import { AttachmentTray } from "./attachment-tray";
-import { MAIN_LANE, useLiveTurn } from "@/lib/api/job-stream";
+import { MAIN_LANE, useLiveTurn, type ContextBreakdown } from "@/lib/api/job-stream";
 import { useAllJobs } from "@/lib/api/inbox";
 import { ContextMeter } from "./bubbles";
 import { UsageRing } from "./usage-ring";
@@ -54,7 +54,12 @@ export interface ComposerFooter {
   model?: string;
   effort?: string;
   engine?: string;
-  context?: { tokens: number; limit: number; model?: string } | null;
+  context?: {
+    tokens: number;
+    limit: number;
+    model?: string;
+    contextBreakdown?: ContextBreakdown | null;
+  } | null;
 }
 
 /**
@@ -499,6 +504,7 @@ export function Composer({
                   tokens={footer.context.tokens}
                   limit={footer.context.limit}
                   model={footer.context.model}
+                  breakdown={footer.context.contextBreakdown}
                 />
               </>
             ) : null}
