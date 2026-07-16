@@ -65,6 +65,9 @@ export interface ThreadRealtimeRow extends Row {
    *  DriverStoreService.recomputeBuildStageProgress. Null = not applicable / never computed. */
   buildStagesDone: number | null;
   buildStagesTotal: number | null;
+  /** Anchor map for sidebar within-section ordering (backend JobStatus -> first-entry ISO ts),
+   *  maintained by the `jobs_stamp_section_entered` DB trigger. See job.entity.ts. */
+  sectionFirstEntered: Record<string, string> | null;
   /** True only while a "Ship it" is being finalized (PR opening). Shipping re-uses the `running` status,
    *  so this distinguishes "opening PR" from "building threads" and keeps the card in "Ready to Ship". */
   shipping: boolean;
@@ -140,6 +143,8 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
+    sectionFirstEntered:
+      (raw.section_first_entered as Record<string, string> | null) ?? null,
   };
 }
 
