@@ -1500,7 +1500,17 @@ export class WebSurfaceController {
             .map((a) => a.id),
         },
         {
-          author: { id: author.authorId, displayName: author.authorName },
+          // The STIMULUS/turn author stays SYSTEM_SEED_AUTHOR (not the operator) so `isOperatorAuthored()`
+          // in agent-session-manager.service.ts is false for this composed-seed turn and the pre-rendered
+          // body (`<system_notice>…</system_notice>\n<user …>note</user>`) rides through verbatim via the
+          // non-operator seed path instead of being re-wrapped in a single tag-stripped `<user>` chunk (which
+          // would corrupt the framing — see the CASE-3 finding). The real operator identity still renders on
+          // the transcript bubble via `bubbleAuthor`.
+          author: {
+            id: SYSTEM_SEED_AUTHOR.id,
+            displayName: SYSTEM_SEED_AUTHOR.name,
+          },
+          bubbleAuthor: { id: author.authorId, displayName: author.authorName },
           replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );

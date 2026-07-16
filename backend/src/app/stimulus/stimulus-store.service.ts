@@ -281,6 +281,14 @@ export class StimulusStoreService {
      * the FULL composed turn (`input.body`) regardless — only the rendered bubble text differs.
      */
     operatorBubbleText?: string;
+    /**
+     * CASE-3 BUBBLE AUTHOR OVERRIDE — the real operator identity to stamp on the `operatorBubbleText` row
+     * when `input.author` (the STIMULUS/turn author) is deliberately a non-operator scope (e.g.
+     * `SYSTEM_SEED_AUTHOR`, so the composed turn keeps taking the non-operator-authored turn-composition
+     * path — see `isOperatorAuthored` in agent-session-manager.service.ts). Absent = the bubble uses
+     * `input.author`, same as before.
+     */
+    bubbleAuthor?: { id: string; displayName: string };
     /** DELIVERY SEED — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedQuestionId`). */
     seedQuestionId?: string;
     /** DELIVERY SEED (secret variant) — piggybacked into `reply_route` jsonb (see `ChatStimulus.seedSecretId`). */
@@ -335,12 +343,15 @@ export class StimulusStoreService {
       if (input.operatorBubbleText !== undefined) {
         // CASE 3 (note sent WITH answered cards): the note lands as its own durable operator bubble rendering
         // ONLY the note text — NOT a "…+ a message" pill. The full composed turn still rides `inbound.body`.
+        // The bubble's author is `bubbleAuthor` when given (the real operator) — independent of `input.author`,
+        // which may deliberately be a non-operator scope so the turn-composition path stays non-operator-authored.
+        const bubbleAuthor = input.bubbleAuthor ?? input.author;
         bubbleRow = await m.save(
           m.create(TranscriptMessageEntity, {
             job_id: input.jobId,
             thread_id: threadId,
-            author: input.author.displayName,
-            author_id: input.author.id,
+            author: bubbleAuthor.displayName,
+            author_id: bubbleAuthor.id,
             author_bot_id: null,
             text: input.operatorBubbleText,
             card: input.card ?? null,

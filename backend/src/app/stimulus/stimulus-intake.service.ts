@@ -285,6 +285,10 @@ export class StimulusIntake {
     },
     transport: {
       author: { id: string; displayName: string };
+      /** The real operator identity to stamp on the `operatorBubbleText` row — independent of `author`,
+       *  which stays a non-operator scope (`SYSTEM_SEED_AUTHOR`) so the composed turn keeps taking the
+       *  non-operator-authored turn-composition path (see `isOperatorAuthored`). */
+      bubbleAuthor: { id: string; displayName: string };
       replyRoute: { surfaceId: string; jobRef: string };
     },
   ): Promise<void> {
@@ -293,6 +297,7 @@ export class StimulusIntake {
       repoId: input.repoId,
       jobId: input.jobId,
       author: transport.author,
+      bubbleAuthor: transport.bubbleAuthor,
       replyRoute: transport.replyRoute,
       body: input.body,
       operatorBubbleText: input.operatorBubbleText,
