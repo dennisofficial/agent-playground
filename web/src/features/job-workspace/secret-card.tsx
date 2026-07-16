@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Clock, ExternalLink, KeyRound, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, ExternalLink, KeyRound, Loader2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Markdown } from "./markdown";
 import { useProvideSecret } from "@/lib/api/job-queries";
@@ -12,6 +12,7 @@ import {
   useComposerStagedAnswers,
   type StagedAnswer,
 } from "@/lib/api/composer-store";
+import { cardSendState } from "./send-state";
 
 /**
  * A secure secret request the onboarding brain posed via `request_secret`. Renders a MASKED input.
@@ -52,7 +53,7 @@ export function SecretCardView({
     setValue(""); // never keep the plaintext in component state after staging
   }
 
-  if (staged) {
+  if (staged && !staged.submitting) {
     return (
       <div className="anim-pop self-stretch overflow-hidden rounded-lg border border-dashed border-accent-line bg-surface">
         <div className="flex items-center gap-2.5 px-4 py-3">
@@ -90,6 +91,29 @@ export function SecretCardView({
             <p className="text-[12px] text-faint">
               Withdrawn
               {card.withdrawnReason ? ` — ${card.withdrawnReason}` : ""}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (staged?.submitting || cardSendState(card.provided_at != null, card.delivered_at) === "sending") {
+    return (
+      <div
+        className="anim-pop self-stretch overflow-hidden rounded-lg border border-border bg-surface"
+        style={{ opacity: 0.7 }}
+      >
+        <div className="flex items-center gap-2.5 px-4 py-3">
+          <Loader2 size={15} className="animate-spin text-faint" />
+          <div className="min-w-0">
+            <p className="text-[13px] font-medium text-text">
+              <span className="font-mono">{card.name}</span>
+            </p>
+            <p className="text-[12.5px] text-dim">•••• staged</p>
+            <p className="mt-0.5 flex items-center gap-1 text-[10px] font-mono text-faint">
+              <Loader2 size={9} className="animate-spin" />
+              sending…
             </p>
           </div>
         </div>

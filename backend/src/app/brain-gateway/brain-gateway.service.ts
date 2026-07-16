@@ -9,8 +9,11 @@ import type { UnblockBlockerInfo } from '@shared/domain/message';
  *  - `openPrAtShip` — ENQUEUES the open-PR seed onto the ci lane and returns; the PR is latched by the reconciler.
  *  - `seedPreviewOnPostBuild` — ENQUEUES the "Spin up preview" seed onto the post_build lane and returns.
  *  - `seedPostBuildGate` — ENQUEUES the ship-review-gate initial message onto the post_build lane and returns.
- *  - `wakeUnblockedJob` — fire-and-forget notification the driver awaits only to log per-attempt failures;
- *    at-least-once retry is driven by the JobUnblockSweep.
+ *  - `recordUnblockNote` — records the JIT "unblocked by X, Y" note while the job is STILL blocked (so the
+ *    `isJobBlocked` guard holds it with the rest of the backlog); deduped, fire-and-forget.
+ *  - `pumpUnblockedJob` — drains the job's `main` lane AFTER the funnel flips it open, coalescing the whole
+ *    held backlog (born-blocked/mid-flight note + operator chat + unblock note) into ONE turn; at-least-once
+ *    retry is driven by the JobUnblockSweep + the undelivered-chat sweep.
  */
 export interface BrainGatewayHandler {
   openPrAtShip(input: {
@@ -39,12 +42,13 @@ export interface BrainGatewayHandler {
     repoId: string;
     threadId: string;
   }): Promise<void>;
-  wakeUnblockedJob(
+  recordUnblockNote(
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
+    input: { blockers: UnblockBlockerInfo[] },
   ): Promise<void>;
+  pumpUnblockedJob(jobId: string, orgId: string, repoId: string): Promise<void>;
 }
 
 /**
@@ -104,12 +108,20 @@ export class BrainGateway implements BrainGatewayHandler {
     return this.require().seedPostBuildGate(input);
   }
 
-  wakeUnblockedJob(
+  recordUnblockNote(
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
+    input: { blockers: UnblockBlockerInfo[] },
   ): Promise<void> {
-    return this.require().wakeUnblockedJob(jobId, orgId, repoId, input);
+    return this.require().recordUnblockNote(jobId, orgId, repoId, input);
+  }
+
+  pumpUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    return this.require().pumpUnblockedJob(jobId, orgId, repoId);
   }
 }

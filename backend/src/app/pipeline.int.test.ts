@@ -43,6 +43,7 @@ import { CustomNamingStrategy } from '../_lib/database/custom-naming.strategy';
 import { DB_CONNECTION } from './persistence/database.module';
 import { ENTITIES, JobEntity, ThreadEntity } from './persistence/entities';
 import { JobDependencyService } from './job-deps';
+import { StimulusStoreService } from './stimulus/stimulus-store.service';
 import { DriverStoreService } from './driver/driver-store.service';
 import { ThreadDriver } from './driver/thread-driver.service';
 import { BuildShipService } from './driver/build-ship.service';
@@ -221,7 +222,8 @@ function makePr(): GithubPrService {
 function makeBrainGatewaySpy(): BrainGateway {
   return {
     openPrAtShip: vi.fn(async () => undefined),
-    wakeUnblockedJob: vi.fn(async () => undefined),
+    recordUnblockNote: vi.fn(async () => undefined),
+    pumpUnblockedJob: vi.fn(async () => undefined),
     seedPostBuildGate: vi.fn(async () => undefined),
   } as unknown as BrainGateway;
 }
@@ -245,6 +247,10 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
         {
           provide: JobDependencyService,
           useValue: { blockersOf: async () => [] },
+        },
+        {
+          provide: StimulusStoreService,
+          useValue: { pendingBlockedPreview: async () => null },
         },
       ],
     }).compile();
@@ -779,7 +785,8 @@ describe('pipeline (live Postgres) — thread-group-driven drive over a stubbed 
 
       // ── 2c: the headless driver bounced NOTHING to the brain on the halt ─────────────────────────────
       expect(brainGateway.openPrAtShip).not.toHaveBeenCalled();
-      expect(brainGateway.wakeUnblockedJob).not.toHaveBeenCalled();
+      expect(brainGateway.recordUnblockNote).not.toHaveBeenCalled();
+      expect(brainGateway.pumpUnblockedJob).not.toHaveBeenCalled();
     },
     60_000,
   );

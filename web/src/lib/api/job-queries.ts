@@ -345,13 +345,20 @@ export function useMessage(ref: JobRef) {
       if (ctx?.prev) qc.setQueryData(qk.threadMessages(ref), ctx.prev);
     },
     onSuccess: (data) => {
-      // Only drop the staged items the backend actually applied — a per-item `stale`/`withdrawn`/`noop`/
-      // `notfound` result means that answer never landed, so keep it staged rather than silently discarding it.
+      // Don't drop applied items here — the query cache hasn't refetched yet (that happens in
+      // `onSettled` below), so the card still reads as unanswered for a brief window. Removing the
+      // staged entry now would drop it out of both the "staged" and "sending" card states and briefly
+      // fall back to the raw ask/upload/provide UI. Instead, leave applied items staged with
+      // `submitting: true` (hidden from the tray, rendered as "sending" by the card itself) and let
+      // `pruneStagedAnswers` remove them once the refetched messages actually confirm the answer.
+      //
+      // Every item the backend did NOT apply (a `stale`/`withdrawn`/`noop`/`notfound` result) reverts
+      // `submitting` to false so it doesn't get stuck showing "sending…" forever.
       const appliedIds = new Set(
         data.results.filter((r) => r.status === "applied").map((r) => r.id),
       );
       composerStore.setStagedAnswers(ref, (prev) =>
-        prev.filter((a) => !appliedIds.has(a.cardId)),
+        prev.map((a) => (appliedIds.has(a.cardId) ? a : { ...a, submitting: false })),
       );
     },
     onSettled: () => {

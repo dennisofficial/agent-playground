@@ -22,7 +22,8 @@ export type ChunkKind =
   | 'system_notice'
   | 'system_reminder'
   | 'user'
-  | 'untrusted';
+  | 'untrusted'
+  | 'passthrough';
 
 /** One framed piece of a turn. `body` is the raw content; `attrs` become XML attributes. */
 export interface TurnChunk {
@@ -46,7 +47,8 @@ const KIND_ORDER: Record<ChunkKind, number> = {
   system_notice: 0,
   system_reminder: 1,
   untrusted: 2,
-  user: 3,
+  passthrough: 3,
+  user: 4,
 };
 
 /** Human/external kinds whose body is untrusted for tag-forgery purposes (a payload can't "break out"). */
@@ -136,10 +138,13 @@ function renderAttrs(chunk: TurnChunk): string {
   if (chunk.kind === 'user') {
     pairs.push(['name', a.name], ['role', a.role], ['at', a.at]);
   } else if (chunk.kind === 'untrusted') {
-    pairs.push(['source', a.source], ['severity', a.severity]);
+    pairs.push(['source', a.source], ['severity', a.severity], ['at', a.at]);
   } else if (chunk.kind === 'system_reminder') {
     // The reminder sub-kind surfaces as `source="awareness"` etc. in the tag.
     pairs.push(['source', a.reminderKind]);
+  } else if (chunk.kind === 'system_notice') {
+    // No dedicated attrs today; `at` rides along when a caller sets it (harmless when absent).
+    pairs.push(['at', a.at]);
   }
   const rendered = pairs
     .filter((p): p is [string, string] => p[1] != null && p[1] !== '')
@@ -148,8 +153,19 @@ function renderAttrs(chunk: TurnChunk): string {
   return rendered;
 }
 
-/** Render ONE chunk to its XML tag. `user`/`untrusted` bodies are tag-stripped first. */
+/**
+ * Render ONE chunk to its XML tag. `user`/`untrusted` bodies are tag-stripped first.
+ *
+ * `passthrough` is the one exception: its `body` is ALREADY the final, host-composed engine string
+ * (pre-framed, e.g. a system seed) — emitting it verbatim (no enclosing tag) avoids double-wrapping.
+ * An optional `[<name> · <at>]` header line precedes it when either attr is present.
+ */
 export function renderChunk(chunk: TurnChunk): string {
+  if (chunk.kind === 'passthrough') {
+    const a = chunk.attrs ?? {};
+    const header = a.name || a.at ? `[${a.name ?? ''} · ${a.at ?? ''}]\n` : '';
+    return `${header}${chunk.body}`;
+  }
   const body = STRIP_KINDS.has(chunk.kind) ? stripTags(chunk.body) : chunk.body;
   return `<${chunk.kind}${renderAttrs(chunk)}>${body}</${chunk.kind}>`;
 }

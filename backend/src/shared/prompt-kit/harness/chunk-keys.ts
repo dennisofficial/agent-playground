@@ -79,6 +79,16 @@ function unblock(jobId: string): string {
   return `seed:unblock:${jobId}`;
 }
 
+/** The born-blocked provenance note for a job (the pill on the creation-time "created blocked" bubble). */
+function bornBlockedSeed(jobId: string): string {
+  return `seed:born-blocked:${jobId}`;
+}
+
+/** The mid-flight "blocked" note for a job. */
+function blockNote(jobId: string): string {
+  return `seed:blocked:${jobId}`;
+}
+
 /** The single live-preview seed for a job. */
 function preview(jobId: string): string {
   return `seed:preview:${jobId}`;
@@ -158,6 +168,8 @@ export const chunkKey = {
   amendApproved,
   requestChanges,
   unblock,
+  bornBlockedSeed,
+  blockNote,
   preview,
   gate,
   planApproved,

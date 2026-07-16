@@ -74,6 +74,7 @@ import {
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
 import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { renderTurn, type TurnChunk } from '@shared/stimulus/chunk-vocabulary';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
@@ -760,6 +761,11 @@ export class WebSurfaceController {
     // per (job, user). From this (non-@Global) module's own providers. @Optional (trailing), same reason
     // as `exposure`/`jit` above — keeps the positional-arg unit tests compiling without a trailing arg.
     @Optional() private readonly draftService?: ComposerDraftService,
+    // The blocked-overlay preview source — the queued born-blocked brief / mid-flight "blocked" note that
+    // replaced the `jobs.blocked_seed_message` column (batched via `pendingLockedPreviews` to avoid N+1).
+    // From the (non-@Global) StimulusModule already imported for `intake`. @Optional (trailing), same reason
+    // as `exposure`/`jit` above — keeps the positional-arg unit tests compiling.
+    @Optional() private readonly stimulusStore?: StimulusStoreService,
   ) {}
 
   /** `GET /web/ping` — public liveness probe. */
@@ -792,6 +798,9 @@ export class WebSurfaceController {
       .filter((t) => t.status === 'blocked')
       .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
+    const blockedPreviews =
+      (await this.stimulusStore?.pendingLockedPreviews(blockedIds)) ??
+      new Map<string, string | null>();
     const orgById = new Map(orgs.map((o) => [o.id, o]));
     const repoName = new Map(repos.map((r) => [`${r.org_id}:${r.id}`, r.name]));
     return threads.map((t) => {
@@ -811,8 +820,7 @@ export class WebSurfaceController {
         shipping: t.status === 'running' && t.ship_review_approved_at != null,
         createdBy: t.created_by ?? null,
         blockedBy: blockersByJob.get(t.id) ?? [],
-        blockedSeedMessage:
-          t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+        blockedSeedMessage: blockedPreviews.get(t.id) ?? null,
         needsYou: deriveNeedsYou({
           status: t.status,
           activity: t.activity,
@@ -894,6 +902,9 @@ export class WebSurfaceController {
       .filter((t) => t.status === 'blocked')
       .map((t) => t.id);
     const blockersByJob = await this.jobDeps.blockersOfManyBlocked(blockedIds);
+    const blockedPreviews =
+      (await this.stimulusStore?.pendingLockedPreviews(blockedIds)) ??
+      new Map<string, string | null>();
     return rows.map((t) => ({
       id: t.id,
       title: t.title,
@@ -904,8 +915,7 @@ export class WebSurfaceController {
       halted: t.halted,
       createdBy: t.created_by ?? null,
       blockedBy: blockersByJob.get(t.id) ?? [],
-      blockedSeedMessage:
-        t.status === 'blocked' ? (t.blocked_seed_message ?? null) : null,
+      blockedSeedMessage: blockedPreviews.get(t.id) ?? null,
       needsYou: deriveNeedsYou({
         status: t.status,
         activity: t.activity,
@@ -1074,9 +1084,10 @@ export class WebSurfaceController {
           : {}),
       });
     }
-    // anyBlocked: the row is parked 'blocked' with bodyText stored as blocked_seed_message — the wake
-    // funnel (onBlockerResolved → wakeUnblockedJob → startFollowUpJob) replays it once every blocker
-    // resolves, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
+    // anyBlocked: the row is parked 'blocked' and `addDependency` queued bodyText as a held `main`-lane
+    // born-blocked seed (provenance note + brief). Once every blocker resolves the wake funnel
+    // (onBlockerResolved → recordUnblockNote → pumpUnblockedJob) drains the held backlog as one coalesced
+    // turn, provisioning the sandbox/branch fresh from origin. Do NOT inject the first message here.
 
     // Fire-and-forget: generate a concise title from the first message and push it live (see service).
     void this.threadTitle
@@ -1152,6 +1163,11 @@ export class WebSurfaceController {
           }
         : {}),
       postedAt: m.created_at,
+      // Operator-bubble send state: `stimulusId` links this bubble to its delivery-ledger row and
+      // `deliveredAt` is null while sending, set once the SDK accepted the turn (both null for non-operator
+      // rows). The client renders a "sending…" affordance until `deliveredAt` lands.
+      stimulusId: m.stimulus_id,
+      deliveredAt: m.delivered_at,
     }));
   }
 
@@ -1431,8 +1447,9 @@ export class WebSurfaceController {
     }
 
     // CASE 3 — delivered cards AND an operator message in one submit: compose ONE turn where each card's
-    // notice frames as a `<system_notice>` chunk and the operator's message is the trailing `<user>` chunk,
-    // then deliver it through the `Message`-typed intake seam as a single system seed.
+    // notice frames as a `<system_notice>` chunk and the operator's message is the trailing `<user>` chunk
+    // (the FULL turn the brain reads), while the operator's note ALSO lands as its own durable operator
+    // bubble in the transcript — no "…+ a message" summary pill.
     if (applied.length > 0 && userItem) {
       const operatorText = userItem.text ?? '';
       const attach = await resolveAttach();
@@ -1457,13 +1474,16 @@ export class WebSurfaceController {
           repoId: thread.repo_id,
           jobId,
           body: renderTurn(chunks),
-          seedRow: {
-            label: `The operator sent ${applied.length} answer(s) + a message`,
-            chunkKey: chunkKey.batch(
-              jobId,
-              applied.map((a) => a.id),
-            ),
-          },
+          operatorBubbleText: operatorText,
+          ...(attach
+            ? {
+                card: {
+                  type: 'attachments_card',
+                  items: attach.items,
+                  ...(operatorText ? { message: operatorText } : {}),
+                },
+              }
+            : {}),
           deliveredQuestionIds: applied
             .filter((a) => a.kind === 'question')
             .map((a) => a.id),
@@ -1475,10 +1495,17 @@ export class WebSurfaceController {
             .map((a) => a.id),
         },
         {
+          // The STIMULUS/turn author stays SYSTEM_SEED_AUTHOR (not the operator) so `isOperatorAuthored()`
+          // in agent-session-manager.service.ts is false for this composed-seed turn and the pre-rendered
+          // body (`<system_notice>…</system_notice>\n<user …>note</user>`) rides through verbatim via the
+          // non-operator seed path instead of being re-wrapped in a single tag-stripped `<user>` chunk (which
+          // would corrupt the framing — see the CASE-3 finding). The real operator identity still renders on
+          // the transcript bubble via `bubbleAuthor`.
           author: {
             id: SYSTEM_SEED_AUTHOR.id,
             displayName: SYSTEM_SEED_AUTHOR.name,
           },
+          bubbleAuthor: { id: author.authorId, displayName: author.authorName },
           replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
@@ -1819,6 +1846,16 @@ export class WebSurfaceController {
         }),
       ),
     );
+    // A job's message log changed (send persisted, or a delivery landed) → the client refetches `/messages`
+    // so a "sending…" bubble flips to delivered in place without a full reload.
+    const messagesChanged$ = this.surface.messagesChanged$.pipe(
+      filter((m) => m.channel === repoId),
+      map(
+        (m): MessageEvent => ({
+          data: { type: 'messages_changed', channel: repoId, jobId: m.jobId },
+        }),
+      ),
+    );
     // Claude-subscription usage ring updates for this org — a harvested-window change during a turn or an
     // account switch (see `OauthUsageService.invalidate`).
     const usage$ = this.usageBus.stream$.pipe(
@@ -1829,7 +1866,7 @@ export class WebSurfaceController {
         }),
       ),
     );
-    return merge(snapshot$, live$, messages$, meta$, usage$);
+    return merge(snapshot$, live$, messages$, meta$, messagesChanged$, usage$);
   }
 
   /** `POST …/threads/:jobId/approve` — submit a plan verdict. */
@@ -2330,7 +2367,10 @@ export class WebSurfaceController {
       throw new BadRequestException('no such secret request on this thread');
     }
     const seedTransport = {
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
     };
 

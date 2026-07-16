@@ -84,6 +84,31 @@ describe('chunk-vocabulary', () => {
         '<system_notice>use <b> tag</system_notice>',
       );
     });
+
+    it('renders a `passthrough` body verbatim, with no enclosing tag', () => {
+      expect(
+        renderChunk({
+          kind: 'passthrough',
+          body: '<system_notice>already framed</system_notice>',
+        }),
+      ).toBe('<system_notice>already framed</system_notice>');
+    });
+
+    it('renders a `passthrough` header when name/at attrs are present, then the body verbatim', () => {
+      expect(
+        renderChunk({
+          kind: 'passthrough',
+          body: 'raw prose seed',
+          attrs: { name: 'System', at: '2026-07-04T00:00:00.000Z' },
+        }),
+      ).toBe('[System · 2026-07-04T00:00:00.000Z]\nraw prose seed');
+    });
+
+    it('omits the `passthrough` header entirely when neither name nor at is set', () => {
+      expect(
+        renderChunk({ kind: 'passthrough', body: 'raw prose seed' }),
+      ).toBe('raw prose seed');
+    });
   });
 
   describe('renderTurn', () => {
@@ -124,6 +149,16 @@ describe('chunk-vocabulary', () => {
 
     it('returns an empty string for no chunks', () => {
       expect(renderTurn([])).toBe('');
+    });
+
+    it('orders `passthrough` before `user` (a coalesced seed + operator turn)', () => {
+      const chunks: TurnChunk[] = [
+        { kind: 'user', body: 'my reply', attrs: { name: 'Dennis' } },
+        { kind: 'passthrough', body: '<system_notice>answered</system_notice>' },
+      ];
+      expect(renderTurn(chunks)).toBe(
+        '<system_notice>answered</system_notice>\n<user name="Dennis">my reply</user>',
+      );
     });
   });
 
