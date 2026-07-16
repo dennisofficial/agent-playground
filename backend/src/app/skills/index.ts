@@ -7,6 +7,11 @@ export type {
 } from './skill-installer.service';
 export { SkillResolver } from './skill-resolver.service';
 export {
+  SKILL_NUDGE_SELECTOR,
+  AnthropicSkillNudgeSelector,
+} from './skill-nudge-llm';
+export type { SkillNudgeSelector } from './skill-nudge-llm';
+export {
   orgSkillsRootHost,
   skillDirHost,
   skillRelativeDir,
