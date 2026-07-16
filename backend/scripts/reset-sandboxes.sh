@@ -2,12 +2,10 @@
 set -euo pipefail
 # =============================================================================
 # Fresh-slate reset for the dev/validation loop (pre-deploy; DESTROYS runtime data — not for production).
-# Removes managed sandbox containers + their inner-docker volumes, and (optionally) the daemon-build /
-# pnpm-store volumes and the dev database. Run this before an end-to-end validation so a leaked volume
-# or stale DB can't mask a regression.
+# Removes managed sandbox containers + their inner-docker volumes, and (optionally) the dev database. Run
+# this before an end-to-end validation so a leaked volume or stale DB can't mask a regression.
 #
 #   bash backend/scripts/reset-sandboxes.sh                  # sandboxes + their volumes
-#   WIPE_BUILD_VOLUMES=1 bash backend/scripts/reset-sandboxes.sh   # also nuke daemon-build + pnpm-store
 #   RESET_DB=1 bash backend/scripts/reset-sandboxes.sh             # also drop/recreate the dev DB
 # =============================================================================
 
@@ -18,13 +16,6 @@ docker ps -aq --filter "label=com.agent.managed=1" | xargs -r docker rm -f
 
 log "removing managed sandbox volumes…"
 docker volume ls -q --filter "label=com.agent.managed=1" | xargs -r docker volume rm -f
-
-if [ "${WIPE_BUILD_VOLUMES:-0}" = "1" ]; then
-  log "removing daemon-build + pnpm-store volumes (will force a full pnpm install next build)…"
-  docker volume rm -f \
-    "${WORKSPACE_DAEMON_BUILD_VOLUME:-agent-daemon-build}" \
-    "${WORKSPACE_PNPM_STORE_VOLUME:-agent-pnpm-store}" 2>/dev/null || true
-fi
 
 if [ "${RESET_DB:-0}" = "1" ]; then
   PG_CONTAINER="${PG_CONTAINER:-atlas-postgres}"

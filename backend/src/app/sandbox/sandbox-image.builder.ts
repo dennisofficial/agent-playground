@@ -9,7 +9,6 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  bundleEngine,
   bundleMcpBridge,
   bundleMcpHub,
   ensureEngineApp,
@@ -25,9 +24,10 @@ const CONTEXT_HASH_LABEL = 'atlas.context-hash';
 
 /**
  * The STATIC files whose content defines the baked image; the image is rebuilt iff their combined hash
- * changes. `engine-entrypoint.mjs` is deliberately EXCLUDED: it's re-bundled on every boot and
- * bind-mounted live into each sandbox, so folding its churn into the hash would rebuild the image (and,
- * via the imageId fingerprint, recreate every sandbox container) on every restart for no real change.
+ * changes. The engine app bundle (`engine-app.js`/`.map`) is deliberately EXCLUDED: it's refreshed on every
+ * boot via `ensureEngineApp()` and bind-mounted live into each sandbox, so folding its churn into the hash
+ * would rebuild the image (and, via the imageId fingerprint, recreate every sandbox container) on every
+ * restart for no real change.
  */
 const CONTEXT_FILES = [
   'Dockerfile',
@@ -45,11 +45,12 @@ const CONTEXT_FILES = [
  * The image tag comes from `SANDBOX_IMAGE` (else a sane default). The build context is the fixed `backend/sandbox/` dir
  * (Dockerfile + sandbox-init.sh + shell-init.sh + the engine bundle written there at boot).
  *
- * On bootstrap it also REBUNDLES the engine entrypoint (`bundleEngine`) so the API itself keeps the
- * engine current — a dev watch-restart or a prod deploy-restart refreshes it with no manual bundle step
- * or SSH. The bundle is bind-mounted live into every sandbox (see `SandboxManager`), so the refresh
- * reaches running threads on their next turn. Best-effort: if bundling can't run (e.g. esbuild/source
- * absent), it logs and falls back to the existing bundle / the baked image.
+ * On bootstrap it also refreshes the engine app bundle (`ensureEngineApp`) and the MCP subprocess bundles
+ * (`bundleMcpBridge`/`bundleMcpHub`) so the API itself keeps the sandbox tooling current — a dev
+ * watch-restart or a prod deploy-restart refreshes them with no manual bundle step or SSH. Each bundle is
+ * bind-mounted live into every sandbox (see `SandboxManager`), so the refresh reaches running threads on
+ * their next turn. Best-effort: if a refresh can't run (e.g. esbuild/source absent), it logs and falls back
+ * to the existing bundle / the baked image.
  *
  * NOTE: the build context is the fixed `backend/sandbox/` dir (see `sandboxContextDir`), NOT under
  * `dist`/`src` — so it needs no nest-cli asset copy and is identical at build time and runtime.
@@ -72,14 +73,6 @@ export class SandboxImageBuilder implements OnApplicationBootstrap {
    * duplicate build, no regression vs. today. Never throws either the bundle or the warm-up.
    */
   async onApplicationBootstrap(): Promise<void> {
-    try {
-      const out = await bundleEngine();
-      this.logger.log(`refreshed engine bundle → ${out}`);
-    } catch (err) {
-      this.logger.warn(
-        `engine rebundle skipped (using existing bundle): ${err}`,
-      );
-    }
     try {
       const { js } = ensureEngineApp();
       this.logger.log(`engine app bundle present → ${js}`);

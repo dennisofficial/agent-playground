@@ -1,6 +1,6 @@
 /**
  * The SINGLE canonical source of Zod schemas for every Atlas host-bridge tool, shared by both engines:
- * the Claude in-process bridge (`engine-entrypoint.ts` `makeProxyTool`) registers `TOOL_SHAPES[name]`
+ * the Claude in-process bridge (`engine/turn-runner.service.ts` `makeProxyTool`) registers `TOOL_SHAPES[name]`
  * directly, and the Codex stdio bridge (`mcp-bridge-server.ts`) advertises `toolJsonSchema(name)`.
  *
  * The Claude SDK wraps each shape in a STRICT object that STRIPS unknown keys and REJECTS wrong types, so

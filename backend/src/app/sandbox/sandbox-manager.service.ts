@@ -33,7 +33,6 @@ import { managedSkillsRootHost } from '../skills/system-skill-store-paths';
 import {
   engineAppBundlePath,
   engineAppMapPath,
-  engineBundlePath,
   mcpBridgeBundlePath,
   mcpHubBundlePath,
 } from './bundle-engine';
@@ -76,10 +75,8 @@ import { previewId, routePrefix } from '../exposure/exposure-naming';
 
 const execFileAsync = promisify(execFile);
 
-/** The in-container path of the engine entrypoint baked by the Dockerfile — bind-mounted live over it. */
-const CONTAINER_ENGINE_BUNDLE = '/usr/local/lib/atlas/engine-entrypoint.mjs';
-/** The in-container path of the new webpacked engine app (+ its external sourcemap) baked by the
- *  Dockerfile — bind-mounted live over it, same hot-reload contract as the old engine bundle above. */
+/** The in-container path of the webpacked engine app (+ its external sourcemap) baked by the Dockerfile —
+ *  bind-mounted live over it, same hot-reload contract as the MCP bundles below. */
 const CONTAINER_ENGINE_APP = '/usr/local/lib/atlas/engine-app.js';
 const CONTAINER_ENGINE_APP_MAP = '/usr/local/lib/atlas/engine-app.js.map';
 /** The in-container path of the Codex MCP tool-bridge server (spawned by codex via config.toml). Baked by
@@ -421,13 +418,9 @@ export class SandboxManager implements SandboxProvider {
         if (rebased) binds.push(`${rebased}:${CONTAINER_WORKTREE}/${sub}/.git`);
       }
     }
-    // HOT-RELOAD: bind-mount the host engine bundle (read-only) over the baked-in one, so an engine
-    // update (the API rebundles on boot) is picked up by the next `docker exec` in this container —
-    // no recreate, no image rebuild. Falls back to the baked engine if the host bundle is absent.
-    const bundle = engineBundlePath();
-    if (existsSync(bundle)) {
-      binds.push(`${bundle}:${CONTAINER_ENGINE_BUNDLE}:ro`);
-    }
+    // HOT-RELOAD: bind-mount the host engine app bundle (read-only) over the baked-in one, so an engine
+    // update (the API refreshes it on boot) is picked up by the next `docker exec` in this container —
+    // no recreate, no image rebuild. Falls back to the baked engine app if the host bundle is absent.
     const engineApp = engineAppBundlePath();
     if (existsSync(engineApp)) {
       binds.push(`${engineApp}:${CONTAINER_ENGINE_APP}:ro`);

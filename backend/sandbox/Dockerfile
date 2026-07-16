@@ -276,22 +276,20 @@ RUN mkdir -p /usr/local/lib/atlas \
   && cd /usr/local/lib/atlas \
   && printf '{"name":"atlas-engine-runtime","private":true}\n' > package.json \
   && npm install "@anthropic-ai/claude-agent-sdk@${CLAUDE_SDK_VERSION}" "@openai/codex-sdk@${CODEX_SDK_VERSION}"
-COPY engine-entrypoint.mjs /usr/local/lib/atlas/engine-entrypoint.mjs
-# The new webpacked engine app is baked as a build-only artifact for now (not yet exec'd — turn execution
-# over Redis Streams lands in a later thread; see atlas-engine-turn below, still pointed at the old,
-# fully-functional esbuild entrypoint until that thread's validation gate passes).
+# Baked as a fallback; the host bind-mounts the live re-bundled copy over it (same hot-reload contract as
+# mcp-bridge-server.mjs / mcp-hub-server.mjs below).
 COPY engine-app.js /usr/local/lib/atlas/engine-app.js
 COPY engine-app.js.map /usr/local/lib/atlas/engine-app.js.map
 # The Codex MCP tool-bridge server (spawned by codex via config.toml). Baked as a fallback; the host
-# bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.
+# bind-mounts the live re-bundled copy over it, same hot-reload contract as engine-app.js.
 COPY mcp-bridge-server.mjs /usr/local/lib/atlas/mcp-bridge-server.mjs
 # The persistent MCP hub (launched by sandbox-init.sh). Baked as a fallback; the host bind-mounts the live
-# re-bundled copy over it, same hot-reload contract as engine-entrypoint.mjs.
+# re-bundled copy over it, same hot-reload contract as engine-app.js.
 COPY mcp-hub-server.mjs /usr/local/lib/atlas/mcp-hub-server.mjs
 RUN node --check /usr/local/lib/atlas/mcp-hub-server.mjs
 # Pin the engine to THIS image's Node 22 by absolute path — fnm rewrites PATH for the agent's build
 # shells, so calling `node` unqualified here would risk launching the engine under a repo-pinned Node.
-RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node /usr/local/lib/atlas/engine-entrypoint.mjs "$@"\n' \
+RUN printf '#!/usr/bin/env bash\nexec /usr/local/bin/node --enable-source-maps /usr/local/lib/atlas/engine-app.js "$@"\n' \
       > /usr/local/bin/atlas-engine-turn \
   && chmod +x /usr/local/bin/atlas-engine-turn
 
