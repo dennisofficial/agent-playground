@@ -74,6 +74,7 @@ import {
 import { LeaderElectionService } from '../cluster';
 import { StimulusIntake, renderTurn, type TurnChunk } from '../stimulus';
 import type { Message } from '../domain';
+import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
   closeTailFd,
   nextTailFrame,
@@ -1476,7 +1477,10 @@ export class WebSurfaceController {
           .map((a) => a.id),
       };
       await this.intake.intakeChat(seedMessage, {
-        author: { id: author.authorId, displayName: author.authorName },
+        author: {
+          id: SYSTEM_SEED_AUTHOR.id,
+          displayName: SYSTEM_SEED_AUTHOR.name,
+        },
         replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
       });
       return { ok: true, ts: new Date().toISOString(), results };
