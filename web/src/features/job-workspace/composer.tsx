@@ -268,14 +268,19 @@ export function Composer({
     // composer draft.
     const reEnqueueOnNetworkError = (
       e: Error,
-      fields: { text: string; comments: ReviewComment[]; attachments: PendingAttachment[] },
-    ) => {
-      if (e instanceof ThreadApiError && e.status !== 503) return;
+      fields: {
+        text: string;
+        comments: ReviewComment[];
+        attachments: PendingAttachment[];
+      },
+    ): boolean => {
+      if (e instanceof ThreadApiError && e.status !== 503) return false;
       composerStore.enqueue(jobRef, {
         id: crypto.randomUUID(),
         createdAt: Date.now(),
         ...fields,
       });
+      return true;
     };
 
     if (comments.length > 0) {
@@ -291,8 +296,16 @@ export function Composer({
           threadId,
         },
         {
-          onError: (e) =>
-            reEnqueueOnNetworkError(e, { text: trimmed, comments, attachments: [] }),
+          onError: (e) => {
+            const queued = reEnqueueOnNetworkError(e, {
+              text: trimmed,
+              comments,
+              attachments: [],
+            });
+            if (queued) return;
+            composerStore.setText(jobRef, trimmed);
+            composerStore.setComments(jobRef, () => comments);
+          },
         },
       );
       clearComments();
@@ -302,26 +315,51 @@ export function Composer({
 
     const hasText = trimmed.length > 0;
     const hasAttachments = attachments.length > 0;
-    const hasStaged = stagedAnswers.length > 0;
+    // Exclude entries still `submitting` from a prior send that hasn't been confirmed by the refetch yet
+    // (pruneStagedAnswers only drops them once threadMessages reconfirms the card) — otherwise a second
+    // Send before that round-trip lands would resend their already-submitted payload.
+    const unsubmittedStagedAnswers = stagedAnswers.filter((a) => !a.submitting);
+    const hasStaged = unsubmittedStagedAnswers.length > 0;
     if (hasStaged || hasText || hasAttachments) {
-      // No eager staged-tray/text clear here — `useMessage`'s `onSuccess` prunes only the staged items the
-      // backend actually applied, and the typed note is cleared below only on success, so a failed send
-      // leaves both the tray and the note intact for retry.
+      // Eager clear: the composer text and staged tray clear the instant Send is hit, so the lifecycle
+      // renders through a server-driven "sending" state (the message/card themselves) rather than sitting
+      // in the composer until the mutation settles. A failed send restores both below.
+      const stagedSnapshot = unsubmittedStagedAnswers;
+      const stagedIds = stagedSnapshot.map((a) => a.cardId);
       const items: MessageInput[] = [
-        ...stagedAnswers.map(toMessageItem),
+        ...stagedSnapshot.map(toMessageItem),
         ...(hasText || hasAttachments
-          ? [{ type: "user" as const, text: trimmed, ...(lane ? { lane } : {}) }]
+          ? [
+              {
+                type: "user" as const,
+                text: trimmed,
+                ...(lane ? { lane } : {}),
+              },
+            ]
           : []),
       ];
+      composerStore.setText(jobRef, "");
+      if (hasStaged) composerStore.markSubmitting(jobRef, stagedIds, true);
       message.mutate(
         { messages: items, attachments, threadId },
         {
-          // Only the note text is deferred to success — a failed send (e.g. a 4xx the network-error
-          // fallback below doesn't re-queue) must leave the typed note intact for retry, same as the old
-          // `useSubmitStagedAnswers`'s onSuccess-only clear.
-          onSuccess: () => composerStore.setText(jobRef, ""),
-          onError: (e) =>
-            reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
+          onError: (e) => {
+            const queued = hasStaged
+              ? false
+              : reEnqueueOnNetworkError(e, {
+                  text: trimmed,
+                  comments: [],
+                  attachments,
+                });
+            if (!queued) {
+              composerStore.setText(jobRef, trimmed);
+              if (hasAttachments) {
+                composerStore.setAttachments(jobRef, () => attachments);
+              }
+            }
+            if (hasStaged)
+              composerStore.markSubmitting(jobRef, stagedIds, false);
+          },
         },
       );
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
@@ -384,67 +422,72 @@ export function Composer({
             <div className="mb-2 text-[11px] text-red">{attachError}</div>
           ) : null}
           {isSubagent ? null : (
-          <div className={`flex items-start gap-2.5${inert ? " opacity-60" : ""}`}>
-            <textarea
-              ref={textareaRef}
-              value={inert ? "" : text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={onPaste}
-              rows={1}
-              disabled={inert}
-              placeholder={
-                blocked
-                  ? "This job is blocked — unblock it above to continue"
-                  : readOnly
-                    ? "Read-only — steer Atlas from the Conversation"
-                    : comments.length > 0
-                      ? "Add a message with your comments (optional)…"
-                      : placeholder
-              }
-              className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
-            />
-            {showStop ? (
-              <button
-                type="button"
-                onClick={() => stop.mutate()}
-                disabled={stop.isPending}
-                className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
-                aria-label="Stop"
-                title="Stop Atlas"
-              >
-                <Square size={12} strokeWidth={2.6} fill="currentColor" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={send}
-                disabled={
-                  inert ||
-                  (!text.trim() &&
-                    comments.length === 0 &&
-                    attachments.length === 0 &&
-                    stagedAnswers.length === 0) ||
-                  message.isPending ||
-                  sendReviewComments.isPending
-                }
-                className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
-                aria-label="Send"
-                title={
+            <div
+              className={`flex items-start gap-2.5${inert ? " opacity-60" : ""}`}
+            >
+              <textarea
+                ref={textareaRef}
+                value={inert ? "" : text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={onKeyDown}
+                onPaste={onPaste}
+                rows={1}
+                disabled={inert}
+                placeholder={
                   blocked
-                    ? "This job is blocked"
+                    ? "This job is blocked — unblock it above to continue"
                     : readOnly
-                      ? "Read-only lane"
-                      : undefined
+                      ? "Read-only — steer Atlas from the Conversation"
+                      : comments.length > 0
+                        ? "Add a message with your comments (optional)…"
+                        : placeholder
                 }
-              >
-                <ArrowUp size={15} strokeWidth={2.4} />
-              </button>
-            )}
-          </div>
+                className="max-h-44 min-h-[24px] flex-1 resize-none overflow-y-auto bg-transparent pt-0.5 text-[13.5px] leading-relaxed text-text outline-none placeholder:text-faint disabled:cursor-default"
+              />
+              {showStop ? (
+                <button
+                  type="button"
+                  onClick={() => stop.mutate()}
+                  disabled={stop.isPending}
+                  className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                  aria-label="Stop"
+                  title="Stop Atlas"
+                >
+                  <Square size={12} strokeWidth={2.6} fill="currentColor" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={send}
+                  disabled={
+                    inert ||
+                    (!text.trim() &&
+                      comments.length === 0 &&
+                      attachments.length === 0 &&
+                      stagedAnswers.filter((a) => !a.submitting).length ===
+                        0) ||
+                    message.isPending ||
+                    sendReviewComments.isPending
+                  }
+                  className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-accent text-white transition hover:brightness-105 disabled:opacity-45"
+                  aria-label="Send"
+                  title={
+                    blocked
+                      ? "This job is blocked"
+                      : readOnly
+                        ? "Read-only lane"
+                        : undefined
+                  }
+                >
+                  <ArrowUp size={15} strokeWidth={2.4} />
+                </button>
+              )}
+            </div>
           )}
 
-          <div className={`${isSubagent ? "" : "mt-2.5 "}flex items-center gap-2`}>
+          <div
+            className={`${isSubagent ? "" : "mt-2.5 "}flex items-center gap-2`}
+          >
             {isSubagent ? (
               // Subagent read-only pane: a static label where the Plan pill + ＋ normally sit.
               <span className="font-mono text-[11px] text-faint">
@@ -479,12 +522,17 @@ export function Composer({
               </>
             )}
             {showOffline ? (
-              <span className="font-mono text-[11px]" style={{ color: "var(--red)" }}>
+              <span
+                className="font-mono text-[11px]"
+                style={{ color: "var(--red)" }}
+              >
                 reconnecting…
               </span>
             ) : null}
             <div className="flex-1" />
-            {!isSubagent && jobRef.orgId ? <UsageRing orgId={jobRef.orgId} /> : null}
+            {!isSubagent && jobRef.orgId ? (
+              <UsageRing orgId={jobRef.orgId} />
+            ) : null}
             {/* Live: the model · effort the lane's latest turn ran on (threads `turn_meta.usage`). */}
             {modelLabel ? (
               <span className="font-mono text-[11px] text-dim">
