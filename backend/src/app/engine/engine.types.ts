@@ -345,7 +345,7 @@ export interface RunEngineArgs {
    * `SkillResolver`'s doc). The per-turn skills-compose step in `engine-core.ts` idempotently
    * wipes+rewrites `<CLAUDE_CONFIG_DIR>/skills/` with a write-through symlink per skill (joining `dirPath`
    * against `CONTAINER_SKILLS_STORE`, or `CONTAINER_SKILLS_MANAGED` when `managed`), which the SDK loads
-   * NATIVELY (`settingSources: ['user']` + `skills: 'all'`) — no synthetic plugin. Empty/omitted → no
+   * NATIVELY (`settingSources: ['user','project']` + `skills: 'all'`) — no synthetic plugin. Empty/omitted → no
    * skills this turn (the wipe still runs, so a prior turn's skills don't linger).
    */
   skills?: ResolvedSkill[];

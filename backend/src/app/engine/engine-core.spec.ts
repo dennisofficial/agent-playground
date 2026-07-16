@@ -319,9 +319,10 @@ describe('EngineCore — Claude mode/home/credential wiring', () => {
     // The SDK is allowed to ride out its own retryable API errors natively (default 10 retries) instead of
     // failing the turn on the first overloaded/5xx blip.
     expect(env.CLAUDE_CODE_MAX_RETRIES).toBe('10');
-    // settingSources ['user'] = only <CLAUDE_CONFIG_DIR>/settings.json (missing → no-op), never CLAUDE.md,
-    // never the untrusted worktree's own project-scope config (see engine-core.ts's options comment).
-    expect(opts.settingSources).toEqual(['user']);
+    // settingSources ['user','project'] = user-scope settings.json PLUS native worktree memory: the repo's
+    // CLAUDE.md loads (root at launch, nested subdirs on read). See engine-core.ts's options comment for why
+    // our programmatic options (model, disallowedTools) stay authoritative over a worktree's own `.claude/`.
+    expect(opts.settingSources).toEqual(['user', 'project']);
     // skills 'all' turns on native skill discovery (the single SDK-level switch, auto-enables Skill tool).
     expect(opts.skills).toBe('all');
     // Result + usage surfaced.
