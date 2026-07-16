@@ -536,7 +536,7 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
       [FAKE_TEAM_ID, repoId, jobId],
     );
     await ds.query(
-      `INSERT INTO inbound_messages (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+      `INSERT INTO inbound_messages (org_id, repo_id, kind, type, trust, body, job_id) VALUES ($1, $2, 'chat', 'user', 'trusted', 'b', $3)`,
       [FAKE_TEAM_ID, repoId, jobId],
     );
 

@@ -14,14 +14,14 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * ones) are renamed explicitly. `subagents.fk_..._messages` is renamed too since a FK's name embeds
  * the referenced table even though Postgres tracks the reference by oid, not name.
  */
-export class RenameStimuliAndMessages1784160903846
-  implements MigrationInterface
-{
+export class RenameStimuliAndMessages1784160903846 implements MigrationInterface {
   name = 'RenameStimuliAndMessages1784160903846';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // ─── messages → transcript_messages ────────────────────────────────────
-    await queryRunner.query(`ALTER TABLE "messages" RENAME TO "transcript_messages"`);
+    await queryRunner.query(
+      `ALTER TABLE "messages" RENAME TO "transcript_messages"`,
+    );
     await queryRunner.query(
       `ALTER TABLE "transcript_messages" RENAME CONSTRAINT "pk_messages" TO "pk_transcript_messages"`,
     );
@@ -51,7 +51,9 @@ export class RenameStimuliAndMessages1784160903846
     );
 
     // ─── stimuli → inbound_messages ─────────────────────────────────────────
-    await queryRunner.query(`ALTER TABLE "stimuli" RENAME TO "inbound_messages"`);
+    await queryRunner.query(
+      `ALTER TABLE "stimuli" RENAME TO "inbound_messages"`,
+    );
     await queryRunner.query(
       `ALTER TABLE "inbound_messages" RENAME CONSTRAINT "pk_stimuli" TO "pk_inbound_messages"`,
     );
@@ -76,7 +78,7 @@ export class RenameStimuliAndMessages1784160903846
       `ALTER TABLE "inbound_messages" ADD COLUMN "type" text`,
     );
     await queryRunner.query(
-      `UPDATE "inbound_messages" SET "type" = CASE "kind" WHEN 'event' THEN 'event' ELSE 'user' END`,
+      `UPDATE "inbound_messages" SET "type" = CASE WHEN "kind" = 'event' THEN 'event' WHEN "author_id" = 'U-SYSTEM' THEN 'seed' ELSE 'user' END`,
     );
     await queryRunner.query(
       `ALTER TABLE "inbound_messages" ALTER COLUMN "type" SET NOT NULL`,
@@ -107,7 +109,9 @@ export class RenameStimuliAndMessages1784160903846
     await queryRunner.query(
       `ALTER TABLE "inbound_messages" RENAME CONSTRAINT "pk_inbound_messages" TO "pk_stimuli"`,
     );
-    await queryRunner.query(`ALTER TABLE "inbound_messages" RENAME TO "stimuli"`);
+    await queryRunner.query(
+      `ALTER TABLE "inbound_messages" RENAME TO "stimuli"`,
+    );
 
     // ─── transcript_messages → messages ─────────────────────────────────────
     await queryRunner.query(
@@ -137,6 +141,8 @@ export class RenameStimuliAndMessages1784160903846
     await queryRunner.query(
       `ALTER TABLE "transcript_messages" RENAME CONSTRAINT "pk_transcript_messages" TO "pk_messages"`,
     );
-    await queryRunner.query(`ALTER TABLE "transcript_messages" RENAME TO "messages"`);
+    await queryRunner.query(
+      `ALTER TABLE "transcript_messages" RENAME TO "messages"`,
+    );
   }
 }

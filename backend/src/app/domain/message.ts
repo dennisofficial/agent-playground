@@ -125,14 +125,16 @@ export type EventMessage = MessageBase & {
  * `agent-session-manager.service.ts`. Job 2 decomposes this into the enumerated typed internal-seed
  * variants (`reset_verify`, `compaction`, `ship_open_pr`, …) and removes this variant.
  *
- * NOTE: `seedHaltWake`/`seedDoneWake` are NOT carried — they were already removed upstream (dead
- * code; see decision d7) and must not be reintroduced.
+ * NOTE: `seedHaltWake`/`seedDoneWake` stay in this transitional shape for Job 1 so any remaining producer
+ * compiles unchanged. Job 2 owns the coordinated dead-code sweep.
  */
 export type SeedMessage = MessageBase & {
   type: 'seed';
   trust: 'system';
   body: string;
   seedResetVerify?: boolean;
+  seedHaltWake?: boolean;
+  seedDoneWake?: boolean;
   resumeThreadId?: string;
   compact?: boolean;
   seedRow?: SeedRow;

@@ -17,7 +17,7 @@ import {
   CHAT_SURFACE,
   type ChatSurface,
   type InboundChatMessage,
-} from '../surface';
+} from '../surface/chat-surface.port';
 import { StimulusIntake } from './stimulus-intake.service';
 
 /**
@@ -112,9 +112,7 @@ export class ChatStimulusBridge
           deliveredQuestionIds: msg.seedQuestionId
             ? [msg.seedQuestionId]
             : msg.seedQuestionIds,
-          deliveredFileIds: msg.seedFileId
-            ? [msg.seedFileId]
-            : msg.seedFileIds,
+          deliveredFileIds: msg.seedFileId ? [msg.seedFileId] : msg.seedFileIds,
           deliveredSecretIds: msg.seedSecretId
             ? [msg.seedSecretId]
             : msg.seedSecretIds,

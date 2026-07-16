@@ -72,7 +72,8 @@ import {
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
-import { StimulusIntake, renderTurn, type TurnChunk } from '../stimulus';
+import { StimulusIntake } from '../stimulus/stimulus-intake.service';
+import { renderTurn, type TurnChunk } from '../stimulus/chunk-vocabulary';
 import type { Message } from '../domain';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import {
@@ -405,7 +406,12 @@ function coerceOperatorKind(raw: string | undefined): JobKind | null {
 type MessageInput =
   | { type: 'user'; text: string; lane?: string }
   | { type: 'answer_question'; questionId: string; answer: string }
-  | { type: 'file_answered'; requestId: string; filename: string; content: string }
+  | {
+      type: 'file_answered';
+      requestId: string;
+      filename: string;
+      content: string;
+    }
   | { type: 'secret_provided'; requestId: string; value: string };
 /** `/message` request body. `messages` is a JSON array — or its JSON-stringified form when the request
  *  is multipart (carrying `files` for a `user` item's attachments), since form fields are always strings. */
@@ -1799,7 +1805,10 @@ export class WebSurfaceController {
       const claimed = await this.claimManualRetry(jobId);
       if (!claimed) {
         throw new HttpException(
-          { status: 'cooling_down', retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS },
+          {
+            status: 'cooling_down',
+            retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS,
+          },
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }
@@ -1881,7 +1890,10 @@ export class WebSurfaceController {
       const claimed = await this.claimManualRetry(jobId);
       if (!claimed) {
         throw new HttpException(
-          { status: 'cooling_down', retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS },
+          {
+            status: 'cooling_down',
+            retryAfterMs: WebSurfaceController.MANUAL_RETRY_COOLDOWN_MS,
+          },
           HttpStatus.TOO_MANY_REQUESTS,
         );
       }

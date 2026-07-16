@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { Subject } from 'rxjs';
 import type { Repository } from 'typeorm';
 import type { JobEntity } from '../persistence/entities';
-import type { ChatSurface, InboundChatMessage } from '../surface';
+import type {
+  ChatSurface,
+  InboundChatMessage,
+} from '../surface/chat-surface.port';
 import { ChatStimulusBridge } from './chat-stimulus.bridge';
 import type { StimulusIntake } from './stimulus-intake.service';
 import type { EventMessage, Message } from '../domain';
@@ -42,8 +45,10 @@ function makeBridge(threads: JobEntity[]): {
   const calls: IntakeCall[] = [];
   const intake = {
     intakeChat: vi.fn(
-      async (message: IntakeCall['message'], transport: IntakeCall['transport']) =>
-        void calls.push({ message, transport }),
+      async (
+        message: IntakeCall['message'],
+        transport: IntakeCall['transport'],
+      ) => void calls.push({ message, transport }),
     ),
   } as unknown as StimulusIntake;
   const inbound$ = new Subject<InboundChatMessage>();
@@ -124,7 +129,10 @@ describe('ChatStimulusBridge → Message', () => {
     } as JobEntity;
     const { bridge, calls } = makeBridge([existing]);
 
-    const seedRow = { label: 'Question answered', chunkKey: 'seed:q:thread-7:q1' };
+    const seedRow = {
+      label: 'Question answered',
+      chunkKey: 'seed:q:thread-7:q1',
+    };
     await bridge.onInbound(
       msg({
         threadTs: 'thread-7',

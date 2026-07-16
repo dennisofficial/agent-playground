@@ -11,8 +11,12 @@ import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
 import { JobBootstrapModule } from '../job-bootstrap';
-import { StimulusModule } from '../stimulus';
-import { TranscriptMessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
+import { StimulusModule } from '../stimulus/stimulus.module';
+import {
+  TranscriptMessageEntity,
+  RepoEntity,
+  JobEntity,
+} from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
   AMEND_APPROVE_ACTION_ID,
