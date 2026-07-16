@@ -37,7 +37,7 @@ import {
   statSync,
 } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { basename, extname, join, relative, resolve, sep } from 'node:path';
 import {
   Observable,
@@ -72,6 +72,8 @@ import {
   SHIP_ACTION_ID,
 } from './approval-blocks';
 import { LeaderElectionService } from '../cluster';
+import { StimulusIntake, renderTurn, type TurnChunk } from '../stimulus';
+import type { Message } from '../domain';
 import {
   closeTailFd,
   nextTailFrame,
@@ -396,12 +398,18 @@ function coerceOperatorKind(raw: string | undefined): JobKind | null {
   return null;
 }
 
-interface SayDto {
-  text: string;
-  /** Target thread coordinate (`thread:<threadId>`). Absent or `'main'` targets the job's planning thread
-   *  (today's behavior, unchanged); a `thread:<id>` lane targets that builder thread — steering it mid-turn or
-   *  re-driving it if halted. */
-  lane?: string;
+/** One item in a `/message` batch — the wire shape of a `Message` (mirrors the `Message` union's
+ *  client-originated variants). `secret_provided` carries no kind discriminant: the durable-vs-mcp
+ *  destination is derived server-side from the card, never trusted from the client. */
+type MessageInput =
+  | { type: 'user'; text: string; lane?: string }
+  | { type: 'answer_question'; questionId: string; answer: string }
+  | { type: 'file_answered'; requestId: string; filename: string; content: string }
+  | { type: 'secret_provided'; requestId: string; value: string };
+/** `/message` request body. `messages` is a JSON array — or its JSON-stringified form when the request
+ *  is multipart (carrying `files` for a `user` item's attachments), since form fields are always strings. */
+interface MessageBatchDto {
+  messages: MessageInput[] | string;
 }
 /** One highlighted-and-annotated selection in a review-comments batch. */
 interface ReviewCommentItemDto {
@@ -455,13 +463,6 @@ interface ApproveResult {
   ok: boolean;
   jobId?: string;
   message?: string;
-}
-interface AnswerQuestionDto {
-  /** The question card's id (its message `ts`). */
-  questionId: string;
-  /** The operator's answer — the picked option's label, or free text. */
-  answer: string;
-  answeredBy?: string;
 }
 interface ProvideSecretDto {
   /** The secret card's id (its message `ts`). */
@@ -549,25 +550,6 @@ function resolveUploadFilePath(root: string, relPath: string): string {
   }
   return abs;
 }
-interface ProvideFileDto {
-  /** The file-request card's id (its message `ts`). */
-  requestId: string;
-  /** The operator-chosen filename (metadata only — display/provenance, never the store key). */
-  filename: string;
-  /** The file's text contents — written to the encrypted store + granted, NEVER persisted in the card. */
-  content: string;
-}
-
-/** One staged answer in an `answer-batch` — a question answer, a file upload, or a durable/mcp secret value. */
-type AnswerBatchItem =
-  | { kind: 'question'; questionId: string; answer: string }
-  | { kind: 'file'; requestId: string; filename: string; content: string }
-  | { kind: 'secret'; requestId: string; value: string }; // durable/mcp only — ephemeral is never batched
-interface AnswerBatchDto {
-  items: AnswerBatchItem[];
-  /** Optional operator note delivered inside the same combined seed body. */
-  message?: string;
-}
 /** Total inline content cap across a batch's items (must stay ≤ the JSON body-parser limit in `main.ts`). */
 const MAX_BATCH_BYTES = 4 * 1024 * 1024;
 /** Hard cap on staged answers per submit, to bound per-item DB/file-store work even when bodies are small. */
@@ -585,34 +567,45 @@ function requiredBatchValue(value: unknown, field: string): string {
   return s;
 }
 
-function normalizeAnswerBatchItem(item: unknown): AnswerBatchItem {
+/** Validate + normalize one raw `/message` batch item into a typed `MessageInput`. A `user` item's text
+ *  may be empty (an attachment-only send is valid); the card variants require their ids/values. */
+function normalizeMessageInput(item: unknown): MessageInput {
   if (item == null || typeof item !== 'object') {
-    throw new BadRequestException('each item must be an object');
+    throw new BadRequestException('each message must be an object');
   }
   const raw = item as Record<string, unknown>;
-  if (raw.kind === 'question') {
+  if (raw.type === 'user') {
     return {
-      kind: 'question',
+      type: 'user',
+      text: String(raw.text ?? ''),
+      ...(raw.lane != null && raw.lane !== ''
+        ? { lane: String(raw.lane) }
+        : {}),
+    };
+  }
+  if (raw.type === 'answer_question') {
+    return {
+      type: 'answer_question',
       questionId: requiredBatchString(raw.questionId, 'questionId'),
       answer: requiredBatchString(raw.answer, 'answer'),
     };
   }
-  if (raw.kind === 'file') {
+  if (raw.type === 'file_answered') {
     return {
-      kind: 'file',
+      type: 'file_answered',
       requestId: requiredBatchString(raw.requestId, 'requestId'),
       filename: String(raw.filename ?? 'upload').trim() || 'upload',
       content: requiredBatchValue(raw.content, 'content'),
     };
   }
-  if (raw.kind === 'secret') {
+  if (raw.type === 'secret_provided') {
     return {
-      kind: 'secret',
+      type: 'secret_provided',
       requestId: requiredBatchString(raw.requestId, 'requestId'),
       value: requiredBatchValue(raw.value, 'value'),
     };
   }
-  throw new BadRequestException('unsupported batch item kind');
+  throw new BadRequestException('unsupported message type');
 }
 
 /**
@@ -793,6 +786,10 @@ export class WebSurfaceController {
     // awaits `resolveMergeApproval` → `mergeNow`). Placed after the last required dep so the controller's
     // positional-arg unit tests keep their alignment.
     private readonly moduleRef: ModuleRef,
+    // The `Message`-typed intake seam — the composed-turn path of `/message` (answered cards + an operator
+    // message in one submit) delivers through `intakeChat`. Provided by the (non-@Global) StimulusModule,
+    // imported into WebSurfaceModule for this injection to resolve.
+    private readonly intake: StimulusIntake,
     // Sandbox-preview exposure — renders each service's public URL + triggers a per-poll Caddy reconcile.
     // From the @Global ExposureModule (inert unless PREVIEW_BASE_DOMAIN is set). @Optional so the
     // controller's direct-construction unit tests (positional args) compile without a trailing argument.
@@ -1186,36 +1183,75 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:jobId/say` — inject a human reply. Returns the synthetic ts.
+   * `POST …/jobs/:jobId/message` — the ONE inbound endpoint for everything the operator sends: a free-text
+   * chat message (optionally lane-targeted and/or carrying attachments), a batch of answered cards (question
+   * answers, uploaded files, durable/mcp secret values), or both together in one submit. Replaces the legacy
+   * `say` / `answer-question` / `provide-file` / `answer-batch` endpoints.
    *
-   * Text-only sends stay pure JSON (the `FilesInterceptor` no-ops on non-multipart requests, so the
-   * optimistic-`useSay` hot path is untouched). When the operator attaches files/images the request is
-   * multipart: each file is streamed to `/context/uploads/` (visible in-sandbox), an `<uploaded-files>`
-   * XML block is PREPENDED to the body so the brain reads them with its Read tool, and an `attachments_card`
-   * rides `messages.card` for the transcript.
+   * `messages` is an array of typed `MessageInput`s (a JSON body, or a JSON-stringified field when the
+   * request is multipart because it carries `files` for a `user` item's attachments). At most one `user`
+   * item is allowed. Dispatch splits three ways:
+   *  - a `user` item alone → the operator-chat intake (planning-brain, or a lane's send seam);
+   *  - answered cards alone → ONE combined system seed (byte-identical to the old batch delivery);
+   *  - answered cards AND a `user` item → ONE composed turn (each card's notice as a `<system_notice>`
+   *    chunk, the operator's message as the trailing `<user>` chunk) delivered through `StimulusIntake`.
    */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/say')
+  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/message')
   @UseGuards(OrgMembershipGuard)
   @UseInterceptors(
     FilesInterceptor('files', MAX_ATTACHMENTS, {
       limits: { fileSize: MAX_ATTACHMENT_BYTES },
     }),
   )
-  async say(
+  async postMessage(
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
-    @Param('repoId') repoId: string,
     @Param('jobId') jobId: string,
-    @Body() body: SayDto,
+    @Body() body: MessageBatchDto,
     @UploadedFiles() files?: UploadedAttachment[],
-  ): Promise<{ ts: string }> {
-    const operatorText = body?.text ?? '';
-    if (!operatorText && !files?.length) {
-      throw new BadRequestException('text or an attachment is required');
+  ): Promise<{
+    ok: boolean;
+    ts: string;
+    results: Array<{ id: string; status: string }>;
+  }> {
+    // Multipart form fields are always strings, so a multipart send stringifies `messages`; a plain JSON POST
+    // sends the array directly. Accept either.
+    let rawMessages: unknown = body?.messages;
+    if (typeof rawMessages === 'string') {
+      try {
+        rawMessages = JSON.parse(rawMessages);
+      } catch {
+        throw new BadRequestException('messages must be valid JSON');
+      }
     }
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+      throw new BadRequestException('messages must be a non-empty array');
+    }
+    if (rawMessages.length > MAX_BATCH_ITEMS) {
+      throw new BadRequestException(
+        `message batch may contain at most ${MAX_BATCH_ITEMS} items`,
+      );
+    }
+    const inputs = rawMessages.map((m) => normalizeMessageInput(m));
+    const totalBytes = inputs.reduce(
+      (n, m) =>
+        n +
+        (m.type === 'user'
+          ? Buffer.byteLength(m.text, 'utf8')
+          : m.type === 'file_answered'
+            ? Buffer.byteLength(m.content, 'utf8')
+            : m.type === 'secret_provided'
+              ? Buffer.byteLength(m.value, 'utf8')
+              : 0),
+      0,
+    );
+    if (totalBytes > MAX_BATCH_BYTES) {
+      throw new BadRequestException('message content exceeds size limit');
+    }
+
     // Only the leader processes turns. During a deploy's drain window this instance is draining (or is a
-    // standby), so reject new turns with 503 — the client retries and lands on the freshly-promoted
-    // leader within a poll interval. (isLeader() is false while draining or a follower.)
+    // standby), so reject with 503 — the client retries and lands on the freshly-promoted leader. Enforced
+    // once here for EVERY case (the legacy single endpoints were inconsistent about this).
     if (!this.election.isLeader()) {
       throw new ServiceUnavailableException(
         'Atlas is handing off — retry momentarily.',
@@ -1227,56 +1263,228 @@ export class WebSurfaceController {
         'This job is blocked on another job; unblock it (or wait for its blocker to merge) before interacting.',
       );
     }
-    const attach = files?.length
-      ? await this.ingestAttachments(org.id, jobId, files)
-      : null;
-    const bodyText = attach ? `${attach.xml}\n\n${operatorText}` : operatorText;
 
-    // A lane-targeted message (`thread:<id>`) routes through the shared send seam to the thread that owns the
-    // lane — steering a live builder turn, or re-driving a halted one with the text as guidance. Absent or
-    // `'main'` keeps the byte-identical planning-brain path below.
-    const targetLane = body?.lane;
-    if (targetLane && targetLane !== 'main') {
-      const seam = this.threadInput;
-      if (!seam) {
-        throw new ServiceUnavailableException(
-          'thread messaging is unavailable — retry momentarily.',
-        );
-      }
-      if (!seam.canPost(targetLane)) {
-        throw new BadRequestException(
-          `thread "${targetLane}" is not accepting messages right now`,
-        );
-      }
-      const author = operatorAuthor(user);
-      await seam.postToThread(
-        targetLane,
-        {
-          jobId,
-          orgId: org.id,
-          repoId: thread.repo_id,
-          author: { id: author.authorId, displayName: author.authorName },
-        },
-        bodyText,
+    const userItems = inputs.filter(
+      (m): m is Extract<MessageInput, { type: 'user' }> => m.type === 'user',
+    );
+    if (userItems.length > 1) {
+      throw new BadRequestException('at most one user message per submit');
+    }
+    const userItem = userItems[0];
+    const cardItems = inputs.filter((m) => m.type !== 'user');
+
+    // Writing a secret/file is an Administer action — owner-gated. Question answers stay membership-only.
+    // Checked before applying anything.
+    const needsOwner = cardItems.some(
+      (m) => m.type === 'file_answered' || m.type === 'secret_provided',
+    );
+    if (needsOwner && org.role !== 'owner') {
+      throw new ForbiddenException(
+        'providing files/secrets requires an org owner',
       );
-      return { ts: new Date().toISOString() };
     }
 
-    const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
-      orgId: org.id,
-      threadTs: jobId,
-      ...operatorAuthor(user),
-      ...(attach
-        ? {
-            card: {
-              type: 'attachments_card',
-              items: attach.items,
-              ...(operatorText ? { message: operatorText } : {}),
-            },
-          }
-        : {}),
-    });
-    return { ts };
+    // Apply each answered card through its shared gate (same helpers the legacy endpoints used). `applied`
+    // collects the winners to deliver; `results` mirrors every item's status back to the client.
+    const applied: Array<{
+      id: string;
+      notice: AgentMessage;
+      kind: 'question' | 'file' | 'secret';
+    }> = [];
+    const results: Array<{ id: string; status: string }> = [];
+    let wroteToStore = false;
+    for (const item of cardItems) {
+      const kind =
+        item.type === 'answer_question'
+          ? 'question'
+          : item.type === 'file_answered'
+            ? 'file'
+            : 'secret';
+      const id =
+        item.type === 'answer_question' ? item.questionId : item.requestId;
+      const r =
+        item.type === 'answer_question'
+          ? await this.applyQuestionAnswer(
+              jobId,
+              org.id,
+              thread.repo_id,
+              item.questionId,
+              item.answer,
+            )
+          : item.type === 'file_answered'
+            ? await this.applyFileUpload(
+                jobId,
+                org.id,
+                thread.repo_id,
+                item.requestId,
+                item.filename,
+                item.content,
+              )
+            : await this.applySecretProvide(
+                jobId,
+                org.id,
+                thread.repo_id,
+                item.requestId,
+                item.value,
+              );
+      results.push({ id, status: r.status });
+      if (r.status === 'applied' && r.seedId && r.notice) {
+        applied.push({ id: r.seedId, notice: r.notice, kind });
+        if (kind !== 'question') wroteToStore = true;
+      }
+    }
+    // One rehydrate for the whole batch if anything landed in the worktree secret store. Best-effort.
+    if (wroteToStore) {
+      await this.threadLifecycle
+        .rehydrateThread(jobId, org.id)
+        .catch(() => undefined);
+    }
+
+    const attach =
+      userItem && files?.length
+        ? await this.ingestAttachments(org.id, jobId, files)
+        : null;
+
+    // CASE 1 — a `user` message with no delivered cards: the plain operator-chat path (byte-identical to the
+    // old `say`). A lane-targeted message routes through the send seam; otherwise it hits the planning brain.
+    if (userItem && applied.length === 0) {
+      const operatorText = userItem.text ?? '';
+      if (!operatorText && !attach) {
+        throw new BadRequestException('text or an attachment is required');
+      }
+      const bodyText = attach
+        ? `${attach.xml}\n\n${operatorText}`
+        : operatorText;
+      const targetLane = userItem.lane;
+      if (targetLane && targetLane !== 'main') {
+        if (!this.threadInput) {
+          throw new ServiceUnavailableException(
+            'thread messaging is unavailable — retry momentarily.',
+          );
+        }
+        if (!this.threadInput.canPost(targetLane)) {
+          throw new BadRequestException(
+            `thread "${targetLane}" is not accepting messages right now`,
+          );
+        }
+        const author = operatorAuthor(user);
+        await this.threadInput.postToThread(
+          targetLane,
+          {
+            jobId,
+            orgId: org.id,
+            repoId: thread.repo_id,
+            author: { id: author.authorId, displayName: author.authorName },
+          },
+          bodyText,
+        );
+        return { ok: true, ts: new Date().toISOString(), results };
+      }
+      const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
+        orgId: org.id,
+        threadTs: jobId,
+        ...operatorAuthor(user),
+        ...(attach
+          ? {
+              card: {
+                type: 'attachments_card',
+                items: attach.items,
+                ...(operatorText ? { message: operatorText } : {}),
+              },
+            }
+          : {}),
+      });
+      return { ok: true, ts, results };
+    }
+
+    // CASE 2 — delivered cards with no operator message: ONE combined system seed (byte-identical to the old
+    // `answer-batch` delivery). The seed carries the arrays of card ids so its lone delivery turn's success
+    // tail stamps every card delivered (at-least-once recovery on boot).
+    if (applied.length > 0 && !userItem) {
+      const seedBody = batchAnswerBody(applied.map((a) => a.notice));
+      const ts = this.surface.seedSystemNotification(
+        thread.repo_id,
+        jobId,
+        seedBody,
+        {
+          orgId: org.id,
+          deliveredQuestionIds: applied
+            .filter((a) => a.kind === 'question')
+            .map((a) => a.id),
+          deliveredFileIds: applied
+            .filter((a) => a.kind === 'file')
+            .map((a) => a.id),
+          deliveredSecretIds: applied
+            .filter((a) => a.kind === 'secret')
+            .map((a) => a.id),
+          seedRow: {
+            label: `The operator sent ${applied.length} answer(s)`,
+            chunkKey: chunkKey.batch(
+              jobId,
+              applied.map((a) => a.id),
+            ),
+          },
+        },
+      );
+      return { ok: true, ts, results };
+    }
+
+    // CASE 3 — delivered cards AND an operator message in one submit: compose ONE turn where each card's
+    // notice frames as a `<system_notice>` chunk and the operator's message is the trailing `<user>` chunk,
+    // then deliver it through the `Message`-typed intake seam as a single system seed.
+    if (applied.length > 0 && userItem) {
+      const operatorText = userItem.text ?? '';
+      const userBody = attach
+        ? `${attach.xml}\n\n${operatorText}`
+        : operatorText;
+      const author = operatorAuthor(user);
+      const chunks: TurnChunk[] = [
+        ...applied.map((a) => ({
+          kind: 'system_notice' as const,
+          body: a.notice,
+        })),
+        {
+          kind: 'user' as const,
+          body: userBody,
+          attrs: { name: author.authorName, at: new Date().toISOString() },
+        },
+      ];
+      const seedMessage: Extract<Message, { type: 'seed' }> = {
+        type: 'seed',
+        trust: 'system',
+        id: randomUUID(),
+        orgId: org.id,
+        repoId: thread.repo_id,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        body: renderTurn(chunks),
+        seedRow: {
+          label: `The operator sent ${applied.length} answer(s) + a message`,
+          chunkKey: chunkKey.batch(
+            jobId,
+            applied.map((a) => a.id),
+          ),
+        },
+        deliveredQuestionIds: applied
+          .filter((a) => a.kind === 'question')
+          .map((a) => a.id),
+        deliveredFileIds: applied
+          .filter((a) => a.kind === 'file')
+          .map((a) => a.id),
+        deliveredSecretIds: applied
+          .filter((a) => a.kind === 'secret')
+          .map((a) => a.id),
+      };
+      await this.intake.intakeChat(seedMessage, {
+        author: { id: author.authorId, displayName: author.authorName },
+        replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
+      });
+      return { ok: true, ts: new Date().toISOString(), results };
+    }
+
+    // No operator message and nothing applied (e.g. a re-submit of already-delivered cards). There is nothing
+    // to deliver — surface it rather than silently returning a no-op turn.
+    throw new BadRequestException('no valid messages to process');
   }
 
   /**
@@ -1709,16 +1917,8 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:jobId/answer-question` — answer a brain `ask_question` card. GATED on the CARD's
-   * OWN state (there is no single-slot thread pointer; many cards can be open at once): an already-delivered
-   * card is stale, an already-answered card is an idempotent no-op (e.g. a double click). The first valid
-   * answer is stamped atomically by `markQuestionAnswered` (a conditional update — concurrent double-answers
-   * can't both win); only the winner seeds the delivery turn (carrying this card's `questionId`), whose
-   * success tail stamps the card `deliveredAt`, and `create_decision` attaches the Q&A.
-   */
-  /**
-   * Apply ONE operator answer to an `ask_question` card — the shared gate used by both `/answer-question`
-   * and `/answer-batch`. Does NO seeding/waking; returns what the caller needs to seed (see `ApplyResult`).
+   * Apply ONE operator answer to an `ask_question` card — the shared gate used by the `/message` batch loop.
+   * Does NO seeding/waking; returns what the caller needs to seed (see `ApplyResult`).
    * Preserves the `origin:'build'` short-circuit: a `request_operator_input` card is consumed by the DRIVER
    * (which stamps `deliveredAt` when it reads the answer), so it is stamped here but returns a non-brain
    * `noop` — the caller must NOT seed a brain turn for it.
@@ -1756,45 +1956,6 @@ export class WebSurfaceController {
       kind: 'question',
       chunkKey: chunkKey.qa(jobId, questionId),
     };
-  }
-
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/answer-question')
-  @UseGuards(OrgMembershipGuard)
-  async answerQuestion(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('jobId') jobId: string,
-    @Body() body: AnswerQuestionDto,
-  ): Promise<{ ok: boolean; ts: string }> {
-    const answer = body?.answer?.trim();
-    if (!body?.questionId || !answer) {
-      throw new BadRequestException('questionId and answer are required');
-    }
-    const thread = await this.requireThread(jobId, org.id);
-    const r = await this.applyQuestionAnswer(
-      jobId,
-      org.id,
-      thread.repo_id,
-      body.questionId,
-      answer,
-    );
-    if (r.status === 'notfound') {
-      throw new BadRequestException('no such question on this thread');
-    }
-    if (r.status !== 'applied') return { ok: r.status === 'noop', ts: '' };
-    // Deliver the answer to the brain as a SYSTEM SEED — a `<system_notification>` framed turn that is NOT
-    // persisted as a chat bubble (the answer lives on the card). The seed carries `deliveredQuestionId` so
-    // its delivery turn stamps exactly THIS card `deliveredAt` on success (at-least-once recovery on boot).
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      r.notice!,
-      {
-        orgId: org.id,
-        deliveredQuestionId: r.seedId!,
-        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-      },
-    );
-    return { ok: true, ts };
   }
 
   /**
@@ -2560,18 +2721,10 @@ export class WebSurfaceController {
   }
 
   /**
-   * `POST …/threads/:jobId/provide-file` — upload the file for a brain `request_file` card during repo
-   * onboarding. Like `provide-secret` (owner-only; contents go straight to the encrypted store as a
-   * file-valued secret + an owner grant, NEVER onto the card / transcript / brain tool I/O), but the value
-   * arrives as an UPLOAD and the gate is PER-CARD (the card's own state — no single-slot thread pointer),
-   * so several file requests can be filled in any order. The store key is repo-scoped (`file:<repoId>:<path>`)
-   * so two repos wanting the same relative path don't collide at the org-scoped secret name.
-   */
-  /**
-   * Apply ONE uploaded file to a `request_file` card — the shared gate used by both `/provide-file` and
-   * `/answer-batch`. Does NO seeding/waking/rehydrate; returns what the caller needs to seed (see
-   * `ApplyResult`). Enforces the per-file `MAX_FILE_UPLOAD_BYTES` cap here (throws) so it gates every item
-   * even on the batch path. The contents' only resting place is the encrypted store.
+   * Apply ONE uploaded file to a `request_file` card — the shared gate used by the `/message` batch loop.
+   * Does NO seeding/waking/rehydrate; returns what the caller needs to seed (see `ApplyResult`). Enforces the
+   * per-file `MAX_FILE_UPLOAD_BYTES` cap here (throws) so it gates every item even on the batch path. The
+   * contents' only resting place is the encrypted store.
    */
   private async applyFileUpload(
     jobId: string,
@@ -2618,213 +2771,6 @@ export class WebSurfaceController {
       chunkKey: chunkKey.file(jobId, payload.path),
       rehydrate: true,
     };
-  }
-
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/provide-file')
-  @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
-  async provideFile(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('jobId') jobId: string,
-    @Body() body: ProvideFileDto,
-  ): Promise<{ ok: boolean; ts: string }> {
-    const content = body?.content;
-    const filename = body?.filename?.trim() || 'upload';
-    if (!body?.requestId || content == null || content === '') {
-      throw new BadRequestException(
-        'requestId and non-empty file content are required',
-      );
-    }
-    const thread = await this.requireThread(jobId, org.id);
-    const r = await this.applyFileUpload(
-      jobId,
-      org.id,
-      thread.repo_id,
-      body.requestId,
-      filename,
-      content,
-    );
-    if (r.status === 'notfound') {
-      throw new BadRequestException('no such file request on this thread');
-    }
-    if (r.status !== 'applied') return { ok: r.status === 'noop', ts: '' };
-    // Render the uploaded file into the RUNNING sandbox now (see provide-secret). Best-effort.
-    if (r.rehydrate) {
-      await this.threadLifecycle
-        .rehydrateThread(jobId, org.id)
-        .catch(() => undefined);
-    }
-    // Deliver a MASKED confirmation carrying this card's id so the delivery turn's success tail stamps
-    // exactly THIS card delivered (at-least-once).
-    const ts = this.surface.seedSystemNotification(
-      thread.repo_id,
-      jobId,
-      r.notice!,
-      {
-        orgId: org.id,
-        deliveredFileId: r.seedId!,
-        seedRow: { label: r.notice!, chunkKey: r.chunkKey! },
-      },
-    );
-    return { ok: true, ts };
-  }
-
-  /**
-   * `POST …/jobs/:jobId/answer-batch` — apply a batch of staged card answers (question answers, file
-   * uploads, durable/mcp secret values) plus an optional operator note, and deliver them to the brain as
-   * exactly ONE combined seed → ONE turn (instead of one wake per answer). The brain's `collectPendingForTurn`
-   * delivers system seeds one-at-a-time, so a single combined seed row (carrying arrays of card ids, whose
-   * success tail stamps every card delivered) is the only way to coalesce.
-   *
-   * MEMBERSHIP-guarded — any org member may answer questions. OWNER is enforced PER-ITEM: a batch carrying a
-   * file or secret item requires `org.role === 'owner'` (writing a secret file/value is an Administer action).
-   */
-  @Post('orgs/:orgId/repos/:repoId/jobs/:jobId/answer-batch')
-  @UseGuards(OrgMembershipGuard)
-  async answerBatch(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Param('jobId') jobId: string,
-    @Body() body: AnswerBatchDto,
-  ): Promise<{
-    ok: boolean;
-    ts: string;
-    results: Array<{ id: string; status: string }>;
-  }> {
-    if (!Array.isArray(body?.items) || body.items.length === 0) {
-      throw new BadRequestException('items must be a non-empty array');
-    }
-    if (body.items.length > MAX_BATCH_ITEMS) {
-      throw new BadRequestException(
-        `batch may contain at most ${MAX_BATCH_ITEMS} items`,
-      );
-    }
-    const items = body.items.map((item) => normalizeAnswerBatchItem(item));
-    // Owner is required only when the batch carries a file/secret — a question-only batch stays
-    // membership-only (the web routes even question-only sends through here). `@CurrentOrg()` already carries
-    // the resolved role, so check it directly rather than re-querying membership.
-    const needsOwner = items.some(
-      (i) => i.kind === 'file' || i.kind === 'secret',
-    );
-    if (needsOwner && org.role !== 'owner') {
-      throw new ForbiddenException(
-        'providing files/secrets requires an org owner',
-      );
-    }
-    const totalBytes = items.reduce(
-      (n, i) =>
-        n +
-        ('content' in i
-          ? Buffer.byteLength(i.content, 'utf8')
-          : 'value' in i
-            ? Buffer.byteLength(i.value, 'utf8')
-            : 0),
-      0,
-    );
-    if (totalBytes > MAX_BATCH_BYTES) {
-      throw new BadRequestException('batch content exceeds size limit');
-    }
-    // Only the leader processes turns — same rationale as `say`/`review-comments`.
-    if (!this.election.isLeader()) {
-      throw new ServiceUnavailableException(
-        'Atlas is handing off — retry momentarily.',
-      );
-    }
-    const thread = await this.requireThread(jobId, org.id);
-    const applied: Array<{
-      id: string;
-      notice: AgentMessage;
-      kind: 'question' | 'file' | 'secret';
-    }> = [];
-    const results: Array<{ id: string; status: string }> = [];
-    let wroteToStore = false;
-    for (const item of items) {
-      const id = item.kind === 'question' ? item.questionId : item.requestId;
-      const r =
-        item.kind === 'question'
-          ? await this.applyQuestionAnswer(
-              jobId,
-              org.id,
-              thread.repo_id,
-              item.questionId,
-              item.answer,
-            )
-          : item.kind === 'file'
-            ? await this.applyFileUpload(
-                jobId,
-                org.id,
-                thread.repo_id,
-                item.requestId,
-                item.filename,
-                item.content,
-              )
-            : await this.applySecretProvide(
-                jobId,
-                org.id,
-                thread.repo_id,
-                item.requestId,
-                item.value,
-              );
-      results.push({ id, status: r.status });
-      if (r.status === 'applied' && r.seedId && r.notice) {
-        applied.push({ id: r.seedId, notice: r.notice, kind: item.kind });
-        if (item.kind !== 'question') wroteToStore = true;
-      }
-    }
-    // One rehydrate for the whole batch if anything landed in the worktree secret store (see the single
-    // file/secret endpoints, which rehydrate per-item). Best-effort.
-    if (wroteToStore) {
-      await this.threadLifecycle
-        .rehydrateThread(jobId, org.id)
-        .catch(() => undefined);
-    }
-    const ts = this.deliverBatchSeed(
-      thread.repo_id,
-      jobId,
-      org.id,
-      applied,
-      body.message?.trim() || undefined,
-    );
-    return { ok: true, ts, results };
-  }
-
-  /**
-   * Deliver a whole applied batch as ONE combined system seed → ONE brain turn. The body joins each applied
-   * card's notice (via the hub composer `batchAnswerBody`, which also splices the operator note), and the
-   * seed carries the ARRAYS of card ids so its lone delivery turn's success tail stamps every card delivered.
-   * Returns '' (no seed) when there is nothing to say (no applied cards and no note).
-   */
-  private deliverBatchSeed(
-    repoId: string,
-    jobId: string,
-    orgId: string,
-    applied: Array<{
-      id: string;
-      notice: AgentMessage;
-      kind: 'question' | 'file' | 'secret';
-    }>,
-    note?: string,
-  ): string {
-    if (applied.length === 0 && !note) return '';
-    const body = batchAnswerBody(
-      applied.map((a) => a.notice),
-      note,
-    );
-    const ids = applied.map((a) => a.id);
-    return this.surface.seedSystemNotification(repoId, jobId, body, {
-      orgId,
-      deliveredQuestionIds: applied
-        .filter((a) => a.kind === 'question')
-        .map((a) => a.id),
-      deliveredFileIds: applied
-        .filter((a) => a.kind === 'file')
-        .map((a) => a.id),
-      deliveredSecretIds: applied
-        .filter((a) => a.kind === 'secret')
-        .map((a) => a.id),
-      seedRow: {
-        label: `The operator sent ${applied.length} answer(s)`,
-        chunkKey: chunkKey.batch(jobId, ids),
-      },
-    });
   }
 
   /** `GET …/threads/:jobId/pipeline` — current pipeline state (or `{ status: 'no_job' }`). */

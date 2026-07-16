@@ -88,6 +88,7 @@ function makeController(threadOrgId: string) {
     git as never,
     {} as never, // jobDeps (JobDependencyService)
     {} as never, // moduleRef (ModuleRef)
+    {} as never, // intake (StimulusIntake)
   );
   return { controller, threads, threadLifecycle, git };
 }

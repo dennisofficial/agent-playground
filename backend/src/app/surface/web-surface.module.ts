@@ -11,6 +11,7 @@ import { DecisionApprovalService } from '../brain/decision-approval.service';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { GitModule } from '../git/git.module';
 import { JobBootstrapModule } from '../job-bootstrap';
+import { StimulusModule } from '../stimulus';
 import { TranscriptMessageEntity, RepoEntity, JobEntity } from '../persistence/entities';
 import { WebSurface } from './web-surface';
 import {
@@ -58,6 +59,10 @@ import type { ApprovalVerdict } from '../brain/decision-approval.service';
     // `@Global`, so it must be imported for the injected service to resolve.
     GitModule,
     JobBootstrapModule,
+    // `StimulusIntake` (the `Message`-typed intake seam) is injected by the controller's `/message`
+    // composed-turn path. StimulusModule is not `@Global`; it only imports `JobBootstrapModule` + TypeOrm
+    // (no back-edge into the surface), so this is a one-directional, cycle-free import.
+    StimulusModule,
   ],
   providers: [
     WebSurface,
