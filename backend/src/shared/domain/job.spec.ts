@@ -33,8 +33,8 @@ const NON_IDLE_ACTIVITIES: JobActivity[] = [
 ];
 
 describe('deriveNeedsYou', () => {
-  it('is false for terminal phases (done / cancelled / deleting)', () => {
-    for (const status of ['done', 'cancelled', 'deleting']) {
+  it('is false for terminal phases (done / cancelled / deleting / archived)', () => {
+    for (const status of ['done', 'cancelled', 'deleting', 'archived']) {
       expect(deriveNeedsYou(at({ status }))).toBe(false);
       // Terminal wins over every gate — even an open question or a halt cannot light a dying job's dot.
       expect(

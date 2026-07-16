@@ -222,6 +222,10 @@ class FakeSandboxProvider {
   playgroundDirHost(orgId: string, jobId: string): string {
     return join(this.stateRoot, 'playgrounds', orgId, jobId);
   }
+  /** Keyed only by jobId, mirroring the real port's `brainTranscriptProjectsDir` signature. */
+  brainTranscriptProjectsDir(jobId: string): string | null {
+    return join(this.stateRoot, 'transcripts', jobId);
+  }
 }
 
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
@@ -407,6 +411,27 @@ async function createBareThread(): Promise<string> {
     }),
   );
   return row.id;
+}
+
+/** Insert one `transcript_messages` row (with its owning `thread_groups`/`threads` parents) at an
+ *  explicit `created_at`, so `archiveInactiveJobs`'s `MAX(transcript_messages.created_at)` eligibility
+ *  query has real activity to anchor on. */
+async function seedTranscriptMessageAt(
+  jobId: string,
+  createdAt: Date,
+): Promise<void> {
+  const [threadGroup] = await ds.query(
+    `INSERT INTO thread_groups (job_id, org_id, ordinal, kind) VALUES ($1, $2, 10, 'build') RETURNING id`,
+    [jobId, FAKE_TEAM_ID],
+  );
+  const [thread] = await ds.query(
+    `INSERT INTO threads (job_id, org_id, thread_group_id, ordinal, brief, role) VALUES ($1, $2, $3, 10, 'b', 'builder') RETURNING id`,
+    [jobId, FAKE_TEAM_ID, threadGroup.id],
+  );
+  await ds.query(
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, text, created_at) VALUES ($1, $2, 'U', 'u', 'hi', $3)`,
+    [jobId, thread.id, createdAt],
+  );
 }
 
 // ── GATE tests ───────────────────────────────────────────────────────────────────────────────────
@@ -621,6 +646,131 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(swept).toBeGreaterThanOrEqual(1);
     expect(await jobs.findOne({ where: { id: jobId } })).toBeNull();
     expect(await sandboxes.findOne({ where: { job_id: jobId } })).toBeNull();
+  });
+
+  // ── archive (in-place terminal lifecycle: reclaim filesystem, KEEP row + transcript + /context) ────
+
+  it('claimArchiveJob is single-flight: flips status→archived + stamps archived_at once, then returns false', async () => {
+    const { jobId } = await create();
+
+    const first = await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
+    expect(first).toBe(true);
+    const row = await jobs.findOneOrFail({ where: { id: jobId } });
+    expect(row.status).toBe('archived');
+    expect(row.archived_at).not.toBeNull();
+
+    // A second concurrent claim matches 0 rows (status is already `archived`) — single-flight, same shape
+    // as `claimDeleteJob`.
+    expect(await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID)).toBe(
+      false,
+    );
+    expect(
+      await threadLifecycle.claimArchiveJob(randomUUID(), FAKE_TEAM_ID),
+    ).toBe(false);
+  });
+
+  it('archiveJobDeep reclaims the container + worktree and drops /playground + the on-disk session JSONL, but KEEPS the jobs row, /context, and transcript', async () => {
+    const { jobId, worktreePath } = await create();
+    await seedTranscriptMessageAt(jobId, new Date());
+
+    const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
+    const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
+    const transcriptDir = provider.brainTranscriptProjectsDir(jobId)!;
+    for (const dir of [playground, context, transcriptDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'junk.txt'), 'x');
+    }
+
+    await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
+    await threadLifecycle.archiveJobDeep(jobId, FAKE_TEAM_ID);
+
+    // Physical reclaim: container torn down, worktree removed, /playground + the redundant on-disk
+    // session JSONL dropped.
+    expect(provider.tornDown.length).toBeGreaterThanOrEqual(1);
+    expect(fakeGit.removedWorktrees).toContain(worktreePath);
+    expect(existsSync(playground)).toBe(false);
+    expect(existsSync(transcriptDir)).toBe(false);
+    const sandboxRow = await sandboxes.findOneOrFail({
+      where: { job_id: jobId },
+    });
+    expect(sandboxRow.lifecycle).toBe('closed');
+
+    // Kept: the jobs row, /context (decision d2), and the transcript row.
+    expect(existsSync(context)).toBe(true);
+    const jobRow = await jobs.findOneOrFail({ where: { id: jobId } });
+    expect(jobRow.status).toBe('archived');
+    expect(
+      Number(
+        (
+          await ds.query(
+            `SELECT COUNT(*) AS count FROM transcript_messages WHERE job_id = $1`,
+            [jobId],
+          )
+        )[0].count,
+      ),
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('archiveInactiveJobs archives a merged/closed job idle past the TTL, anchored on last transcript activity (not jobs.updated_at)', async () => {
+    // A generous TTL + fixed, widely-separated timestamp offsets (rather than a tight TTL raced against a
+    // short sleep) keep this deterministic regardless of how long the sequential setup below actually takes.
+    process.env.ARCHIVE_INACTIVITY_TTL_MS = '5000';
+    try {
+      // Eligible: merged, last message well before the cutoff.
+      const eligible = await create('Idle merged job');
+      await seedTranscriptMessageAt(
+        eligible.jobId,
+        new Date(Date.now() - 10_000),
+      );
+      await jobs.update({ id: eligible.jobId }, { pr_state: 'merged' });
+
+      // Ineligible: merged but ACTIVE (last message recent, well inside the 5s TTL).
+      const active = await create('Active merged job');
+      await seedTranscriptMessageAt(active.jobId, new Date());
+      await jobs.update({ id: active.jobId }, { pr_state: 'merged' });
+
+      // Ineligible: idle transcript but PR still open (not merged/closed).
+      const open = await create('Idle open-PR job');
+      await seedTranscriptMessageAt(open.jobId, new Date(Date.now() - 10_000));
+      await jobs.update({ id: open.jobId }, { pr_state: 'open' });
+
+      // Ineligible: merged/closed but ZERO transcript rows — MAX() is NULL, which fails `<` (safe default).
+      const noTranscript = await create('No-transcript merged job');
+      await jobs.update({ id: noTranscript.jobId }, { pr_state: 'closed' });
+
+      // Not an exact count: this file never truncates between cases/runs, so earlier eligible rows may
+      // still be sitting around. Assert the count includes ours and check each job's own outcome below.
+      const archivedCount = await threadLifecycle.archiveInactiveJobs();
+      expect(archivedCount).toBeGreaterThanOrEqual(1);
+
+      const statusOf = async (jobId: string) =>
+        (await jobs.findOneOrFail({ where: { id: jobId } })).status;
+      expect(await statusOf(eligible.jobId)).toBe('archived');
+      expect(await statusOf(active.jobId)).not.toBe('archived');
+      expect(await statusOf(open.jobId)).not.toBe('archived');
+      expect(await statusOf(noTranscript.jobId)).not.toBe('archived');
+    } finally {
+      delete process.env.ARCHIVE_INACTIVITY_TTL_MS;
+    }
+  });
+
+  it('reconcileArchivedSandboxes retries the reclaim for an archived job whose sandbox is not yet closed', async () => {
+    const { jobId, worktreePath } = await create();
+    // Simulate a crash between claimArchiveJob committing and archiveJobDeep's reclaim completing: status
+    // is `archived` but the sandbox row is still `attached`.
+    await threadLifecycle.claimArchiveJob(jobId, FAKE_TEAM_ID);
+
+    const retried = await threadLifecycle.reconcileArchivedSandboxes();
+    expect(retried).toBeGreaterThanOrEqual(1);
+
+    expect(fakeGit.removedWorktrees).toContain(worktreePath);
+    const sandboxRow = await sandboxes.findOneOrFail({
+      where: { job_id: jobId },
+    });
+    expect(sandboxRow.lifecycle).toBe('closed');
+
+    // Already-closed archived jobs are left alone (nothing left to retry).
+    expect(await threadLifecycle.reconcileArchivedSandboxes()).toBe(0);
   });
 
   it('reconcileOnBoot marks non-closed rows detached', async () => {
