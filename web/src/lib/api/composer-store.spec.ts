@@ -12,6 +12,7 @@ vi.mock("./job-api", async (importOriginal) => {
       Promise.resolve({
         payload: { text: "", stagedAnswers: [], comments: [] },
         attachments: [],
+        updatedAt: null,
       }),
     ),
     putDraft: vi.fn(() => Promise.resolve({ ok: true })),
@@ -161,7 +162,13 @@ describe("composerStore", () => {
         hasAttachments: false,
       });
       expect(composerStore.getOutbox(a.jobId)).toEqual([
-        { id: "q1", createdAt: 1, text: "hello", comments: [], hasAttachments: false },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "hello",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
       // Job B was never enqueued into — its outbox stays empty.
       expect(composerStore.getOutbox(b.jobId)).toEqual([]);
@@ -242,7 +249,12 @@ describe("composerStore", () => {
           comments: [],
           outbox: [
             { id: "empty-item", createdAt: 1, text: "", comments: [] },
-            { id: "text-survivor", createdAt: 2, text: "keep me", comments: [] },
+            {
+              id: "text-survivor",
+              createdAt: 2,
+              text: "keep me",
+              comments: [],
+            },
           ],
         }),
       );
@@ -250,7 +262,10 @@ describe("composerStore", () => {
       composerStore.ensure(ref);
       const outbox = composerStore.getOutbox(ref.jobId);
       expect(outbox.map((q) => q.id)).toEqual(["text-survivor"]);
-      expect(outbox[0]).toMatchObject({ text: "keep me", hasAttachments: false });
+      expect(outbox[0]).toMatchObject({
+        text: "keep me",
+        hasAttachments: false,
+      });
     });
 
     it("clearDraft preserves the outbox (text clears, queued item stays)", () => {
@@ -267,13 +282,25 @@ describe("composerStore", () => {
       composerStore.clearDraft(ref.jobId);
       expect(composerStore.getDraft(ref.jobId).text).toBe("");
       expect(composerStore.getOutbox(ref.jobId)).toEqual([
-        { id: "q1", createdAt: 1, text: "queued msg", comments: [], hasAttachments: false },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "queued msg",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
 
       const raw = storage.getItem(KEY_PREFIX + ref.jobId);
       expect(raw).not.toBeNull();
       expect(JSON.parse(raw as string).outbox).toEqual([
-        { id: "q1", createdAt: 1, text: "queued msg", comments: [], hasAttachments: false },
+        {
+          id: "q1",
+          createdAt: 1,
+          text: "queued msg",
+          comments: [],
+          hasAttachments: false,
+        },
       ]);
     });
   });
@@ -440,6 +467,7 @@ describe("composerStore", () => {
       vi.mocked(getDraft).mockResolvedValueOnce({
         payload: { text: "from server", stagedAnswers: [], comments: [] },
         attachments: [{ id: "a1", name: "f.txt", kind: "file", size: 10 }],
+        updatedAt: "2026-01-01T00:00:00.000Z",
       });
 
       composerStore.ensure(ref);
@@ -492,7 +520,89 @@ describe("composerStore", () => {
         [],
         Date.now() + 1000,
       );
-      expect(composerStore.getDraft(ref.jobId).text).toBe("from another device");
+      expect(composerStore.getDraft(ref.jobId).text).toBe(
+        "from another device",
+      );
+    });
+
+    it("applyServerPayload preserves same-session attachment previews and pending uploads", () => {
+      const ref = refFor("job-attachment-reconcile");
+      composerStore.setAttachments(ref, () => [
+        {
+          id: "server-a",
+          name: "shot.png",
+          kind: "image",
+          size: 12,
+          url: "blob:shot",
+        },
+        {
+          id: "pending-a",
+          name: "large.png",
+          kind: "image",
+          size: 123,
+          url: "blob:large",
+          pending: true,
+        },
+      ]);
+
+      composerStore.applyServerPayload(
+        ref.jobId,
+        { text: "server body", stagedAnswers: [], comments: [] },
+        [{ id: "server-a", name: "shot.png", kind: "image", size: 12 }],
+        Date.now() + 1000,
+      );
+
+      expect(composerStore.getDraft(ref.jobId).attachments).toEqual([
+        {
+          id: "server-a",
+          name: "shot.png",
+          kind: "image",
+          size: 12,
+          url: "blob:shot",
+        },
+        {
+          id: "pending-a",
+          name: "large.png",
+          kind: "image",
+          size: 123,
+          url: "blob:large",
+          pending: true,
+        },
+      ]);
+    });
+
+    it("on reconnect keeps a newer server draft instead of pushing an older dirty local edit", async () => {
+      const ref = refFor("job-reconnect-server-wins");
+      const serverUpdatedAt = new Date(Date.now() + 10_000).toISOString();
+      vi.mocked(getDraft).mockImplementation((r) =>
+        Promise.resolve(
+          r.jobId === ref.jobId
+            ? {
+                payload: {
+                  text: "newer server edit",
+                  stagedAnswers: [],
+                  comments: [],
+                },
+                attachments: [],
+                updatedAt: serverUpdatedAt,
+              }
+            : {
+                payload: { text: "", stagedAnswers: [], comments: [] },
+                attachments: [],
+                updatedAt: null,
+              },
+        ),
+      );
+      composerStore.setText(ref, "older offline edit");
+      vi.mocked(putDraft).mockClear();
+
+      (composerStore as unknown as { onReconnect: () => void }).onReconnect();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        vi.mocked(putDraft).mock.calls.some(([r]) => r.jobId === ref.jobId),
+      ).toBe(false);
+      expect(composerStore.getDraft(ref.jobId).text).toBe("newer server edit");
     });
   });
 });

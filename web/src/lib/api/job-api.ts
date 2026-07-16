@@ -291,9 +291,11 @@ export interface DraftAttachmentDto {
 }
 
 /** Read the caller's own draft for a job. Never creates a row — an absent draft reads as empty. */
-export function getDraft(
-  ref: JobRef,
-): Promise<{ payload: DraftPayloadWire; attachments: DraftAttachmentDto[] }> {
+export function getDraft(ref: JobRef): Promise<{
+  payload: DraftPayloadWire;
+  attachments: DraftAttachmentDto[];
+  updatedAt: string | null;
+}> {
   return webJson(threadPath(ref, "/draft"));
 }
 

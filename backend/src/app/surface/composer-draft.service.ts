@@ -90,8 +90,8 @@ function isUniqueViolation(err: unknown): boolean {
   if (!(err instanceof QueryFailedError)) return false;
   const pgCode =
     (err as QueryFailedError & { code?: unknown }).code ??
-    (err as QueryFailedError & { driverError?: { code?: unknown } })
-      .driverError?.code;
+    (err as QueryFailedError & { driverError?: { code?: unknown } }).driverError
+      ?.code;
   return pgCode === PG_UNIQUE_VIOLATION;
 }
 
@@ -163,13 +163,18 @@ export class ComposerDraftService {
     orgId: string,
     jobId: string,
     userId: string,
-  ): Promise<{ payload: DraftPayloadWire; attachments: DraftAttachmentDto[] }> {
+  ): Promise<{
+    payload: DraftPayloadWire;
+    attachments: DraftAttachmentDto[];
+    updatedAt: string | null;
+  }> {
     const [row, attachmentRows] = await Promise.all([
       this.drafts.findOne({
         where: { org_id: orgId, job_id: jobId, user_id: userId },
       }),
       this.attachments.find({
         where: { org_id: orgId, job_id: jobId, user_id: userId },
+        order: { created_at: 'ASC' },
       }),
     ]);
     const payload = row?.payload ?? emptyPayload();
@@ -180,6 +185,7 @@ export class ComposerDraftService {
         comments: payload.comments,
       },
       attachments: attachmentRows.map((r) => this.toAttachmentDto(r)),
+      updatedAt: row?.updated_at?.toISOString() ?? null,
     };
   }
 
@@ -263,6 +269,7 @@ export class ComposerDraftService {
       const row = await repo.findOneOrFail({
         where: { org_id: orgId, job_id: jobId, user_id: userId },
       });
+      row.updated_at = new Date();
       await repo.save(row);
     }
   }
@@ -296,28 +303,34 @@ export class ComposerDraftService {
     const safeName = safeUploadName(file.originalname);
     const dir = this.lifecycle.draftUploadsDirHost(jobId, orgId, userId);
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, safeName), file.buffer);
+    const stagedPath = join(dir, safeName);
+    await writeFile(stagedPath, file.buffer);
 
     const mime = MIME_BY_EXT[ext]?.mime ?? '';
     const kind: 'image' | 'file' = mime.startsWith('image/') ? 'image' : 'file';
     const filename = basename(file.originalname).slice(0, 100) || safeName;
 
-    const saved = await this.dataSource.transaction(async (manager) => {
-      const repo = manager.getRepository(ComposerDraftAttachmentEntity);
-      const row = await repo.save(
-        repo.create({
-          org_id: orgId,
-          job_id: jobId,
-          user_id: userId,
-          filename,
-          stored_name: safeName,
-          kind,
-          size: file.size,
-        }),
-      );
-      await this.touchDraft(manager, orgId, jobId, userId);
-      return row;
-    });
+    const saved = await this.dataSource
+      .transaction(async (manager) => {
+        const repo = manager.getRepository(ComposerDraftAttachmentEntity);
+        const row = await repo.save(
+          repo.create({
+            org_id: orgId,
+            job_id: jobId,
+            user_id: userId,
+            filename,
+            stored_name: safeName,
+            kind,
+            size: file.size,
+          }),
+        );
+        await this.touchDraft(manager, orgId, jobId, userId);
+        return row;
+      })
+      .catch(async (err) => {
+        await unlink(stagedPath).catch(() => undefined);
+        throw err;
+      });
     return this.toAttachmentDto(saved);
   }
 
@@ -366,6 +379,7 @@ export class ComposerDraftService {
   ): Promise<{ xml: string; items: AttachmentCardItem[] } | null> {
     const rows = await this.attachments.find({
       where: { org_id: orgId, job_id: jobId, user_id: userId },
+      order: { created_at: 'ASC' },
     });
     if (rows.length === 0) return null;
 

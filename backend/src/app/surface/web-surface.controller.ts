@@ -1314,24 +1314,21 @@ export class WebSurfaceController {
 
     // A `user` message with multipart `files` ingests them straight to `/context/uploads/` (legacy path,
     // used by the New-job modal); one with NO files instead promotes whatever the caller staged in their
-    // server-side draft (`ComposerDraftService.promoteOnSend`) — the in-job composer's send path.
-    const attach = userItem
-      ? files?.length
-        ? await this.ingestAttachments(org.id, jobId, files)
-        : ((await this.draftService?.promoteOnSend(org.id, jobId, user.id)) ??
-          null)
-      : null;
+    // server-side draft (`ComposerDraftService.promoteOnSend`) — the in-job composer's send path. This is
+    // deliberately lazy: lane validation below can still reject the send, and a rejected send must not
+    // consume draft attachment rows.
+    const resolveAttach = async () =>
+      userItem
+        ? files?.length
+          ? await this.ingestAttachments(org.id, jobId, files)
+          : ((await this.draftService?.promoteOnSend(org.id, jobId, user.id)) ??
+            null)
+        : null;
 
     // CASE 1 — a `user` message with no delivered cards: the plain operator-chat path (byte-identical to the
     // old `say`). A lane-targeted message routes through the send seam; otherwise it hits the planning brain.
     if (userItem && applied.length === 0) {
       const operatorText = userItem.text ?? '';
-      if (!operatorText && !attach) {
-        throw new BadRequestException('text or an attachment is required');
-      }
-      const bodyText = attach
-        ? `${attach.xml}\n\n${operatorText}`
-        : operatorText;
       const targetLane = userItem.lane;
       if (targetLane && targetLane !== 'main') {
         if (!this.threadInput) {
@@ -1344,6 +1341,13 @@ export class WebSurfaceController {
             `thread "${targetLane}" is not accepting messages right now`,
           );
         }
+        const attach = await resolveAttach();
+        if (!operatorText && !attach) {
+          throw new BadRequestException('text or an attachment is required');
+        }
+        const bodyText = attach
+          ? `${attach.xml}\n\n${operatorText}`
+          : operatorText;
         const author = operatorAuthor(user);
         await this.threadInput.postToThread(
           targetLane,
@@ -1360,6 +1364,13 @@ export class WebSurfaceController {
         });
         return { ok: true, ts: new Date().toISOString(), results };
       }
+      const attach = await resolveAttach();
+      if (!operatorText && !attach) {
+        throw new BadRequestException('text or an attachment is required');
+      }
+      const bodyText = attach
+        ? `${attach.xml}\n\n${operatorText}`
+        : operatorText;
       const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
         orgId: org.id,
         threadTs: jobId,
@@ -1423,6 +1434,7 @@ export class WebSurfaceController {
     // then deliver it through the `Message`-typed intake seam as a single system seed.
     if (applied.length > 0 && userItem) {
       const operatorText = userItem.text ?? '';
+      const attach = await resolveAttach();
       const userBody = attach
         ? `${attach.xml}\n\n${operatorText}`
         : operatorText;
@@ -1558,10 +1570,15 @@ export class WebSurfaceController {
     @CurrentOrg() org: CurrentOrgCtx,
     @CurrentUser() user: UserEntity,
     @Param('jobId') jobId: string,
-  ): Promise<{ payload: DraftPayloadWire; attachments: DraftAttachmentDto[] }> {
+  ): Promise<{
+    payload: DraftPayloadWire;
+    attachments: DraftAttachmentDto[];
+    updatedAt: string | null;
+  }> {
     if (!this.draftService) {
       throw new ServiceUnavailableException('draft service unavailable');
     }
+    await this.requireThread(jobId, org.id);
     return this.draftService.getDraft(org.id, jobId, user.id);
   }
 
@@ -1577,6 +1594,7 @@ export class WebSurfaceController {
     if (!this.draftService) {
       throw new ServiceUnavailableException('draft service unavailable');
     }
+    await this.requireThread(jobId, org.id);
     const totalBytes =
       Buffer.byteLength(body?.text ?? '', 'utf8') +
       (body?.stagedAnswers ?? []).reduce(
@@ -1623,6 +1641,7 @@ export class WebSurfaceController {
     if (!files?.length) {
       throw new BadRequestException('at least one file is required');
     }
+    await this.requireThread(jobId, org.id);
     const attachments: DraftAttachmentDto[] = [];
     for (const file of files) {
       attachments.push(
@@ -1633,7 +1652,9 @@ export class WebSurfaceController {
   }
 
   /** `DELETE …/jobs/:jobId/draft/attachments/:attachmentId` — drop a staged draft attachment. */
-  @Delete('orgs/:orgId/repos/:repoId/jobs/:jobId/draft/attachments/:attachmentId')
+  @Delete(
+    'orgs/:orgId/repos/:repoId/jobs/:jobId/draft/attachments/:attachmentId',
+  )
   @UseGuards(OrgMembershipGuard)
   async deleteDraftAttachment(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -1644,6 +1665,7 @@ export class WebSurfaceController {
     if (!this.draftService) {
       throw new ServiceUnavailableException('draft service unavailable');
     }
+    await this.requireThread(jobId, org.id);
     await this.draftService.deleteAttachment(
       org.id,
       jobId,

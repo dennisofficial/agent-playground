@@ -55,7 +55,13 @@ export interface QueuedMessage {
  */
 export type StagedAnswer =
   | { kind: "question"; cardId: string; label: string; answer: string }
-  | { kind: "file"; cardId: string; label: string; filename: string; content: string }
+  | {
+      kind: "file";
+      cardId: string;
+      label: string;
+      filename: string;
+      content: string;
+    }
   | { kind: "secret"; cardId: string; label: string; value: string };
 
 export interface ComposerDraft {
@@ -114,7 +120,10 @@ interface PersistedDraft {
   text: string;
   comments: ReviewComment[];
   outbox: Array<
-    Pick<QueuedMessage, "id" | "text" | "comments" | "createdAt" | "hasAttachments">
+    Pick<
+      QueuedMessage,
+      "id" | "text" | "comments" | "createdAt" | "hasAttachments"
+    >
   >;
 }
 
@@ -323,7 +332,9 @@ class ComposerStore {
 
   /** Drop one staged answer (the tray's remove `X`, or a card's own "Remove" reverting it to answerable). */
   removeStagedAnswer(ref: JobRef, cardId: string): void {
-    this.setStagedAnswers(ref, (prev) => prev.filter((a) => a.cardId !== cardId));
+    this.setStagedAnswers(ref, (prev) =>
+      prev.filter((a) => a.cardId !== cardId),
+    );
   }
 
   /**
@@ -385,7 +396,8 @@ class ComposerStore {
   allQueued(): { ref: JobRef; msg: QueuedMessage }[] {
     const all: { ref: JobRef; msg: QueuedMessage }[] = [];
     for (const entry of this.entries.values()) {
-      for (const msg of entry.state.outbox) all.push({ ref: entry.state.ref, msg });
+      for (const msg of entry.state.outbox)
+        all.push({ ref: entry.state.ref, msg });
     }
     return all.sort((a, b) => a.msg.createdAt - b.msg.createdAt);
   }
@@ -522,17 +534,29 @@ class ComposerStore {
   ): void {
     const entry = this.entries.get(jobId);
     if (!entry) return;
+    const existingById = new Map(entry.state.attachments.map((a) => [a.id, a]));
+    const nextAttachments = attachments
+      .filter((a) => !entry.pendingDeletes.has(a.id))
+      .map((a) => {
+        const existing = existingById.get(a.id);
+        return {
+          id: a.id,
+          name: a.name,
+          kind: a.kind,
+          size: a.size,
+          ...(existing?.url ? { url: existing.url } : {}),
+        };
+      });
+    const nextIds = new Set(nextAttachments.map((a) => a.id));
+    const stillUploading = entry.state.attachments.filter(
+      (a) => a.pending && !nextIds.has(a.id),
+    );
     entry.state = {
       ...entry.state,
       text: payload.text,
       stagedAnswers: payload.stagedAnswers,
       comments: payload.comments,
-      attachments: attachments.map((a) => ({
-        id: a.id,
-        name: a.name,
-        kind: a.kind,
-        size: a.size,
-      })),
+      attachments: [...nextAttachments, ...stillUploading],
     };
     this.notify(jobId);
     this.persistNow(jobId, entry.state); // keep the sessionStorage fallback buffer in sync
@@ -546,13 +570,29 @@ class ComposerStore {
   private onReconnect(): void {
     for (const [jobId, entry] of this.entries) {
       if (!jobId) continue;
-      for (const id of entry.pendingDeletes) this.tryDeleteAttachment(entry.state.ref, id);
+      for (const id of entry.pendingDeletes)
+        this.tryDeleteAttachment(entry.state.ref, id);
       if (entry.dirty) {
-        // Sequence the resync GET after the body PUT settles — firing both concurrently can let the GET's
-        // response land first and clobber the just-made edit with pre-edit server state (the PUT's own
-        // `dirty` clear would then wrongly stick since its clock check only guards against a NEWER local
-        // edit, not a reconciled-away one).
-        void this.pushDraft(jobId).then(() => this.fetchAndReconcile(entry.state.ref));
+        // Reconnect conflict check: server wins if it changed after our last local edit; otherwise push the
+        // dirty local body, then refetch so this device carries the server's canonical timestamps/attachments.
+        void getDraft(entry.state.ref)
+          .then(({ payload, attachments, updatedAt }) => {
+            const cur = this.entries.get(jobId);
+            if (!cur) return;
+            const parsed = updatedAt ? Date.parse(updatedAt) : 0;
+            const serverUpdatedAt = Number.isFinite(parsed) ? parsed : 0;
+            if (cur.lastLocalEditAt <= serverUpdatedAt) {
+              cur.dirty = false;
+              this.applyPayload(jobId, payload, attachments);
+              return;
+            }
+            void this.pushDraft(jobId).then(() =>
+              this.fetchAndReconcile(cur.state.ref),
+            );
+          })
+          .catch(() => {
+            void this.pushDraft(jobId);
+          });
       } else {
         this.fetchAndReconcile(entry.state.ref);
       }
@@ -659,17 +699,32 @@ class ComposerStore {
  * since it was staged. Matches by the card's own kind + id (`questionId`/`requestId`) against `cardId`; a
  * card that isn't found at all in `messages` is NOT stale — the list may be paginated/incomplete.
  */
-function isStagedAnswerStale(answer: StagedAnswer, messages: JobMessage[]): boolean {
+function isStagedAnswerStale(
+  answer: StagedAnswer,
+  messages: JobMessage[],
+): boolean {
   for (const m of messages) {
     const card = m.card;
     if (!card) continue;
-    if (answer.kind === "question" && card.type === "question_card" && card.questionId === answer.cardId) {
+    if (
+      answer.kind === "question" &&
+      card.type === "question_card" &&
+      card.questionId === answer.cardId
+    ) {
       return card.withdrawnAt != null || card.answer != null;
     }
-    if (answer.kind === "file" && card.type === "file_request_card" && card.requestId === answer.cardId) {
+    if (
+      answer.kind === "file" &&
+      card.type === "file_request_card" &&
+      card.requestId === answer.cardId
+    ) {
       return card.withdrawnAt != null || card.provided_at != null;
     }
-    if (answer.kind === "secret" && card.type === "secret_input_card" && card.requestId === answer.cardId) {
+    if (
+      answer.kind === "secret" &&
+      card.type === "secret_input_card" &&
+      card.requestId === answer.cardId
+    ) {
       return card.withdrawnAt != null || card.provided_at != null;
     }
   }
@@ -743,7 +798,11 @@ export function useComposerStagedAnswers(ref: JobRef): StagedAnswer[] {
     () => composerStore.getDraft(ref.jobId).stagedAnswers,
     [ref.jobId],
   );
-  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY.stagedAnswers);
+  return useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    () => EMPTY.stagedAnswers,
+  );
 }
 
 /** Slice-aware subscription — a Job's offline-send outbox only, so `<QueuedTray>` re-renders on enqueue/

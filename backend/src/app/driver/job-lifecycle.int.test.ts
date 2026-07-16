@@ -222,6 +222,9 @@ class FakeSandboxProvider {
   playgroundDirHost(orgId: string, jobId: string): string {
     return join(this.stateRoot, 'playgrounds', orgId, jobId);
   }
+  draftUploadsDirHost(orgId: string, jobId: string, userId: string): string {
+    return join(this.stateRoot, 'draft-uploads', orgId, jobId, userId);
+  }
 }
 
 // ── Module bootstrap ──────────────────────────────────────────────────────────────────────────────
@@ -560,23 +563,30 @@ describe('R2 gate — JobLifecycleService (live Postgres + fakes)', () => {
     expect(await count('job_sandboxes')).toBe(0);
   });
 
-  it('deleteJobDeep removes the durable host-side /playground and /context scratch dirs', async () => {
+  it('deleteJobDeep removes the durable host-side /playground, /context, and draft-upload scratch dirs', async () => {
     const { jobId } = await create();
 
     // Simulate the durable, out-of-worktree scratch dirs a live job would accumulate.
     const playground = provider.playgroundDirHost(FAKE_TEAM_ID, jobId);
     const context = provider.contextDirHost(FAKE_TEAM_ID, jobId);
-    for (const dir of [playground, context]) {
+    const draftUpload = provider.draftUploadsDirHost(
+      FAKE_TEAM_ID,
+      jobId,
+      randomUUID(),
+    );
+    for (const dir of [playground, context, draftUpload]) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, 'junk.txt'), 'x');
     }
     expect(existsSync(playground)).toBe(true);
     expect(existsSync(context)).toBe(true);
+    expect(existsSync(draftUpload)).toBe(true);
 
     await threadLifecycle.deleteJobDeep(jobId, FAKE_TEAM_ID);
 
     expect(existsSync(playground)).toBe(false);
     expect(existsSync(context)).toBe(false);
+    expect(existsSync(draftUpload)).toBe(false);
   });
 
   it('claimDeleteJob is single-flight: flips status→deleting once, then returns false', async () => {

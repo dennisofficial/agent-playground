@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, rmSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { In, IsNull, Not, Repository } from 'typeorm';
 import type { FeatureSandbox, ProjectRepo } from '../git';
 import { GithubPrService, LocalGitService, parseGithubRepoUrl } from '../git';
@@ -818,13 +819,15 @@ export class JobLifecycleService {
     return closed;
   }
 
-  /** Remove a job's durable host-side scratch dirs (`/playground` + `/context`) — they live OUTSIDE the
-   *  worktree (keyed by jobId), so neither `closeJob` nor a worktree removal touches them. Best-effort;
-   *  never throws. Used by `deleteJobDeep` (hard delete) and `reapMergedSandboxes` (disk GC). */
+  /** Remove a job's durable host-side scratch dirs (`/playground`, `/context`, draft uploads) — they live
+   *  OUTSIDE the worktree (keyed by jobId), so neither `closeJob` nor a worktree removal touches them.
+   *  Best-effort; never throws. Used by `deleteJobDeep` (hard delete) and `reapMergedSandboxes` (disk GC). */
   private removeJobScratchDirs(orgId: string, jobId: string): void {
+    const draftUploadsDir = this.draftUploadsJobDirHost(orgId, jobId);
     for (const dir of [
       this.sandboxProvider.playgroundDirHost(orgId, jobId),
       this.sandboxProvider.contextDirHost(orgId, jobId),
+      ...(draftUploadsDir ? [draftUploadsDir] : []),
     ]) {
       try {
         rmSync(dir, { recursive: true, force: true });
@@ -836,14 +839,26 @@ export class JobLifecycleService {
     }
   }
 
+  private draftUploadsJobDirHost(orgId: string, jobId: string): string | null {
+    const marker = '__job_root__';
+    const probe = this.sandboxProvider.draftUploadsDirHost(
+      orgId,
+      jobId,
+      marker,
+    );
+    if (basename(probe) !== marker) return null;
+    const dir = dirname(probe);
+    return dir === dirname(dir) ? null : dir;
+  }
+
   /**
    * Disk GC for merged/closed jobs whose sandbox has sat `detached` past {@link MERGED_SANDBOX_GC_TTL_MS}.
    * Merge now DETACHES (frees the container RAM immediately, keeps the worktree so the conversation stays
    * resumable) — but nothing reclaims that worktree, so without this it grows unbounded. Runs the full
    * `closeJob` (worktree + container-by-identity + `closed`) AND `removeJobScratchDirs` (`/context`,
-   * `/playground` — which `closeJob` does NOT touch). The job row + transcript SURVIVE (never a data delete);
-   * the conversation just becomes non-resumable past the TTL (start a new job). Leader-only, best-effort;
-   * returns how many were reclaimed.
+   * `/playground`, draft uploads — which `closeJob` does NOT touch). The job row + transcript SURVIVE
+   * (never a data delete); the conversation just becomes non-resumable past the TTL (start a new job).
+   * Leader-only, best-effort; returns how many were reclaimed.
    */
   async reapMergedSandboxes(): Promise<number> {
     const cutoff = Date.now() - MERGED_SANDBOX_GC_TTL_MS;
