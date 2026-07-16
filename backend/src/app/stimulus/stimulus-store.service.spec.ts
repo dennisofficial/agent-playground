@@ -106,6 +106,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'run:1',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed',
       title: '[github] CI failed',
     });
@@ -165,6 +166,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'run:1',
         severity: 'info',
+        eventKind: 'ci_failure',
         body: 'dup',
         title: 't',
       }),
@@ -197,6 +199,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'ci:abc',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed',
     });
 
@@ -254,6 +257,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       source: 'github',
       dedupeKey: 'ci:abc',
       severity: 'critical',
+      eventKind: 'ci_failure',
       body: 'CI failed again',
     });
 
@@ -292,6 +296,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'ci:abc',
         severity: 'critical',
+        eventKind: 'ci_failure',
         body: 'CI failed',
       }),
     ).rejects.toThrow('stimulus write failed');
@@ -332,6 +337,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
         source: 'github',
         dedupeKey: 'ci:abc',
         severity: 'info',
+        eventKind: 'ci_failure',
         body: 'dup',
       }),
     ).rejects.toBeInstanceOf(DuplicateStimulusError);

@@ -1,7 +1,13 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
-import type { ChatStimulus, EventStimulus, SeedRow } from '../domain';
+import type {
+  ChatStimulus,
+  EventKind,
+  EventStimulus,
+  MessageType,
+  SeedRow,
+} from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -106,6 +112,9 @@ export class StimulusStoreService {
     source: string;
     dedupeKey: string;
     severity: EventStimulus['severity'];
+    /** Render-time discriminant threaded from ingress onto the transcript row's `meta` (never persisted
+     *  on the event row). */
+    eventKind: EventKind;
     body: string;
     title: string;
   }): Promise<SeededEvent> {
@@ -139,6 +148,7 @@ export class StimulusStoreService {
           source: 'system_event',
           eventSource: input.source,
           severity: input.severity,
+          eventKind: input.eventKind,
         },
       }),
     );
@@ -208,6 +218,9 @@ export class StimulusStoreService {
     source: string;
     dedupeKey: string;
     severity: EventStimulus['severity'];
+    /** Render-time discriminant threaded from ingress onto the transcript row's `meta` (never persisted
+     *  on the event row). */
+    eventKind: EventKind;
     body: string;
     /** Optional render-only card payload persisted on the message row. */
     card?: Record<string, unknown>;
@@ -237,6 +250,7 @@ export class StimulusStoreService {
               source: 'system_event',
               eventSource: input.source,
               severity: input.severity,
+              eventKind: input.eventKind,
             },
           }),
         );
@@ -331,6 +345,11 @@ export class StimulusStoreService {
     author: { id: string; displayName: string };
     replyRoute: { surfaceId: string; jobRef: string };
     body: string;
+    /**
+     * The `Message`-union discriminant persisted on the `type` column. Explicit callers (the intake seam)
+     * pass it; the brain-side direct callers omit it, so it's inferred from the seed-author signal below.
+     */
+    type?: MessageType;
     /** Optional render-only card payload (e.g. a review-comments batch) carried on the persisted row. */
     card?: Record<string, unknown>;
     /** Delivery priority (d18: `now` | `queue` | `later`); absent = `now`. Piggybacked into `reply_route` jsonb. */
@@ -361,6 +380,10 @@ export class StimulusStoreService {
     // mid-turn process restart) leave a transcript row with no stimulus behind it — it renders but no turn
     // ever runs and the durable delivery pump can't recover a row that was never written. One transaction
     // makes it both-or-neither.
+    const type: MessageType =
+      input.type ??
+      (input.author.id === SYSTEM_SEED_AUTHOR.id ? 'seed' : 'user');
+
     const replyRoute: ReplyRouteJson = {
       ...input.replyRoute,
       ...(input.priority ? { priority: input.priority } : {}),
@@ -427,6 +450,7 @@ export class StimulusStoreService {
           org_id: input.orgId,
           repo_id: input.repoId,
           kind: 'chat',
+          type,
           trust: 'trusted',
           body: input.body,
           job_id: input.jobId,
@@ -490,6 +514,7 @@ export class StimulusStoreService {
         org_id: input.orgId,
         repo_id: input.repoId,
         kind: 'chat',
+        type: 'seed',
         trust: 'trusted',
         body: input.body,
         job_id: input.jobId,

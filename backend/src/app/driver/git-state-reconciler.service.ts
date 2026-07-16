@@ -273,6 +273,7 @@ export class GitStateReconciler {
         source: 'github',
         dedupeKey: `conflict:${prNumber}:${detail.headSha}`,
         severity: 'critical',
+        eventKind: 'ci_failure',
         body:
           `Your PR #${prNumber} has a merge conflict against its base branch. ` +
           `Fetch the base, resolve the conflicts in the sandbox, and push the fix.\n${detail.url}`,

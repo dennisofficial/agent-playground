@@ -9,7 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Subscription } from 'rxjs';
 import { Repository } from 'typeorm';
-import type { ChatStimulus } from '../domain';
+import type { EventMessage, Message } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { JobEntity } from '../persistence/entities';
@@ -81,7 +81,7 @@ export class ChatStimulusBridge
     this.sub?.unsubscribe();
   }
 
-  /** Resolve the thread, build the `ChatStimulus`, hand it to intake. */
+  /** Resolve the thread, build the `Message`, hand it to intake. */
   async onInbound(msg: InboundChatMessage): Promise<void> {
     const thread = await this.resolveThread(msg);
     if (!thread) {
@@ -91,36 +91,56 @@ export class ChatStimulusBridge
       return;
     }
 
-    const stimulus: ChatStimulus = {
-      id: '', // minted by the store on persist
-      orgId: thread.org_id,
-      repoId: thread.repo_id,
-      kind: 'chat',
-      trust: 'trusted',
-      body: msg.text,
-      jobId: thread.id,
+    // `id: ''` is minted by the store on persist; `receivedAt` is an ISO string on the union (`msg.ts` is
+    // a Date). Any seed-flavored inbound (answered question, uploaded file, provided secret, or a generic
+    // system seed) maps to the transitional `SeedMessage` — the narrower answer/file/secret variants are
+    // reserved for the future `/message` endpoint, which has the real question/answer text on hand and no
+    // curated `seedRow` to preserve.
+    const message: Exclude<Message, EventMessage> = msg.seed
+      ? {
+          type: 'seed',
+          trust: 'system',
+          id: '',
+          orgId: thread.org_id,
+          repoId: thread.repo_id,
+          jobId: thread.id,
+          receivedAt: msg.ts.toISOString(),
+          body: msg.text,
+          seedRow: msg.seedRow,
+          priority: msg.priority,
+          card: msg.card,
+          deliveredQuestionIds: msg.seedQuestionId
+            ? [msg.seedQuestionId]
+            : msg.seedQuestionIds,
+          deliveredFileIds: msg.seedFileId
+            ? [msg.seedFileId]
+            : msg.seedFileIds,
+          deliveredSecretIds: msg.seedSecretId
+            ? [msg.seedSecretId]
+            : msg.seedSecretIds,
+        }
+      : {
+          type: 'user',
+          trust: 'trusted',
+          id: '',
+          orgId: thread.org_id,
+          repoId: thread.repo_id,
+          jobId: thread.id,
+          receivedAt: msg.ts.toISOString(),
+          body: msg.text,
+          author: { id: msg.authorId, displayName: msg.authorName },
+        };
+
+    await this.intake.intakeChat(message, {
       author: { id: msg.authorId, displayName: msg.authorName },
-      replyRoute: {
-        surfaceId: this.surface.name,
-        jobRef: thread.id,
-      },
-      receivedAt: msg.ts,
-      ...(msg.seed ? { seed: true } : {}),
-      ...(msg.seedQuestionId ? { seedQuestionId: msg.seedQuestionId } : {}),
-      ...(msg.seedFileId ? { seedFileId: msg.seedFileId } : {}),
-      ...(msg.seedSecretId ? { seedSecretId: msg.seedSecretId } : {}),
-      ...(msg.seedQuestionIds?.length
-        ? { seedQuestionIds: msg.seedQuestionIds }
-        : {}),
-      ...(msg.seedFileIds?.length ? { seedFileIds: msg.seedFileIds } : {}),
-      ...(msg.seedSecretIds?.length
-        ? { seedSecretIds: msg.seedSecretIds }
-        : {}),
-      ...(msg.seedRow ? { seedRow: msg.seedRow } : {}),
-      ...(msg.priority ? { priority: msg.priority } : {}),
-      ...(msg.card ? { card: msg.card } : {}),
-    };
-    await this.intake.intakeChat(stimulus);
+      replyRoute: { surfaceId: this.surface.name, jobRef: thread.id },
+      // A PLAIN (non-seed) inbound can still carry a render-only card (an operator's attachments_card /
+      // review_comments_card send) — `UserMessage` has no `card` field (data-model.md: `attachments`
+      // supersedes it), so it rides the transport instead of being dropped. `msg.priority` mirrors it for
+      // the same reason.
+      card: msg.card,
+      priority: msg.priority,
+    });
   }
 
   /**

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { ChatStimulus, ParsedEvent, SeedRow } from '../domain';
+import type { EventMessage, Message, ParsedEvent, SeedRow } from '../domain';
+import { assertNever } from '../domain';
 import { EventFilterService } from './event-filter.service';
 import { BRAIN_SINK, type BrainSink } from './stimulus-consumer';
 import {
@@ -92,6 +93,7 @@ export class StimulusIntake {
         source: event.source,
         dedupeKey: event.dedupeKey,
         severity: event.severity,
+        eventKind: event.eventKind,
         body: event.body,
       });
       // NOT awaited: the webhook 202 must not wait on an engine turn (which can provision a sandbox).
@@ -150,45 +152,115 @@ export class StimulusIntake {
   }
 
   /**
-   * Push a chat message continuing an existing thread into the brain. Persists, then consumes (no
-   * filter). The caller (the chat bridge) has already resolved the thread + reply route.
+   * Push a chat message (any non-event `Message`) continuing an existing thread into the brain. The
+   * variant's `type` decides how it persists + renders; `transport` carries who authored it and where
+   * Atlas replies (the caller — the chat bridge, or the future `/message` endpoint — resolves those).
+   *
+   * Every variant rides the SAME durable pump as ordinary chat: `recordChatStimulus` decides how it
+   * renders (a plain bubble, a curated pill, or no row at all) from the `systemChunk`/`type` it's handed,
+   * and the persisted `type` is the new authority for framing. No in-memory fast path — always persisted
+   * first, then handed to the delivery pump (`enqueueChat`, not the old fire-and-forget `handleChat`).
    */
-  async intakeChat(stimulus: ChatStimulus): Promise<void> {
-    // A SYSTEM SEED (e.g. an `ask_question` answer framed as `<system_notification>`) now rides the SAME
-    // durable pump as ordinary chat: `recordChatStimulus` decides how it renders (a curated pill, or no
-    // row at all) from `stimulus.seedRow`, and `author.id === SYSTEM_SEED_AUTHOR.id` is what reload uses
-    // to reconstruct `seed: true`. No more in-memory fast path — every chat stimulus is persisted first.
-    const recorded = await this.store.recordChatStimulus({
-      orgId: stimulus.orgId,
-      repoId: stimulus.repoId,
-      jobId: stimulus.jobId,
-      author: stimulus.author,
-      replyRoute: stimulus.replyRoute,
-      body: stimulus.body,
-      card: stimulus.card,
-      priority: stimulus.priority,
-      systemChunk: stimulus.seed
-        ? (stimulus.seedRow ?? genericSeedRow(stimulus))
-        : undefined,
-      seedQuestionId: stimulus.seedQuestionId,
-      seedSecretId: stimulus.seedSecretId,
-      seedFileId: stimulus.seedFileId,
-      seedQuestionIds: stimulus.seedQuestionIds,
-      seedSecretIds: stimulus.seedSecretIds,
-      seedFileIds: stimulus.seedFileIds,
-    });
+  async intakeChat(
+    message: Exclude<Message, EventMessage>,
+    transport: {
+      author: { id: string; displayName: string };
+      replyRoute: { surfaceId: string; jobRef: string };
+      /** Render-only card payload riding alongside a PLAIN (non-seed) inbound — e.g. an operator's
+       *  `attachments_card`/`review_comments_card` send. Not part of the typed `Message` shape (the
+       *  clean `attachments` field on `UserMessage` supersedes this once the `/message` endpoint lands),
+       *  but this legacy seam still carries it through so today's attachment/review-comment sends keep
+       *  rendering. */
+      card?: Record<string, unknown>;
+      priority?: 'now' | 'queue' | 'later';
+    },
+  ): Promise<void> {
+    const base = {
+      orgId: message.orgId,
+      repoId: message.repoId,
+      jobId: message.jobId,
+      author: transport.author,
+      replyRoute: transport.replyRoute,
+      card: transport.card,
+      priority: transport.priority,
+    };
+
+    let input: RecordChatInput;
+    switch (message.type) {
+      case 'user':
+        input = { ...base, body: message.body, type: 'user' };
+        break;
+      case 'seed':
+        input = {
+          ...base,
+          body: message.body,
+          systemChunk:
+            message.seedRow ??
+            genericSeedRow({ jobId: message.jobId, body: message.body }),
+          priority: message.priority,
+          card: message.card,
+          seedQuestionIds: message.deliveredQuestionIds,
+          seedFileIds: message.deliveredFileIds,
+          seedSecretIds: message.deliveredSecretIds,
+          type: 'seed',
+        };
+        break;
+      case 'answer_question': {
+        const body = message.answer;
+        input = {
+          ...base,
+          body,
+          seedQuestionId: message.questionId,
+          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          type: 'answer_question',
+        };
+        break;
+      }
+      case 'file_answered': {
+        const body = `File "${message.filename}" was uploaded.`;
+        input = {
+          ...base,
+          body,
+          seedFileId: message.requestId,
+          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          type: 'file_answered',
+        };
+        break;
+      }
+      case 'secret_provided': {
+        const body = 'A secret was provided.';
+        input = {
+          ...base,
+          body,
+          seedSecretId: message.requestId,
+          systemChunk: genericSeedRow({ jobId: message.jobId, body }),
+          type: 'secret_provided',
+        };
+        break;
+      }
+      default:
+        return assertNever(message);
+    }
+
+    const recorded = await this.store.recordChatStimulus(input);
     // Durable hand-off: the row is persisted; the pump owns steer-vs-turn + the delivered/sweep guarantee.
-    // NOT the old `await handleChat` (a fire-and-forget turn that could be steered into a dead engine and
-    // silently lost). `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
+    // `enqueueChat` returns fast once enqueued — the engine turn runs behind it.
     await this.sink.enqueueChat(recorded);
   }
 }
 
-function genericSeedRow(stimulus: ChatStimulus): Exclude<SeedRow, 'skip'> {
+type RecordChatInput = Parameters<
+  StimulusStoreService['recordChatStimulus']
+>[0];
+
+function genericSeedRow(fields: {
+  jobId: string;
+  body: string;
+}): Exclude<SeedRow, 'skip'> {
   return {
     label: 'A harness system notification was delivered to Atlas.',
-    chunkKey: `seed:generic:${stimulus.jobId}:${createHash('sha1')
-      .update(stimulus.body)
+    chunkKey: `seed:generic:${fields.jobId}:${createHash('sha1')
+      .update(fields.body)
       .digest('hex')
       .slice(0, 16)}`,
   };
