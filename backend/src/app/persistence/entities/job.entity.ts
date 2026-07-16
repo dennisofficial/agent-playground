@@ -92,12 +92,6 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
 
-  /** The create_job firstMessage stored when a never-started job is born blocked (create_job dependsOn);
-   *  replayed on wake, then cleared. Null for a job manually blocked while already running (it resumes its
-   *  existing session on wake, no replay). */
-  @Column({ type: 'text', nullable: true })
-  blocked_seed_message!: string | null;
-
   /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
    *  operator/system top-level jobs. Powers the "Created jobs" children query. */
   @Column({ type: 'uuid', nullable: true })

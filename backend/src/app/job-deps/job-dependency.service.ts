@@ -456,6 +456,14 @@ export class JobDependencyService {
    * that pump throws we re-park so the JobUnblockSweep re-drives — the held seed rows (note included) persist
    * undelivered, so at-least-once now rides the stimulus `delivered_at`, not a column. Returns whether this
    * call actually unblocked the job.
+   *
+   * Re-checks the job's CURRENT status immediately before writing anything — every caller
+   * (`wakeDependentIfAllTerminal`'s direct call, and `unblockAndWake` for `removeDependency`/
+   * `reconcileBlockedJob`) may be working off a status snapshot that's gone stale (a manual edge removal
+   * on a job that was never actually parked — e.g. an edge to an already-terminal blocker recorded "for
+   * history" by `addDependency` — or a concurrent wake racing another caller on the same job). Without this,
+   * the note write below is unconditional and lands a bogus/duplicate "unblocked" system note in a job that
+   * was never (or is no longer) blocked.
    */
   private async recordUnblockNoteThenPump(
     jobId: string,
@@ -463,6 +471,9 @@ export class JobDependencyService {
     repoId: string,
     blockers: UnblockBlockerInfo[],
   ): Promise<boolean> {
+    const current = await this.jobs.findOne({ where: { id: jobId } });
+    if (current?.status !== 'blocked') return false; // not (or no longer) parked — nothing to wake.
+
     await this.brainGateway.recordUnblockNote(jobId, orgId, repoId, {
       blockers,
     });
