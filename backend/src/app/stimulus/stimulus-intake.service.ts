@@ -24,11 +24,11 @@ export type IntakeOutcome =
  *
  *  - `intakeEvent(ParsedEvent)` — the `NotificationSource` path. Runs the mechanical dedup/rate-limit
  *    filter; on pass, ROUTES the event to the brain of the job that already OWNS its PR/branch (persists
- *    the event row, body fenced as untrusted, then hands the `EventStimulus` to the consumer). An event
+ *    the event row, body fenced as untrusted, then hands the `EventMessage` to the consumer). An event
  *    that nothing owns is DROPPED — repo activity never seeds a new job (decision d6). On a filter drop,
  *    a no-owner drop, OR a DB unique-violation backstop, nothing is consumed (the firehose pays no turn).
- *  - `intakeChat(ChatStimulus)` — the `ChatSurface` path. Persists the chat message + row (no filter —
- *    chat bypasses it), then hands the `ChatStimulus` to the brain.
+ *  - `intakeChat(Message)` — the `ChatSurface` path. Persists the chat message + row (no filter —
+ *    chat bypasses it), then hands the resulting `TurnEnvelope` to the brain.
  *
  * The downstream is the brain (`BRAIN_SINK`): chat → the thread's session (`handleChat`); event →
  * delivered to the seeded thread's brain as a harness message (`deliverEvent`). The untrusted-content

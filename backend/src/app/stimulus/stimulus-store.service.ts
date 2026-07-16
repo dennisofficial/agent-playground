@@ -2,11 +2,13 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, IsNull, QueryFailedError, Repository } from 'typeorm';
 import type {
-  ChatStimulus,
   EventKind,
-  EventStimulus,
+  EventMessage,
+  EventSeverity,
+  Message,
   MessageType,
   SeedRow,
+  TurnEnvelope,
 } from '../domain';
 import { JobBootstrapService } from '../job-bootstrap';
 import { DB_CONNECTION } from '../persistence/database.module';
@@ -54,16 +56,16 @@ const HOST_SEED_AUTHOR = { id: 'U-SYSTEM', displayName: 'System' } as const;
  * Persistence for the intake seam — the single place stimuli/threads/messages land on the 'atlas'
  * connection.
  *
- *  - `attachEventToJob` — an `EventStimulus` is delivered to the brain of the job that already OWNS its
+ *  - `attachEventToJob` — an `EventMessage` is delivered to the brain of the job that already OWNS its
  *    PR/branch: persists the operator-visible `messages` row + the `stimuli` event row atomically. The
  *    partial-unique index on (org, repo, source, dedupe_key) is the durable backstop to the in-memory
  *    filter: a racing duplicate that slips past the window is rejected at insert (→ `DuplicateStimulusError`),
  *    so one event collapses to one delivered message.
- *  - `recordChatStimulus` — a `ChatStimulus` CONTINUES its existing thread: persists the inbound
- *    `messages` row + the `stimuli` chat row (no new thread, no dedupe).
+ *  - `recordChatStimulus` — a chat/seed `Message` CONTINUES its existing thread: persists the inbound
+ *    `messages` row + the `stimuli` chat row (no new thread, no dedupe), returning a `TurnEnvelope`.
  *
- * Everything is the in-memory `Stimulus`/`Thread` currency at the seam; this store maps it to rows.
- * Zero v1 imports.
+ * The brain's turn currency is the `TurnEnvelope` (wrapping a typed `Message`); this store maps it to/from
+ * rows. Zero v1 imports.
  */
 @Injectable()
 export class StimulusStoreService {
@@ -102,8 +104,8 @@ export class StimulusStoreService {
    *
    * ROUTING (thread 4 §CI-routing): once the job's `ci` thread group thread exists (post-ship —
    * `DriverStoreService.ensureCiThread`), the event's `messages` row AND its `stimuli.lane` both target
-   * that thread (`thread:<ciThreadId>`) instead of planning, so `EventStimulus.resumeThreadId` (derived
-   * back from `lane` on read — see `rowToEventStimulus`) resumes the `ci` thread's own session. Pre-ship
+   * that thread (`thread:<ciThreadId>`) instead of planning, so `EventMessage.resumeThreadId` (derived
+   * back from `lane` on read — see `rowToEventMessage`) resumes the `ci` thread's own session. Pre-ship
    * (no `ci` thread yet) falls back to planning exactly as before.
    */
   async attachEventToJob(input: {
@@ -112,14 +114,14 @@ export class StimulusStoreService {
     repoId: string;
     source: string;
     dedupeKey: string;
-    severity: EventStimulus['severity'];
+    severity: EventSeverity;
     /** Render-time discriminant threaded from ingress onto the transcript row's `meta` (never persisted
      *  on the event row). */
     eventKind: EventKind;
     body: string;
     /** Optional render-only card payload persisted on the message row. */
     card?: Record<string, unknown>;
-  }): Promise<EventStimulus> {
+  }): Promise<EventMessage> {
     // ATOMIC: the operator-visible `system_event` card and the `stimuli` row that DRIVES brain delivery must
     // commit together. Two separate saves let a crash between them leave a visible event card with NO stimulus
     // row — which the at-least-once sweep (keyed on `stimuli.delivered_at`) can never recover, so the card
@@ -178,16 +180,17 @@ export class StimulusStoreService {
 
     return {
       id: row.id,
+      type: 'event',
+      trust: 'untrusted',
       orgId: input.orgId,
       repoId: input.repoId,
-      kind: 'event',
-      trust: 'untrusted',
       jobId: input.jobId,
       body: input.body,
       source: input.source,
+      eventKind: input.eventKind,
       dedupeKey: input.dedupeKey,
       severity: input.severity,
-      receivedAt: row.created_at,
+      receivedAt: row.created_at.toISOString(),
       ...(ciThreadId ? { resumeThreadId: ciThreadId } : {}),
     };
   }
@@ -231,8 +234,8 @@ export class StimulusStoreService {
   }
 
   /**
-   * Persist a chat message continuing an existing thread + its chat stimulus row. Returns the
-   * `ChatStimulus` with its minted id. No new thread, no dedupe (chat bypasses the filter).
+   * Persist a chat/seed message continuing an existing thread + its inbound row. Returns the
+   * `TurnEnvelope` with its minted id. No new thread, no dedupe (chat bypasses the filter).
    */
   async recordChatStimulus(input: {
     orgId: string;
@@ -270,7 +273,7 @@ export class StimulusStoreService {
     seedQuestionIds?: string[];
     seedSecretIds?: string[];
     seedFileIds?: string[];
-  }): Promise<ChatStimulus> {
+  }): Promise<TurnEnvelope> {
     // ATOMIC: the operator-visible row (a plain bubble, a curated pill, or nothing) and the `stimuli` row
     // that DRIVES the brain turn must commit together. Two separate saves let a crash between them (e.g. a
     // mid-turn process restart) leave a transcript row with no stimulus behind it — it renders but no turn
@@ -340,6 +343,11 @@ export class StimulusStoreService {
           ...(desc.severity ? { severity: desc.severity } : {}),
           ...(fullBody ? { fullBody: fromExternal(fullBody) } : {}),
           ...(desc.framing ? { framing: desc.framing } : {}),
+          // Frontend per-seed-type pill discriminant (mirrors `meta.eventKind`); only for a genuine typed
+          // internal-seed row, never a plain operator `'user'` turn or a type-less legacy seed.
+          ...(input.type && input.type !== 'user'
+            ? { seedType: input.type }
+            : {}),
         });
       }
       // else 'skip': neither the plain bubble nor a pill — the content already has a durable row elsewhere.
@@ -365,29 +373,40 @@ export class StimulusStoreService {
     });
 
     const resumeThreadId = resumeThreadIdFromLane(input.lane);
+    const deliveredQuestionIds = collapseDeliveredIds(
+      input.seedQuestionId,
+      input.seedQuestionIds,
+    );
+    const deliveredSecretIds = collapseDeliveredIds(
+      input.seedSecretId,
+      input.seedSecretIds,
+    );
+    const deliveredFileIds = collapseDeliveredIds(
+      input.seedFileId,
+      input.seedFileIds,
+    );
     return {
+      message: reconstructMessage({
+        id: row.id,
+        orgId: input.orgId,
+        repoId: input.repoId,
+        jobId: input.jobId,
+        receivedAt: row.created_at,
+        type,
+      }),
       id: row.id,
       orgId: input.orgId,
       repoId: input.repoId,
-      kind: 'chat',
-      trust: 'trusted',
-      body: input.body,
       jobId: input.jobId,
+      receivedAt: row.created_at,
       author: input.author,
       replyRoute: input.replyRoute,
-      receivedAt: row.created_at,
+      body: input.body,
       ...(input.priority ? { priority: input.priority } : {}),
-      ...(input.seedQuestionId ? { seedQuestionId: input.seedQuestionId } : {}),
-      ...(input.seedSecretId ? { seedSecretId: input.seedSecretId } : {}),
-      ...(input.seedFileId ? { seedFileId: input.seedFileId } : {}),
-      ...(input.seedQuestionIds?.length
-        ? { seedQuestionIds: input.seedQuestionIds }
-        : {}),
-      ...(input.seedSecretIds?.length
-        ? { seedSecretIds: input.seedSecretIds }
-        : {}),
-      ...(input.seedFileIds?.length ? { seedFileIds: input.seedFileIds } : {}),
-      ...(input.author.id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
+      ...(deliveredQuestionIds ? { deliveredQuestionIds } : {}),
+      ...(deliveredSecretIds ? { deliveredSecretIds } : {}),
+      ...(deliveredFileIds ? { deliveredFileIds } : {}),
+      ...(input.card ? { card: input.card } : {}),
       ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
@@ -408,7 +427,7 @@ export class StimulusStoreService {
     lane: string;
     body: string;
     priority?: 'now' | 'queue' | 'later';
-  }): Promise<ChatStimulus> {
+  }): Promise<TurnEnvelope> {
     const replyRoute = { surfaceId: 'web', jobRef: input.jobId };
     const row = await this.stimuli.save(
       this.stimuli.create({
@@ -431,20 +450,27 @@ export class StimulusStoreService {
       }),
     );
 
+    const author = {
+      id: HOST_SEED_AUTHOR.id,
+      displayName: HOST_SEED_AUTHOR.displayName,
+    };
     return {
+      message: reconstructMessage({
+        id: row.id,
+        orgId: input.orgId,
+        repoId: input.repoId,
+        jobId: input.jobId,
+        receivedAt: row.created_at,
+        type: 'seed',
+      }),
       id: row.id,
       orgId: input.orgId,
       repoId: input.repoId,
-      kind: 'chat',
-      trust: 'trusted',
-      body: input.body,
       jobId: input.jobId,
-      author: {
-        id: HOST_SEED_AUTHOR.id,
-        displayName: HOST_SEED_AUTHOR.displayName,
-      },
-      replyRoute,
       receivedAt: row.created_at,
+      author,
+      replyRoute,
+      body: input.body,
       ...(input.priority ? { priority: input.priority } : {}),
     };
   }
@@ -457,7 +483,7 @@ export class StimulusStoreService {
   // attempted_at}.
 
   /**
-   * A lane's eligible pending chat stimuli (undelivered + lease-free), oldest first, as ChatStimulus.
+   * A lane's eligible pending chat stimuli (undelivered + lease-free), oldest first, as TurnEnvelope.
    * `lane` is a trailing optional param defaulting `'main'` so every existing (jobId, leaseMs) brain
    * caller keeps working unchanged; a build-lane caller passes its `'thread:<id>'` lane explicitly.
    * Legacy NULL `lane` rows (written before this column existed) are treated as `'main'`.
@@ -466,7 +492,7 @@ export class StimulusStoreService {
     jobId: string,
     leaseMs: number,
     lane: string = 'main',
-  ): Promise<ChatStimulus[]> {
+  ): Promise<TurnEnvelope[]> {
     const cutoff = new Date(Date.now() - leaseMs);
     const rows = await this.stimuli
       .createQueryBuilder('s')
@@ -479,7 +505,7 @@ export class StimulusStoreService {
       })
       .orderBy('s.created_at', 'ASC')
       .getMany();
-    return rows.map((r) => this.rowToChatStimulus(r));
+    return rows.map((r) => this.rowToEnvelope(r));
   }
 
   /** Stamp the delivery lease (`attempted_at = now`) so a concurrent sweep can't re-take these rows. */
@@ -504,7 +530,7 @@ export class StimulusStoreService {
   async undeliveredChatForLane(
     jobId: string,
     lane: string,
-  ): Promise<ChatStimulus[]> {
+  ): Promise<TurnEnvelope[]> {
     const rows = await this.stimuli
       .createQueryBuilder('s')
       .where('s.kind = :k', { k: 'chat' })
@@ -513,7 +539,7 @@ export class StimulusStoreService {
       .andWhere('s.delivered_at IS NULL')
       .orderBy('s.created_at', 'ASC')
       .getMany();
-    return rows.map((r) => this.rowToChatStimulus(r));
+    return rows.map((r) => this.rowToEnvelope(r));
   }
 
   /**
@@ -532,9 +558,9 @@ export class StimulusStoreService {
 
   /** Reconstruct a single chat stimulus by id (the durable stimuli.id), or null. Used by the brain to
    *  resolve a delivered row's seed stamp targets (seedQuestionId/seedSecretId/seedFileId) from reply_route. */
-  async findChatStimulusById(id: string): Promise<ChatStimulus | null> {
+  async findChatStimulusById(id: string): Promise<TurnEnvelope | null> {
     const row = await this.stimuli.findOne({ where: { id, kind: 'chat' } });
-    return row ? this.rowToChatStimulus(row) : null;
+    return row ? this.rowToEnvelope(row) : null;
   }
 
   /**
@@ -679,8 +705,8 @@ export class StimulusStoreService {
   // worklist is the events themselves (leader-wide), not distinct threads. `leaseChatStimuli`/
   // `markChatDelivered` are by-id (kind-agnostic) and reused for event rows.
 
-  /** Every eligible pending event (undelivered + lease-free), oldest first, as EventStimulus — the sweep worklist. */
-  async eligiblePendingEvents(leaseMs: number): Promise<EventStimulus[]> {
+  /** Every eligible pending event (undelivered + lease-free), oldest first, as EventMessage — the sweep worklist. */
+  async eligiblePendingEvents(leaseMs: number): Promise<EventMessage[]> {
     const cutoff = new Date(Date.now() - leaseMs);
     const rows = await this.stimuli
       .createQueryBuilder('s')
@@ -692,7 +718,7 @@ export class StimulusStoreService {
       })
       .orderBy('s.created_at', 'ASC')
       .getMany();
-    return rows.map((r) => this.rowToEventStimulus(r));
+    return rows.map((r) => this.rowToEventMessage(r));
   }
 
   /** Clear the lease on every undelivered event row (boot reconcile — re-drive anything mid-attempt at crash). */
@@ -703,71 +729,122 @@ export class StimulusStoreService {
     );
   }
 
-  /** Reconstruct the in-memory `EventStimulus` from a persisted event row (for re-drive). Body is the CLEAN
-   *  text — the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). `resumeThreadId`
+  /** Reconstruct the `EventMessage` a persisted event row carries (for re-drive). Body is the CLEAN text —
+   *  the untrusted fence is re-applied at the delivery seam (`renderEventDelivery`). `resumeThreadId`
    *  round-trips through the persisted `lane` (`thread:<id>`) so a sweep re-drive routes identically to the
-   *  first delivery attempt (see `attachEventToJob`'s §CI-routing). */
-  private rowToEventStimulus(row: InboundMessageEntity): EventStimulus {
+   *  first delivery attempt (see `attachEventToJob`'s §CI-routing). `eventKind` is not persisted on the row
+   *  (it rode the transcript `meta` at intake) — the render path only reads `source`/`severity`/`body`, so a
+   *  re-drive supplies a benign fallback. `correlation` is transient — already consumed at routing. */
+  private rowToEventMessage(row: InboundMessageEntity): EventMessage {
     const resumeThreadId = resumeThreadIdFromLane(row.lane);
     return {
       id: row.id,
+      type: 'event',
+      trust: 'untrusted',
       orgId: row.org_id,
       repoId: row.repo_id,
-      kind: 'event',
-      trust: 'untrusted',
       jobId: row.job_id as string,
       body: row.body,
       source: row.source ?? 'webhook',
+      // Not persisted on the inbound row (it rode the transcript `meta` at intake) and never read by the
+      // render path (`renderEventDelivery` reads only source/severity/body) — a benign fallback on re-drive.
+      eventKind: 'ci_failure',
       dedupeKey: row.dedupe_key ?? '',
-      severity: (row.severity as EventStimulus['severity'] | null) ?? 'info',
-      receivedAt: row.created_at,
+      severity: (row.severity as EventSeverity | null) ?? 'info',
+      receivedAt: row.created_at.toISOString(),
       ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
 
-  /** Reconstruct the in-memory `ChatStimulus` from a persisted chat row (for re-drive). */
-  private rowToChatStimulus(row: InboundMessageEntity): ChatStimulus {
+  /** Reconstruct the `TurnEnvelope` a persisted chat/seed row carries (for re-drive). `message` is a
+   *  documented partial (see {@link reconstructMessage}) keyed on the persisted `type`; the delivered-card
+   *  ids collapse the persisted singular `seed*Id` + plural `seed*Ids` reply_route keys into one array each. */
+  private rowToEnvelope(row: InboundMessageEntity): TurnEnvelope {
     const replyRoute: ReplyRouteJson | null = row.reply_route;
     const resumeThreadId = resumeThreadIdFromLane(row.lane);
+    const author = {
+      id: row.author_id ?? '',
+      // Rows written before author_name existed fall back to the scope id as the display label.
+      displayName: row.author_name ?? row.author_id ?? 'operator',
+    };
+    const deliveredQuestionIds = collapseDeliveredIds(
+      replyRoute?.seedQuestionId,
+      replyRoute?.seedQuestionIds,
+    );
+    const deliveredSecretIds = collapseDeliveredIds(
+      replyRoute?.seedSecretId,
+      replyRoute?.seedSecretIds,
+    );
+    const deliveredFileIds = collapseDeliveredIds(
+      replyRoute?.seedFileId,
+      replyRoute?.seedFileIds,
+    );
     return {
+      message: reconstructMessage({
+        id: row.id,
+        orgId: row.org_id,
+        repoId: row.repo_id,
+        jobId: row.job_id as string,
+        receivedAt: row.created_at,
+        type: (row.type as string | null) ?? 'user',
+      }),
       id: row.id,
       orgId: row.org_id,
       repoId: row.repo_id,
-      kind: 'chat',
-      trust: 'trusted',
-      body: row.body,
       jobId: row.job_id as string,
-      author: {
-        id: row.author_id ?? '',
-        // Rows written before author_name existed fall back to the scope id as the display label.
-        displayName: row.author_name ?? row.author_id ?? 'operator',
-      },
+      receivedAt: row.created_at,
+      author,
       replyRoute: row.reply_route ?? {
         surfaceId: '',
         jobRef: row.job_id as string,
       },
-      receivedAt: row.created_at,
+      body: row.body,
       ...(replyRoute?.priority ? { priority: replyRoute.priority } : {}),
-      ...(replyRoute?.seedQuestionId
-        ? { seedQuestionId: replyRoute.seedQuestionId }
-        : {}),
-      ...(replyRoute?.seedSecretId
-        ? { seedSecretId: replyRoute.seedSecretId }
-        : {}),
-      ...(replyRoute?.seedFileId ? { seedFileId: replyRoute.seedFileId } : {}),
-      ...(replyRoute?.seedQuestionIds?.length
-        ? { seedQuestionIds: replyRoute.seedQuestionIds }
-        : {}),
-      ...(replyRoute?.seedSecretIds?.length
-        ? { seedSecretIds: replyRoute.seedSecretIds }
-        : {}),
-      ...(replyRoute?.seedFileIds?.length
-        ? { seedFileIds: replyRoute.seedFileIds }
-        : {}),
-      ...(row.author_id === SYSTEM_SEED_AUTHOR.id ? { seed: true } : {}),
+      ...(deliveredQuestionIds ? { deliveredQuestionIds } : {}),
+      ...(deliveredSecretIds ? { deliveredSecretIds } : {}),
+      ...(deliveredFileIds ? { deliveredFileIds } : {}),
       ...(resumeThreadId ? { resumeThreadId } : {}),
     };
   }
+}
+
+/**
+ * Reconstruct the `TurnEnvelope.message` a persisted row (or a synthetic seed) carries when the full typed
+ * variant is no longer at hand — the documented partial the durability seams rely on (mirrors `pumpEvent`'s
+ * stopgap cast, and `reattachOne`'s ctx rebuild). Only `.type` + the `MessageBase` identity are real: the
+ * variant-specific args were consumed by `composeMessageBody` at construction and the rendered body rides
+ * `TurnEnvelope.body`, so nothing downstream of render reads them. `type` may be a persistence-only value
+ * (`'seed'`) outside the `Message` union — legitimate on this reconstruction path, hence the `unknown` cast.
+ */
+function reconstructMessage(input: {
+  id: string;
+  orgId: string;
+  repoId: string;
+  jobId: string;
+  receivedAt: Date;
+  type: string;
+}): Message {
+  return {
+    id: input.id,
+    orgId: input.orgId,
+    repoId: input.repoId,
+    jobId: input.jobId,
+    receivedAt: input.receivedAt.toISOString(),
+    type: input.type,
+  } as unknown as Message;
+}
+
+/** Collapse a singular delivered-card id + its batch-array counterpart into one array (or undefined when
+ *  neither is present) — the envelope's one delivered-id name per kind. Dedupes so a row carrying both the
+ *  singular key and the same id in the plural array stamps the card once. */
+function collapseDeliveredIds(
+  single: string | undefined,
+  plural: string[] | undefined,
+): string[] | undefined {
+  const ids = new Set<string>();
+  if (single) ids.add(single);
+  for (const id of plural ?? []) ids.add(id);
+  return ids.size ? [...ids] : undefined;
 }
 
 /** The `thread:<id>` routing coordinate a persisted `lane` encodes, or `undefined` for `'main'`/absent —

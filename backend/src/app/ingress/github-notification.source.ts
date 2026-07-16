@@ -30,7 +30,7 @@ import { ProjectRoutingService } from '../stimulus';
  *  - ROUTING: `repository.full_name` (owner/repo) → `ProjectRoutingService.routeGithubRepo` →
  *    `repos` → its 1:1 channel. Unknown repo → `unroutable`.
  *
- * Output is ONLY a `ParsedEvent` (→ `EventStimulus`, `trust:'untrusted'`); everything downstream
+ * Output is ONLY a `ParsedEvent` (→ `EventMessage`, `trust:'untrusted'`); everything downstream
  * (filter, seed, triage) is gateway-agnostic. Zero v1 imports — the HMAC shape is rewritten from v1's
  * Slack guard, not imported.
  */

@@ -21,9 +21,10 @@ import {
 import { StimulusIntake } from './stimulus-intake.service';
 
 /**
- * The CHAT EDGE → `ChatStimulus` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each
- * inbound human message into a `ChatStimulus` that CONTINUES a thread, then hands it to the intake seam.
- * Counterpart to the `NotificationSource` adapters that OPEN a thread; both converge on `StimulusIntake`.
+ * The CHAT EDGE → `UserMessage` mapper. Subscribes to the bound `ChatSurface.inbound$` and turns each
+ * inbound human message into a typed `Message` that CONTINUES a thread, then hands it to the intake seam
+ * (which persists it and hands the brain a `TurnEnvelope`). Counterpart to the `NotificationSource`
+ * adapters that route an event to a thread; both converge on `StimulusIntake`.
  *
  * Addressing: the web surface addresses by the REAL thread id (`msg.threadTs` carries `threads.id`)
  * and the repo coordinate (`msg.channel` carries `repo_id`). A message referencing an existing thread

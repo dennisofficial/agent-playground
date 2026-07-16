@@ -16,8 +16,8 @@
  *    variant into its `AgentMessage` body + optional `SeedRow`.
  */
 
-import type { ChunkKind } from '../stimulus/chunk-vocabulary';
-import type { EventSeverity } from './stimulus';
+import type { ChunkKind, TurnChunk } from '../stimulus/chunk-vocabulary';
+import type { EventSeverity, SeedRow } from './seed-row';
 import type { JobProvenance } from './job';
 
 export type { ChunkKind };
@@ -35,7 +35,7 @@ export type MessageBase = {
 };
 
 /** One composer attachment (mirrors `AttachmentCardItem`, `prompt-kit/messages/first-turn-seeds.ts`) —
- *  replaces `ChatStimulus.card`'s ad-hoc `attachments_card` path for a `UserMessage`. */
+ *  replaces the retired stimulus `card`'s ad-hoc `attachments_card` path for a `UserMessage`. */
 export type MessageAttachment = {
   /** The operator's (sanitized) filename, for display. */
   name: string;
@@ -300,6 +300,59 @@ export type Message =
 
 /** The message-type discriminant, standalone (for column/param types that don't need the full union). */
 export type MessageType = Message['type'];
+
+/**
+ * The brain's SOLE turn currency — "one turn to run". Wraps a typed {@link Message} with the transport
+ * fields a turn needs (who authored it, where to reply, the framed engine `body`, delivery/routing hints),
+ * replacing the retired `ChatStimulus`/`EventStimulus`.
+ *
+ * KEY SIMPLIFICATION: a seed variant's structured ARGS are consumed by `composeMessageBody` at construction
+ * — the envelope then carries only the already-rendered `body` + the `message.type` discriminant + routing.
+ * So the durability seams (reattach ctx / durable `reply_route`) need to reconstruct only `type` + `body` +
+ * the delivered-id arrays, never the args: on those paths `message` is a documented partial (only `.type`
+ * and the `MessageBase` identity are real — see the reconstruction casts in the store + `reattachOne`).
+ *
+ * The `MessageBase` identity is duplicated FLAT (`id`/`orgId`/`repoId`/`jobId`/`receivedAt`) for ergonomic
+ * access across the brain's 8k-line turn loop + its tool closures — it is set once from `message` (or the
+ * persisted row) at construction and never drifts.
+ */
+export type TurnEnvelope = {
+  /** The typed inbound thing. Post-render only `.type` (+ the flat identity below) is authoritative. */
+  message: Message;
+  /** Stable id: the fresh-turn engine id, the durable `inbound_messages` row id, or a synthetic seed id. */
+  id: string;
+  orgId: string;
+  repoId: string;
+  jobId: string;
+  /** Receipt time — a `Date` (the brain frames `<user name at>` off it), distinct from `MessageBase`'s ISO string. */
+  receivedAt: Date;
+  /** Who authored the turn — `SYSTEM_SEED_AUTHOR` marks a host seed; `atlas` an Atlas-authored turn. */
+  author: { id: string; displayName: string };
+  /** Where the system replies: the surface id + the surface-native thread coordinate. */
+  replyRoute: { surfaceId: string; jobRef: string };
+  /** The engine-facing body — a seed/event's already-framed string, or a user turn's clean text. */
+  body: string;
+  /** SESSION RE-HOME (opt-in): resume/persist `threads.session_id` for this thread id instead of the job sandbox. */
+  resumeThreadId?: string;
+  /** SEED RENDER COMMAND ({@link SeedRow}) — how this seed turn shows in the transcript (read by `persistSeedRow`). */
+  seedRow?: SeedRow;
+  /** Optional pre-built turn-chunk envelope (advisory framing for a coalesced/composed turn). */
+  chunks?: TurnChunk[];
+  /** DELIVERY PRIORITY (d18): `now` (default) steers/starts; `queue` waits for turn-end; `later` only rides along. */
+  priority?: 'now' | 'queue' | 'later';
+  /**
+   * DELIVERY-TAIL BOOKKEEPING (at-least-once card stamping). The ids of the answered/uploaded/provided cards
+   * THIS turn delivers — one array per kind, holding a single id (a solo card delivery) or many (a combined
+   * `answer-batch`). The success tail loops each to stamp every card `deliveredAt`. Collapses the retired
+   * singular `seed*Id` + plural `seed*Ids` transport fields into ONE name each (the persisted `reply_route`
+   * keys keep their own names for row compatibility — {@link rowToEnvelope} maps between them).
+   */
+  deliveredQuestionIds?: string[];
+  deliveredFileIds?: string[];
+  deliveredSecretIds?: string[];
+  /** Optional render-only card payload persisted alongside `body` on the `messages` row (brain triages `body`, not `card`). */
+  card?: Record<string, unknown>;
+};
 
 /**
  * Exhaustiveness helper — call in the `default`/`else` arm of a switch over `Message`/`MessageType` (or

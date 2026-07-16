@@ -1,5 +1,79 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ChatStimulus } from '../domain';
+import type { EventMessage, Message, TurnEnvelope } from '../domain';
+
+/**
+ * Test helper — build a {@link TurnEnvelope} from the flat, legacy-shaped fixture these specs write. Derives
+ * the `message.type` discriminant + the collapsed delivered-card id arrays from the old `seed*`/`compact`
+ * fields, so a fixture keeps its terse shape while satisfying the brain's `message.type`-driven guards.
+ */
+type LegacyStimulus = {
+  id: string;
+  orgId: string;
+  repoId: string;
+  jobId: string;
+  body: string;
+  author: { id: string; displayName: string };
+  replyRoute: { surfaceId: string; jobRef: string };
+  receivedAt: Date;
+  seed?: boolean;
+  seedResetVerify?: boolean;
+  compact?: boolean;
+  seedQuestionId?: string;
+  seedSecretId?: string;
+  seedFileId?: string;
+  seedQuestionIds?: string[];
+  seedSecretIds?: string[];
+  seedFileIds?: string[];
+  resumeThreadId?: string;
+  chunks?: unknown[];
+  priority?: 'now' | 'queue' | 'later';
+  /** Tolerate legacy fixture fields (`kind`/`trust`) + spread envelope props without excess-property errors. */
+  [key: string]: unknown;
+};
+function mkEnvelope(s: LegacyStimulus): TurnEnvelope {
+  const deliveredQuestionIds = s.seedQuestionId
+    ? [s.seedQuestionId]
+    : s.seedQuestionIds;
+  const deliveredSecretIds = s.seedSecretId
+    ? [s.seedSecretId]
+    : s.seedSecretIds;
+  const deliveredFileIds = s.seedFileId ? [s.seedFileId] : s.seedFileIds;
+  const type = s.compact
+    ? 'compaction'
+    : s.seedResetVerify
+      ? 'reset_verify'
+      : deliveredQuestionIds
+        ? 'answer_question'
+        : deliveredSecretIds
+          ? 'secret_provided'
+          : deliveredFileIds
+            ? 'file_answered'
+            : 'user';
+  return {
+    message: {
+      id: s.id,
+      orgId: s.orgId,
+      repoId: s.repoId,
+      jobId: s.jobId,
+      receivedAt: s.receivedAt.toISOString(),
+      type,
+    } as unknown as Message,
+    id: s.id,
+    orgId: s.orgId,
+    repoId: s.repoId,
+    jobId: s.jobId,
+    receivedAt: s.receivedAt,
+    body: s.body,
+    author: s.author,
+    replyRoute: s.replyRoute,
+    ...(deliveredQuestionIds ? { deliveredQuestionIds } : {}),
+    ...(deliveredSecretIds ? { deliveredSecretIds } : {}),
+    ...(deliveredFileIds ? { deliveredFileIds } : {}),
+    ...(s.resumeThreadId ? { resumeThreadId: s.resumeThreadId } : {}),
+    ...(s.chunks ? { chunks: s.chunks as TurnEnvelope['chunks'] } : {}),
+    ...(s.priority ? { priority: s.priority } : {}),
+  };
+}
 import type { JobDispatcher } from './job-dispatcher';
 import type { BrainStoreService } from './brain-store.service';
 import type { DecisionApprovalService } from './decision-approval.service';
@@ -44,7 +118,6 @@ import {
   UNRESUMABLE_SESSION_MARKER,
 } from '../engine/engine.types';
 import type { EngineEvent, RunEngineArgs } from '../engine/engine.types';
-import type { EventStimulus } from '../domain';
 import type { PlanReviewService } from './plan-review.service';
 import type { TurnRecoveryService } from './turn-recovery.service';
 import type {
@@ -339,7 +412,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   const PROJECT_ID = 'r3gate-proj';
   const THREAD_ID = 'th-r3gate-001';
 
-  const fakeStimulus: ChatStimulus = {
+  const fakeStimulus: TurnEnvelope = mkEnvelope({
     kind: 'chat',
     trust: 'trusted',
     id: 'stim-r3gate-001',
@@ -350,7 +423,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     body: 'Add rate limiting to the API',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'agent', jobRef: 'ts-r3gate-001' },
-  };
+  });
 
   const FAKE_JOB_ID = 'job-r3gate-001';
   const FAKE_RECORD_ID = 'rec-r3gate-001';
@@ -2410,11 +2483,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
       decision: { id: 'd1' },
       all: [{ id: 'd1' }],
     });
-    const deliveryStimulus: ChatStimulus = {
+    const deliveryStimulus: TurnEnvelope = mkEnvelope({
       ...fakeStimulus,
       seed: true,
       seedQuestionId: 'q-delivered',
-    };
+    });
     const tools = manager.buildTools(deliveryStimulus);
     await tools['create_decision']({
       decisionClass: 'data_model',
@@ -3356,7 +3429,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   const PROJECT_ID = 'stream-proj';
   const THREAD_ID = 'th-stream-001';
 
-  const stimulus: ChatStimulus = {
+  const stimulus: TurnEnvelope = mkEnvelope({
     kind: 'chat',
     trust: 'trusted',
     id: 'stim-stream-001',
@@ -3367,7 +3440,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     body: 'Explain the build step',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', jobRef: 'ts-stream-001' },
-  };
+  });
 
   function makeManager(opts: {
     findSandbox?: unknown;
@@ -3384,7 +3457,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     /** The engine runner's `steer` mock (present → `steerIntoLiveBrainTurn` can fire). */
     steer?: ReturnType<typeof vi.fn>;
     /** Durable stimulus row resolved by input_ack/success-tail stamping; null models a legacy in-memory seed. */
-    stimulusRow?: ChatStimulus | null;
+    stimulusRow?: TurnEnvelope | null;
     /** `driverStore.threadRole` result — the stage a `resumeThreadId`d turn resolves to (d8 prefix gating). */
     threadRole?: ThreadRole | null;
     /** The binding usage window's utilization for a TEXT-fallback session-limit hit's corroboration check
@@ -3904,10 +3977,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
         kind: null,
         status: 'amending',
       });
-      const turnStimulus: ChatStimulus = {
+      const turnStimulus: TurnEnvelope = mkEnvelope({
         ...stimulus,
         ...(opts.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
-      };
+      });
       return { ...built, run, turnStimulus };
     }
 
@@ -4373,14 +4446,14 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   it('steers a queued durable question-answer into a LIVE brain turn and stamps only on input_ack', async () => {
     const steer = vi.fn().mockResolvedValue(undefined);
     const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
-    const answerSeed: ChatStimulus = {
+    const answerSeed: TurnEnvelope = mkEnvelope({
       ...stimulus,
       id: 'seed-ans-1',
       body: '<system_notice>The operator answered your question "toolchain?": napi-rs</system_notice>',
       author: { id: 'U-SYSTEM', displayName: 'System' },
       seed: true,
       seedQuestionId: 'q-1',
-    };
+    });
     const { manager, dockerRunner, store, stimulusStore } = makeManager({
       findSandbox: { worktreePath: '/wt' },
       run,
@@ -4421,13 +4494,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       runningBrainTurn: { turn_id: 'T-live' },
     });
 
-    const resetVerify: ChatStimulus = {
+    const resetVerify: TurnEnvelope = mkEnvelope({
       ...stimulus,
       id: 'seed-reset-1',
       author: { id: 'U-SYSTEM', displayName: 'System' },
       seed: true,
       seedResetVerify: true,
-    };
+    });
     await manager.handleChatTurn(resetVerify);
 
     // Reset-verify is exempt from the steer-into-live shortcut (its cold-attach semantics are load-bearing).
@@ -4449,12 +4522,13 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       },
     });
 
-    await manager.handleChatTurn({
-      ...stimulus,
-      id: 'seed-ans-2',
-      seed: true,
-      seedQuestionId: 'q-2',
-    });
+    await manager.handleChatTurn(
+      mkEnvelope({
+        ...stimulus,
+        id: 'seed-ans-2',
+        seedQuestionId: 'q-2',
+      }),
+    );
 
     expect(steer).not.toHaveBeenCalled();
     expect(dockerRunner.run).toHaveBeenCalledTimes(1);
@@ -4495,7 +4569,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     await (
       manager as unknown as {
         runChatTurn: (
-          s: ChatStimulus,
+          s: TurnEnvelope,
           o: { onRegistered: () => void },
         ) => Promise<void>;
       }
@@ -4547,10 +4621,10 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     });
 
     // runDirectBuild / startFollowUpJob stamp author.id = 'atlas' — these must not consume the buffer.
-    const synthetic: ChatStimulus = {
+    const synthetic: TurnEnvelope = mkEnvelope({
       ...stimulus,
       author: { id: 'atlas', displayName: 'Atlas' },
-    };
+    });
     await manager.handleChatTurn(synthetic);
 
     expect(
@@ -4620,12 +4694,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
   it('a DELIVERY turn (seedQuestionId set) stamps exactly that card delivered on success', async () => {
     // The answer-delivery seed carries seedQuestionId; the success tail marks THAT card delivered (so the
     // boot sweep won't re-deliver it). An answered, not-yet-delivered card is the delivery target.
-    const deliveryStimulus: ChatStimulus = {
+    const deliveryStimulus: TurnEnvelope = mkEnvelope({
       ...stimulus,
       id: 'seed-deliver-row',
       seed: true,
       seedQuestionId: 'q-deliver',
-    };
+    });
     const { manager, store, stimulusStore } = makeManager({
       pendingCard: {
         type: 'question_card',
@@ -4882,7 +4956,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
       await (
         manager as unknown as {
-          maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void>;
+          maybeHonorSandboxReset: (s: TurnEnvelope) => Promise<void>;
         }
       ).maybeHonorSandboxReset(stimulus);
 
@@ -4904,8 +4978,8 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       // …and exactly one synthetic verify continuation is kicked.
       expect(kick).toHaveBeenCalledTimes(1);
       const seed = kick.mock.calls[0][0];
-      expect(seed.seed).toBe(true);
-      expect(seed.seedResetVerify).toBe(true);
+      expect(seed.author.id).toBe('U-SYSTEM');
+      expect(seed.message.type).toBe('reset_verify');
     });
 
     it('the turn tail does NOT reset or kick when a build is running in the container (busy guard)', async () => {
@@ -4922,7 +4996,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
       await (
         manager as unknown as {
-          maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void>;
+          maybeHonorSandboxReset: (s: TurnEnvelope) => Promise<void>;
         }
       ).maybeHonorSandboxReset(stimulus);
 
@@ -4944,7 +5018,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       const { manager } = makeManager({ resetContainer });
       await (
         manager as unknown as {
-          maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void>;
+          maybeHonorSandboxReset: (s: TurnEnvelope) => Promise<void>;
         }
       ).maybeHonorSandboxReset(stimulus);
       expect(resetContainer).not.toHaveBeenCalled();
@@ -5038,7 +5112,7 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
 
       await (
         manager as unknown as {
-          maybeHonorSandboxReset: (s: ChatStimulus) => Promise<void>;
+          maybeHonorSandboxReset: (s: TurnEnvelope) => Promise<void>;
         }
       ).maybeHonorSandboxReset(stimulus);
 
@@ -5084,12 +5158,12 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       const run = vi.fn().mockResolvedValue({ result: 'ok', sessionId: 's' });
       const { manager, dockerRunner } = makeManager({ run });
       // pendingResetVerify is NOT set → an earlier turn already cold-attached and consumed the notice.
-      const seed: ChatStimulus = {
+      const seed: TurnEnvelope = mkEnvelope({
         ...stimulus,
         author: { id: 'atlas', displayName: 'Atlas' },
         seed: true,
         seedResetVerify: true,
-      };
+      });
 
       await manager.handleChatTurn(seed);
 
@@ -5103,7 +5177,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
   const REPO = 'repo-ct';
   const THREAD = 'th-parent';
 
-  const stimulus: ChatStimulus = {
+  const stimulus: TurnEnvelope = mkEnvelope({
     kind: 'chat',
     trust: 'trusted',
     id: 'stim-ct-1',
@@ -5114,7 +5188,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
     body: 'Do thing A, then a follow-up for thing B',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', jobRef: THREAD },
-  };
+  });
 
   function makeManager(storeOverrides: Record<string, unknown> = {}) {
     const store = {
@@ -5298,7 +5372,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
   const REPO = 'repo-latch';
   const JOB_ID = 'job-latch-1';
 
-  const stimulus: ChatStimulus = {
+  const stimulus: TurnEnvelope = mkEnvelope({
     kind: 'chat',
     trust: 'trusted',
     id: 'stim-latch-1',
@@ -5309,7 +5383,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     body: 'ship it',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
-  };
+  });
 
   /** The default `running` direct-build job the latch acts on (domain shape → camelCase branch fields). */
   const runningJob = {
@@ -5449,10 +5523,10 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
   const pending = (m: AgentSessionManager) =>
     (m as unknown as { directBuildShipPending: Map<string, boolean> })
       .directBuildShipPending;
-  const runLatch = (m: AgentSessionManager, s: ChatStimulus) =>
+  const runLatch = (m: AgentSessionManager, s: TurnEnvelope) =>
     (
       m as unknown as {
-        latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void>;
+        latchDirectBuildAtTurnEnd: (s: TurnEnvelope) => Promise<void>;
       }
     ).latchDirectBuildAtTurnEnd(s);
 
@@ -5518,23 +5592,24 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
 });
 
 describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the ONE brain as a harness message', () => {
-  const eventStimulus: EventStimulus = {
-    kind: 'event',
+  const eventStimulus: EventMessage = {
+    type: 'event',
     trust: 'untrusted',
     id: 'stim-evt-001',
     jobId: 'th-evt-001',
-    receivedAt: new Date('2026-06-21T00:00:00Z'),
+    receivedAt: '2026-06-21T00:00:00.000Z',
     orgId: 'T-EVT',
     repoId: 'evt-proj',
     body: 'CI job #42 failed on the main branch.',
     source: 'github',
+    eventKind: 'ci_failure',
     dedupeKey: 'ci-run-42',
     severity: 'warning',
   };
 
   /** A manager wired with only the deps the event pump (`deliverEvent`/`pumpEvent`/`sweepUndeliveredEvents`)
    *  touches; everything else is an inert stub. Mirrors the chat-pump harness. */
-  function makeManager(opts: { events?: EventStimulus[] } = {}) {
+  function makeManager(opts: { events?: EventMessage[] } = {}) {
     const stimulusStore = {
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
@@ -5636,7 +5711,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
   });
 
   it('a CI-routed event steers only into the matching CI lane', async () => {
-    const ciEvent: EventStimulus = {
+    const ciEvent: EventMessage = {
       ...eventStimulus,
       id: 'stim-evt-ci',
       resumeThreadId: 'thr-ci',
@@ -5662,7 +5737,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
   });
 
   it('a CI-routed event never cross-steers into a live non-CI lane', async () => {
-    const ciEvent: EventStimulus = {
+    const ciEvent: EventMessage = {
       ...eventStimulus,
       id: 'stim-evt-ci',
       resumeThreadId: 'thr-ci',
@@ -5725,12 +5800,13 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
     expect(runChatTurnSpy).toHaveBeenCalledOnce();
     const [delivery, deliveryOpts] = runChatTurnSpy.mock.calls[0] as [
-      ChatStimulus,
+      TurnEnvelope,
       TurnDeliveryOptsLike,
     ];
     expect(delivery.id).toBe('stim-evt-001'); // the DURABLE event-row id, not a synthetic uuid
     expect(delivery.jobId).toBe('th-evt-001');
-    expect(delivery.seed).toBe(true); // a seed turn → no duplicate operator bubble
+    expect(delivery.author.id).toBe('U-SYSTEM'); // a host-seed turn → no duplicate operator bubble
+    expect(delivery.message.type).toBe('event');
     expect(delivery.body).toMatch(/no human sent it/i);
     expect(delivery.body).toContain('<untrusted');
     expect(delivery.body).toContain('CI job #42 failed');
@@ -5793,7 +5869,7 @@ describe('R3 gate: AgentSessionManager.deliverEvent — (b) an event reaches the
 
       expect(stimulusStore.eligiblePendingEvents).toHaveBeenCalled();
       expect(runChatTurnSpy).toHaveBeenCalledOnce();
-      const [delivery] = runChatTurnSpy.mock.calls[0] as [ChatStimulus];
+      const [delivery] = runChatTurnSpy.mock.calls[0] as [TurnEnvelope];
       expect(delivery.body).toContain('CI job #42 failed');
     });
 
@@ -5817,20 +5893,18 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   const ORG_ID = 'T-PUMP';
   const REPO_ID = 'repo-pump';
 
-  /** A pending chat stimulus, ChatStimulus-shaped, as `stimulusStore.eligiblePendingChat` would resolve it. */
-  function pendingRow(id: string, body: string, createdAt: Date): ChatStimulus {
-    return {
+  /** A pending chat `TurnEnvelope`, as `stimulusStore.eligiblePendingChat` would resolve it. */
+  function pendingRow(id: string, body: string, createdAt: Date): TurnEnvelope {
+    return mkEnvelope({
       id,
       orgId: ORG_ID,
       repoId: REPO_ID,
-      kind: 'chat',
-      trust: 'trusted',
       jobId: JOB_ID,
       body,
       author: { id: 'U1', displayName: 'Dennis' },
       replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
       receivedAt: createdAt,
-    };
+    });
   }
 
   // Operator messages reach the engine wrapped in a `<user name at>` tag (chunk-vocabulary) reconstructed
@@ -5842,7 +5916,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
   /** A manager wired with only the deps `pumpThread`/`sweepUndeliveredChat` touch; everything else inert. */
   function makeManager(
     opts: {
-      pending?: ChatStimulus[];
+      pending?: TurnEnvelope[];
       threads?: Array<{
         jobId: string;
         orgId: string;
@@ -6010,7 +6084,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
 
     expect(runChatTurnSpy).toHaveBeenCalledOnce();
     const [combined, opts] = runChatTurnSpy.mock.calls[0] as [
-      ChatStimulus,
+      TurnEnvelope,
       TurnDeliveryOptsLike,
     ];
     // Coalesced: one turn, oldest-first body join — the operator still sees each as its own chat bubble
@@ -6182,7 +6256,7 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
         running?: unknown[];
         job?: { status: string; repoId: string } | null;
         liveTurn?: { turn_id: string } | null;
-        pendingChat?: ChatStimulus[];
+        pendingChat?: TurnEnvelope[];
         leader?: boolean;
       } = {},
     ) {
@@ -6284,7 +6358,8 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       expect(handleChatTurn).toHaveBeenCalledOnce();
       const stim = handleChatTurn.mock.calls[0][0];
       expect(stim.jobId).toBe(JOB_ID);
-      expect(stim.seed).toBe(true); // invisible system seed, not an operator bubble
+      expect(stim.author.id).toBe('U-SYSTEM'); // invisible system seed, not an operator bubble
+      expect(stim.message.type).toBe('work_owed_nudge');
       expect(stim.body).toMatch(/review_plan/); // the nudge tells Atlas to resume review_plan
     });
 
@@ -6346,7 +6421,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
   const PROJECT_ID = 'memrecall-proj';
   const THREAD_ID = 'th-memrecall-001';
 
-  const stimulus: ChatStimulus = {
+  const stimulus: TurnEnvelope = mkEnvelope({
     kind: 'chat',
     trust: 'trusted',
     id: 'stim-memrecall-001',
@@ -6357,7 +6432,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
     body: 'what auth library does this project use',
     author: { id: 'U-OP', displayName: 'Operator' },
     replyRoute: { surfaceId: 'web', jobRef: 'ts-memrecall-001' },
-  };
+  });
 
   /** Only `memory` + `env` matter here — every other dep is an unused stub (buildMemoryRecallPrefix
    *  touches neither store, driver, nor surface). */
@@ -6427,7 +6502,7 @@ describe('AgentSessionManager.buildMemoryRecallPrefix (memory auto-retrieval tur
     );
     return manager as unknown as {
       buildMemoryRecallPrefix(
-        s: ChatStimulus,
+        s: TurnEnvelope,
         sessionId?: string,
       ): Promise<string | null>;
       bindInjectedMemorySession(jobId: string, sessionId: string): void;

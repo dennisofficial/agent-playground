@@ -19,7 +19,7 @@ import {
   JobEntity,
   OrganizationEntity,
 } from '../persistence/entities';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 import {
   FakeClassifierLlm,
   FakeEngineRunner,
@@ -65,7 +65,7 @@ const PROJECT_ID = 'e2e-project';
 const OFFLINE_REPO_URL = 'https://github.com/atlas-e2e/sample.git';
 /** Stable thread id pre-seeded by the harness for the feature scenario's direct submit_plan call. */
 const FEATURE_THREAD_ID = '00000000-e2e0-4000-8000-e2e000000001';
-/** Human author id stamped on the fake ChatStimulus in the feature scenario. */
+/** Human author id stamped on the fake TurnEnvelope in the feature scenario. */
 const DEFAULT_HUMAN_ID = 'U-E2E';
 
 /**
@@ -368,23 +368,36 @@ export class E2eHarness {
 
   /**
    * OFFLINE HELPER — call `submit_plan` via the real `AgentSessionManager` tool impl (bypassing the
-   * in-sandbox subprocess). Constructs a minimal fake ChatStimulus pointing to the pre-seeded feature
+   * in-sandbox subprocess). Constructs a minimal fake TurnEnvelope pointing to the pre-seeded feature
    * thread so `route()` can resolve the channel/threadTs for the approval card post.
    *
    * Returns the posted approval card (or undefined on timeout).
    */
   private async submitPlanDirect(): Promise<CapturedApprovalCard | undefined> {
-    const stimulus: ChatStimulus = {
+    const body = 'Please add a short note to the README about the project.';
+    const receivedAt = new Date();
+    const author = { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' };
+    const message: Message = {
       id: 'e2e-stimulus-feature',
-      kind: 'chat',
+      type: 'user',
       trust: 'trusted',
       orgId: TEAM_ID,
       repoId: PROJECT_ID,
       jobId: FEATURE_THREAD_ID,
-      body: 'Please add a short note to the README about the project.',
-      author: { id: DEFAULT_HUMAN_ID, displayName: 'Dennis (e2e)' },
+      receivedAt: receivedAt.toISOString(),
+      body,
+      author,
+    };
+    const stimulus: TurnEnvelope = {
+      message,
+      id: 'e2e-stimulus-feature',
+      orgId: TEAM_ID,
+      repoId: PROJECT_ID,
+      jobId: FEATURE_THREAD_ID,
+      body,
+      author,
       replyRoute: { surfaceId: 'agent', jobRef: CHANNEL_REF },
-      receivedAt: new Date(),
+      receivedAt,
     };
 
     // Build the tool impls (the full host-side dispatch table for this stimulus's thread).

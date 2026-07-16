@@ -10,7 +10,7 @@
  */
 import type { Message, UserMessage } from '../../domain/message';
 import { assertNever } from '../../domain/message';
-import type { SeedRow } from '../../domain/stimulus';
+import type { SeedRow } from '../../domain/seed-row';
 import { agentMessage, type AgentMessage } from '../message';
 import { shipOpenPrBody } from '../messages/ship-open-pr';
 import { chunkKey } from './chunk-keys';

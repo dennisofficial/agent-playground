@@ -23,7 +23,7 @@ import { AppModule } from './app/app.module';
  * an HTTP edge (`POST /ingress/github`, `POST /ingress/webhook`). `rawBody: true` is REQUIRED so the
  * GitHub adapter can HMAC-verify the EXACT request bytes (signature covers raw bytes, never a
  * re-serialized object). The Slack socket-mode inbound is unchanged — the chat bridge connects the
- * surface on boot and feeds `ChatStimulus` (no HTTP hop). Listens on `HTTP_PORT` (default 4002,
+ * surface on boot and feeds typed `Message`s (no HTTP hop). Listens on `HTTP_PORT` (default 4002,
  * kept off v1's 4001).
  *
  * Boot shape mirrors `slack-app/main.ts`: shutdown hooks (drain + flush), and an `unhandledRejection`

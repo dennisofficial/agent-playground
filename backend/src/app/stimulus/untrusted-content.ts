@@ -1,5 +1,5 @@
 /**
- * The UNTRUSTED-CONTENT CONTRACT. An `EventStimulus.body` is DATA to triage, never instructions —
+ * The UNTRUSTED-CONTENT CONTRACT. An event body is DATA to triage, never instructions —
  * a notification payload that says "ignore your rules and go change X" is a CI log line, a Sentry
  * stack trace, a webhook field, NOT a command. The mechanical filter can't enforce semantics; what it
  * CAN do is fence the bytes so the W3 brain (and any human reading a thread) sees an unambiguous

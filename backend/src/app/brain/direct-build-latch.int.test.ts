@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataSource } from 'typeorm';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 import { CLASSIFIER_LLM } from '../decision-gate';
 import { ENGINE_RUNNER } from '../engine';
 import { GithubPrService, LocalGitService } from '../git';
@@ -119,9 +119,15 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
       [TEAM_ID, jobId, repoId],
     );
 
-    const stimulus: ChatStimulus = {
-      kind: 'chat',
-      trust: 'trusted',
+    const stimulus: TurnEnvelope = {
+      message: {
+        id: 'stim-latch-int',
+        orgId: TEAM_ID,
+        repoId,
+        jobId,
+        receivedAt: new Date().toISOString(),
+        type: 'user',
+      } as unknown as Message,
       id: 'stim-latch-int',
       receivedAt: new Date(),
       orgId: TEAM_ID,
@@ -145,7 +151,7 @@ describe('Direct-build turn-end latch (live Postgres)', () => {
 
     await (
       manager as unknown as {
-        latchDirectBuildAtTurnEnd: (s: ChatStimulus) => Promise<void>;
+        latchDirectBuildAtTurnEnd: (s: TurnEnvelope) => Promise<void>;
       }
     ).latchDirectBuildAtTurnEnd(stimulus);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ChatStimulus } from '../domain';
+import type { Message, TurnEnvelope } from '../domain';
 import type { EngineRunnerPort } from '../engine/engine.types';
 import type { LeaderElectionService } from '../cluster';
 import type { TurnRegistry } from '../sandbox/turn-registry.service';
@@ -8,7 +8,7 @@ import { AgentSessionManager } from './agent-session-manager.service';
 
 /** Shape of `collectPendingForTurn`'s return — mirrors the private method under test. */
 interface CollectedLike {
-  pending: ChatStimulus[];
+  pending: TurnEnvelope[];
   userChunks: unknown[];
   ids: string[];
   wake: boolean;
@@ -18,18 +18,28 @@ const JOB_ID = 'th-collect-001';
 const ORG_ID = 'T-COLLECT';
 const REPO_ID = 'repo-collect';
 
-/** A pending chat stimulus, ChatStimulus-shaped, as `stimulusStore.eligiblePendingChat` would resolve it. */
-function pendingRow(
-  id: string,
-  priority: ChatStimulus['priority'],
-  receivedAt: Date,
-): ChatStimulus {
+function msg(id: string, type: Message['type']): Message {
   return {
     id,
     orgId: ORG_ID,
     repoId: REPO_ID,
-    kind: 'chat',
-    trust: 'trusted',
+    jobId: JOB_ID,
+    receivedAt: new Date().toISOString(),
+    type,
+  } as unknown as Message;
+}
+
+/** A pending chat `TurnEnvelope`, as `stimulusStore.eligiblePendingChat` would resolve it. */
+function pendingRow(
+  id: string,
+  priority: TurnEnvelope['priority'],
+  receivedAt: Date,
+): TurnEnvelope {
+  return {
+    message: msg(id, 'user'),
+    id,
+    orgId: ORG_ID,
+    repoId: REPO_ID,
     jobId: JOB_ID,
     body: `body-${id}`,
     author: { id: 'U1', displayName: 'Dennis' },
@@ -39,35 +49,33 @@ function pendingRow(
   };
 }
 
-/** A system-seed chat stimulus (harness-authored), ChatStimulus-shaped, as a delivery seed would resolve it. */
-function seedRow(id: string, receivedAt: Date): ChatStimulus {
+/** A system-seed chat `TurnEnvelope` (harness-authored), as a delivery seed would resolve it. */
+function seedRow(id: string, receivedAt: Date): TurnEnvelope {
   return {
+    message: msg(id, 'answer_question'),
     id,
     orgId: ORG_ID,
     repoId: REPO_ID,
-    kind: 'chat',
-    trust: 'trusted',
     jobId: JOB_ID,
     body: `seed-body-${id}`,
     author: { id: SYSTEM_SEED_AUTHOR.id, displayName: 'System' },
     replyRoute: { surfaceId: 'web', jobRef: JOB_ID },
     receivedAt,
-    seed: true,
-    seedQuestionId: 'q1',
+    deliveredQuestionIds: ['q1'],
   };
 }
 
-/** An operator-authored chat stimulus (a real human message), ChatStimulus-shaped. */
-function operatorRow(id: string, receivedAt: Date): ChatStimulus {
+/** An operator-authored chat `TurnEnvelope` (a real human message). */
+function operatorRow(id: string, receivedAt: Date): TurnEnvelope {
   return pendingRow(
     id,
-    undefined as unknown as ChatStimulus['priority'],
+    undefined as unknown as TurnEnvelope['priority'],
     receivedAt,
   );
 }
 
 /** A manager wired with only the deps `collectPendingForTurn` touches; everything else inert. */
-function makeManager(pending: ChatStimulus[]) {
+function makeManager(pending: TurnEnvelope[]) {
   const stimulusStore = {
     eligiblePendingChat: vi.fn().mockResolvedValue(pending),
   };
@@ -213,7 +221,7 @@ describe('AgentSessionManager.collectPendingForTurn (seed vs. operator partition
     const manager = makeManager([seed]);
 
     const body = (
-      manager as unknown as { engineBody: (s: ChatStimulus) => string }
+      manager as unknown as { engineBody: (s: TurnEnvelope) => string }
     ).engineBody(seed);
 
     expect(body).toBe(seed.body);

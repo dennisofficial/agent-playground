@@ -9,7 +9,7 @@ import { renderChunk } from './tag-vocabulary';
  * Every builder here renders the TEXT of a synthetic (host-authored) turn the brain's agent-session-manager
  * delivers straight through `handleChatTurn` — no human sent it, but it must read as trusted harness
  * context (or, for a fenced record, clearly-untrusted data). The WIRING (which stimulus shape carries it,
- * when it fires, `randomUUID`/`ChatStimulus` construction) stays in the brain; this module owns only the
+ * when it fires, `randomUUID`/`TurnEnvelope` construction) stays in the brain; this module owns only the
  * rendered bytes.
  *
  * `wrapUntrusted`/`wrapSystemNotification` are NOT imported here (they live in `stimulus`/`surface`, which

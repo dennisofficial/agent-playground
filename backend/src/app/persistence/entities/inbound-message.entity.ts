@@ -19,10 +19,13 @@ import { JobEntity } from './job.entity';
  *    mechanical pre-harness filter dedups by `dedupe_key` (events only) so the firehose doesn't pay
  *    an Atlas turn per duplicate.
  *
- * `type` is the Message-union discriminant (`user` | `answer_question` | `file_answered` |
- * `secret_provided` | `event` | `seed`) — the NEW authority for Claude-Code framing + the `/message`
- * API. `kind` stays put as the coarser chat/event split the delivery queries already key off; it is
- * NOT derivable from `type` alone pre-backfill, so both columns are kept (d10).
+ * `type` is the Message-union discriminant — the four client variants (`user` | `answer_question` |
+ * `file_answered` | `secret_provided`), `event`, or one of the typed internal-seed variants
+ * (`reset_verify` | `compaction` | `ship_open_pr` | `mcp_approved` | … see `../../domain/message.ts`);
+ * plus the persistence-only `seed` value a legacy/host-lane seed row still carries. It is the NEW
+ * authority for Claude-Code framing + the `/message` API. `kind` stays put as the coarser chat/event
+ * split the delivery queries already key off; it is NOT derivable from `type` alone pre-backfill, so both
+ * columns are kept (d10).
  */
 @Entity({ name: 'inbound_messages' })
 @Index(['org_id', 'repo_id'])
@@ -95,7 +98,7 @@ export class InboundMessageEntity extends TimestampedEntity {
   /**
    * Chat author display name; null for events (and for chat rows written before this column existed —
    * the durable delivery pump then falls back to `author_id` as the label). Persisted so the pump can
-   * reconstruct a full `ChatStimulus` from the row alone when re-driving an undelivered message.
+   * reconstruct a full `TurnEnvelope` from the row alone when re-driving an undelivered message.
    */
   @Column({ type: 'text', nullable: true })
   author_name!: string | null;

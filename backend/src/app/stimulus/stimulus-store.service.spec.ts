@@ -133,7 +133,7 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       dedupe_key: 'ci:abc',
     });
     expect(event).toMatchObject({
-      kind: 'event',
+      type: 'event',
       trust: 'untrusted',
       jobId: 'job-7',
       source: 'github',
@@ -296,10 +296,9 @@ describe('StimulusStoreService — notification-seeds-a-thread', () => {
       body: 'hey',
     });
     expect(chat).toMatchObject({
-      kind: 'chat',
-      trust: 'trusted',
       jobId: 'thread-9',
       author: { id: 'U1', displayName: 'Dennis' },
+      message: { type: 'user' },
     });
     expect(chat.replyRoute).toEqual({ surfaceId: 'slack', jobRef: '100.1' });
   });
@@ -460,12 +459,14 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(messageRows[0].text).toBe(seedRow.label);
     expect(messageRows[0].card).toBeUndefined();
 
-    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata.
+    // The durable stimuli row still commits (atomically, same transaction) and returns the seed metadata as
+    // the envelope's collapsed delivered-id array. No explicit `type` was passed, so a host-seed author
+    // falls through to the persistence-only `'seed'` discriminant (unchanged behavior).
     expect(chat).toMatchObject({
       jobId: 'job-9',
-      seedQuestionId: 'q1',
-      seed: true,
+      deliveredQuestionIds: ['q1'],
     });
+    expect(chat.message.type).toBe('seed');
   });
 
   it('the curated pill is DEDUPED on chunkKey — a second seed with the same key writes NO additional message row', async () => {
@@ -545,10 +546,9 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
     expect(chat).toMatchObject({
       id: 'stim-42',
       jobId: 'thread-9',
-      seedQuestionId: 'q1',
-      seedSecretId: 's1',
-      seedFileId: 'f1',
-      seed: true,
+      deliveredQuestionIds: ['q1'],
+      deliveredSecretIds: ['s1'],
+      deliveredFileIds: ['f1'],
     });
   });
 
@@ -581,9 +581,10 @@ describe('StimulusStoreService — seed-aware recordChatStimulus (durable chat/g
 
     const chat = await store.findChatStimulusById('stim-43');
 
-    expect(chat?.seed).toBeUndefined();
-    expect(chat?.seedQuestionId).toBeUndefined();
-    expect(chat?.seedSecretId).toBeUndefined();
-    expect(chat?.seedFileId).toBeUndefined();
+    expect(chat?.deliveredQuestionIds).toBeUndefined();
+    expect(chat?.deliveredSecretIds).toBeUndefined();
+    expect(chat?.deliveredFileIds).toBeUndefined();
+    // A plain operator row round-trips as a `'user'` envelope (author != host-seed scope).
+    expect(chat?.message.type).toBe('user');
   });
 });

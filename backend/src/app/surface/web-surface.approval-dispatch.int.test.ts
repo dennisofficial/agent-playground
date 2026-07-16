@@ -61,7 +61,7 @@ import { ChatStimulusBridge } from '../stimulus/chat-stimulus.bridge';
 import { WebSurface } from './web-surface';
 import { SYSTEM_SEED_AUTHOR } from './chat-surface.port';
 import type { InboundChatMessage } from './chat-surface.port';
-import type { SeedRow } from '../domain/stimulus';
+import type { SeedRow } from '../domain/seed-row';
 
 /** The visible-row form of `SeedRow` (excludes the `'skip'` sentinel). */
 type SeedRowObject = Exclude<SeedRow, 'skip'>;
