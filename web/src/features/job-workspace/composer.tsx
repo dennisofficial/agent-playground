@@ -304,8 +304,9 @@ export function Composer({
     const hasAttachments = attachments.length > 0;
     const hasStaged = stagedAnswers.length > 0;
     if (hasStaged || hasText || hasAttachments) {
-      // No draft/tray clear here for the staged items themselves — `useMessage`'s `onSuccess` prunes only
-      // the ones the backend actually applied, so a failed send leaves the tray intact for retry.
+      // No eager staged-tray/text clear here — `useMessage`'s `onSuccess` prunes only the staged items the
+      // backend actually applied, and the typed note is cleared below only on success, so a failed send
+      // leaves both the tray and the note intact for retry.
       const items: MessageInput[] = [
         ...stagedAnswers.map(toMessageItem),
         ...(hasText || hasAttachments
@@ -315,14 +316,17 @@ export function Composer({
       message.mutate(
         { messages: items, attachments, threadId },
         {
+          // Only the note text is deferred to success — a failed send (e.g. a 4xx the network-error
+          // fallback below doesn't re-queue) must leave the typed note intact for retry, same as the old
+          // `useSubmitStagedAnswers`'s onSuccess-only clear.
+          onSuccess: () => composerStore.setText(jobRef, ""),
           onError: (e) =>
             reEnqueueOnNetworkError(e, { text: trimmed, comments: [], attachments }),
         },
       );
       // clear() empties the tray WITHOUT revoking — the optimistic attachments card still renders these blob
-      // URLs; they're freed when the tab closes. clearDraft also drops attachments without revoking.
+      // URLs; they're freed when the tab closes.
       if (hasAttachments) clearAttachments?.();
-      composerStore.clearDraft(jobRef.jobId);
     }
   }
 
