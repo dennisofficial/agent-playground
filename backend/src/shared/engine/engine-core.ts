@@ -647,7 +647,7 @@ export class EngineCore {
 
     // This repo's skills (resolved host-side, dir paths + names only — no bodies) composed into
     // `<claudeConfigDir>/skills/` as write-through symlinks into the central skills store, for the SDK to
-    // discover NATIVELY (settingSources 'user' + skills 'all' below). Re-composed every turn (wipes a
+    // discover NATIVELY (settingSources 'user'/'project' + skills 'all' below). Re-composed every turn (wipes a
     // removed/disabled skill); a no-op wipe when the turn carries none.
     composeSkillsDir(
       claudeConfigDir,

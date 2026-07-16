@@ -70,8 +70,9 @@ export const AUTO_APPROVE = [
 const LSP_NAV_TOOLS = qualifyLspToolNames(LSP_NAV_TOOL_NAMES);
 const LSP_WRITE_TOOLS = qualifyLspToolNames(LSP_TOOL_NAMES);
 
-// Subagent types the engine can spawn via `Task`. With `settingSources: []` there are NO on-disk agent
-// definitions, so this map is the ONLY set of spawnable subagents — every subagent is Sonnet-pinned by
+// Subagent types the engine can spawn via `Task`. With `settingSources: ['user','project']` a worktree's
+// own project-scope `.claude/agents/` would be sourced too, but Atlas ships no such dir and this repo has
+// none, so this map is the ONLY set of spawnable subagents in practice — every subagent is Sonnet-pinned by
 // construction (cheaper than the Opus brain). All are advisory: they investigate and report, and NONE
 // can Write/Edit (only the calling turn changes files). `test` is the one exception to "read-only": it
 // gets Bash so it can RUN the repo's verification, but it still cannot edit/commit. This keeps delegated

@@ -8,7 +8,7 @@ import type { RunEngineArgs } from '../engine.types';
  * `CONTAINER_SKILLS_MANAGED`), a `managedGit` skill from `managedGitSkillsRoot` (Atlas's GIT-SOURCED
  * built-ins, synced by `ManagedSkillSyncService`, `CONTAINER_SKILLS_MANAGED_GIT`), every other skill from
  * `skillsRoot` (the org-scoped store, `CONTAINER_SKILLS_STORE`) — for the SDK to discover NATIVELY
- * (`settingSources: ['user']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
+ * (`settingSources: ['user','project']` + `skills: 'all'`, below) — no synthetic plugin. Idempotent wipe+rewrite
  * EVERY turn (the config dir is durable across turns, so a skill removed/disabled since last turn must not
  * linger — same discipline the old plugin-render step used). A skill whose source dir isn't actually on
  * disk under its root yet (e.g. its DB row exists but nothing installed/authored the files, OR a

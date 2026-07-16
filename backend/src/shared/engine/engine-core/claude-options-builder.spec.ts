@@ -62,7 +62,7 @@ describe('buildClaudeOptions', () => {
     expect(o.betas).toContain('context-1m-2025-08-07');
     expect((o as { resume?: string }).resume).toBe('sess');
     expect(o.model).toBe('claude-x');
-    expect(o.settingSources).toEqual(['user']);
+    expect(o.settingSources).toEqual(['user', 'project']);
   });
 
   it('plan turn: PLAN tools + plan permission mode', () => {
