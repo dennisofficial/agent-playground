@@ -84,7 +84,7 @@ async function register(
 
 async function purge(): Promise<void> {
   await ds
-    .query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+    .query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
       [GATE_JOB, RUNNING_JOB],
     ])
     .catch(() => undefined);
@@ -113,7 +113,7 @@ async function seedShipCardRow(jobId: string): Promise<void> {
     summary: 'The build is ready.',
   });
   await ds.query(
-    `INSERT INTO messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, ts, card)
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, author_bot_id, text, kind, ts, card)
      VALUES ($1, $2, 'Atlas', 'atlas', 'atlas', 'Ready to ship', 'card', $3, $4::jsonb)`,
     [jobId, threadId, `ship-review:${jobId}`, JSON.stringify(card)],
   );
@@ -123,7 +123,7 @@ async function shipCard(
   jobId: string,
 ): Promise<Record<string, unknown> | undefined> {
   const rows = (await ds.query(
-    `SELECT card FROM messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
+    `SELECT card FROM transcript_messages WHERE job_id = $1 AND ts = $2 AND kind = 'card' LIMIT 1`,
     [jobId, `ship-review:${jobId}`],
   )) as Array<{ card: Record<string, unknown> }>;
   return rows[0]?.card;
@@ -134,15 +134,15 @@ function previewUrl(jobId: string): string {
 }
 
 /**
- * The durable `seed:preview:<jobId>` pill row (if any) — the seed now lands as a `messages` row on the
- * job's `post_build` session, not a live `surface.inbound$` emission (d14). `text` carries the curated
- * label; `meta.fullBody` carries the full preview-prep body handed to the engine.
+ * The durable `seed:preview:<jobId>` pill row (if any) — the seed now lands as a `transcript_messages` row
+ * on the job's `post_build` session, not a live `surface.inbound$` emission (d14). `text` carries the
+ * curated label; `meta.fullBody` carries the full preview-prep body handed to the engine.
  */
 async function previewSeedRows(
   jobId: string,
 ): Promise<Array<{ text: string; meta: Record<string, unknown> }>> {
   return ds.query(
-    `SELECT text, meta FROM messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
+    `SELECT text, meta FROM transcript_messages WHERE job_id = $1 AND meta->>'chunkKey' = $2`,
     [jobId, `seed:preview:${jobId}`],
   );
 }
@@ -211,7 +211,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   // Fresh cards/jobs per test — each `it` seeds the exact status it needs.
-  await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [
+  await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
     [GATE_JOB, RUNNING_JOB],
   ]);
   await ds.query(`DELETE FROM jobs WHERE id = ANY($1)`, [

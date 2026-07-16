@@ -202,32 +202,35 @@ export function fetchMessages(ref: JobRef): Promise<JobMessage[]> {
   );
 }
 
-export function sayMessage(
-  ref: JobRef,
-  text: string,
-  lane?: string,
-): Promise<{ ts: string }> {
-  return webJson(threadPath(ref, "/say"), {
-    method: "POST",
-    body: JSON.stringify({ text, ...(lane ? { lane } : {}) }),
-  });
-}
+/** One item in a `/message` send — the wire shape of a `Message` (mirrors the backend's client-originated
+ *  `Message` union variants; see `web-surface.controller.ts`'s `MessageInput`). `secret_provided` carries no
+ *  kind discriminant — the durable-vs-mcp destination is derived server-side from the card. */
+export type MessageInput =
+  | { type: "user"; text: string; lane?: string }
+  | { type: "answer_question"; questionId: string; answer: string }
+  | { type: "file_answered"; requestId: string; filename: string; content: string }
+  | { type: "secret_provided"; requestId: string; value: string };
 
 /**
- * Send a message WITH attachments — multipart (`text` + repeated `files` parts). Binary all the way (no
- * base64): the files stream to the server, which writes them to the sandbox and points the brain at them.
+ * Send a batch of typed messages in ONE request — replaces the old `say`/`answer-question`/`provide-file`/
+ * `answer-batch` endpoints. JSON body when `files` is absent; multipart (`messages` JSON-stringified +
+ * repeated `files` parts, binary all the way — no base64) when a `user` item carries attachments.
  */
-export function sayMessageWithFiles(
+export function postMessage(
   ref: JobRef,
-  text: string,
-  files: File[],
-  lane?: string,
-): Promise<{ ts: string }> {
-  const form = new FormData();
-  form.append("text", text);
-  if (lane) form.append("lane", lane);
-  for (const f of files) form.append("files", f, f.name);
-  return webJson(threadPath(ref, "/say"), { method: "POST", body: form });
+  messages: MessageInput[],
+  files?: File[],
+): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
+  if (files?.length) {
+    const form = new FormData();
+    form.append("messages", JSON.stringify(messages));
+    for (const f of files) form.append("files", f, f.name);
+    return webJson(threadPath(ref, "/message"), { method: "POST", body: form });
+  }
+  return webJson(threadPath(ref, "/message"), {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
 }
 
 /**
@@ -324,28 +327,9 @@ export function approveThread(
   });
 }
 
-// ── Formal questions ─────────────────────────────────────────────────────────────────────────────
-export interface AnswerQuestionBody {
-  /** The question card's id (its message ts). */
-  questionId: string;
-  /** The picked option's label, or free text. */
-  answer: string;
-  answeredBy?: string;
-}
-
-export function answerQuestion(
-  ref: JobRef,
-  body: AnswerQuestionBody,
-): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, "/answer-question"), {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 // ── Spin up preview (ship gate) ────────────────────────────────────────────────────────────────────
 /** Ask the build brain to stand up a demo-ready live preview at the ship gate. Injects the full preview
- *  procedure as a server-side seed turn (not the generic /say path) and stamps the ship card so the button
+ *  procedure as a server-side seed turn (not the generic /message path) and stamps the ship card so the button
  *  hides. Gated server-side on `awaiting_ship_review`; a no-op `ok:false` off-gate. */
 export function spinUpPreview(
   ref: JobRef,
@@ -391,48 +375,6 @@ export function approveSkillProposal(
 ): Promise<{ ok: boolean; name: string; ts?: string }> {
   return webJson(threadPath(ref, `/skill-proposals/${requestId}/approve`), {
     method: "POST",
-  });
-}
-
-// ── Secure file upload (repo onboarding) ─────────────────────────────────────────────────────────
-export interface ProvideFileBody {
-  /** The file-request card's id (its message ts). */
-  requestId: string;
-  /** The operator-chosen filename (metadata only — display/provenance). */
-  filename: string;
-  /** The file's text contents — sent once over HTTPS to the encrypted store; never round-tripped back. */
-  content: string;
-}
-
-export function provideFile(
-  ref: JobRef,
-  body: ProvideFileBody,
-): Promise<{ ok: boolean; ts: string }> {
-  return webJson(threadPath(ref, "/provide-file"), {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// ── Batched staged answers (the Composer staging tray) ─────────────────────────────────────────────
-/** One staged answer in an `answer-batch` — a question answer, a file upload, or a durable/MCP secret
- *  value (ephemeral secrets are never batched — they keep the immediate `provide-secret` path). */
-export type AnswerBatchItem =
-  | { kind: "question"; questionId: string; answer: string }
-  | { kind: "file"; requestId: string; filename: string; content: string }
-  | { kind: "secret"; requestId: string; value: string };
-
-/**
- * Submit every staged card answer + an optional operator note as ONE combined request — a single brain
- * wake instead of one per card. See `staged-answers-tray.tsx` for the authoring side.
- */
-export function submitAnswerBatch(
-  ref: JobRef,
-  body: { items: AnswerBatchItem[]; message?: string },
-): Promise<{ ok: boolean; ts: string; results: Array<{ id: string; status: string }> }> {
-  return webJson(threadPath(ref, "/answer-batch"), {
-    method: "POST",
-    body: JSON.stringify(body),
   });
 }
 

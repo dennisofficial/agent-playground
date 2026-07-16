@@ -17,15 +17,15 @@ import { SubagentEntity } from './subagent.entity';
  * `job_id` stays denormalized for job-wide queries. Rendering is uniform via "messages for this node": a
  * node is either a thread (`subagent_id IS NULL`) or a subagent (`subagent_id = X`, d4).
  */
-@Entity({ name: 'messages' })
+@Entity({ name: 'transcript_messages' })
 @Index(['job_id', 'created_at'])
 @Index(['thread_id', 'created_at'])
 @Index(['subagent_id'])
-@Index('ux_messages_idem_key', ['idem_key'], {
+@Index('ux_transcript_messages_idem_key', ['idem_key'], {
   unique: true,
   where: `"idem_key" IS NOT NULL`,
 })
-export class MessageEntity extends TimestampedEntity {
+export class TranscriptMessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 

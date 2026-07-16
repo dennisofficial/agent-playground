@@ -11,7 +11,7 @@ import {
   MCP_WRITER_CONNECTION,
 } from '../persistence/database.module';
 import {
-  MessageEntity,
+  TranscriptMessageEntity,
   ProdMaintenanceWriteEntity,
   type ProdMaintenanceWriteDryRun,
   type ProdMaintenanceWriteResult,
@@ -55,8 +55,8 @@ export class ProdDiagnosticsService {
     private readonly writer: DataSource | undefined,
     @InjectRepository(ProdMaintenanceWriteEntity, DB_CONNECTION)
     private readonly ledger: Repository<ProdMaintenanceWriteEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @Inject(CHAT_SURFACE)
     private readonly surface: ChatSurface,
     private readonly env: EnvService,

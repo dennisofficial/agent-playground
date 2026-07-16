@@ -69,6 +69,7 @@ function makeController(
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
     {} as never, // moduleRef (ModuleRef)
+    {} as never, // intake (StimulusIntake)
   );
   return { controller, mocks };
 }

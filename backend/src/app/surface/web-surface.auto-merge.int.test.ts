@@ -149,7 +149,7 @@ async function loadJobRow(
 
 async function countStimuli(jobId: string): Promise<number> {
   const rows = (await ds.query(
-    `SELECT count(*)::int AS n FROM stimuli WHERE job_id = $1`,
+    `SELECT count(*)::int AS n FROM inbound_messages WHERE job_id = $1`,
     [jobId],
   )) as Array<{ n: number }>;
   return rows[0]?.n ?? 0;
@@ -329,7 +329,7 @@ describe('auto-merge — PATCH .../jobs/:jobId/auto-merge (live Postgres, real H
     await autoMerge.maybeAutoMerge(CARD_JOB);
 
     const cardRows = (await ds.query(
-      `SELECT card FROM messages WHERE job_id = $1 AND ts = $2 AND kind = 'card'`,
+      `SELECT card FROM transcript_messages WHERE job_id = $1 AND ts = $2 AND kind = 'card'`,
       [CARD_JOB, `merge-ready:${CARD_JOB}`],
     )) as Array<{ card: unknown }>;
     expect(cardRows).toHaveLength(1);

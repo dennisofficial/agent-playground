@@ -4,7 +4,7 @@ import type { DataSource } from 'typeorm';
 import { AppDataSource } from '../cli/data-source';
 import {
   JobEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   RepoEntity,
   ThreadGroupEntity,
   TaskEntity,
@@ -493,7 +493,7 @@ async function upsertRichTasks(ds: DataSource): Promise<void> {
 }
 
 async function upsertRichMessages(ds: DataSource): Promise<void> {
-  const messages = ds.getRepository(MessageEntity);
+  const messages = ds.getRepository(TranscriptMessageEntity);
   const fixtureIds = RICH_MESSAGES.map((m) => m.id);
   await messages
     .createQueryBuilder()

@@ -57,6 +57,7 @@ function makeController(opts: {
     {} as never, // git
     {} as never, // jobDeps
     {} as never, // moduleRef
+    {} as never, // intake (StimulusIntake)
   );
 }
 

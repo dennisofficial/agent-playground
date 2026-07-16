@@ -163,7 +163,7 @@ describe('single-winner finalize claim (live Postgres row-locked delete)', () =>
     await loser.discard();
 
     const rows = await dataSource.query(
-      `SELECT count(*)::int AS n FROM messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
+      `SELECT count(*)::int AS n FROM transcript_messages WHERE job_id = $1 AND kind = 'chat' AND text = $2`,
       [jobA, text],
     );
     expect(rows[0].n).toBe(1);

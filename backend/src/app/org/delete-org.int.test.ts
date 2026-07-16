@@ -35,13 +35,13 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
   ENTITIES,
-  MessageEntity,
+  TranscriptMessageEntity,
   OrgInviteEntity,
   OrganizationEntity,
   OrganizationMemberEntity,
   RepoEntity,
   ThreadEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
   UserEntity,
@@ -176,13 +176,15 @@ async function purge(): Promise<void> {
     );
     const ids = threadIds.map((t) => t.id);
     if (ids.length) {
-      await ds.query(`DELETE FROM messages WHERE job_id = ANY($1)`, [ids]);
+      await ds.query(`DELETE FROM transcript_messages WHERE job_id = ANY($1)`, [
+        ids,
+      ]);
     }
     for (const table of [
       'threads',
       'thread_groups',
       'decision_records',
-      'stimuli',
+      'inbound_messages',
       'job_sandboxes',
       'jobs',
       'repos',
@@ -226,7 +228,7 @@ async function seedThreadChildren(
     [jobId, orgId, threadGroup.id],
   );
   await ds.query(
-    `INSERT INTO messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
+    `INSERT INTO transcript_messages (job_id, thread_id, author, author_id, text) VALUES ($1, $2, 'U', 'u', 'hi')`,
     [jobId, thread.id],
   );
   await ds.query(
@@ -234,7 +236,7 @@ async function seedThreadChildren(
     [orgId, repoIdArg, jobId],
   );
   await ds.query(
-    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, job_id) VALUES ($1, $2, 'chat', 'trusted', 'b', $3)`,
+    `INSERT INTO inbound_messages (org_id, repo_id, kind, type, trust, body, job_id) VALUES ($1, $2, 'chat', 'user', 'trusted', 'b', $3)`,
     [orgId, repoIdArg, jobId],
   );
 }
@@ -264,7 +266,7 @@ async function seedOrgDirect(
   );
   // A stimulus parked on the org/repo BEFORE any thread existed (job_id NULL) — orphaned unless swept.
   await ds.query(
-    `INSERT INTO stimuli (org_id, repo_id, kind, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'untrusted', 'b', 'github', $3)`,
+    `INSERT INTO inbound_messages (org_id, repo_id, kind, type, trust, body, source, dedupe_key) VALUES ($1, $2, 'event', 'event', 'untrusted', 'b', 'github', $3)`,
     [orgId, repoIdArg, dedupeKey],
   );
 }
@@ -296,10 +298,10 @@ beforeEach(async () => {
           JobEntity,
           JobSandboxEntity,
           RepoEntity,
-          MessageEntity,
+          TranscriptMessageEntity,
           ThreadEntity,
           DecisionRecordEntity,
-          StimulusEntity,
+          InboundMessageEntity,
         ],
         DB_CONNECTION,
       ),
@@ -424,7 +426,7 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     // Sanity: the rows really exist before the delete.
     expect(await countWhere('jobs', 'org_id', ORG_ID)).toBe(2);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(2);
-    expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(3); // 2 thread-tied + 1 parked event
+    expect(await countWhere('inbound_messages', 'org_id', ORG_ID)).toBe(3); // 2 thread-tied + 1 parked event
 
     await orgService.deleteOrg(ORG_ID);
 
@@ -438,12 +440,12 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('threads', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('thread_groups', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('decision_records', 'org_id', ORG_ID)).toBe(0);
-    expect(await countWhere('stimuli', 'org_id', ORG_ID)).toBe(0);
+    expect(await countWhere('inbound_messages', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('job_sandboxes', 'org_id', ORG_ID)).toBe(0);
     expect(await countWhere('memory', 'org_id', ORG_ID)).toBe(0);
     // messages carry no org_id — assert by the (now-deleted) jobs' ids.
     const msgs = await ds.query(
-      `SELECT COUNT(*)::int AS c FROM messages WHERE job_id = ANY($1)`,
+      `SELECT COUNT(*)::int AS c FROM transcript_messages WHERE job_id = ANY($1)`,
       [[t1.jobId, t2.jobId]],
     );
     expect(Number(msgs[0].c)).toBe(0);
@@ -474,7 +476,9 @@ describe('deleteOrg cascade (live Postgres + fakes)', () => {
     expect(await countWhere('decision_records', 'org_id', OTHER_ORG_ID)).toBe(
       1,
     );
-    expect(await countWhere('stimuli', 'org_id', OTHER_ORG_ID)).toBe(2);
+    expect(await countWhere('inbound_messages', 'org_id', OTHER_ORG_ID)).toBe(
+      2,
+    );
     expect(await countWhere('job_sandboxes', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_credentials', 'org_id', OTHER_ORG_ID)).toBe(1);
     expect(await countWhere('org_invites', 'org_id', OTHER_ORG_ID)).toBe(1);

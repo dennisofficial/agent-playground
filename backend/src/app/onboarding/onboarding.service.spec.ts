@@ -8,7 +8,7 @@ import type {
   OrganizationEntity,
   OrgCredentialsEntity,
   RepoEntity,
-  StimulusEntity,
+  InboundMessageEntity,
   JobEntity,
   JobSandboxEntity,
 } from '../persistence/entities';
@@ -299,7 +299,7 @@ function assemble(
     repos.repo,
     orgCreds.repo,
     threads.repo as unknown as Repository<JobEntity>,
-    stimuli.repo as unknown as Repository<StimulusEntity>,
+    stimuli.repo as unknown as Repository<InboundMessageEntity>,
     decisionRecords.repo as unknown as Repository<DecisionRecordEntity>,
     sandboxes.repo as unknown as Repository<JobSandboxEntity>,
     fakeCreds(opts.creds),

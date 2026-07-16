@@ -66,6 +66,7 @@ function makeController(threadOrgId: string) {
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
     {} as never, // moduleRef (ModuleRef)
+    {} as never, // intake (StimulusIntake)
   );
   return { controller, deleteJobDeep, claimDeleteJob, threads, messages };
 }

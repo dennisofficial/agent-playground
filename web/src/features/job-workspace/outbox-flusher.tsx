@@ -8,12 +8,7 @@ import {
   type ConnectivityStatus,
 } from "@/lib/api/connectivity";
 import { composerStore } from "@/lib/api/composer-store";
-import {
-  postReviewComments,
-  sayMessage,
-  sayMessageWithFiles,
-  ThreadApiError,
-} from "@/lib/api/job-api";
+import { postMessage, postReviewComments, ThreadApiError } from "@/lib/api/job-api";
 import { qk } from "@/lib/api/query-keys";
 
 /**
@@ -62,13 +57,13 @@ export function OutboxFlusher(): null {
               message: msg.text || undefined,
             });
           } else if (msg.attachments.length > 0) {
-            await sayMessageWithFiles(
+            await postMessage(
               ref,
-              msg.text,
+              [{ type: "user", text: msg.text }],
               msg.attachments.map((a) => a.file),
             );
           } else if (msg.text) {
-            await sayMessage(ref, msg.text);
+            await postMessage(ref, [{ type: "user", text: msg.text }]);
           } else {
             // Empty (shouldn't happen post-hydrate filter) — nothing to send, discard.
             composerStore.removeQueued(ref.jobId, msg.id);

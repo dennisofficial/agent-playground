@@ -149,7 +149,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
   beforeEach(async () => {
     steerCalls.length = 0;
     await ds.query(
-      'TRUNCATE stimuli, messages, active_turns, jobs RESTART IDENTITY CASCADE',
+      'TRUNCATE inbound_messages, transcript_messages, active_turns, jobs RESTART IDENTITY CASCADE',
     );
   });
 
@@ -171,7 +171,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     attempted_at: string | null;
   }> {
     const rows = await ds.query(
-      `SELECT id, delivered_at, attempted_at FROM stimuli WHERE job_id = $1 AND lane = $2`,
+      `SELECT id, delivered_at, attempted_at FROM inbound_messages WHERE job_id = $1 AND lane = $2`,
       [jobId, lane],
     );
     return rows[0];
@@ -193,7 +193,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     expect(seed.priority).toBe('queue');
 
     const rows = await ds.query(
-      `SELECT lane, author_id, author_name, kind, reply_route FROM stimuli WHERE id = $1`,
+      `SELECT lane, author_id, author_name, kind, reply_route FROM inbound_messages WHERE id = $1`,
       [seed.id],
     );
     expect(rows[0].lane).toBe(lane);
@@ -204,7 +204,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
 
     // NO operator bubble — the whole point of a no-bubble recorder (build lanes are read-only).
     const msgCount = await ds.query(
-      `SELECT COUNT(*)::int AS n FROM messages WHERE job_id = $1`,
+      `SELECT COUNT(*)::int AS n FROM transcript_messages WHERE job_id = $1`,
       [job.id],
     );
     expect(msgCount[0].n).toBe(0);
@@ -300,7 +300,7 @@ describe('build-lane host-seed delivery — live Postgres proof', () => {
     );
 
     const rows = await ds.query(
-      `SELECT lane, attempted_at, delivered_at, body FROM stimuli WHERE id = $1`,
+      `SELECT lane, attempted_at, delivered_at, body FROM inbound_messages WHERE id = $1`,
       [seed.id],
     );
     expect(rows[0].lane).toBe('main');

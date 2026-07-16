@@ -150,7 +150,7 @@ export interface Job {
 }
 
 /** One message in a thread's append-only log. */
-export interface Message {
+export interface TranscriptMessage {
   /** Stable message id (`messages.id`). */
   id: string;
   /** The thread this message belongs to (the partition key). */

@@ -12,13 +12,19 @@ import { RepoEntity } from './repo.entity';
 import { JobEntity } from './job.entity';
 
 /**
- * The durable record of an intake stimulus — both subtypes in one table, discriminated by `kind`:
+ * The durable record of an inbound `Message` — the delivery QUEUE (see `../../domain/message.ts`),
+ * both subtypes in one table, discriminated by `kind`:
  *  - 'chat'  — continues a thread (carries `job_id` + author + reply route).
  *  - 'event' — opens a new thread; UNTRUSTED; carries `source`, `dedupe_key`, `severity`. The
  *    mechanical pre-harness filter dedups by `dedupe_key` (events only) so the firehose doesn't pay
  *    an Atlas turn per duplicate.
+ *
+ * `type` is the Message-union discriminant (`user` | `answer_question` | `file_answered` |
+ * `secret_provided` | `event` | `seed`) — the NEW authority for Claude-Code framing + the `/message`
+ * API. `kind` stays put as the coarser chat/event split the delivery queries already key off; it is
+ * NOT derivable from `type` alone pre-backfill, so both columns are kept (d10).
  */
-@Entity({ name: 'stimuli' })
+@Entity({ name: 'inbound_messages' })
 @Index(['org_id', 'repo_id'])
 // Event dedup: at most one live event row per (team, project, source, dedupe_key). Partial — chat
 // stimuli carry no dedupe_key and are exempt.
@@ -26,7 +32,7 @@ import { JobEntity } from './job.entity';
   unique: true,
   where: `"kind" = 'event'`,
 })
-export class StimulusEntity extends TimestampedEntity {
+export class InboundMessageEntity extends TimestampedEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -49,6 +55,14 @@ export class StimulusEntity extends TimestampedEntity {
   /** Subtype discriminator: 'chat' | 'event'. */
   @Column({ type: 'text' })
   kind!: string;
+
+  /**
+   * Message-type discriminant (the `Message` union's `type`): 'user' | 'answer_question' |
+   * 'file_answered' | 'secret_provided' | 'event' | 'seed'. Drives Claude-Code framing + the
+   * `/message` API; `kind` above stays the coarser chat/event split the delivery pump keys off.
+   */
+  @Column({ type: 'text' })
+  type!: string;
 
   /** Trust label: 'trusted' (chat) | 'untrusted' (every event body is data, never instructions). */
   @Column({ type: 'text' })

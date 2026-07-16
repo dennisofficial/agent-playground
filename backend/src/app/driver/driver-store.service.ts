@@ -20,7 +20,7 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { writeSystemChunk } from '../persistence/system-chunk-writer';
 import {
   DecisionRecordEntity,
-  MessageEntity,
+  TranscriptMessageEntity,
   ThreadGroupEntity,
   TaskEntity,
   ThreadEntity,
@@ -110,8 +110,8 @@ export class DriverStoreService {
     private readonly tasks: Repository<TaskEntity>,
     @InjectRepository(DecisionRecordEntity, DB_CONNECTION)
     private readonly records: Repository<DecisionRecordEntity>,
-    @InjectRepository(MessageEntity, DB_CONNECTION)
-    private readonly messages: Repository<MessageEntity>,
+    @InjectRepository(TranscriptMessageEntity, DB_CONNECTION)
+    private readonly messages: Repository<TranscriptMessageEntity>,
     @InjectDataSource(DB_CONNECTION)
     private readonly dataSource: DataSource,
     private readonly jobDeps: JobDependencyService,
@@ -165,7 +165,7 @@ export class DriverStoreService {
     };
     const threadId = await this.planningThreadId(jobId);
     await this.dataSource.transaction(async (m) => {
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       await messages.save(
         messages.create({
           job_id: jobId,
@@ -378,7 +378,7 @@ export class DriverStoreService {
         .andWhere("status IN ('running', 'amending')")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       await messages.save(
         messages.create({
           job_id: jobId,
@@ -436,7 +436,7 @@ export class DriverStoreService {
         .andWhere("status = 'awaiting_ship_review'")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const rows = await messages.find({
         where: { job_id: jobId, ts: `ship-review:${jobId}`, kind: 'card' },
       });
@@ -471,7 +471,7 @@ export class DriverStoreService {
     });
     const res = await this.messages
       .createQueryBuilder()
-      .update(MessageEntity)
+      .update(TranscriptMessageEntity)
       .set({ card: () => 'card || :patch::jsonb' })
       .where('job_id = :jobId', { jobId })
       .andWhere('ts = :ts', { ts: `ship-review:${jobId}` })
@@ -505,7 +505,7 @@ export class DriverStoreService {
         .getRepository(JobEntity)
         .findOne({ where: { id: jobId } });
       if (!job || job.status !== 'awaiting_ship_review') return 'not-parked';
-      const messages = m.getRepository(MessageEntity);
+      const messages = m.getRepository(TranscriptMessageEntity);
       const existing = await messages.find({
         where: { job_id: jobId, ts: `amend-proposal:${jobId}`, kind: 'card' },
       });

@@ -18,7 +18,7 @@ const MAX_FILE_BYTES = 512 * 1024;
  * A secure file-upload request the onboarding brain posed via `request_file`. Renders a file picker; the
  * chosen file is read as text client-side and STAGED into the composer's tray the instant it's picked (no
  * separate confirm step) — nothing hits the backend until the operator's batched Send, which POSTs to
- * `…/threads/:jobId/answer-batch`. The contents are never echoed back or kept in the card. Once
+ * `…/threads/:jobId/message`. The contents are never echoed back or kept in the card. Once
  * `provided_at` is set, renders the compact "uploaded" state.
  */
 export function FileCardView({

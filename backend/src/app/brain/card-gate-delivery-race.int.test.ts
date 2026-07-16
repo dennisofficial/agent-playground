@@ -126,14 +126,14 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
   });
 
   beforeEach(async () => {
-    await ds.query('TRUNCATE stimuli, messages, jobs RESTART IDENTITY CASCADE');
+    await ds.query('TRUNCATE inbound_messages, transcript_messages, jobs RESTART IDENTITY CASCADE');
   });
 
   async function purgeOwnRows(): Promise<void> {
     if (!ds?.isInitialized) return;
-    await ds.query('DELETE FROM stimuli WHERE org_id = $1', [ORG_ID]);
+    await ds.query('DELETE FROM inbound_messages WHERE org_id = $1', [ORG_ID]);
     await ds.query(
-      'DELETE FROM messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
+      'DELETE FROM transcript_messages WHERE job_id IN (SELECT id FROM jobs WHERE org_id = $1)',
       [ORG_ID],
     );
     await ds.query('DELETE FROM active_turns WHERE org_id = $1', [ORG_ID]);
@@ -203,7 +203,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
     id: string,
   ): Promise<{ delivered_at: Date | null; attempted_at: Date | null }> {
     const rows = await ds.query(
-      'SELECT delivered_at, attempted_at FROM stimuli WHERE id = $1',
+      'SELECT delivered_at, attempted_at FROM inbound_messages WHERE id = $1',
       [id],
     );
     return rows[0];
@@ -211,7 +211,7 @@ describe('Card/gate delivery lost-wakeup race (integration): durable pump stamps
 
   /** Clear the delivery lease so a subsequent sweep/pump can re-collect a row a dead steer left owed. */
   async function expireLease(jobId: string): Promise<void> {
-    await ds.query('UPDATE stimuli SET attempted_at = NULL WHERE job_id = $1', [
+    await ds.query('UPDATE inbound_messages SET attempted_at = NULL WHERE job_id = $1', [
       jobId,
     ]);
   }
