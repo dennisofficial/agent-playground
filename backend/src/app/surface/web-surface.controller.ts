@@ -1355,7 +1355,9 @@ export class WebSurfaceController {
           },
           bodyText,
         );
-        await this.clearDraftOnSend(org.id, jobId, user.id, results);
+        await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+          clearText: true,
+        });
         return { ok: true, ts: new Date().toISOString(), results };
       }
       const ts = this.surface.receiveFromClient(thread.repo_id, bodyText, {
@@ -1372,7 +1374,9 @@ export class WebSurfaceController {
             }
           : {}),
       });
-      await this.clearDraftOnSend(org.id, jobId, user.id, results);
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: true,
+      });
       return { ok: true, ts, results };
     }
 
@@ -1405,7 +1409,12 @@ export class WebSurfaceController {
           },
         },
       );
-      await this.clearDraftOnSend(org.id, jobId, user.id, results);
+      // CASE 2 carries no `user` item — the draft's typed text is unrelated to this card-only submit, so
+      // leave it (and any queued `/review-comments` tray, never touched from `/message`) alone; only prune
+      // the staged answers that were just applied.
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: false,
+      });
       return { ok: true, ts, results };
     }
 
@@ -1460,7 +1469,9 @@ export class WebSurfaceController {
           replyRoute: { surfaceId: this.surface.name, jobRef: jobId },
         },
       );
-      await this.clearDraftOnSend(org.id, jobId, user.id, results);
+      await this.clearDraftOnSend(org.id, jobId, user.id, results, {
+        clearText: true,
+      });
       return { ok: true, ts: new Date().toISOString(), results };
     }
 
@@ -1469,13 +1480,17 @@ export class WebSurfaceController {
     throw new BadRequestException('no valid messages to process');
   }
 
-  /** Best-effort: prune the caller's server-side draft of whatever this submit just applied. Realtime is
-   *  not load-bearing for correctness, so a failure here never fails the send itself. */
+  /** Best-effort: prune the caller's server-side draft of whatever this submit just applied, and blank the
+   *  typed text only when `clearText` says this submit actually carried/sent a `user` item. `/message`
+   *  never carries the draft's queued `comments` (those ride `/review-comments`, which clears them inline
+   *  at its own call site), so `comments` is never cleared from this path. Realtime is not load-bearing for
+   *  correctness, so a failure here never fails the send itself. */
   private async clearDraftOnSend(
     orgId: string,
     jobId: string,
     userId: string,
     results: Array<{ id: string; status: string }>,
+    opts: { clearText: boolean },
   ): Promise<void> {
     await this.draftService
       ?.clearOnSend(
@@ -1483,6 +1498,7 @@ export class WebSurfaceController {
         jobId,
         userId,
         results.filter((r) => r.status === 'applied').map((r) => r.id),
+        { clearText: opts.clearText, clearComments: false },
       )
       .catch(() => undefined);
   }
@@ -1695,6 +1711,16 @@ export class WebSurfaceController {
       ...operatorAuthor(user),
       card,
     });
+    // This send just carried the ENTIRE queued-comments tray plus whatever text was typed alongside it (see
+    // composer.tsx's `comments.length > 0` branch), so — unlike `/message`, which never touches `comments`
+    // — clear both fields of the server-side draft here. Best-effort: realtime is not load-bearing for
+    // correctness, so a failure never fails the send itself.
+    await this.draftService
+      ?.clearOnSend(org.id, jobId, user.id, [], {
+        clearText: true,
+        clearComments: true,
+      })
+      .catch(() => undefined);
     return { ts };
   }
 

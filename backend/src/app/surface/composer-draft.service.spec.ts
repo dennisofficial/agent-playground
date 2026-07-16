@@ -108,7 +108,10 @@ describe('ComposerDraftService', () => {
       ],
     });
 
-    await service.clearOnSend('org-1', 'job-1', 'user-1', ['q1']);
+    await service.clearOnSend('org-1', 'job-1', 'user-1', ['q1'], {
+      clearText: true,
+      clearComments: true,
+    });
 
     const { payload } = await service.getDraft('org-1', 'job-1', 'user-1');
     expect(payload.text).toBe('');
@@ -118,9 +121,36 @@ describe('ComposerDraftService', () => {
     ]);
   });
 
+  it('clearOnSend leaves text/comments untouched when the caller says this submit did not carry them', async () => {
+    await service.putDraft('org-1', 'job-1', 'user-1', {
+      text: 'unrelated in-progress note',
+      stagedAnswers: [
+        { kind: 'question', cardId: 'q1', label: 'DB?', answer: 'Postgres' },
+      ],
+      comments: [
+        { id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' },
+      ],
+    });
+
+    await service.clearOnSend('org-1', 'job-1', 'user-1', ['q1'], {
+      clearText: false,
+      clearComments: false,
+    });
+
+    const { payload } = await service.getDraft('org-1', 'job-1', 'user-1');
+    expect(payload.text).toBe('unrelated in-progress note');
+    expect(payload.comments).toEqual([
+      { id: 'r1', file: { node: 'n', label: 'l' }, quote: 'q', note: 'n' },
+    ]);
+    expect(payload.stagedAnswers).toEqual([]);
+  });
+
   it('clearOnSend is a no-op when the caller has no draft row', async () => {
     await expect(
-      service.clearOnSend('org-1', 'job-none', 'user-1', ['q1']),
+      service.clearOnSend('org-1', 'job-none', 'user-1', ['q1'], {
+        clearText: true,
+        clearComments: true,
+      }),
     ).resolves.toBeUndefined();
   });
 
