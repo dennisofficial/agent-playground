@@ -383,6 +383,7 @@ describe('ThreadDriver — the host backstop RETRIES a transient drive error ove
         openPrAtShip: vi.fn(async () => undefined),
         notifyThreadHalted: vi.fn(async () => undefined),
         notifyThreadDone: vi.fn(async () => undefined),
+        seedPostBuildGate: vi.fn(async () => undefined),
       } as unknown as import('../brain-gateway').BrainGateway;
       let judgeCalls = 0;
       const judge = {

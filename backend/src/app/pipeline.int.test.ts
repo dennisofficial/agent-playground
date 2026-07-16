@@ -225,11 +225,12 @@ function makePr(): GithubPrService {
   } as unknown as GithubPrService;
 }
 
-/** A `BrainGateway` whose two live methods are spies — the whole point of the headless-driver assertion. */
+/** A `BrainGateway` whose live methods are spies — the whole point of the headless-driver assertion. */
 function makeBrainGatewaySpy(): BrainGateway {
   return {
     openPrAtShip: vi.fn(async () => undefined),
     wakeUnblockedJob: vi.fn(async () => undefined),
+    seedPostBuildGate: vi.fn(async () => undefined),
   } as unknown as BrainGateway;
 }
 
@@ -707,6 +708,18 @@ describe('pipeline (live Postgres) — stage-driven drive over a stubbed engine'
       expect(postBuildStage).toBeTruthy();
       const [postBuildThread] = await store.threadsForStage(postBuildStage!.id);
       expect(postBuildThread.role).toBe('post_build');
+
+      // The gate delivers the post_build session's opening turn (the build summary + preview offer) via
+      // `BrainGateway.seedPostBuildGate`, targeted at the freshly-spawned post_build thread — the live
+      // proof that Thread 4's wiring (parkForShipReview → postBuildThreadId → seedPostBuildGate) actually
+      // fires when the driver parks a real job at the ship-review gate.
+      expect(brainGateway.seedPostBuildGate).toHaveBeenCalledTimes(1);
+      expect(brainGateway.seedPostBuildGate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: seed.jobId,
+          threadId: postBuildThread.id,
+        }),
+      );
 
       // ── 2e: ship() spawned a ci stage-thread and openPrAtShip fired with ITS (ci) thread id — PR
       // creation moved to ci, so it must NOT be the post_build thread's id ────────────────────────────

@@ -348,6 +348,7 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         openPrAtShip: vi.fn(async () => undefined),
         notifyThreadHalted: vi.fn(async () => undefined),
         notifyThreadDone: vi.fn(async () => undefined),
+        seedPostBuildGate: vi.fn(async () => undefined),
       } as unknown as import('../brain-gateway').BrainGateway;
       let judgeCalls = 0;
       const judge = {
