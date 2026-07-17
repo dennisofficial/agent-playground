@@ -865,7 +865,8 @@ export type JobStatus =
   | "done"
   | "triaging"
   | "cancelled"
-  | "deleting";
+  | "deleting"
+  | "archived";
 
 /** UI kind badge — `feat`/`fix` from WireJobKind; `event` denotes a notification-seeded job;
  *  `onboard` is the Atlas-run repo-init (onboarding) job; `review` is an external-PR review job. */

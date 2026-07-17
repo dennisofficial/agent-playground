@@ -6683,6 +6683,7 @@ export class AgentSessionManager
       'done',
       'cancelled',
       'deleting',
+      'archived',
     ];
     if (pastGate.includes(existing.status)) {
       return {

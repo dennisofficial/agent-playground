@@ -620,13 +620,18 @@ export function useSetAutoMerge(ref: JobRef) {
   });
 }
 
-/** Delete a thread (closes its sandbox + removes its messages). Refreshes the inbox. */
+/** Archive a thread (closes its sandbox, flips its status to the terminal `archived`). Refreshes the
+ *  inbox (the job drops out of the active sidebar groups), this job's own pipeline (so its `status`
+ *  recomputes to `archived` and the open workspace page goes read-only without a manual reload), and the
+ *  collapsed Archived sidebar group (so it picks up the job next time it's expanded/refetched). */
 export function useDeleteJob(ref: JobRef) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (prAction?: "close" | "leave") => deleteThread(ref, prAction),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.allJobs() });
+      void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
+      void qc.invalidateQueries({ queryKey: qk.archivedJobs() });
     },
   });
 }

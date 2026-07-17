@@ -144,6 +144,8 @@ const STATUS_SHAPE: Record<
   cancelled: "paused",
   // Winding down — a muted static ring; the faint color (STATUS_META) carries the "Deleting…" meaning.
   deleting: "paused",
+  // Terminal, read-only archive — same muted static ring as cancelled/deleting.
+  archived: "paused",
 };
 
 export function StatusPie({

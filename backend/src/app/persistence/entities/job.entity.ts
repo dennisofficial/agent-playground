@@ -120,9 +120,19 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   kind!: string | null;
 
-  // 'open' | 'planning' | 'plan_review' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'done' | 'cancelled' | 'deleting'
+  // 'open' | 'planning' | 'plan_review' | 'awaiting_approval' | 'running' | 'awaiting_ship_review' | 'done' | 'cancelled' | 'deleting' | 'archived'
   @Column({ type: 'text', default: 'open' })
   status!: string;
+
+  /**
+   * When the job was ARCHIVED (status flipped to `archived`), null for every non-archived job. Archiving
+   * reclaims the expensive filesystem (worktree + container + /playground + redundant on-disk session
+   * JSONL) while keeping the row + transcript + analytics + /context — see `JobLifecycleService`. Set to
+   * `now()` at archive; used only to order the collapsed "Archived" view (no index needed — the sweep
+   * filters by `status` + `pr_state`, not this).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  archived_at!: Date | null;
 
   /**
    * Anchor map for sidebar within-section ordering: backend {@link JobStatus} -> ISO timestamp of the

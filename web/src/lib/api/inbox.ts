@@ -192,6 +192,28 @@ export function useAllJobs() {
   });
 }
 
+async function fetchArchivedThreads(): Promise<InboxThread[]> {
+  const res = await fetchWithRefresh(
+    `${env.NEXT_PUBLIC_HTTP_URL}/web/jobs/archived`,
+    { headers: { accept: "application/json" } },
+  );
+  if (!res.ok) throw new Error(`archived threads ${res.status}`);
+  const rows = (await res.json()) as RawInboxThread[];
+  return rows.map(normalize);
+}
+
+/** The operator's archived jobs (the collapsed "Archived" sidebar group) — fetched only once `enabled`
+ *  (the group has actually been expanded), mirroring `useJobDiff`'s lazy `enabled` gate. Archived jobs are
+ *  immutable (read-only, terminal), so a long `staleTime` is safe. */
+export function useArchivedJobs(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.archivedJobs(),
+    queryFn: fetchArchivedThreads,
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** A repo subgroup: the in-flight threads on one repo. */
 export interface RepoThreadGroup {
   repoId: string;

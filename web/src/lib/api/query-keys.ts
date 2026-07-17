@@ -4,6 +4,8 @@ export const qk = {
   session: () => ["session"] as const,
   /** Every thread across all the operator's orgs (`GET /web/threads`). */
   allJobs: () => ["all-threads"] as const,
+  /** The operator's ARCHIVED jobs across all orgs (`GET /web/jobs/archived`) — the collapsed sidebar group. */
+  archivedJobs: () => ["archived-jobs"] as const,
   /** One org's members (`GET /web/orgs/:orgId/members`). */
   orgMembers: (orgId: string) => ["org-members", orgId] as const,
   /** One org's credential presence flags (`GET /web/orgs/:orgId/credentials`). */

@@ -77,16 +77,24 @@ export interface ThreadRealtimeRow extends Row {
   createdBy: JobProvenance | null;
 }
 
-/** Row-level scope: a user may stream only threads belonging to an org they are a member of. */
+/**
+ * Row-level scope: a user may stream only threads belonging to an org they are a member of, AND only
+ * non-`archived` threads. Membership is decided by ONE engine (mingo) on BOTH the snapshot and the live
+ * matcher, so excluding `archived` here does double duty: an archived row never appears in the initial
+ * snapshot, and — because archiving is a status UPDATE, not a row DELETE — the matcher sees the updated
+ * row leave the result set (`!pass`) and emits a `remove` delta, dropping it from the active sidebar
+ * live. The web console fetches archived jobs separately (`GET /web/jobs/archived`); it needs no client
+ * filter — an archived job simply arrives as a `remove`.
+ */
 class ThreadOrgGuard extends RealtimeRuleGuard<
   RealtimePrincipal,
   ThreadRealtimeRow
 > {
   canRead(
     user: RealtimePrincipal | null,
-  ): { orgId: { $in: string[] } } | false {
+  ): { orgId: { $in: string[] }; status: { $ne: string } } | false {
     if (!user || user.orgIds.length === 0) return false;
-    return { orgId: { $in: user.orgIds } };
+    return { orgId: { $in: user.orgIds }, status: { $ne: 'archived' } };
   }
 }
 

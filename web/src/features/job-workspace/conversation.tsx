@@ -39,6 +39,7 @@ import { AgentPromptBlock } from "./phases";
 import { indexCodexReviewBlocks } from "./codex-review";
 import { Composer, type ComposerFooter } from "./composer";
 import { BlockedOverlay } from "./blocked-overlay";
+import { ArchivedOverlay } from "./archived-overlay";
 import { useAttachments } from "./use-attachments";
 import { useFileDrop } from "./use-file-drop";
 import { DetailTopBar } from "./detail-top-bar";
@@ -66,6 +67,7 @@ export function Conversation({
   blocked = false,
   blockedBy = [],
   blockedSeedMessage = null,
+  archived = false,
   mainThreadId,
   mainDefaultFooter,
   onOpenPlan,
@@ -83,6 +85,8 @@ export function Conversation({
   blockedBy?: JobBlocker[];
   /** The pending seed message this job will start on when it unblocks — previewed in the blocked overlay. */
   blockedSeedMessage?: string | null;
+  /** The job is `archived` — terminal and read-only, pins the archived overlay at the top. */
+  archived?: boolean;
   /** The planning thread group's thread id — Main's transcript is scoped to it. Undefined for a pre-plan (`no_job`)
    *  job, where every message belongs to the single brain thread and no scoping is needed. */
   mainThreadId?: string;
@@ -105,6 +109,7 @@ export function Conversation({
           blockedSeedMessage={blockedSeedMessage}
         />
       ) : null}
+      {archived ? <ArchivedOverlay /> : null}
       <TranscriptView
         jobRef={jobRef}
         messages={messages}
@@ -112,6 +117,7 @@ export function Conversation({
         threadId={mainThreadId}
         composer
         blocked={blocked}
+        archived={archived}
         isLoading={isLoading}
         live={live}
         defaultFooter={mainDefaultFooter}
@@ -138,6 +144,7 @@ export function TranscriptView({
   composer = false,
   readOnly = false,
   blocked = false,
+  archived = false,
   isLoading = false,
   live = false,
   emptyText,
@@ -162,6 +169,8 @@ export function TranscriptView({
   readOnly?: boolean;
   /** The job is `blocked` — fully disable the composer (a send would just 400). */
   blocked?: boolean;
+  /** The job is `archived` — fully disable the composer, no send would be accepted (409). */
+  archived?: boolean;
   isLoading?: boolean;
   live?: boolean;
   /** The empty-state line when the lane has no activity yet. */
@@ -552,6 +561,7 @@ export function TranscriptView({
           footer={footer}
           readOnly={readOnly}
           blocked={blocked}
+          archived={archived}
         />
       ) : null}
       {/* Drag-over affordance — covers the whole pane; `pointer-events-none` so the drop still lands on the

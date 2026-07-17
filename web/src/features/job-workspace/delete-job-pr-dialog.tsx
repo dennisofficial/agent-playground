@@ -1,10 +1,10 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { Archive } from "lucide-react";
 
 /**
- * The secondary confirmation shown when deleting a job whose PR is still OPEN — the inline two-click
- * kebab confirm isn't enough here because deleting the job doesn't automatically touch the PR, so the
+ * The secondary confirmation shown when archiving a job whose PR is still OPEN — the inline two-click
+ * kebab confirm isn't enough here because archiving the job doesn't automatically touch the PR, so the
  * operator needs to explicitly choose whether to close it. Modeled on `DeleteOrgDialog`.
  */
 export function DeleteJobPrDialog({
@@ -46,10 +46,10 @@ export function DeleteJobPrDialog({
                   "1px solid color-mix(in srgb, var(--red) 40%, transparent)",
               }}
             >
-              <Trash2 size={17} />
+              <Archive size={17} />
             </span>
             <div className="font-disp text-[16px] font-semibold text-text">
-              Delete this job?
+              Archive this job?
             </div>
           </div>
           <p className="mb-1.5 text-[12.5px] leading-relaxed text-dim">
@@ -57,11 +57,11 @@ export function DeleteJobPrDialog({
             {prNumber != null
               ? `an open pull request (#${prNumber})`
               : "an open pull request"}
-            . Deleting the job won&apos;t touch the PR unless you close it.
+            . Archiving the job won&apos;t touch the PR unless you close it.
           </p>
           {error ? (
             <p className="mt-2.5 text-[11.5px] text-red">
-              {error.message ?? "Could not delete the job."}
+              {error.message ?? "Could not archive the job."}
             </p>
           ) : null}
         </div>
@@ -83,7 +83,7 @@ export function DeleteJobPrDialog({
             onClick={() => onChoose("leave")}
             className="rounded-md border border-border-2 px-3.5 py-2 text-[12.5px] font-medium text-dim transition hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {pending ? "Working…" : "Leave PR open & delete"}
+            {pending ? "Working…" : "Leave PR open & archive"}
           </button>
           <button
             type="button"
@@ -92,7 +92,7 @@ export function DeleteJobPrDialog({
             className="rounded-md px-4 py-2 text-[12.5px] font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-45"
             style={{ background: "var(--red)" }}
           >
-            {pending ? "Working…" : "Close PR & delete"}
+            {pending ? "Working…" : "Close PR & archive"}
           </button>
         </div>
       </div>

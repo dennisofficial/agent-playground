@@ -107,10 +107,11 @@ function setupErrorFrom(sandbox: FeatureSandbox): string | null {
   return r && !r.ok ? `exit ${r.exitCode}: ${r.tail}` : null;
 }
 
-/** How long a merged/closed job's sandbox may sit `detached` (RAM already freed, worktree kept so the
- *  conversation stays resumable) before the disk GC reclaims its worktree + scratch dirs. A week of
- *  post-merge resume-ability, then reclaim; the job row + transcript always survive. */
-const MERGED_SANDBOX_GC_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Default idle window (since a job's LAST transcript activity) after which a merged/closed job
+ *  auto-archives — env-overridable via `ARCHIVE_INACTIVITY_TTL_MS`. Aggressive by design (decision d3):
+ *  a merged PR stays interactive for follow-ups, then archives 3 quiet days later, reclaiming its
+ *  worktree/container while the row + transcript + /context survive. */
+const DEFAULT_ARCHIVE_INACTIVITY_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class JobLifecycleService {
@@ -158,6 +159,15 @@ export class JobLifecycleService {
     @Optional()
     private readonly jobBootstrap?: JobBootstrapService,
   ) {}
+
+  /** Idle window (since a job's last transcript activity) before a merged/closed job auto-archives —
+   *  `ARCHIVE_INACTIVITY_TTL_MS` when set + valid, else the 3-day default. Read via the env service (same
+   *  numeric-env pattern as `ThreadDriver.phaseTimeoutMs`); never a bare module constant. */
+  private get archiveInactivityTtlMs(): number {
+    const raw = Number(this.env.get('ARCHIVE_INACTIVITY_TTL_MS'));
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return DEFAULT_ARCHIVE_INACTIVITY_TTL_MS;
+  }
 
   /**
    * The HOST path of the thread's durable `/context` shared folder (mounted into the sandbox at
@@ -385,8 +395,9 @@ export class JobLifecycleService {
   }
 
   /**
-   * Look up the sandbox row for a thread, returning its current `FeatureSandbox` (or null if none
-   * exists). Read-only (no attach) — used where a live container isn't required (e.g. plan-review).
+   * Look up the sandbox row for a thread, returning its current worktree-backed `FeatureSandbox` (or null
+   * if none exists or it is closed/reclaimed). Read-only (no attach) — used where a live container isn't
+   * required (e.g. diff/repo-tree reads).
    */
   async findSandbox(
     jobId: string,
@@ -395,7 +406,7 @@ export class JobLifecycleService {
     const row = await this.sandboxes.findOne({
       where: { job_id: jobId, org_id: orgId },
     });
-    if (!row) return null;
+    if (!row || row.lifecycle === 'closed') return null;
     return this.rowToSandbox(row);
   }
 
@@ -554,11 +565,13 @@ export class JobLifecycleService {
   }
 
   /**
-   * The RAM-free TWIN of {@link closeJob}, used on a terminal PR state (merge/close): reclaim the CONTAINER
-   * but PRESERVE the worktree + `session_id`, so the operator's next message re-attaches a fresh container to
-   * the existing worktree and RESUMES the same brain session with full context (vs `closeJob`, which removes
-   * the worktree + flips to `closed` → `doEnsureProvisioned` returns null → a fresh session = amnesia). A
-   * stale detached worktree is later reclaimed for disk by {@link reapMergedSandboxes}.
+   * The RAM-free TWIN of {@link closeJob}: reclaim the CONTAINER but PRESERVE the worktree + `session_id`, so
+   * the operator's next message re-attaches a fresh container to the existing worktree and RESUMES the same
+   * brain session with full context (vs `closeJob`, which removes the worktree + flips to `closed` →
+   * `doEnsureProvisioned` returns null → a fresh session = amnesia). NO LONGER called on merge (decision d5 —
+   * a merged job stays interactive; its RAM is freed by the idle {@link reapIdle} sweep instead, and its
+   * worktree is reclaimed only at archive by {@link archiveInactiveJobs}). Retained as the shared detach
+   * primitive; a stale detached worktree is later reclaimed for disk when the job is archived.
    *
    * Modeled on `closeJob` EXACTLY for the two things that matter: `teardownByIdentity` (not `teardown`) so a
    * boot-reconciled row — `container_id` nulled on restart while the real container still runs — is still
@@ -653,8 +666,11 @@ export class JobLifecycleService {
     await this.closeJob(jobId, orgId);
 
     // 1b. Remove the job's durable host-side scratch dirs — `closeJob` reclaims the container + worktree but
-    //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them.
-    this.removeJobScratchDirs(orgId, jobId);
+    //     these live OUTSIDE the worktree (keyed by jobId), so nothing else deletes them. A hard delete drops
+    //     BOTH /playground and /context (unlike archive, which keeps /context — decision d2).
+    this.removeJobPlaygroundDir(orgId, jobId);
+    this.removeJobContextDir(orgId, jobId);
+    this.removeOnDiskSessionJsonl(jobId);
 
     // 2. If this was a repo's onboarding thread, release the spawn marker so a re-connect can re-onboard
     //    (the marker is a pointer, not an FK — it would otherwise dangle and block re-spawn forever).
@@ -679,6 +695,198 @@ export class JobLifecycleService {
     this.logger.log(
       `deleted thread ${jobId} (org ${orgId}); thread rows removed=${res.affected ?? 0}, children cascaded`,
     );
+  }
+
+  // ── archive (in-place TERMINAL lifecycle: reclaim filesystem, KEEP row + transcript + analytics + /context) ──
+
+  /**
+   * Atomically CLAIM a job for archiving — flip `status` → `'archived'` + stamp `archived_at` in a single
+   * conditional UPDATE, returning whether THIS caller won the claim. Mirrors {@link claimDeleteJob}, but
+   * archive is the TERMINAL, in-place lifecycle (the row + transcript + analytics + /context all survive):
+   * the guard excludes both `archived` and `deleting`, so a second concurrent archive matches 0 rows and an
+   * in-flight hard-delete cannot be converted into a retained archive. The archived state commits IMMEDIATELY
+   * so reads/realtime flip the UI to read-only before the slow physical reclaim ({@link archiveJobDeep}) runs
+   * in the background. Org-scoped.
+   */
+  async claimArchiveJob(jobId: string, orgId: string): Promise<boolean> {
+    const res = await this.jobs.update(
+      { id: jobId, org_id: orgId, status: Not(In(['archived', 'deleting'])) },
+      { status: 'archived', archived_at: new Date() },
+    );
+    return (res.affected ?? 0) > 0;
+  }
+
+  /**
+   * A TRUTHFUL reclaim of a job's two EXPENSIVE artifacts (container + worktree) — the disk cost archive is
+   * after. Deliberately does NOT reuse {@link closeJob}: closeJob swallows teardown / worktree-remove failures
+   * and STILL writes `lifecycle='closed'`, so a silent failure would masquerade as reclaimed and never retry,
+   * leaving disk on an archived job forever. Instead run BOTH reclaims while TRACKING success, and only mark
+   * the sandbox `closed` when both genuinely succeeded. Returns whether the reclaim truly completed — `false`
+   * leaves `lifecycle` non-`closed` so {@link reconcileArchivedSandboxes} retries. Idempotent: a `closed`
+   * (or absent) row owes nothing.
+   */
+  async reclaimJobArtifacts(jobId: string, orgId: string): Promise<boolean> {
+    const row = await this.sandboxes.findOne({
+      where: { job_id: jobId, org_id: orgId },
+    });
+    if (!row || row.lifecycle === 'closed') return true; // nothing owed
+    let ok = true;
+    // The container side is truthful — `teardownByIdentity` REJECTS on failure (unlike `removeSandbox`).
+    try {
+      await this.sandboxProvider.teardownByIdentity({
+        sandbox: await this.rowToSandbox(row),
+        orgId,
+        jobId,
+      });
+    } catch (err) {
+      ok = false;
+      this.logger.warn(
+        `archive: container teardown failed for ${jobId}: ${err}`,
+      );
+    }
+    if (row.worktree_path) {
+      const repo = await this.repoForRow(row).catch(() => null);
+      if (repo) {
+        try {
+          await this.git.removeSandbox(repo, row.worktree_path);
+        } catch (err) {
+          ok = false;
+          this.logger.warn(
+            `archive: worktree remove threw for ${jobId}: ${err}`,
+          );
+        }
+      }
+      // `LocalGitService.removeSandbox` SWALLOWS its rm / `git worktree remove` failures and RESOLVES — its
+      // resolve is NOT proof of removal. Trust the filesystem: if the worktree dir still exists, reclaim did
+      // not happen → do not mark closed → the reconciler retries.
+      if (existsSync(row.worktree_path)) {
+        ok = false;
+        this.logger.warn(
+          `archive: worktree still present after remove for ${jobId}`,
+        );
+      }
+    }
+    if (ok) {
+      await this.sandboxes.update(
+        { id: row.id },
+        { container_id: null, lifecycle: 'closed' },
+      );
+    }
+    return ok; // false ⇒ lifecycle stays non-closed ⇒ reconciler retries
+  }
+
+  /**
+   * The PHYSICAL side of archiving — {@link deleteJobDeep} MINUS the row delete and MINUS the /context removal
+   * (decision d2). Reclaim the container + worktree TRUTHFULLY ({@link reclaimJobArtifacts} — that is what
+   * gates the reconciler retry, since they are the disk cost), best-effort-drop /playground + the redundant
+   * on-disk session JSONL, release any onboarding-spawn marker, and wake dependents. The jobs row + transcript
+   * + analytics + /context all SURVIVE. Fully idempotent (teardown-by-identity, worktree remove, and the dir
+   * removals all no-op / `force:true`), so {@link reconcileArchivedSandboxes} can safely re-run it. Assumes
+   * the status was already flipped to `archived` by {@link claimArchiveJob}.
+   */
+  async archiveJobDeep(jobId: string, orgId: string): Promise<void> {
+    await this.reclaimJobArtifacts(jobId, orgId); // container + worktree — gates the reconciler retry
+    this.removeJobPlaygroundDir(orgId, jobId); // best-effort, small; NOT /context (kept — decision d2)
+    this.removeOnDiskSessionJsonl(jobId); // best-effort; redundant with transcript_messages (decision d4)
+
+    // Release the onboarding-spawn marker so a re-connect can re-onboard (a dangling pointer would block
+    // re-spawn forever) — same as the hard-delete path.
+    await this.projects
+      .update(
+        { org_id: orgId, onboarding_job_id: jobId },
+        { onboarding_job_id: null },
+      )
+      .catch(() => undefined);
+
+    // Wake any job blocked on this one — `archived` is now a terminal blocker resolution, so a dependent
+    // doesn't strand forever on a blocker that will never merge (archive replaced the cascade-delete that
+    // used to make the blocker row vanish).
+    await this.jobDeps
+      .onBlockerResolved(jobId, 'archived')
+      .catch((err) =>
+        this.logger.warn(
+          `archiveJobDeep: wake funnel failed for blocker ${jobId}: ${err}`,
+        ),
+      );
+  }
+
+  /**
+   * The AUTO-ARCHIVE sweep (replaces the old 7-day merged-sandbox disk GC): archive every merged/closed job
+   * idle longer than {@link archiveInactivityTtlMs} — anchored on its LAST TRANSCRIPT ACTIVITY
+   * (`MAX(transcript_messages.created_at)`, NOT `jobs.updated_at`, which background reconcilers bump without
+   * real activity). A job with zero transcript rows (`MAX` is NULL) does NOT match — NULL fails `<`, the safe
+   * default (it needs a manual archive). Already-`deleting` rows are also excluded so the org/repo hard-delete
+   * drain stays destructive. Set-based eligibility query, then claim-then-archive per job (best-effort).
+   * Drains the detached-worktree backlog on the first sweeps. Leader-only (runs from the reap timer). Returns
+   * how many it archived.
+   */
+  async archiveInactiveJobs(): Promise<number> {
+    const cutoff = new Date(Date.now() - this.archiveInactivityTtlMs);
+    const rows = await this.jobs
+      .createQueryBuilder('j')
+      .select(['j.id', 'j.org_id'])
+      .where('j.status NOT IN (:...archiveExcluded)', {
+        archiveExcluded: ['archived', 'deleting'],
+      })
+      .andWhere('j.pr_state IN (:...terminal)', {
+        terminal: ['merged', 'closed'],
+      })
+      .andWhere(
+        '(SELECT MAX(m.created_at) FROM transcript_messages m WHERE m.job_id = j.id) < :cutoff',
+        { cutoff },
+      )
+      .getMany();
+    let archived = 0;
+    for (const j of rows) {
+      try {
+        if (await this.claimArchiveJob(j.id, j.org_id)) {
+          await this.archiveJobDeep(j.id, j.org_id);
+          archived++;
+        }
+      } catch (err) {
+        this.logger.warn(
+          `archiveInactiveJobs: archive of job ${j.id} failed: ${err}`,
+        );
+      }
+    }
+    if (archived)
+      this.logger.log(`archiveInactiveJobs: archived ${archived} idle job(s)`);
+    return archived;
+  }
+
+  /**
+   * Durable RECLAIM RETRY for archive — the self-heal for an interrupted {@link archiveJobDeep}. Unlike
+   * `deleting`, archive commits `status='archived'` IMMEDIATELY (for instant read-only), so there is no
+   * transient marker a sweep re-picks; without this a crash mid-reclaim would leave an archived job with its
+   * worktree/container on disk forever, silently defeating the disk goal. Find already-archived jobs whose
+   * sandbox is not yet fully `closed` — a TRUTHFUL signal now that {@link reclaimJobArtifacts} only writes
+   * `closed` on genuine success — and re-run the idempotent {@link archiveJobDeep}. Run leader-only from the
+   * reap timer AND on boot (like {@link reconcileDeletingJobs}). Returns how many it re-attempted.
+   */
+  async reconcileArchivedSandboxes(): Promise<number> {
+    const rows = await this.jobs
+      .createQueryBuilder('j')
+      .innerJoin('job_sandboxes', 's', 's.job_id = j.id')
+      .where('j.status = :arch', { arch: 'archived' })
+      .andWhere("s.lifecycle <> 'closed'")
+      .select(['j.id', 'j.org_id'])
+      .getMany();
+    let retried = 0;
+    for (const j of rows) {
+      try {
+        await this.archiveJobDeep(j.id, j.org_id);
+        retried++;
+      } catch (err) {
+        this.logger.warn(
+          `reconcileArchivedSandboxes: reclaim retry for job ${j.id} failed: ${err}`,
+        );
+      }
+    }
+    if (retried)
+      this.logger.log(
+        `reconcileArchivedSandboxes: re-attempted reclaim for ${retried} archived job(s)`,
+      );
+    return retried;
   }
 
   // ── reaping / reconciliation (driven by DriverModule's boot hook + interval) ────────────────────
@@ -715,15 +923,18 @@ export class JobLifecycleService {
 
   /**
    * Apply an authoritative GitHub PR state to a job: terminal `pr_state` write (authoritative sidebar
-   * glyph) FIRST, then sandbox teardown. Ordering is load-bearing — the write is the authoritative
-   * observer so purple/red are immediate; `closeJob` is last. Idempotent — an `open` state is a no-op;
-   * `gone` (PR/repo deleted) folds to `closed`. Shared by the `pull_request` webhook (fast path) and
-   * `pollPrClosures` (30-min backstop) so they can't drift.
+   * glyph), retire any live "Merge PR" card, and wake blockers. Merge NO LONGER tears down the sandbox
+   * (decision d5) — a merged/closed job stays fully interactive so the operator can follow up after merge;
+   * the container's RAM is freed by the idle reaper (`reapIdle`) and the worktree/container are reclaimed
+   * only at ARCHIVE (`archiveInactiveJobs` after >TTL idle, or a manual archive). Idempotent — an `open`
+   * state is a no-op; `gone` (PR/repo deleted) folds to `closed`. Always returns `'noop'` (nothing is torn
+   * down here anymore). Shared by the `pull_request` webhook (fast path) and `pollPrClosures` (30-min
+   * backstop) so they can't drift.
    */
   async applyGithubPrState(
     job: JobEntity,
     state: 'open' | 'merged' | 'closed' | 'gone',
-  ): Promise<'closed' | 'noop'> {
+  ): Promise<'noop'> {
     if (state === 'open') return 'noop';
     const prState = state === 'gone' ? 'closed' : state; // 'merged' | 'closed'
     await this.jobs.update({ id: job.id }, { pr_state: prState });
@@ -747,31 +958,32 @@ export class JobLifecycleService {
           `applyGithubPrState: wake funnel failed for blocker ${job.id}: ${err}`,
         ),
       );
-    // DETACH, not close: free the container's RAM but KEEP the worktree + session so a post-merge follow-up
-    // resumes the brain with full context (a merged PR should "just free RAM, never delete data"). The
-    // worktree is reclaimed for disk later by `reapMergedSandboxes` once it's sat detached past the TTL.
-    await this.detachJobContainer(job.id, job.org_id);
-    return 'closed';
+    return 'noop';
   }
 
   /**
-   * Poll the PR of every thread that has one (the PR lives on the THREAD now) whose sandbox isn't
-   * `closed`; when it has merged or closed (or was deleted), `closeJob` to reclaim the container +
-   * worktree. Best-effort per thread. Returns how many threads were closed.
+   * Poll the PR of every non-archived, non-deleting thread that has one (the PR lives on the THREAD now)
+   * whose sandbox isn't `closed`; when it has merged or closed (or was deleted), stamp the terminal
+   * `pr_state` (via `applyGithubPrState`). Merge no longer tears anything down here (decision d5) — this is
+   * now purely the authoritative-state backstop the webhook fast path mirrors. Best-effort per thread.
+   * Returns how many threads it transitioned to a terminal PR state.
    */
   async pollPrClosures(): Promise<number> {
     const threads = await this.jobs.find({
-      where: { pr_number: Not(IsNull()) },
+      where: {
+        pr_number: Not(IsNull()),
+        status: Not(In(['archived', 'deleting'])),
+      },
     });
-    let closed = 0;
+    let applied = 0;
     for (const thread of threads) {
       try {
         const sandbox = await this.sandboxes.findOne({
           where: { job_id: thread.id },
         });
         // Skip already-terminal jobs: a closed sandbox, OR a job whose `pr_state` is already merged/closed
-        // (its teardown ran — since merge now DETACHES rather than closing, the lifecycle-only guard would
-        // otherwise re-poll + re-apply + re-count a detached merged job every 30 min forever).
+        // (state already applied — the lifecycle-only guard would otherwise re-poll + re-apply + re-count it
+        // every 30 min forever, since merge no longer flips the sandbox to `closed`).
         if (
           !sandbox ||
           sandbox.lifecycle === 'closed' ||
@@ -790,12 +1002,12 @@ export class JobLifecycleService {
           repo: parsed.repo,
           number: thread.pr_number,
         });
-        const outcome = await this.applyGithubPrState(thread, state);
-        if (outcome === 'closed') {
+        await this.applyGithubPrState(thread, state);
+        if (state !== 'open') {
           this.logger.log(
-            `thread ${thread.id} PR #${thread.pr_number} is ${state} — closing thread`,
+            `thread ${thread.id} PR #${thread.pr_number} is ${state} — pr_state recorded (sandbox kept until archive)`,
           );
-          closed++;
+          applied++;
         }
       } catch (err) {
         this.logger.debug(
@@ -803,71 +1015,53 @@ export class JobLifecycleService {
         );
       }
     }
-    if (closed)
+    if (applied)
       this.logger.log(
-        `pollPrClosures: closed ${closed} merged/closed thread(s)`,
+        `pollPrClosures: recorded ${applied} terminal PR state(s)`,
       );
-    return closed;
+    return applied;
   }
 
-  /** Remove a job's durable host-side scratch dirs (`/playground` + `/context`) — they live OUTSIDE the
-   *  worktree (keyed by jobId), so neither `closeJob` nor a worktree removal touches them. Best-effort;
-   *  never throws. Used by `deleteJobDeep` (hard delete) and `reapMergedSandboxes` (disk GC). */
-  private removeJobScratchDirs(orgId: string, jobId: string): void {
-    for (const dir of [
-      this.sandboxProvider.playgroundDirHost(orgId, jobId),
-      this.sandboxProvider.contextDirHost(orgId, jobId),
-    ]) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch (err) {
-        this.logger.warn(
-          `removeJobScratchDirs: remove failed for ${dir}: ${err}`,
-        );
-      }
+  /** Remove a job's durable host-side `/playground` scratch dir — it lives OUTSIDE the worktree (keyed by
+   *  jobId), so neither `closeJob` nor a worktree removal touches it. Best-effort; never throws. Reclaimed by
+   *  BOTH hard delete ({@link deleteJobDeep}) and archive ({@link archiveJobDeep}). */
+  private removeJobPlaygroundDir(orgId: string, jobId: string): void {
+    const dir = this.sandboxProvider.playgroundDirHost(orgId, jobId);
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(
+        `removeJobPlaygroundDir: remove failed for ${dir}: ${err}`,
+      );
     }
   }
 
-  /**
-   * Disk GC for merged/closed jobs whose sandbox has sat `detached` past {@link MERGED_SANDBOX_GC_TTL_MS}.
-   * Merge now DETACHES (frees the container RAM immediately, keeps the worktree so the conversation stays
-   * resumable) — but nothing reclaims that worktree, so without this it grows unbounded. Runs the full
-   * `closeJob` (worktree + container-by-identity + `closed`) AND `removeJobScratchDirs` (`/context`,
-   * `/playground` — which `closeJob` does NOT touch). The job row + transcript SURVIVE (never a data delete);
-   * the conversation just becomes non-resumable past the TTL (start a new job). Leader-only, best-effort;
-   * returns how many were reclaimed.
-   */
-  async reapMergedSandboxes(): Promise<number> {
-    const cutoff = Date.now() - MERGED_SANDBOX_GC_TTL_MS;
-    const jobs = await this.jobs.find({
-      where: { pr_state: In(['merged', 'closed']) },
-      select: { id: true, org_id: true },
-    });
-    let reclaimed = 0;
-    for (const job of jobs) {
-      try {
-        const sandbox = await this.sandboxes.findOne({
-          where: { job_id: job.id, org_id: job.org_id },
-        });
-        // Only a still-detached row past the cutoff: an `attached` (re-engaged) or already-`closed` row is
-        // left alone, and a recently-detached one stays resumable until it ages out.
-        if (!sandbox || sandbox.lifecycle !== 'detached') continue;
-        if (!sandbox.updated_at || sandbox.updated_at.getTime() >= cutoff)
-          continue;
-        await this.closeJob(job.id, job.org_id);
-        this.removeJobScratchDirs(job.org_id, job.id);
-        reclaimed++;
-      } catch (err) {
-        this.logger.warn(
-          `reapMergedSandboxes: reclaim of job ${job.id} failed: ${err}`,
-        );
-      }
+  /** Remove a job's durable host-side `/context` dir (specs/artifacts/evidence) — same out-of-worktree,
+   *  keyed-by-jobId nature as `/playground`. Best-effort; never throws. Reclaimed ONLY by hard delete
+   *  ({@link deleteJobDeep}); archive KEEPS /context on the box (decision d2), so it does NOT call this. */
+  private removeJobContextDir(orgId: string, jobId: string): void {
+    const dir = this.sandboxProvider.contextDirHost(orgId, jobId);
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(`removeJobContextDir: remove failed for ${dir}: ${err}`);
     }
-    if (reclaimed)
-      this.logger.log(
-        `reapMergedSandboxes: reclaimed disk for ${reclaimed} stale merged sandbox(es)`,
+  }
+
+  /** Best-effort removal of a job's REDUNDANT on-disk Claude session JSONL (the durable copy lives in
+   *  `transcript_messages` — decision d4). `teardownByIdentity` reclaims the container but NOT the host-side
+   *  agent-home dir that holds the transcript, so archive drops it explicitly via the sandbox provider's
+   *  existing `brainTranscriptProjectsDir` accessor. Null (nothing on disk yet) is a no-op; never throws. */
+  private removeOnDiskSessionJsonl(jobId: string): void {
+    const dir = this.sandboxProvider.brainTranscriptProjectsDir(jobId);
+    if (!dir) return;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(
+        `removeOnDiskSessionJsonl: remove failed for ${dir}: ${err}`,
       );
-    return reclaimed;
+    }
   }
 
   /**

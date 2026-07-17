@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import { env } from "@/lib/env";
 import { ROUTES, threadHref } from "@/lib/routes";
 import { useOrgs, type OrgSummary } from "@/lib/api/me";
-import { useAllJobs, type InboxThread } from "@/lib/api/inbox";
+import { useAllJobs, useArchivedJobs, type InboxThread } from "@/lib/api/inbox";
 import { useAllRepos } from "@/lib/api/job-queries";
 import {
   groupThreadsBySection,
@@ -43,9 +43,9 @@ import { AccountMenu } from "./account-menu";
 const repoKeyOf = (orgId: string, repoId: string) => `${orgId}:${repoId}`;
 
 // Section collapse is global (collapsing "Merged" collapses it in every repo) and persists across
-// reloads; the repo/org collapse above it does not. Default: everything expanded except Merged.
+// reloads; the repo/org collapse above it does not. Default: everything expanded except Archived.
 const COLLAPSED_SECTIONS_KEY = "atlas.sidebar.collapsedSections";
-const DEFAULT_COLLAPSED_SECTIONS: JobSection[] = ["merged"];
+const DEFAULT_COLLAPSED_SECTIONS: JobSection[] = ["archived"];
 
 function loadCollapsedSections(): Set<JobSection> {
   try {
@@ -151,6 +151,11 @@ export function Sidebar({
 
   const isSectionCollapsed = (section: JobSection) =>
     collapsedSections.has(section);
+
+  const archivedExpanded = !isSectionCollapsed("archived");
+  const { data: archivedThreads = [], isLoading: archivedLoading } =
+    useArchivedJobs(archivedExpanded);
+
   const toggleSection = (section: JobSection) =>
     setCollapsedSections((prev) => {
       const next = new Set(prev);
@@ -279,6 +284,17 @@ export function Sidebar({
             />
           ))
         )}
+
+        {/* Archived — one flat, cross-org group at the very bottom, fetched only once expanded (archived
+            jobs may span repos/orgs the operator hasn't opened, so they don't live inside any org/repo
+            section above). */}
+        <ArchivedSection
+          threads={archivedThreads}
+          loading={archivedLoading}
+          pathname={pathname}
+          collapsed={!archivedExpanded}
+          onToggle={() => toggleSection("archived")}
+        />
       </div>
 
       {/* Build tag — the running web bundle's git SHA, baked in at build time (falls back to "dev"
@@ -624,6 +640,58 @@ function RepoGroup({
   );
 }
 
+/** The flat, cross-org "Archived" group — a sibling of the per-org sections, not nested inside any of
+ *  them (an archived job may belong to a repo/org the operator hasn't expanded). Always rendered so the
+ *  operator has something to expand; its jobs are fetched lazily, only once expanded. */
+function ArchivedSection({
+  threads,
+  loading,
+  pathname,
+  collapsed,
+  onToggle,
+}: {
+  threads: InboxThread[];
+  loading: boolean;
+  pathname: string;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="border-t border-border px-0.5 pb-2 pt-2.5">
+      <SidebarSection
+        section="archived"
+        count={threads.length}
+        collapsed={collapsed}
+        onToggle={onToggle}
+        anyNeedsYou={false}
+      >
+        {loading ? (
+          <div className="px-1 py-0.5 font-mono text-[10px] text-faint">
+            Loading…
+          </div>
+        ) : threads.length === 0 ? (
+          <div className="px-1 py-0.5 text-[10.5px] italic text-faint">
+            No archived jobs
+          </div>
+        ) : (
+          threads.map((t) => (
+            <ThreadRow
+              key={t.id}
+              thread={t}
+              orgId={t.org.id}
+              section="archived"
+              active={
+                pathname ===
+                threadHref({ orgId: t.org.id, repoId: t.repo.id, jobId: t.id })
+              }
+            />
+          ))
+        )}
+      </SidebarSection>
+    </div>
+  );
+}
+
 /** The fixed swatch/label color per {@link JobSection} (matches the sidebar-redesign mockup palette). */
 const SECTION_COLOR: Record<JobSection, string> = {
   planning: "var(--blue)",
@@ -637,6 +705,7 @@ const SECTION_COLOR: Record<JobSection, string> = {
   done: "var(--green)",
   pr_open: "var(--green)",
   merged: "var(--purple)",
+  archived: "var(--faint)",
 };
 
 /** A collapsible status-derived section header (label + live count + chevron) over its thread rows.
