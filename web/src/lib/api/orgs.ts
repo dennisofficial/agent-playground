@@ -60,7 +60,7 @@ export interface Member {
   role: string;
 }
 
-// WIRED (RTK): GET /web/orgs/:orgId/members
+// WIRED (RTK): GET /orgs/:orgId/members
 export function useOrgMembers(orgId: string) {
   return adaptQuery(useGetOrgMembersQuery(orgId, { skip: !orgId }));
 }
@@ -801,14 +801,14 @@ export function useMcpOAuthConnect(orgId: string) {
 // feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
 
 /** Create an org — the caller becomes its owner; it starts in `onboarding`.
- *  WIRED (RTK): POST /web/orgs. Vars stay `string` (name) for existing callers; the mutation
+ *  WIRED (RTK): POST /orgs. Vars stay `string` (name) for existing callers; the mutation
  *  invalidates SESSION so `useCurrentUser`'s org list refetches. */
 export function useCreateOrg(): MutationResultLike<OrgSummary, string> {
   const [trigger, state] = useCreateOrgMutation();
   return adaptMutation([(name: string) => trigger({ name }), state]);
 }
 
-/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /web/orgs/:orgId.
+/** Owner-only rename / automation-defaults update. WIRED (RTK): PATCH /orgs/:orgId.
  *  Takes the shared `UpdateOrgDto` (name + the three auto-* booleans) directly. */
 export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, UpdateOrgDto> {
   const [trigger, state] = useUpdateOrgMutation();
@@ -816,7 +816,7 @@ export function useUpdateOrg(orgId: string): MutationResultLike<OrgSummary, Upda
 }
 
 /** Owner-only delete — tears down the org's repos, threads, and live agent sessions. Irreversible.
- *  WIRED (RTK): DELETE /web/orgs/:orgId. */
+ *  WIRED (RTK): DELETE /orgs/:orgId. */
 export function useDeleteOrg(orgId: string): MutationResultLike<{ ok: boolean }, void> {
   const [trigger, state] = useDeleteOrgMutation();
   return adaptMutation([() => trigger(orgId), state]) as unknown as MutationResultLike<

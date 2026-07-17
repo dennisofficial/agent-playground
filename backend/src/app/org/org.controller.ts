@@ -4,7 +4,7 @@ import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@w
 import type { User } from '../auth/entities/user.entity';
 import { OrgService } from './org.service';
 
-@Controller('web/orgs')
+@Controller('orgs')
 export class OrgController {
   constructor(private readonly orgs: OrgService) {}
 

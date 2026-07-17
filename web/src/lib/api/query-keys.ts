@@ -6,7 +6,7 @@ export const qk = {
   allJobs: () => ["all-threads"] as const,
   /** The operator's ARCHIVED jobs across all orgs (`GET /web/jobs/archived`) — the collapsed sidebar group. */
   archivedJobs: () => ["archived-jobs"] as const,
-  /** One org's members (`GET /web/orgs/:orgId/members`). */
+  /** One org's members (`GET /orgs/:orgId/members`). */
   orgMembers: (orgId: string) => ["org-members", orgId] as const,
   /** One org's credential presence flags (`GET /web/orgs/:orgId/credentials`). */
   orgCredentials: (orgId: string) => ["org-credentials", orgId] as const,

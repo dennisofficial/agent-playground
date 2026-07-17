@@ -8,7 +8,7 @@ import { useDeleteOrg } from "@/lib/api/orgs";
 import { ROUTES } from "@/lib/routes";
 
 /**
- * Type-the-name-to-confirm delete dialog. Confirming hits `DELETE /web/orgs/:orgId` (owner-only), which
+ * Type-the-name-to-confirm delete dialog. Confirming hits `DELETE /orgs/:orgId` (owner-only), which
  * tears down the org's repos, threads, and live agent sessions. On success we route to the workspace (the
  * deleted org's settings page no longer resolves).
  */

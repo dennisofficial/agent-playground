@@ -9,7 +9,7 @@ import { DeleteOrgDialog } from "./delete-org-dialog";
 
 /**
  * General settings — org identity + status + the danger zone. Rename / re-slug persist via
- * `PATCH /web/orgs/:orgId` and delete via `DELETE /web/orgs/:orgId` (both owner-only); a non-owner sees
+ * `PATCH /orgs/:orgId` and delete via `DELETE /orgs/:orgId` (both owner-only); a non-owner sees
  * the write affordances disabled, and the backend enforces it regardless.
  */
 export function GeneralSection({ org }: { org: OrgSummary }) {

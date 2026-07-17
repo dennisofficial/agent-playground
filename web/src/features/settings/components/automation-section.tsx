@@ -7,7 +7,7 @@ import { useState } from "react";
 
 /**
  * Automation settings — the org-level defaults a new job inherits at creation (the create-job form seeds
- * its Plan/Ship/Merge toggles from these). Owner-only, same PATCH /web/orgs/:orgId as General. Each of the
+ * its Plan/Ship/Merge toggles from these). Owner-only, same PATCH /orgs/:orgId as General. Each of the
  * three toggles maps 1:1 to a backend boolean default.
  */
 export function AutomationSection({ org }: { org: OrgSummary }) {

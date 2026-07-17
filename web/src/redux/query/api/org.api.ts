@@ -9,19 +9,19 @@ export const orgApi = baseApi.injectEndpoints({
   overrideExisting: true,
   endpoints: (build) => ({
     getOrgMembers: build.query<MemberView[], string>({
-      query: (orgId) => ({ url: `/web/orgs/${orgId}/members`, method: "GET" }),
+      query: (orgId) => ({ url: `/orgs/${orgId}/members`, method: "GET" }),
       providesTags: (_result, _error, orgId) => [{ type: EBaseApiCacheTags.ORG_MEMBER, id: orgId }],
     }),
     createOrg: build.mutation<OrgSummary, CreateOrgDto>({
-      query: (body) => ({ url: "/web/orgs", method: "POST", data: body }),
+      query: (body) => ({ url: "/orgs", method: "POST", data: body }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
     updateOrg: build.mutation<OrgSummary, { orgId: string; body: UpdateOrgDto }>({
-      query: ({ orgId, body }) => ({ url: `/web/orgs/${orgId}`, method: "PATCH", data: body }),
+      query: ({ orgId, body }) => ({ url: `/orgs/${orgId}`, method: "PATCH", data: body }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
     deleteOrg: build.mutation<{ ok: true }, string>({
-      query: (orgId) => ({ url: `/web/orgs/${orgId}`, method: "DELETE" }),
+      query: (orgId) => ({ url: `/orgs/${orgId}`, method: "DELETE" }),
       invalidatesTags: [EBaseApiCacheTags.SESSION],
     }),
   }),
