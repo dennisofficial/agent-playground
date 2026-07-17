@@ -215,6 +215,9 @@ export interface WebQuestionCard {
   allowOther: boolean;
   answer?: string;
   answeredAt?: string;
+  /** ISO time the answer was actually delivered (taken by the SDK/engine); absent while still in flight
+   *  (drives the sending → landed transition once {@link answer} is set). */
+  deliveredAt?: string;
   loggedDecision?: boolean;
   /** Set when the brain RETRACTED this still-unanswered question (`withdraw_question`) — renders a compact
    *  "withdrawn" state with no answer buttons. Terminal, like `answer`. */

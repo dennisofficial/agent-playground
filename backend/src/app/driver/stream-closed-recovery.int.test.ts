@@ -36,6 +36,7 @@ import {
   DecisionRecordEntity,
 } from '../persistence/entities';
 import { JobDependencyService } from '../job-deps';
+import { StimulusStoreService } from '../stimulus/stimulus-store.service';
 import { DriverStoreService } from './driver-store.service';
 import { ThreadDriver } from './thread-driver.service';
 import { BuildShipService } from './build-ship.service';
@@ -213,6 +214,10 @@ describe('ThreadDriver — the lane RE-DRIVES on the stream-closed circuit-break
         {
           provide: JobDependencyService,
           useValue: { blockersOf: async () => [] },
+        },
+        {
+          provide: StimulusStoreService,
+          useValue: { pendingBlockedPreview: async () => null },
         },
       ],
     }).compile();

@@ -63,6 +63,10 @@ import {
   webSkillProposalCard,
   wrapSystemNotification,
 } from '../surface';
+import {
+  MESSAGE_CHANGE_NOTIFIER,
+  type MessageChangeNotifier,
+} from '../surface/message-change-notifier.port';
 import { LiveTurnStore, MAIN_LANE } from '../surface/live-turn-store';
 import { TurnUsageProjector } from '../analytics/turn-usage-projector.service';
 import { EnvService } from '@core/config/env/env.service';
@@ -110,7 +114,7 @@ import {
   foldCompactionSeed,
   renderEventDelivery,
   renderFollowUpJobSeed,
-  renderBornBlockedUnblockPrefix,
+  renderUnblockedNote,
   frameAnswer,
   composeTurn,
   composeSeedTurn,
@@ -118,6 +122,7 @@ import {
   maskedFileNotice,
   wakeForAmendApprovedBody,
   retryResumeNudge,
+  interruptRedriveNudge,
 } from '../prompt-kit/harness';
 // Re-exported so `brain/index.ts` (`export *`) and specs that import these straight from this file
 // (colocated golden-snapshot/doctrine specs — see continuation-preamble-snapshot.spec / halt-triage-guidance.spec /
@@ -211,7 +216,7 @@ import type { TurnFailureCategory } from '@shared/engine/turn-failure-summary';
 import type { EngineHomeKey } from '@shared/engine/engine-home';
 import { threadKindSpec } from '../thread-kind';
 import type { ThreadRole } from '../thread-kind';
-import { BrainStoreService } from './brain-store.service';
+import { BrainStoreService, type CreateJobAutoMode } from './brain-store.service';
 import { DecisionApprovalService } from './decision-approval.service';
 import type {
   ApprovalResolution,
@@ -506,6 +511,12 @@ export class AgentSessionManager
     // without reaching this param; DI (@Global LiveTurnModule) supplies the real EntityTaskEventSink live.
     @Inject(TASK_EVENT_SINK)
     private readonly taskSink: TaskEventSink = NOOP_TASK_EVENT_SINK,
+    // Best-effort realtime nudge that a job's message log changed — emitted from the LEGACY in-memory seed
+    // stamp path (which has no accompanying `markChatDelivered`, so it isn't covered by that method's own
+    // emit). @Optional matching this constructor's convention; the @Global SurfaceModule supplies it live.
+    @Optional()
+    @Inject(MESSAGE_CHANGE_NOTIFIER)
+    private readonly messageNotifier?: MessageChangeNotifier,
   ) {}
 
   /** The job's planning thread group thread id — the anchor every brain-lane turn's durable blocks are stamped
@@ -958,34 +969,58 @@ export class AgentSessionManager
   }
 
   /**
-   * WAKE a job whose block just cleared (every blocker reached a terminal state). Born-blocked jobs
-   * (a create_job dependsOn that never started) replay their stored seed as the first turn; a job that
-   * was manually blocked while it already had a session resumes that session with a synthetic wake
-   * stimulus. `blockers` names each job that was holding this one (and how it resolved), so each variant can
-   * name them and reorient: the born-blocked seed gets a fresh-start prefix, the resumed session a
-   * rebase/re-scope nudge. Fire-and-forget (the JobUnblockSweep is the retry); concurrency-safe via
-   * handleChatTurn/startFollowUpJob.
+   * Record the JIT "unblocked by X, Y" note the wake funnel appends the moment every blocker resolves.
+   * Called while the job is STILL blocked (BEFORE the `blocked→open` flip), so the `isJobBlocked` pump guard
+   * HOLDS this note with the rest of the backlog — whichever drain fires first (the explicit pump or the
+   * undelivered-chat sweep) then coalesces the WHOLE backlog, note included, into ONE timestamped turn (the
+   * ordering fix for the wake race). Deduped on the unblock pill so a sweep re-drive never stacks a second
+   * note. `blockers` names each job that was holding this one so the note can reorient the brain.
    */
-  async wakeUnblockedJob(
+  async recordUnblockNote(
     jobId: string,
     orgId: string,
     repoId: string,
-    input: { seed: string | null; blockers: UnblockBlockerInfo[] },
+    input: { blockers: UnblockBlockerInfo[] },
   ): Promise<void> {
-    if (input.seed != null) {
-      const firstMessage =
-        input.blockers.length > 0
-          ? `${renderBornBlockedUnblockPrefix(input.blockers)}\n\n${input.seed}`
-          : input.seed;
-      await this.startFollowUpJob(jobId, orgId, repoId, firstMessage);
+    if (
+      await this.stimulusStore.hasChatStimulusForSeedTarget(jobId, {
+        unblockNote: true,
+      })
+    ) {
       return;
     }
-    const stimulus = seedEnvelope({
-      ...seedBase({ jobId, orgId, repoId }),
+    await this.stimulusStore.recordChatStimulus({
+      orgId,
+      repoId,
+      jobId,
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       type: 'unblocked_job_wake',
-      blockers: input.blockers,
+      body: renderUnblockedNote(input.blockers),
+      lane: 'main',
+      replyRoute: { surfaceId: 'web', jobRef: jobId },
+      unblockNote: true,
+      systemChunk: {
+        label: 'All blocking jobs resolved — unblocked.',
+        chunkKey: chunkKey.unblock(jobId),
+      },
     });
-    await this.handleChatTurn(stimulus);
+  }
+
+  /**
+   * Drain a just-unblocked job's `main` lane AFTER the funnel flips it `blocked→open`, so the pump coalesces
+   * the whole held backlog (born-blocked provenance note + brief, or the mid-flight "blocked" note, plus any
+   * operator chat, plus the JIT unblock note) into ONE timestamped turn. The undelivered-chat sweep is the
+   * at-least-once backstop if this prompt drain drops.
+   */
+  async pumpUnblockedJob(
+    jobId: string,
+    orgId: string,
+    repoId: string,
+  ): Promise<void> {
+    await this.pumpThread(jobId, orgId, repoId, 'main');
   }
 
   /**
@@ -1179,16 +1214,60 @@ export class AgentSessionManager
    */
   /**
    * The engine-facing string for a stimulus's BODY (no turn-level notice/reminder prefixes — those are
-   * added once, in `runChatTurnInner`). A human (operator) message is wrapped in a `<user name at>` tag
-   * reconstructed from the author fields AT TURN TIME (the persisted body stays clean, so a replayed
-   * stimulus frames identically); a coalesced turn carries one `<user>` chunk per message via `chunks`.
-   * Seeds / synthetic Atlas turns already carry framed bodies (`<system_notice>`, event/halt framing) —
+   * added once, in `runChatTurnInner`). `chunks` are checked FIRST: a coalesced turn always carries them
+   * (heterogeneous per-row chunks) and renders through them regardless of the oldest row's authorship. A
+   * solo operator message with no chunks is wrapped in a `<user name at>` tag reconstructed from the author
+   * fields AT TURN TIME (the persisted body stays clean, so a replayed stimulus frames identically). A solo
+   * seed / synthetic Atlas turn already carries a framed body (`<system_notice>`, event/halt framing) —
    * pass through untouched.
    */
   private engineBody(stimulus: TurnEnvelope): string {
-    if (!isOperatorAuthored(stimulus)) return stimulus.body;
     if (stimulus.chunks?.length) return renderTurn(stimulus.chunks);
+    if (!isOperatorAuthored(stimulus)) return stimulus.body;
     return renderTurn([userChunkFor(stimulus)]);
+  }
+
+  /**
+   * Map ONE pending row to its turn chunk for the coalescing drain: operator rows keep their `<user name
+   * at>` framing; system rows pass their already-framed `body` through verbatim (a `passthrough` chunk,
+   * timestamped) — wrapping again would double-frame a body that's already `<system_notice>`-wrapped or
+   * raw prose, depending on seed type. A `kind:'event'` row is defensive (chat-kind rows never carry one
+   * in practice — event rows live under a separate `kind:'event'` query) but still fenced as `untrusted`
+   * rather than flattened to a passthrough/user chunk, so the trust fence holds even in that case.
+   */
+  private pendingRowToChunk(p: TurnEnvelope): TurnChunk {
+    if (isOperatorAuthored(p)) return userChunkFor(p);
+    if (p.message.type === 'event') {
+      return {
+        kind: 'untrusted',
+        body: p.body,
+        attrs: { at: p.receivedAt.toISOString() },
+      };
+    }
+    return {
+      kind: 'passthrough',
+      body: p.body,
+      attrs: { name: p.author.displayName, at: p.receivedAt.toISOString() },
+    };
+  }
+
+  /**
+   * Restart-survivable hand-off for a coalesced batch (fired the instant the turn registers + kicks): a
+   * plain chat row has nothing to strand, so stamp it delivered immediately; a card-bearing row (question/
+   * secret/file answer) defers its stamp to the SUCCESS tail (see `stampCardTail`) so a register-then-fail
+   * turn leaves both the row and its card unstamped for the at-least-once sweep to re-drive together.
+   */
+  private stampBatchOnRegistered(pending: TurnEnvelope[]): void {
+    for (const p of pending) {
+      if (isSeedCardDelivery(p)) continue;
+      void this.stimulusStore
+        .markChatDelivered(p.id)
+        .catch((err) =>
+          this.logger.debug(
+            `markChatDelivered ${p.id} failed (sweep will retry): ${err}`,
+          ),
+        );
+    }
   }
 
   /**
@@ -1388,6 +1467,9 @@ export class AgentSessionManager
           );
       }
     }
+    // This legacy path stamps cards WITHOUT a `markChatDelivered` call, so its delivery-stamp emit isn't
+    // covered there — nudge clients directly (best-effort; the durable-row paths self-heal via the sweep).
+    this.messageNotifier?.emitMessagesChanged(stimulus.repoId, stimulus.jobId);
   }
 
   /**
@@ -1470,6 +1552,26 @@ export class AgentSessionManager
   }
 
   /**
+   * Stamp every card-bearing id a (possibly coalesced) turn delivered, success-tail style: durable rows
+   * from a real coalesced batch (`stimulus.cardBearingIds`) are ALWAYS found by `stampSeedCardSuccessTails`
+   * (batch members are always durable `stimuli` rows), so no legacy fallback applies to them. Only a SOLO
+   * turn — where `cardBearingIds` was derived from `isSeedCardDelivery(stimulus)` alone (a single legacy
+   * in-memory seed with no durable row) — passes `legacyFallback` so a 'missing' result still stamps via
+   * the old direct best-effort path.
+   */
+  private async stampCardTail(
+    ids: string[],
+    legacyFallback?: TurnEnvelope,
+  ): Promise<void> {
+    for (const id of ids) {
+      const result = await this.stampSeedCardSuccessTails(id);
+      if (result === 'missing' && legacyFallback) {
+        await this.stampLegacySeedCard(legacyFallback);
+      }
+    }
+  }
+
+  /**
    * TERMINAL delivery stamp for a pending chat being permanently dropped this turn (thread closed / provisioning
    * permanently failed) after we posted the explanatory notice — marks it delivered so the at-least-once sweep
    * won't re-post the identical notice every lease cycle. A solo seed-card delivery deferred its stamp from
@@ -1480,9 +1582,13 @@ export class AgentSessionManager
     stimulus: TurnEnvelope,
     opts?: TurnDeliveryOpts,
   ): Promise<void> {
-    if (isSeedCardDelivery(stimulus)) {
-      const result = await this.stampSeedCardSuccessTails(stimulus.id);
-      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
+    const cardBearingIds = cardBearingIdsOf(stimulus);
+    if (cardBearingIds.length) {
+      await this.stampCardTail(
+        cardBearingIds,
+        stimulus.cardBearingIds ? undefined : stimulus,
+      );
+      opts?.onRegistered?.();
       return;
     }
     opts?.onRegistered?.();
@@ -1647,52 +1753,57 @@ export class AgentSessionManager
       steer: (turnId, id, body) => this.engineRunner.steer!(turnId, id, body),
       renderBody: (p) => this.engineBody(p),
       drainFreshTurn: async (collected) => {
-        await this.stimulusStore.leaseChatStimuli(collected.ids);
-        const ids = collected.ids;
-        // Coalesce into one turn: the operator already sees each as its own bubble (a `messages` row per
-        // message); the brain reads them together as this turn's task. Base fields come from the oldest.
+        // ATOMIC claim: stamp the lease only on rows still eligible, and act ONLY on the ids actually won —
+        // a concurrent caller (another process/pass) may have claimed some or all of this same batch, in
+        // which case starting a turn here would duplicate-drive its message (the self-steer race this
+        // replaces the old check-then-lease two-step for).
+        const won = new Set(
+          await this.stimulusStore.claimChatStimuli(
+            collected.ids,
+            AgentSessionManager.CHAT_DELIVERY_LEASE_MS,
+          ),
+        );
+        if (won.size === 0) return; // another caller claimed this batch — it will deliver them
+        const claimed = collected.pending.filter((p) => won.has(p.id));
+        // Coalesce the CLAIMED batch into one turn, heterogeneous per-row chunks: operator rows become
+        // `<user name at>`, system rows pass their already-framed body through verbatim (`passthrough`,
+        // timestamped). Base identity fields come from the oldest claimed row; `containsOperator` and
+        // `cardBearingIds` are computed over the claimed batch so the downstream gates (awareness flush,
+        // reset-spiral guard, JIT prepends, seed-card success tail) judge the batch as a whole, not just
+        // the oldest row's authorship.
+        const chunks = claimed.map((p) => this.pendingRowToChunk(p));
+        const cardBearingIds = claimed
+          .filter((p) => isSeedCardDelivery(p))
+          .map((p) => p.id);
         const combined: TurnEnvelope = {
-          ...collected.pending[0],
-          body: collected.pending.map((p) => p.body).join('\n\n'),
-          // Per-message attribution: one `<user name at>` chunk each, so a batch coalesced from several
-          // senders isn't misattributed to the oldest. `engineBody` renders these; the joined `body` above
-          // is the clean fallback (used for logging + when `chunks` is absent on a replay).
-          chunks: collected.userChunks,
+          ...claimed[0],
+          // The clean `\n\n`-joined fallback body (logging + a `chunks`-less replay); the engine-facing
+          // render always goes through `chunks` (see `engineBody`).
+          body: claimed.map((p) => p.body).join('\n\n'),
+          chunks,
+          containsOperator: claimed.some((p) => isOperatorAuthored(p)),
+          cardBearingIds,
         };
-        // A solo seed-card delivery defers its stimulus stamp to the SUCCESS tail (stamped together with the
-        // card via `stampSeedCardSuccessTails`) so a register-then-fail turn leaves BOTH unstamped and the
-        // sweep re-drives it (at-least-once atomicity). Operator chat keeps the looser at-registration bar —
-        // its input rides the prompt the instant it registers.
-        const deferStimulusStamp = isSeedCardDelivery(combined);
         await this.runChatTurn(combined, {
-          // Restart-survivable hand-off: stamp every coalesced message delivered the instant the turn is
-          // registered + kicked (a later crash resumes THIS turn rather than re-running these messages).
-          onRegistered: () => {
-            if (deferStimulusStamp) return;
-            for (const id of ids) {
-              void this.stimulusStore
-                .markChatDelivered(id)
-                .catch((err) =>
-                  this.logger.debug(
-                    `markChatDelivered ${id} failed (sweep will retry): ${err}`,
-                  ),
-                );
-            }
-          },
+          // Threaded so the `BrainTurnAlreadyRunningError` registration-loss fallback can steer each claimed
+          // member individually (each needs its own ack) instead of only the combined head's id.
+          coalesced: claimed,
+          // Restart-survivable hand-off: stamp every claimed message delivered the instant the turn is
+          // registered + kicked (a later crash resumes THIS turn rather than re-running these messages); a
+          // card-bearing row defers its stamp to the success tail (handled inside stampBatchOnRegistered).
+          onRegistered: () => this.stampBatchOnRegistered(claimed),
         });
       },
     };
   }
 
   /**
-   * Owned coalescing selection for a fresh operator turn (d18). Fetches the `main` lane's eligible pending
-   * chat, then PARTITIONS on the head row's authorship so a system seed never coalesces with operator rows: a
-   * seed batched as a `<user>` chunk would render named "System" and mis-decide the batch's awareness drain.
-   * An operator head takes the leading run of operator rows (coalesced as one turn); a seed head takes ONLY
-   * that one seed (each seed delivers solo, keeping its `<system_notice>` framing + awareness-drain
-   * semantics). The remainder stays pending and drains via the turn-end re-pump. Builds the chronological
-   * `<user>` chunks (one per batched message), the id set to stamp delivered, and the wake flag. Returns null
-   * when nothing is pending.
+   * The lane's full eligible-pending-chat batch for a fresh turn (mirrors the shared `collectPending` in
+   * `stimulus/delivery-pump.service.ts`, which the brain used to diverge from via an authorship partition —
+   * now deleted: every drain takes the WHOLE batch, oldest first, and `drainFreshTurn` renders it as one
+   * heterogeneous, per-row-timestamped turn). `wake` is true when at least one row is wake-eligible
+   * (`now`/`queue`) — a lane whose only pending rows are `later` must never start a turn on its own.
+   * Returns null when nothing is pending.
    */
   private async collectPendingForTurn(
     jobId: string,
@@ -1711,21 +1822,10 @@ export class AgentSessionManager
         return [] as TurnEnvelope[];
       });
     if (pending.length === 0) return null;
-    const operatorHead = isOperatorAuthored(pending[0]);
-    const batch: TurnEnvelope[] = [];
-    for (const p of pending) {
-      if (isOperatorAuthored(p) !== operatorHead) break;
-      batch.push(p);
-      if (!operatorHead) break; // seeds deliver one-at-a-time
-    }
     return {
-      pending: batch,
-      userChunks: batch.map((p) => userChunkFor(p)),
-      ids: batch.map((p) => p.id),
-      // Wake is computed over the FULL eligible-pending set, not just `batch`: a wake-eligible row excluded by
-      // the author partition (e.g. a `now` seed behind a `later` operator head) must still start a turn —
-      // otherwise no turn runs, no turn-end re-pump reconsiders the remainder, and the thread stalls until an
-      // unrelated wake.
+      pending,
+      userChunks: pending.map((p) => userChunkFor(p)),
+      ids: pending.map((p) => p.id),
       wake: pending.some(isWakeEligible),
     };
   }
@@ -2084,9 +2184,10 @@ export class AgentSessionManager
         deliveredQuestionIds?: string[];
         deliveredSecretIds?: string[];
         deliveredFileIds?: string[];
-        // The durable `stimuli.id` for a seed-card delivery — carried so the reattach success tail can stamp
-        // the RIGHT row (the reconstructed `TurnEnvelope.id` below is `row.turn_id`, the engine turn, not the row).
-        deliveryStimulusId?: string;
+        // The durable `stimuli.id`s a seed-card delivery (or coalesced batch of them) stamped — carried so the
+        // reattach success tail can stamp the RIGHT row(s) (the reconstructed `TurnEnvelope.id` below is
+        // `row.turn_id`, the engine turn, not a row).
+        deliveryStimulusIds?: string[];
         // SESSION RE-HOME: this turn persists its session onto `threads.session_id` for this thread, not the
         // job sandbox (see {@link TurnEnvelope.resumeThreadId}) — carried so a reattach persists the same target.
         resumeThreadId?: string;
@@ -2220,11 +2321,14 @@ export class AgentSessionManager
               }
             : undefined,
         );
-        // SUCCESS TAIL — a seed-card delivery that completed via reattach: stamp its durable stimulus
-        // row + card together, keyed on the `stimuli.id` carried in ctx (the reconstructed `stimulus.id` is the
-        // engine turn id here, not the row). Else the sweep re-delivers an already-consumed answer (exactly-once).
-        if (ctx.deliveryStimulusId) {
-          await this.stampSeedCardSuccessTails(ctx.deliveryStimulusId);
+        // SUCCESS TAIL — every card-bearing row a coalesced batch delivered via reattach: stamp each durable
+        // stimulus row + card together, keyed on the `stimuli.id`s carried in ctx (the reconstructed
+        // `stimulus.id` is the engine turn id here, not a row). Else the sweep re-delivers an already-consumed
+        // answer (exactly-once). No legacy fallback here (matches the original absence of one on this path).
+        if (ctx.deliveryStimulusIds?.length) {
+          for (const id of ctx.deliveryStimulusIds) {
+            await this.stampSeedCardSuccessTails(id);
+          }
         }
         void this.usageProjector?.record(
           {
@@ -2371,7 +2475,7 @@ export class AgentSessionManager
     // operator-driven resets never trip the guard (only unattended self-resets accumulate). Also disarm any
     // pending hard-reset confirm: the two `hard:true` calls must be consecutive within one autonomous stretch,
     // never split across an operator message that might have changed the intent.
-    if (isOperatorAuthored(stimulus)) {
+    if (turnHasOperatorInput(stimulus)) {
       this.consecutiveResets.delete(resetKey);
       this.pendingHardReset.delete(resetKey);
     }
@@ -2410,10 +2514,14 @@ export class AgentSessionManager
     // This is HARNESS narration, not an Atlas reply — appendSystemEvent renders it as a quiet pill (same
     // treatment as "Codex is reviewing the plan…"), never faking Atlas's voice for operational setup text.
     if (!alreadyProvisioned) {
-      await this.store.appendSystemEvent(
-        stimulus.jobId,
-        'Setting up an isolated workspace for this thread — one moment…',
-      );
+      await this.store
+        .appendSystemEvent(
+          stimulus.jobId,
+          'Setting up an isolated workspace for this thread — one moment…',
+        )
+        .catch((err) =>
+          this.logger.debug(`appendSystemEvent failed: ${err}`),
+        );
     }
     const onMilestone = this.sandboxMilestoneNotifier(stimulus);
     try {
@@ -2582,7 +2690,7 @@ export class AgentSessionManager
     // (atlas-authored) turns skip the drain (runDirectBuild / startFollowUpJob must not consume the
     // buffer before the operator sees it). Best-effort: a failure here never blocks the turn. PLANNING-only:
     // post_build/ci ARE the post-build stage, so build-milestone awareness is noise there.
-    if (isOperatorAuthored(stimulus) && stageRole === 'planning') {
+    if (turnHasOperatorInput(stimulus) && stageRole === 'planning') {
       const awarenessPrefix = await this.buildAwarenessPrefix(
         stimulus.jobId,
         stimulus.orgId,
@@ -2666,7 +2774,7 @@ export class AgentSessionManager
     // JIT turn-prefix rail (d18): `operator-message` rules may prepend a `system_reminder`. The reserved
     // `memory` slot now carries auto-recalled facts (d1/d2) via `prependText`; empty → no chunk → byte-identical.
     if (
-      isOperatorAuthored(stimulus) &&
+      turnHasOperatorInput(stimulus) &&
       this.jit?.hasEnabledOperatorPrepends()
     ) {
       const prependText =
@@ -2679,27 +2787,22 @@ export class AgentSessionManager
       );
     }
 
-    // Compose the turn through the hub (d18): the operator path frames prefix chunks + chronological `<user>`
-    // chunks via composeTurn (byte-identical to the old inline `framedPrefix ? `${framedPrefix}\n${body}` :
-    // body`). A non-operator seed body is RAW/already-framed XML (engineBody returns it verbatim) — it can't
-    // be a `<user>` chunk, so that path keeps the inline prefix+body concat.
+    // Compose the turn through the hub (d18), chunks-first: a coalesced turn ALWAYS carries `chunks` (mixed
+    // operator/system/untrusted rows) and renders through composeTurn regardless of which row is oldest. A
+    // genuinely solo operator turn without pre-built chunks still frames its one `<user>` chunk the same way.
+    // A solo non-operator seed body is RAW/already-framed XML (`engineBody` returns it verbatim) — it can't
+    // be a `<user>` chunk, so it keeps the seed-turn factory path.
     let task: AgentMessage;
-    if (isOperatorAuthored(stimulus)) {
-      const userChunks = stimulus.chunks?.length
-        ? stimulus.chunks
-        : [userChunkFor(stimulus)];
-      task = composeTurn({
-        prefixChunks: [...noticeChunks, ...reminderChunks],
-        userChunks,
-      });
+    const prefixChunks = [...noticeChunks, ...reminderChunks];
+    if (stimulus.chunks?.length) {
+      task = composeTurn({ prefixChunks, userChunks: stimulus.chunks });
+    } else if (turnHasOperatorInput(stimulus)) {
+      task = composeTurn({ prefixChunks, userChunks: [userChunkFor(stimulus)] });
     } else {
       // Non-operator seed body is RAW/already-framed passthrough (`engineBody` returns it verbatim) — it can't
       // be a `<user>` chunk, so frame it through the hub's seed-turn factory; `fromExternal` marks the non-hub
       // body at the seam rather than minting it locally.
-      task = composeSeedTurn(
-        [...noticeChunks, ...reminderChunks],
-        fromExternal(this.engineBody(stimulus)),
-      );
+      task = composeSeedTurn(prefixChunks, fromExternal(this.engineBody(stimulus)));
     }
 
     // COMPACTION seed fold: a prior compaction nulled the session + stashed a lean handoff summary here.
@@ -2928,11 +3031,11 @@ export class AgentSessionManager
           ...(stimulus.deliveredSecretIds?.length
             ? { deliveredSecretIds: stimulus.deliveredSecretIds }
             : {}),
-          // Durable stimulus id for a seed-CARD delivery — carried so a reattach-completed turn stamps the RIGHT
-          // `stimuli` row + its card together (here `stimulus.id` is the fresh-turn `combined.id` = `stimuli.id`).
-          // Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag their id through the tail.
-          ...(isSeedCardDelivery(stimulus)
-            ? { deliveryStimulusId: stimulus.id }
+          // Durable stimulus ids for every card-bearing row this turn delivers (one for a solo card, many for
+          // a coalesced batch) — carried so a reattach-completed turn stamps the RIGHT `stimuli` row(s) + card(s)
+          // together. Scoped to card seeds so event/wake seeds (no card, no owned row) don't drag ids through.
+          ...(cardBearingIdsOf(stimulus).length
+            ? { deliveryStimulusIds: cardBearingIdsOf(stimulus) }
             : {}),
           // Session re-home target: a reattach must persist onto the same thread, not the job sandbox.
           ...(stimulus.resumeThreadId
@@ -3071,7 +3174,14 @@ export class AgentSessionManager
         // lane with the live turn, and ending it would clobber the live turn's stream (no turn_start was
         // fanned yet — the first engine event fans it — so there is nothing to clean up). If the live turn
         // vanished in the meantime there is nothing to steer into; the pump sweep / boot re-seed re-drives.
-        if (!(await this.steerIntoLiveBrainTurn(stimulus))) {
+        // A coalesced batch steers each claimed member individually (each needs its own ack), falling back to
+        // the solo `stimulus` when this turn wasn't a coalesced delivery.
+        const members = opts?.coalesced?.length ? opts.coalesced : [stimulus];
+        let steered = false;
+        for (const m of members) {
+          if (await this.steerIntoLiveBrainTurn(m)) steered = true;
+        }
+        if (!steered) {
           this.logger.warn(
             `single-brain-turn guard hit but no live turn to steer for job=${stimulus.jobId} — leaving for re-drive`,
           );
@@ -3140,7 +3250,7 @@ export class AgentSessionManager
           const title = await this.store
             .jobTitle(stimulus.jobId)
             .catch(() => null);
-          const nudge = retryResumeNudge(title ?? undefined);
+          const nudge = interruptRedriveNudge(title ?? undefined);
           // `seedRow: 'skip'` keeps this re-drive SILENT: the durable stimulus row is still written (the
           // brain turn is driven), but no operator-facing transcript pill is rendered. This auto-resume was
           // always meant to have "no operator box" — a bare seed with no seedRow falls through to the generic
@@ -3433,13 +3543,18 @@ export class AgentSessionManager
       result.usage,
     );
 
-    // SUCCESS TAIL — a solo seed-card fresh turn stamps its DURABLE stimulus row + exact card together here
-    // (its `onRegistered` deferred the row stamp) so a register-then-fail turn leaves both unstamped and the
-    // sweep re-drives it. On this path `stimulus.id === stimuli.id` (seeds deliver solo). Internal legacy
-    // in-memory seeds have no row, so fall back to the old best-effort direct card stamp.
-    if (isSeedCardDelivery(stimulus)) {
-      const result = await this.stampSeedCardSuccessTails(stimulus.id);
-      if (result === 'missing') await this.stampLegacySeedCard(stimulus);
+    // SUCCESS TAIL — every card-bearing row THIS turn delivered (solo, or every member of a coalesced
+    // batch) stamps its DURABLE stimulus row + exact card together here (its `onRegistered` deferred the row
+    // stamp) so a register-then-fail turn leaves both unstamped and the sweep re-drives it. A real coalesced
+    // batch's ids (`stimulus.cardBearingIds`) are ALWAYS durable rows (no legacy fallback needed); only the
+    // solo-turn fallback derivation (an internal legacy in-memory seed with no durable row) gets the old
+    // best-effort direct card stamp.
+    const cardBearingIds = cardBearingIdsOf(stimulus);
+    if (cardBearingIds.length) {
+      await this.stampCardTail(
+        cardBearingIds,
+        stimulus.cardBearingIds ? undefined : stimulus,
+      );
     }
 
     // SUCCESS TAIL — honor a pending `reset_sandbox`: tear the container down NOW (safe here — the engine
@@ -4640,6 +4755,11 @@ export class AgentSessionManager
         // Same org + repo as this thread — derived from the closure, never from tool args (no cross-tenant
         // escape). The follow-up inherits this thread's base branch and starts scoping immediately.
         const current = await this.store.loadJob(stimulus.jobId);
+        // Always forwarded (even when the caller omitted it, as `{}`) so an agent-spawned follow-up
+        // resolves the org's default_auto_approve_mode/default_auto_merge instead of hard-defaulting to
+        // off/false — onboarding's own createFollowUpJob call sites never pass this key and stay untouched.
+        const autoMode =
+          (args['autoMode'] as CreateJobAutoMode | undefined) ?? {};
         const newJobId = await this.store.createFollowUpJob({
           orgId: stimulus.orgId,
           repoId: stimulus.repoId,
@@ -4647,6 +4767,7 @@ export class AgentSessionManager
           baseBranch: current.baseBranch,
           createdByJobId: stimulus.jobId,
           createdByTitle: current.title,
+          autoMode,
         });
 
         let anyBlocked = false;
@@ -7949,6 +8070,12 @@ const WORK_OWED_RENUDGE_MS = 5 * 60_000;
 interface TurnDeliveryOpts {
   /** Fired when the turn becomes restart-survivable (registered + kicked). */
   onRegistered?: () => void;
+  /** The individual won member envelopes that make up a coalesced fresh-turn batch (in order; the head is
+   *  `stimulus` itself for a solo delivery). Used ONLY by the `BrainTurnAlreadyRunningError` registration-loss
+   *  fallback in `runChatTurnInner`, so each coalesced member gets its OWN steer → its OWN `input_ack` → its
+   *  own `delivered_at` stamp, instead of one steer under the combined turn's head id leaving the other
+   *  members' rows un-acked (which would re-deliver them as duplicates once their lease expires). */
+  coalesced?: TurnEnvelope[];
 }
 
 type SeedCardStampResult = 'stamped' | 'missing' | 'failed';
@@ -7963,6 +8090,14 @@ function isOperatorAuthored(stimulus: TurnEnvelope): boolean {
     stimulus.author.id !== ATLAS_AUTHOR_ID &&
     stimulus.author.id !== SYSTEM_SEED_AUTHOR.id
   );
+}
+
+/** A coalesced batch's real operator-membership, computed once in `drainFreshTurn` and carried on the
+ *  combined `TurnEnvelope` (`containsOperator`) — the gate sites that used to inspect a single stimulus's
+ *  authorship read THIS instead, so a mixed batch is judged as a whole. A solo (non-coalesced) turn leaves
+ *  `containsOperator` undefined and falls back to `isOperatorAuthored`, unchanged single-message behavior. */
+function turnHasOperatorInput(stimulus: TurnEnvelope): boolean {
+  return stimulus.containsOperator ?? isOperatorAuthored(stimulus);
 }
 
 /** A seed that must run its OWN (guarded) turn rather than steering into a live one: `reset_verify` (its
@@ -7990,6 +8125,14 @@ function isSeedCardDelivery(s: TurnEnvelope): boolean {
     (s.deliveredFileIds?.length ?? 0) > 0 ||
     (s.deliveredSecretIds?.length ?? 0) > 0
   );
+}
+
+/** The durable stimulus-row ids a (possibly coalesced) turn must stamp on its success tail: a real
+ *  coalesced batch carries the real per-row list (`cardBearingIds`, set in `drainFreshTurn` — may be
+ *  empty); a solo turn (that field undefined) falls back to `[stimulus.id]` when the turn itself is
+ *  card-bearing, unchanged single-message behavior. */
+function cardBearingIdsOf(stimulus: TurnEnvelope): string[] {
+  return stimulus.cardBearingIds ?? (isSeedCardDelivery(stimulus) ? [stimulus.id] : []);
 }
 
 /** Max consecutive UNATTENDED `reset_sandbox` calls before the tool refuses (cleared by any operator turn). */

@@ -5,6 +5,7 @@ import { type QueryDeepPartialEntity, Repository } from 'typeorm';
 import {
   type EngineEvent,
   type EngineUsage,
+  type JitInjection,
   resolveContextLimit,
 } from '@shared/engine';
 import { AppVersionService } from '../cluster/app-version.service';
@@ -17,6 +18,7 @@ import {
   type TaskItem,
   ThreadEntity,
 } from '../persistence/entities';
+import { isInterruptAbortResult } from '../brain/session-transcript';
 import { LiveTurnStore } from './live-turn-store';
 import { type TaskScope } from './thread-registry';
 import {
@@ -851,9 +853,29 @@ export class TurnHarnessFactory {
                   ...b.meta,
                   result: e.result ?? null,
                   isError: e.isError ?? false,
+                  ...(e.isError && isInterruptAbortResult(e.result)
+                    ? { superseded: true }
+                    : {}),
                   ...(e.structuredPatch
                     ? { structuredPatch: e.structuredPatch }
                     : {}),
+                };
+                break;
+              }
+            }
+            break;
+          }
+          case 'jit_injection': {
+            // Match by `toolId` alone (NOT `!b.done`) — the (possibly async, up to 5s for
+            // install-awareness) injection can arrive after `tool_result` already closed the block.
+            for (let i = blocks.length - 1; i >= 0; i--) {
+              const b = blocks[i];
+              if (b.kind === 'tool' && b.toolId === e.id) {
+                const prior =
+                  (b.meta?.jitContext as JitInjection[] | undefined) ?? [];
+                b.meta = {
+                  ...b.meta,
+                  jitContext: [...prior, { rule: e.rule, text: e.text }],
                 };
                 break;
               }

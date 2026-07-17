@@ -21,6 +21,7 @@ import { SubagentEntity } from './subagent.entity';
 @Index(['job_id', 'created_at'])
 @Index(['thread_id', 'created_at'])
 @Index(['subagent_id'])
+@Index(['stimulus_id'])
 @Index('ux_transcript_messages_idem_key', ['idem_key'], {
   unique: true,
   where: `"idem_key" IS NOT NULL`,
@@ -112,4 +113,15 @@ export class TranscriptMessageEntity extends TimestampedEntity {
   /** Git commit of the backend process that wrote this transcript row (auto-stamped). */
   @Column({ type: 'text', nullable: true })
   engine_git_sha!: string | null;
+
+  /** The delivery-ledger row (`inbound_messages.id`) this transcript bubble was sent by — set only on an
+   *  operator chat row so its send/delivery state correlates with the durable stimulus. Null on pills,
+   *  seeds, and every non-operator row. */
+  @Column({ type: 'uuid', nullable: true })
+  stimulus_id!: string | null;
+
+  /** When the SDK accepted the turn this bubble belongs to (the correlated stimulus was delivered). Null =
+   *  still sending; set = landed. */
+  @Column({ type: 'timestamptz', nullable: true })
+  delivered_at!: Date | null;
 }

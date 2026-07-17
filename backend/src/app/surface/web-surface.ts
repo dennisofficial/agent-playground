@@ -13,6 +13,7 @@ import {
 } from './chat-surface.port';
 import { APPROVE_ACTION_ID } from './approval-blocks';
 import type { ApprovalDecision } from './approval-blocks';
+import type { MessageChangeNotifier } from './message-change-notifier.port';
 import { webApprovalCard } from './web-approval-card';
 import type { WebApprovalCard } from './web-approval-card';
 
@@ -92,7 +93,7 @@ const DEFAULT_AUTHOR_NAME = 'Operator';
  * Zero v1 imports.
  */
 @Injectable()
-export class WebSurface implements ChatSurface {
+export class WebSurface implements ChatSurface, MessageChangeNotifier {
   readonly name = 'web';
   private readonly logger = new Logger(WebSurface.name);
 
@@ -112,6 +113,12 @@ export class WebSurface implements ChatSurface {
     channel: string;
     jobId: string;
     title: string;
+  }>();
+  /** A job's durable message log changed (a send persisted, or a delivery landed) — the SSE controller
+   *  fans a `messages_changed` frame so connected clients refetch `/messages`. */
+  private readonly messagesChangedSubject = new Subject<{
+    channel: string;
+    jobId: string;
   }>();
 
   /** Every message Atlas posted, in order — in-memory for the REST history endpoint. */
@@ -160,6 +167,17 @@ export class WebSurface implements ChatSurface {
   /** Broadcast a thread metadata change (the channel is the repo id the SSE stream is keyed by). */
   emitThreadMeta(channel: string, jobId: string, title: string): void {
     this.threadMetaSubject.next({ channel, jobId, title });
+  }
+
+  /** A job's durable message log changed — the SSE controller maps these to `{ type: 'messages_changed' }`
+   *  frames the client reacts to by refetching. */
+  get messagesChanged$(): Observable<{ channel: string; jobId: string }> {
+    return this.messagesChangedSubject.asObservable();
+  }
+
+  /** Broadcast a durable message-log change (the channel is the repo id the SSE stream is keyed by). */
+  emitMessagesChanged(repoId: string, jobId: string): void {
+    this.messagesChangedSubject.next({ channel: repoId, jobId });
   }
 
   /** Emit a resume request (called by the controller on `POST /web/resume`). */

@@ -49,6 +49,7 @@ function makeStore(opts: {
     {
       onBlockerResolved: vi.fn().mockResolvedValue(undefined),
     } as unknown as JobDependencyService,
+    stub, // organizations
   );
 }
 
@@ -126,5 +127,126 @@ describe('BrainStoreService.endTurnActivity', () => {
       { id: 'job-1' },
       { activity: 'idle' },
     );
+  });
+});
+
+/** `BrainStoreService.createFollowUpJob` — the `create_job` host-tool `autoMode` resolution rule: an
+ *  explicit field wins, an omitted field falls back to the org's `default_auto_approve_mode`/
+ *  `default_auto_merge`, and no `autoMode` key at all (onboarding's call sites) leaves the auto_* columns
+ *  untouched. Only `jobs` (create/save) + `organizations` (findOne) are exercised — `title` is always null
+ *  here so the titler round-trip never fires, and `jobBootstrap` stays unwired (optional, trailing) so
+ *  `ensurePlanningThreadGroup` no-ops. */
+function fakeCreateJobsRepo() {
+  return {
+    create: vi.fn((row: Record<string, unknown>) => row),
+    save: vi.fn(async (row: Record<string, unknown>) => ({
+      id: 'new-job-id',
+      ...row,
+    })),
+  } as unknown as Repository<JobEntity> & {
+    create: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+  };
+}
+
+function makeCreateFollowUpStore(opts: {
+  jobs: ReturnType<typeof fakeCreateJobsRepo>;
+  org: Partial<{ default_auto_approve_mode: string; default_auto_merge: boolean }> | null;
+}) {
+  const stub = {} as never;
+  const organizations = {
+    findOne: vi.fn(async () => opts.org),
+  };
+  return {
+    store: new BrainStoreService(
+      opts.jobs,
+      stub, // messages
+      stub, // records
+      stub, // threads
+      stub, // threadGroups
+      stub, // stimuli
+      stub, // dataSource
+      stub, // titler
+      {} as unknown as JobDependencyService, // jobDeps
+      organizations as never,
+    ),
+    organizations,
+  };
+}
+
+describe('BrainStoreService.createFollowUpJob — autoMode', () => {
+  it('an explicit autoMode field overrides the org defaults', async () => {
+    const jobs = fakeCreateJobsRepo();
+    const { store, organizations } = makeCreateFollowUpStore({
+      jobs,
+      org: { default_auto_approve_mode: 'off', default_auto_merge: false },
+    });
+
+    await store.createFollowUpJob({
+      orgId: 'org-1',
+      repoId: 'repo-1',
+      title: null,
+      baseBranch: null,
+      autoMode: { approveMode: 'ship', merge: true },
+    });
+
+    expect(organizations.findOne).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+    });
+    expect(jobs.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auto_approve_mode: 'ship',
+        auto_merge: true,
+        auto_approve_by: null,
+        auto_merge_by: null,
+      }),
+    );
+  });
+
+  it('an omitted autoMode field inherits the org default', async () => {
+    const jobs = fakeCreateJobsRepo();
+    const { store } = makeCreateFollowUpStore({
+      jobs,
+      org: { default_auto_approve_mode: 'plan', default_auto_merge: true },
+    });
+
+    await store.createFollowUpJob({
+      orgId: 'org-1',
+      repoId: 'repo-1',
+      title: null,
+      baseBranch: null,
+      autoMode: {},
+    });
+
+    expect(jobs.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auto_approve_mode: 'plan',
+        auto_merge: true,
+        auto_approve_by: null,
+        auto_merge_by: null,
+      }),
+    );
+  });
+
+  it('no autoMode key at all (onboarding) never reads the org and sets no auto_* column', async () => {
+    const jobs = fakeCreateJobsRepo();
+    const { store, organizations } = makeCreateFollowUpStore({
+      jobs,
+      org: { default_auto_approve_mode: 'ship', default_auto_merge: true },
+    });
+
+    await store.createFollowUpJob({
+      orgId: 'org-1',
+      repoId: 'repo-1',
+      title: null,
+      baseBranch: null,
+    });
+
+    expect(organizations.findOne).not.toHaveBeenCalled();
+    const created = jobs.create.mock.calls[0][0] as Record<string, unknown>;
+    expect(created).not.toHaveProperty('auto_approve_mode');
+    expect(created).not.toHaveProperty('auto_merge');
+    expect(created).not.toHaveProperty('auto_approve_by');
+    expect(created).not.toHaveProperty('auto_merge_by');
   });
 });

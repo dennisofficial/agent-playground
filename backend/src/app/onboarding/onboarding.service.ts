@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { ChatAnthropic } from '@langchain/anthropic';
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -16,6 +17,7 @@ import {
   WORK_EVENTS,
   STATE_EVENTS,
 } from '../git';
+import { JOB_TEARDOWN, type JobTeardownPort } from '../driver/job-teardown.port';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   DecisionRecordEntity,
@@ -157,11 +159,13 @@ export class OnboardingService {
     private readonly creds: CredentialResolver,
     private readonly store: TenantCredentialStore,
     private readonly pr: GithubPrService,
-    // `JobLifecycleService` is resolved LAZILY in `disconnectRepo` via this ref + a dynamic
-    // `import()`. A STATIC import of the driver service would close an ES module cycle
-    // (onboarding.service → driver/job-lifecycle → onboarding barrel → onboarding.service). `ModuleRef`
-    // is core (no module dependency) and the dynamic import is evaluated after boot — same pattern as
-    // `OrganizationService.deleteOrg`.
+    // Physical job teardown (container + git worktree) lives in the driver's `JobLifecycleService`, which a
+    // STATIC import from `onboarding/` cannot reach without closing an ES module cycle. It is exposed as the
+    // @Global `JOB_TEARDOWN` leaf port (see `driver/job-teardown.port.ts`) — injected here as an explicit,
+    // typed constructor param, exactly as `OrganizationService.deleteOrg` does it.
+    @Inject(JOB_TEARDOWN) private readonly jobTeardown: JobTeardownPort,
+    // The brain services (`BrainStoreService`/`AgentSessionManager`) are still resolved LAZILY via this ref
+    // + a dynamic `import()` (see the notes on those call sites) to dodge the same kind of ES module cycle.
     private readonly moduleRef: ModuleRef,
     private readonly env: EnvService,
   ) {}
@@ -511,14 +515,6 @@ export class OnboardingService {
     });
     if (!repo) throw new NotFoundException('repo not found');
 
-    // Resolve the driver service lazily (see the constructor note on the module cycle). `strict: false`
-    // searches the whole app; the `.js` extension is required for a relative dynamic `import()` under
-    // `moduleResolution: nodenext`.
-    const { JobLifecycleService } =
-      await import('../driver/job-lifecycle.service.js');
-    const lifecycle = this.moduleRef.get(JobLifecycleService, {
-      strict: false,
-    });
     let threadsDeleted = 0;
     for (;;) {
       const batch = await this.jobs.find({
@@ -527,7 +523,7 @@ export class OnboardingService {
       });
       if (batch.length === 0) break;
       for (const { id } of batch) {
-        await lifecycle.deleteJobDeep(id, orgId);
+        await this.jobTeardown.deleteJobDeep(id, orgId);
         threadsDeleted++;
       }
     }

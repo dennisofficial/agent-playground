@@ -112,7 +112,7 @@ function makeController(opts?: {
     {} as never, // skillInstaller (SkillInstallerService)
     {} as never, // git (LocalGitService)
     {} as never, // jobDeps (JobDependencyService)
-    {} as never, // moduleRef (ModuleRef)
+    {} as never, // driverApproval (DriverApprovalGateway)
     { intakeChat: m.intakeChat } as never, // intake (StimulusIntake)
   );
   return { controller, m };

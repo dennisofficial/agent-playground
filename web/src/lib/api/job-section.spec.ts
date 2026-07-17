@@ -9,6 +9,8 @@ function makeThread(overrides: Partial<InboxThread> = {}): InboxThread {
     title: "A thread",
     kind: "feat",
     status: "planning",
+    rawStatus: "planning",
+    sectionFirstEntered: null,
     activity: "idle",
     needsYou: false,
     halted: false,
@@ -260,5 +262,72 @@ describe("groupThreadsBySection", () => {
       "ready_to_ship",
       "done",
     ]);
+  });
+
+  it("sorts a section's threads by their rawStatus anchor, newest first", () => {
+    const threads = [
+      makeThread({
+        id: "old",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-01T00:00:00.000Z" },
+      }),
+      makeThread({
+        id: "new",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-03T00:00:00.000Z" },
+      }),
+      makeThread({
+        id: "mid",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-02T00:00:00.000Z" },
+      }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups[0].threads.map((t) => t.id)).toEqual(["new", "mid", "old"]);
+  });
+
+  it("falls back to createdAt when the anchor map has no entry for the raw status", () => {
+    const threads = [
+      makeThread({
+        id: "no-map",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+      makeThread({
+        id: "has-map",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-05T00:00:00.000Z" },
+        createdAt: "2026-01-02T00:00:00.000Z",
+      }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups[0].threads.map((t) => t.id)).toEqual(["has-map", "no-map"]);
+  });
+
+  it("a kickback (re-entry, anchor unchanged) restores the job's original slot rather than floating it to the top", () => {
+    // p1 entered planning first (older anchor); p2 entered planning more recently. Simulate p1's
+    // kickback: its planning anchor is untouched by re-entry, so it stays below p2, not above it.
+    const threads = [
+      makeThread({
+        id: "p1",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-01T00:00:00.000Z" },
+      }),
+      makeThread({
+        id: "p2",
+        status: "planning",
+        rawStatus: "planning",
+        sectionFirstEntered: { planning: "2026-01-02T00:00:00.000Z" },
+      }),
+    ];
+    const groups = groupThreadsBySection(threads);
+    expect(groups[0].threads.map((t) => t.id)).toEqual(["p2", "p1"]);
   });
 });

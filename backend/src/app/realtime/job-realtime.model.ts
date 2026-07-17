@@ -3,7 +3,7 @@ import {
   RealtimeRuleGuard,
   type Row,
 } from '@workspace/pg-realtime';
-import type { JobHalt } from '@workspace/shared';
+import type { JobHalt, JobStatus } from '@workspace/shared';
 import {
   deriveNeedsYou,
   JOB_ACTIVITIES,
@@ -37,7 +37,7 @@ export interface ThreadRealtimeRow extends Row {
   origin: string;
   /** Job kind ('feature'|'bugfix'|'onboarding'|'event'|'review'|null) — small text col, always in SELECT */
   kind: string | null;
-  status: string;
+  status: JobStatus;
   /** What the system is doing now ('idle'|'turn'|'plan_review'|'build'|'master_review') — any non-'idle'
    *  value suppresses the "needs you" dot while the system owns the next step. */
   activity: JobActivity;
@@ -65,6 +65,9 @@ export interface ThreadRealtimeRow extends Row {
    *  DriverStoreService.recomputeBuildStageProgress. Null = not applicable / never computed. */
   buildStagesDone: number | null;
   buildStagesTotal: number | null;
+  /** Anchor map for sidebar within-section ordering (backend JobStatus -> first-entry ISO ts),
+   *  maintained by the `jobs_stamp_section_entered` DB trigger. See job.entity.ts. */
+  sectionFirstEntered: Partial<Record<JobStatus, string>> | null;
   /** True only while a "Ship it" is being finalized (PR opening). Shipping re-uses the `running` status,
    *  so this distinguishes "opening PR" from "building threads" and keeps the card in "Ready to Ship". */
   shipping: boolean;
@@ -96,7 +99,7 @@ class ThreadOrgGuard extends RealtimeRuleGuard<
 }
 
 function mapRow(raw: Row): ThreadRealtimeRow {
-  const status = String(raw.status);
+  const status = String(raw.status) as JobStatus;
   // The WAL row values are `unknown`, so narrow `activity` to the union (unknown/bad → 'idle').
   const rawActivity = String(raw.activity ?? 'idle');
   const activity: JobActivity = (JOB_ACTIVITIES as readonly string[]).includes(
@@ -148,6 +151,9 @@ function mapRow(raw: Row): ThreadRealtimeRow {
     shipping: status === 'running' && raw.ship_review_approved_at != null,
     halt: (raw.halt as JobHalt | null) ?? null,
     createdBy: (raw.created_by as JobProvenance | null) ?? null,
+    sectionFirstEntered:
+      (raw.section_first_entered as Partial<Record<JobStatus, string>> | null) ??
+      null,
   };
 }
 

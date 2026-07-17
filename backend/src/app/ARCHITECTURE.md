@@ -197,7 +197,7 @@ after a restart (`resume()` re-drives `running` jobs; `resumePaused(jobId)` cont
 
 **The driver is HEADLESS.** The old `BrainGateway` had five methods; three are gone —
 `notifyThreadHalted`, `notifyThreadDone`, `wakeForProvisioningFailure` (`brain-gateway/brain-gateway.service.ts`
-now exposes only `openPrAtShip` + `wakeUnblockedJob`) — along with the synchronous push-notify that used to
+now exposes durable seed/pump calls such as `openPrAtShip`, `recordUnblockNote`, and `pumpUnblockedJob`) — along with the synchronous push-notify that used to
 call straight back into the planning brain the moment a thread halted or finished. A halted/failed thread
 just records its halt (`threads.halt_outcome`/`halt_waked_at`/`halt_fix_attempts`) and shows `halted` in the
 UI; there is no more automatic bounce back to the brain to auto-fix. There IS still a durable, at-least-once

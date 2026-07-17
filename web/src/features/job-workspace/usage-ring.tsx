@@ -16,8 +16,9 @@ type RingVisualState = "active" | "pending" | "degraded";
  * an idle account. Dynamic rows (Opus/Sonnet/per-model) are simply omitted when absent, never "unknown".
  */
 type UnknownReason = "waiting" | "unavailable";
-/** One panel row: a known window, or an always-on row with no data yet (Session/Weekly only). */
-type PanelRow = { label: string; window: PanelWindow | null; unknown: UnknownReason | null };
+/** One panel row: a known window, or an always-on row with no data yet (Session/Weekly only).
+ *  `windowMs` is the window's nominal length, used only to place the pace marker. */
+type PanelRow = { label: string; window: PanelWindow | null; unknown: UnknownReason | null; windowMs: number };
 
 const RING_R = 7;
 const RING_CIRC = 2 * Math.PI * RING_R;
@@ -40,6 +41,11 @@ const OPEN_REFRESH_THROTTLE_MS = 60_000;
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
+
+/** Nominal window lengths, used only to place the pace marker (the wire payload carries no start/duration).
+ *  Session is the 5-hour window; every other window (Weekly, Opus/Sonnet, per-model caps) is 7 days. */
+const SESSION_WINDOW_MS = 5 * MS_PER_HOUR;
+const WEEKLY_WINDOW_MS = 7 * MS_PER_DAY;
 
 function clampPct(fraction: number): number {
   return Math.min(1, Math.max(0, fraction));
@@ -107,6 +113,23 @@ function formatCountdown(resetsAt: string | undefined, now: number = Date.now())
   }
   const minutes = Math.floor(remainingMs / MS_PER_MINUTE);
   return `${minutes}m`;
+}
+
+/**
+ * The pace / budget marker position: the fraction of the window's TIME that has elapsed, so a bar fill
+ * to the RIGHT of it means usage is running ahead of the clock (over budget) and to the left, behind it.
+ * Derived from the window's end (`resetsAt`) and its nominal length, since the payload has no start time.
+ * Null (marker hidden) when `resetsAt` is missing/unparseable or the length is non-positive.
+ */
+function paceFraction(
+  resetsAt: string | null | undefined,
+  windowMs: number,
+  now: number = Date.now(),
+): number | null {
+  if (!resetsAt || windowMs <= 0) return null;
+  const target = new Date(resetsAt).getTime();
+  if (Number.isNaN(target)) return null;
+  return clampPct(1 - (target - now) / windowMs);
 }
 
 /**
@@ -286,16 +309,21 @@ function UnknownRow({ label, reason }: { label: string; reason: UnknownReason })
 function WindowRow({
   label,
   window,
+  windowMs,
   dimmed,
 }: {
   label: string;
   window: PanelWindow;
+  windowMs: number;
   dimmed: boolean;
 }) {
   const pct = clampPct(window.utilization / 100);
   const color = thresholdColor(pct);
   const countdown = formatCountdown(window.resetsAt ?? undefined);
   const resetHuman = formatResetHuman(window.resetsAt ?? undefined);
+  // Where usage "should be" by now, from the fraction of the window's time elapsed. A fill past this
+  // marker is over budget (burning faster than the clock). Hidden when there's no reset time to anchor it.
+  const pace = paceFraction(window.resetsAt, windowMs);
   return (
     <div className={`flex flex-col gap-1 ${dimmed ? "opacity-70" : ""}`}>
       <div className="flex items-center justify-between gap-3">
@@ -307,8 +335,18 @@ function WindowRow({
           {Math.round(window.utilization)}%{countdown ? ` · ${countdown}` : ""}
         </span>
       </div>
-      <div className="h-[3px] w-full overflow-hidden rounded-full bg-border">
-        <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: color }} />
+      <div className="relative h-[3px] w-full rounded-full bg-border">
+        <div
+          className="h-full overflow-hidden rounded-full"
+          style={{ width: `${pct * 100}%`, background: color }}
+        />
+        {pace != null ? (
+          <div
+            aria-hidden
+            className="absolute top-1/2 h-[7px] w-px -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{ left: `${pace * 100}%`, background: "var(--red)", boxShadow: "0 0 0 1px var(--surface-2)" }}
+          />
+        ) : null}
       </div>
       {resetHuman ? <div className="text-[10px] text-faint">resets {resetHuman}</div> : null}
     </div>
@@ -433,8 +471,13 @@ export function UsageRingView({
   // row rather than being hidden. Opus/Sonnet and the per-model weekly caps (e.g. Fable) stay dynamic —
   // present only when the endpoint reports them.
   const alwaysOnRows: PanelRow[] = [
-    { label: "Session · 5h", window: session, unknown: session ? null : unknownReason },
-    { label: "Weekly · all models · 7d", window: weekly, unknown: weekly ? null : unknownReason },
+    { label: "Session · 5h", window: session, unknown: session ? null : unknownReason, windowMs: SESSION_WINDOW_MS },
+    {
+      label: "Weekly · all models · 7d",
+      window: weekly,
+      unknown: weekly ? null : unknownReason,
+      windowMs: WEEKLY_WINDOW_MS,
+    },
   ];
   const dynamicRows: PanelRow[] = (
     [
@@ -443,11 +486,12 @@ export function UsageRingView({
     ] as [string, UsageWindow][]
   )
     .filter((row): row is [string, NonNullable<UsageWindow>] => row[1] !== null)
-    .map(([label, w]) => ({ label, window: w, unknown: null }) satisfies PanelRow);
+    .map(([label, w]) => ({ label, window: w, unknown: null, windowMs: WEEKLY_WINDOW_MS }) satisfies PanelRow);
   const modelRows: PanelRow[] = (data?.modelWindows ?? []).map((w) => ({
     label: `${w.label} · 7d`,
     window: { utilization: w.utilization, resetsAt: w.resetsAt },
     unknown: null,
+    windowMs: WEEKLY_WINDOW_MS,
   }));
   const rows: PanelRow[] = [...alwaysOnRows, ...dynamicRows, ...modelRows];
 
@@ -531,6 +575,7 @@ export function UsageRingView({
                   key={row.label}
                   label={row.label}
                   window={row.window}
+                  windowMs={row.windowMs}
                   dimmed={!isFresh(data?.fetchedAt)}
                 />
               ) : (

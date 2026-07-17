@@ -28,9 +28,13 @@ export interface ToolItem {
   input?: unknown;
   result?: unknown;
   isError?: boolean;
+  /** True when the call was aborted by a benign mid-turn interrupt, not a genuine failure — neutralizes `isError`'s red styling. */
+  superseded?: boolean;
   running?: boolean;
   /** Edit/MultiEdit only: structured patch carrying real file line offsets for the diff body. */
   structuredPatch?: DiffHunk[];
+  /** JIT PostToolUse additionalContext injections that fired on this tool call (rule + verbatim text). */
+  jitContext?: Array<{ rule: string; text: string }>;
 }
 
 export type IconKind =
@@ -50,6 +54,7 @@ export type ToolBadge =
   | { kind: "diffstat"; added: number; removed: number | null }
   | { kind: "lines"; n: number }
   | { kind: "error" }
+  | { kind: "superseded" }
   | null;
 
 /** The collapsed one-line treatment for a tool row + its group-preview token. */

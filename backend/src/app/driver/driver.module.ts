@@ -57,6 +57,7 @@ import { OnboardingService } from '../onboarding';
 import { WorktreeHydrator } from './worktree-hydrator.service';
 import { WorktreeProvisioner } from './worktree-provisioner.service';
 import { ExposureService } from '../exposure';
+import { DriverApprovalGateway } from '../driver-approval-gateway';
 
 // SchedulerRegistry interval names (process-unique) for the leader-gated driver timers. Registered on
 // promote, deleted on demote — the leader-only lifecycle is unchanged; only the timer plumbing moved off
@@ -206,6 +207,14 @@ export class DriverModule
     // direct-construction unit test compiles without a trailing argument.
     @Optional() private readonly buildLaneDelivery?: BuildLaneDeliveryService,
     @Optional() private readonly stimulusStore?: StimulusStoreService,
+    // The neutral surface→driver approval seam (from @Global DriverApprovalGatewayModule). The driver binds
+    // its ship/merge/amend resolution methods into it on bootstrap so the web surface reaches them as a
+    // typed injected collaborator instead of via a ModuleRef service-locator. @Optional + trailing so the
+    // module's direct-construction unit test compiles without passing every new dependency.
+    @Optional() private readonly driverApproval?: DriverApprovalGateway,
+    // `DriverStoreService.neutralizeAmendProposal` is the one gateway method not owned by ThreadDriver, so
+    // the store is injected here to back the bound adapter. @Optional + trailing for the same reason.
+    @Optional() private readonly driverStore?: DriverStoreService,
   ) {}
 
   /**
@@ -215,6 +224,28 @@ export class DriverModule
    * predecessor has fully drained) it reconciles, resumes, and starts the reaper.
    */
   async onApplicationBootstrap(): Promise<void> {
+    // Register the concrete driver adapter behind the neutral surface→driver approval gateway, so the web
+    // surface's ship/merge/amend approval-click bridge forwards here — without the surface importing the
+    // driver (which would close a module cycle, DriverModule already depends on the surface for CHAT_SURFACE).
+    // Mirrors how AgentSessionManager binds itself into BrainGateway, and how reattachRegistry.register below
+    // registers a driver-backed callback into a neutral @Global registry. Unconditional + leadership-agnostic
+    // (approval clicks are leader-routed by Caddy anyway); the driveAfter/merge idempotence is unchanged.
+    if (this.driverApproval && this.driverStore) {
+      const driver = this.driver;
+      const store = this.driverStore;
+      this.driverApproval.bind({
+        resolveShip: async (jobId, ruledBy) => {
+          await driver.resolveShipApprovalDurably(jobId, ruledBy);
+        },
+        retractShip: (jobId, ruledBy) =>
+          driver.retractShipDurably(jobId, ruledBy),
+        resolveMerge: (jobId, ruledBy) =>
+          driver.resolveMergeApprovalDurably(jobId, ruledBy),
+        neutralizeAmendProposal: (jobId, verdictLine) =>
+          store.neutralizeAmendProposal(jobId, verdictLine),
+      });
+    }
+
     // Claim the build kind the drive loop provably re-attaches (`runJob`→`findReattachableTurn` re-tails a
     // live `step` turn at its anchor) on the reattach routing table, so the leader watchdog can re-drive
     // an orphaned-but-alive build turn (see ThreadDriver.reattachTurnRow). `review`/`autofix` are intentionally

@@ -6,7 +6,12 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { AutoApproveMode, JobActivity, JobHalt } from '@workspace/shared';
+import type {
+  AutoApproveMode,
+  JobActivity,
+  JobHalt,
+  JobStatus,
+} from '@workspace/shared';
 import { TimestampedEntity } from '@workspace/shared/schemas';
 import type { Decision } from '@shared/domain/decision-record';
 import type { JobProvenance } from '@shared/domain/job';
@@ -92,12 +97,6 @@ export class JobEntity extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   base_branch!: string | null;
 
-  /** The create_job firstMessage stored when a never-started job is born blocked (create_job dependsOn);
-   *  replayed on wake, then cleared. Null for a job manually blocked while already running (it resumes its
-   *  existing session on wake, no replay). */
-  @Column({ type: 'text', nullable: true })
-  blocked_seed_message!: string | null;
-
   /** The job whose brain spawned this one via create_job (FK → jobs.id, SET NULL). Null for
    *  operator/system top-level jobs. Powers the "Created jobs" children query. */
   @Column({ type: 'uuid', nullable: true })
@@ -134,6 +133,21 @@ export class JobEntity extends TimestampedEntity {
    */
   @Column({ type: 'timestamptz', nullable: true })
   archived_at!: Date | null;
+
+  /**
+   * Anchor map for sidebar within-section ordering: backend {@link JobStatus} -> ISO timestamp of the
+   * FIRST time the job entered that status. Drives the frontend's per-section sort (newest arrival on
+   * top; kickbacks keep their original slot).
+   *
+   * DO NOT WRITE THIS FROM APP CODE. It is maintained ENTIRELY by the Postgres
+   * `jobs_stamp_section_entered` BEFORE INSERT/UPDATE trigger (installed on boot by
+   * `SectionStampService`, see backend/src/app/realtime/section-stamp.service.ts), which stamps
+   * `map[NEW.status] ??= now()` on every status change — first-entry only, re-entry is a no-op. The
+   * map only ever grows; keys come from the JobStatus union. Setting it in a service would fight the
+   * trigger.
+   */
+  @Column({ type: 'jsonb', default: {} })
+  section_first_entered!: Partial<Record<JobStatus, string>>;
 
   /**
    * The SHIP-REVIEW gate marker — stamped by the ship-review approval click (the "Ship it" button), null

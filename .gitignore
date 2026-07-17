@@ -3,6 +3,9 @@ dist
 *.log
 .DS_Store
 
+# Host-rendered workspace secret material (SSH keys, etc.) — never repo content.
+.ssh/
+
 # Per-worker git workspaces (one full-repo checkout per execute job) — see playground/src/workspace.ts
 .workspaces/
 

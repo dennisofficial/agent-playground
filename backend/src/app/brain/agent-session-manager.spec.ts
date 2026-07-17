@@ -134,7 +134,7 @@ import type { TurnRegistry } from '../sandbox/turn-registry.service';
 import type { LeaderElectionService } from '../cluster';
 import type { JitHostExecutor } from './jit-host-executor';
 import type { EnvService } from '@core/config/env/env.service';
-import { retryResumeNudge } from '../prompt-kit/harness';
+import { retryResumeNudge, interruptRedriveNudge } from '../prompt-kit/harness';
 import type { JobBootstrapService } from '../job-bootstrap/job-bootstrap.service';
 import { SelfSufficiencyToolsService } from './self-sufficiency-tools.service';
 
@@ -4196,6 +4196,27 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
     ).toBeUndefined();
   });
 
+  // ── benign-abort auto-resume (d3): a mid-turn interrupt (`aborted_streaming`) silently re-drives the
+  // SAME session with a nudge that reframes the cancellation for the brain, not the generic retry nudge ──
+  describe('benign-abort auto-resume seeds the interrupt-reframe nudge', () => {
+    it('seeds interruptRedriveNudge (not the generic retryResumeNudge) on a benign aborted_streaming', async () => {
+      const run = vi
+        .fn()
+        .mockRejectedValue(new Error('terminal_reason=aborted_streaming'));
+      const { manager, store, surface } = makeManager({ run });
+
+      await manager.handleChatTurn(stimulus);
+
+      expect(store.jobTitle).toHaveBeenCalledWith(THREAD_ID);
+      expect(surface.seedSystemNotification).toHaveBeenCalledWith(
+        PROJECT_ID,
+        THREAD_ID,
+        interruptRedriveNudge(undefined),
+        { orgId: TEAM_ID, seedRow: 'skip' },
+      );
+    });
+  });
+
   // ── host-retry backstop (d1-B): a retryable transient error (transient auth hiccup / host↔container
   // blip the SDK itself never saw) auto-retries the SAME session instead of surfacing a scary box ────────
   describe('host auto-retry backstop for a retryable transient error', () => {
@@ -5332,6 +5353,7 @@ describe('AgentSessionManager — create_job tool (independent follow-up)', () =
       baseBranch: 'main', // inherits the parent thread's base
       createdByJobId: THREAD,
       createdByTitle: 'Parent job',
+      autoMode: {},
     });
     expect(startSpy).toHaveBeenCalledWith(
       'th-followup',
@@ -5950,6 +5972,11 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
       eligiblePendingChat: vi.fn().mockResolvedValue(opts.pending ?? []),
       undeliveredChatForLane: vi.fn().mockResolvedValue([]),
       leaseChatStimuli: vi.fn().mockResolvedValue(undefined),
+      // Atomic claim: this fake always wins everything it's asked to claim (mirrors the old
+      // always-succeeds `leaseChatStimuli` fake) — these tests aren't exercising the cross-caller race
+      // itself (that's covered by the real-Postgres `card-gate-delivery-race.int.test.ts`), just the
+      // single-caller pump/steer/fresh-turn plumbing.
+      claimChatStimuli: vi.fn().mockImplementation(async (ids: string[]) => ids),
       markChatDelivered: vi.fn().mockResolvedValue(undefined),
       undeliveredChatLanes: vi.fn().mockResolvedValue(opts.threads ?? []),
       resetChatLeases: vi.fn().mockResolvedValue(undefined),
@@ -6034,7 +6061,10 @@ describe('Durable operator-message delivery: AgentSessionManager.pumpThread', ()
     await manager.pumpThread(JOB_ID, ORG_ID, REPO_ID);
 
     // Leased BEFORE steering (so a concurrent sweep can't re-take these rows mid-flight).
-    expect(stimulusStore.leaseChatStimuli).toHaveBeenCalledWith(['s1', 's2']);
+    expect(stimulusStore.claimChatStimuli).toHaveBeenCalledWith(
+      ['s1', 's2'],
+      expect.any(Number),
+    );
     expect(steer).toHaveBeenCalledTimes(2);
     expect(steer).toHaveBeenNthCalledWith(
       1,

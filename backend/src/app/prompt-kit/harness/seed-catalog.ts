@@ -216,9 +216,12 @@ export function wakeUnblockedRunningJobBody(
 
 /**
  * FIRST-TURN prefix for a BORN-BLOCKED job (created via create_job dependsOn, never ran) whose blockers have
- * now resolved. Prepended to its stored opening seed by `AgentSessionManager.wakeUnblockedJob`. Unlike the
- * mid-work variant this job has NO prior plan, so it frames a fresh start — start from the latest base and
- * factor the resolved jobs into planning — with no "resume"/"your plan's assumptions" language.
+ * now resolved. Unlike the mid-work variant this job has NO prior plan, so it frames a fresh start — start
+ * from the latest base and factor the resolved jobs into planning — with no "resume"/"your plan's
+ * assumptions" language.
+ *
+ * SUPERSEDED in the wake path by the queue-backed model ({@link renderBornBlockedProvenanceNote} at creation
+ * + {@link renderUnblockedNote} on wake, drained as one coalesced turn); retained for its unit spec.
  */
 export function renderBornBlockedUnblockPrefix(
   blockers: UnblockBlockerInfo[],
@@ -230,6 +233,63 @@ export function renderBornBlockedUnblockPrefix(
     '\n\nAs you scope this job:\n' +
     '  • Start from the latest base branch so you build on whatever those jobs landed.\n' +
     '  • Factor those jobs into your plan — they may overlap, complement, or change what this job should do.'
+  );
+}
+
+/**
+ * CREATION-TIME provenance note for a BORN-BLOCKED job (spawned via create_job dependsOn, held before it
+ * ever ran). Recorded ONCE when the block is wired and drained on wake — so its "this job started life
+ * blocked, and here's who spawned it" context rides the same coalesced turn as the brief and the unblock
+ * note. Carries provenance ONLY (no blocker roster — that half is the wake note); when `parent` is null the
+ * job was opened by the operator, so it frames a plain "created blocked" opener.
+ */
+export function renderBornBlockedProvenanceNote(
+  parent: JobProvenance | null,
+): string {
+  if (!parent) {
+    return (
+      'This job was CREATED already blocked — it is held until the job(s) it depends on resolve. You have ' +
+      'NOT started any work yet; the brief below is your starting point once it unblocks.'
+    );
+  }
+  const name = parent.title ?? 'untitled';
+  return (
+    'This job was CREATED already blocked, and was spawned by ANOTHER Atlas job via create_job — a human ' +
+    `operator did NOT start it. Spawning job: "${name}" (job ${parent.jobId}). It is held until the job(s) ` +
+    "it depends on resolve. The opening brief below was written by that job's Atlas, not by the operator, so " +
+    "don't assume the operator has seen it or is waiting on you — treat it as your starting point once it " +
+    'unblocks, and scope it with the operator from there.'
+  );
+}
+
+/**
+ * CREATION-TIME note for a job BLOCKED MID-FLIGHT (a manual/link block of an already-running job — no seed
+ * to replay). Recorded ONCE when the block is wired and drained on wake, so the resumed session sees "you
+ * were held" in the same coalesced turn as the unblock note.
+ */
+export function renderMidFlightBlockedNote(): string {
+  return (
+    'This job was BLOCKED mid-flight and is held until the job(s) it depends on resolve. Work is paused — ' +
+    'nothing further runs until it unblocks.'
+  );
+}
+
+/**
+ * WAKE note recorded just-in-time when every blocker resolves (drained on the SAME coalesced turn as any
+ * held born-blocked/mid-flight note + operator chat). Names the blockers, frames the block as possibly soft,
+ * and steers the brain to find out why, REBASE, and re-check whether those jobs changed its scope. One note
+ * for both born-blocked and mid-flight — the born-blocked provenance is already carried by its creation-time
+ * note, so this half never re-detects it.
+ */
+export function renderUnblockedNote(blockers: UnblockBlockerInfo[]): string {
+  return (
+    'The job(s) that were blocking this one have now resolved — it is UNBLOCKED.\n\n' +
+    renderBlockerContext(blockers) +
+    '\n\nBefore you continue:\n' +
+    '  • Check your recent operator messages for a stated reason.\n' +
+    '  • Rebase onto the latest base branch so you build on whatever those jobs landed.\n' +
+    '  • Re-examine whether those jobs complement, overlap with, or change the scope of your work — adjust ' +
+    'before continuing.'
   );
 }
 
@@ -381,6 +441,24 @@ export function retryResumeNudge(title?: string): AgentMessage {
     title
       ? `Please continue with the current task: "${title}".`
       : 'Please continue.',
+  );
+}
+
+/**
+ * Auto-resume nudge after a benign `aborted_streaming` — a mid-turn interrupt that cancelled in-flight tool
+ * calls. Names the task AND reframes the cancellation so the resumed brain does not misread the SDK's
+ * "user doesn't want to take this action" tool-results as an operator rejection.
+ */
+export function interruptRedriveNudge(title?: string): AgentMessage {
+  return agentMessage(
+    [
+      'Your previous turn was interrupted mid-flight: new input arrived while one or more tool calls were',
+      'still running, so they were cancelled. In the transcript above those calls show an "AbortError:',
+      'interrupt" or "The user doesn\'t want to take this action right now. STOP…" result — that is the',
+      'mechanical side-effect of delivering input mid-turn, NOT the operator rejecting or stopping your',
+      'action. Re-read any new message that follows, re-evaluate whether the cancelled step is still the',
+      'right next move, and continue' + (title ? ` with the current task: "${title}".` : '.'),
+    ].join(' '),
   );
 }
 

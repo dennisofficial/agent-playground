@@ -280,16 +280,17 @@ function assemble(
   const decisionRecords = makeTable<{ repo_id: string; org_id: string }>();
   const sandboxes = makeTable<{ repo_id: string; org_id: string }>();
 
-  // `disconnectRepo` resolves `JobLifecycleService` lazily via `moduleRef.get(...)`. The fake records
-  // each deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
+  // `disconnectRepo` tears jobs down through the injected `JOB_TEARDOWN` port. The fake records each
+  // deep-delete AND removes the thread row (mirroring the real teardown) so the drain loop converges.
   const deepDeleted: Array<{ jobId: string; orgId: string }> = [];
-  const threadLifecycle = {
+  const jobTeardown = {
     deleteJobDeep: async (jobId: string, orgId: string) => {
       deepDeleted.push({ jobId, orgId });
       await threads.repo.delete({ id: jobId, org_id: orgId });
     },
   };
-  const moduleRef = { get: () => threadLifecycle } as unknown as ModuleRef;
+  // `moduleRef` is retained only for the lazy brain lookups (not exercised in these tests).
+  const moduleRef = { get: () => undefined } as unknown as ModuleRef;
   const pr = fakePr(opts.repoInfo ?? null, {
     ensureWebhookOutcome: opts.ensureWebhookOutcome,
   });
@@ -305,6 +306,7 @@ function assemble(
     fakeCreds(opts.creds),
     fakeStore(opts.presence),
     pr,
+    jobTeardown,
     moduleRef,
     fakeEnv(opts.env),
   );
@@ -317,7 +319,7 @@ function assemble(
     stimuli,
     decisionRecords,
     sandboxes,
-    threadLifecycle,
+    jobTeardown,
     deepDeleted,
     pr,
   };
@@ -606,7 +608,7 @@ describe('OnboardingService', () => {
     });
 
     it('drains a thread created mid-cascade (no orphan left behind)', async () => {
-      const { svc, threads, threadLifecycle } = assemble({
+      const { svc, threads, jobTeardown } = assemble({
         creds: { github: 'ghp_x' },
         repoInfo: info,
       });
@@ -614,9 +616,9 @@ describe('OnboardingService', () => {
       threads.rows.push({ id: 't1', repo_id: connected.id, org_id: 'T1' });
 
       // Simulate a concurrent create: the first deep-delete inserts one more thread row mid-cascade.
-      const original = threadLifecycle.deleteJobDeep;
+      const original = jobTeardown.deleteJobDeep;
       let injected = false;
-      threadLifecycle.deleteJobDeep = async (jobId, orgId) => {
+      jobTeardown.deleteJobDeep = async (jobId, orgId) => {
         await original(jobId, orgId);
         if (!injected) {
           injected = true;
