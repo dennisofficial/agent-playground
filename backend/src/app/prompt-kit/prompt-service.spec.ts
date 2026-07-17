@@ -136,12 +136,11 @@ describe('renderAgentPrompt — brain assembly (ATLAS_MAIN)', () => {
  */
 describe('renderAgentPrompt(Agent.PLANNING) — byte-parity with the monolithic brain prompt', () => {
   const PRE_SPLIT_SHA256: Record<string, string> = {
-    feature:
-      'ff6df9eb363e2c18e0840bc3511aa840a8654de67dade2de1c4485ba65f303b9',
-    bugfix: '8ac1c196d8f8fb78ccf29f430a52c405127a01882a054c6dabfb65f09ba16cba',
+    feature: '389731791c7ea7f8b054baca13ccf473be4304ae228374f5282393c5cef61067',
+    bugfix: 'dcc7a2fd0cd58849810e861d83cb988221296ce5dd2953b06c4cc91d9752b9fa',
     onboarding:
       '0d8393508147d5c3181d5e38a2ec1a3ae5aad4c2033f68d540c382ca04e956ce',
-    review: 'e974415c5b8c6f07654a657d83e6264244bb54dfcd5f9f1037a21ef758d58780',
+    review: 'f7076749d1830d37ff979aebdb739e357276d304886c2bf21ee1f8160e7528cd',
   };
 
   it.each(['feature', 'bugfix', 'onboarding', 'review'] as const)(

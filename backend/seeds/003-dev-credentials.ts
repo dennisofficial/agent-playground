@@ -62,6 +62,16 @@ export default (async (ds) => {
   const orgIds = [DEV_SEED_IDS.orgs.atlasTest];
 
   for (const orgId of orgIds) {
+    const org = await ds
+      .getRepository(OrganizationEntity)
+      .findOne({ where: { id: orgId } });
+    if (!org) {
+      console.log(
+        `  003: org ${orgId} missing — skipping dev credentials (run 001-dev-org first)`,
+      );
+      continue;
+    }
+
     const row =
       (await creds.findOne({ where: { org_id: orgId, scope: '*' } })) ??
       creds.create({ org_id: orgId, scope: '*' });

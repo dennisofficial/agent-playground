@@ -107,7 +107,10 @@ import {
 } from '../prompt-kit/harness';
 import { DRIVER_REPO, type DriverRepoResolver } from '../driver/repo-resolver';
 import type { PlannedStep } from '../prompt-kit/messages/render-plan';
-import { coerceThreadType, type ThreadType } from '@shared/thread-kind/thread-types';
+import {
+  coerceThreadType,
+  type ThreadType,
+} from '@shared/thread-kind/thread-types';
 import { DecisionClassifier } from '../decision-gate';
 import {
   CredentialResolver,
@@ -516,7 +519,8 @@ export class AgentSessionManager
     threadId: string,
     reason: ThreadHaltReason | null,
   ): Promise<void> {
-    if (this.sessionRunner) return this.sessionRunner.markHalt(threadId, reason);
+    if (this.sessionRunner)
+      return this.sessionRunner.markHalt(threadId, reason);
     // Fallback for the positional-construction unit tests (no injected runner) — byte-identical inline write.
     try {
       await this.driverStore.setThreadHaltReason(threadId, reason);
@@ -546,11 +550,13 @@ export class AgentSessionManager
     if (filePath !== specsPrefix && !filePath.startsWith(`${specsPrefix}/`))
       return;
     this.scopingPlanningChecked.add(jobId);
-    void this.driverStore.markScopingToPlanning(jobId).catch((err) =>
-      this.logger.warn(
-        `live scoping→planning transition failed for job=${jobId}: ${err}`,
-      ),
-    );
+    void this.driverStore
+      .markScopingToPlanning(jobId)
+      .catch((err) =>
+        this.logger.warn(
+          `live scoping→planning transition failed for job=${jobId}: ${err}`,
+        ),
+      );
   }
 
   /**
@@ -1462,8 +1468,12 @@ export class AgentSessionManager
     // the whole idempotent sequence — never leaving the row delivered while its card stays stranded.
     const stimulus = await this.stimulusStore.findChatStimulusById(id);
     if (!stimulus) return false;
-    const { jobId, deliveredQuestionIds, deliveredSecretIds, deliveredFileIds } =
-      stimulus;
+    const {
+      jobId,
+      deliveredQuestionIds,
+      deliveredSecretIds,
+      deliveredFileIds,
+    } = stimulus;
 
     // Loop the delivered-id arrays (one id for a solo card delivery, many for a combined `answer-batch`).
     // NO `.catch` here (unlike `stampLegacySeedCard`): this function's invariant is that a transient error
@@ -2245,7 +2255,11 @@ export class AgentSessionManager
             ...(ctx.credentialId ? { credentialId: ctx.credentialId } : {}),
             // Realtime live push via the runner's independent `realtime` consumer group — same 'main' lane
             // the reattach replay streams the brain conversation on (mirrors this `onEvent`→streamer wiring).
-            liveRoute: { channel: row.channel, jobId: row.job_id, lane: 'main' },
+            liveRoute: {
+              channel: row.channel,
+              jobId: row.job_id,
+              lane: 'main',
+            },
           },
         );
         if (result.sessionId && stimulus.resumeThreadId) {
@@ -2341,7 +2355,6 @@ export class AgentSessionManager
     try {
       await this.runChatTurnInner(stimulus, opts);
     } finally {
-      await this.latchDirectBuildAtTurnEnd(stimulus);
       await this.store.endTurnActivity(stimulus.jobId).catch(() => undefined);
       // Turn-end re-pump (d18): drain any `queue` message that arrived mid-turn (it was intentionally NOT
       // steered) into a fresh turn now rather than waiting the 30s sweep. Best-effort + idempotent —
@@ -2361,33 +2374,13 @@ export class AgentSessionManager
   }
 
   /**
-   * DIRECT-BUILD TURN-END LATCH (decision d3). A `finalize_build` in this turn committed the change and
-   * handed the brain `shipOpenPrBody` — the brain then reconciled/pushed/`gh pr create`d inline, so the PR
-   * now exists. Record it + flip `running → done` PROMPTLY here, instead of waiting on the 30-min
-   * `GitStateReconciler` discovery. Runs only when the pending flag was set for this job (consumed here); a
-   * latch MISS leaves the job `running` for that same reconciler backstop.
+   * Compatibility no-op for the removed inline direct-build ship path. Direct builds now dispatch a real
+   * builder Section and ship through the driver, so a planning/post-build turn must never latch a PR inline.
    */
   private async latchDirectBuildAtTurnEnd(
-    stimulus: TurnEnvelope,
+    _stimulus: TurnEnvelope,
   ): Promise<void> {
-    if (!this.directBuildShipPending.delete(stimulus.jobId)) return;
-    const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
-    // Mirror the `finalize_build` refusal gate: only a `running` build with an owning feature branch latches.
-    if (!job || job.status !== 'building' || !job.featureBranch) return;
-    const sandbox = await this.lifecycle
-      .findSandbox(job.id, job.orgId)
-      .catch(() => null);
-    const repo = sandbox
-      ? await this.repos.resolve(job).catch(() => null)
-      : null;
-    if (!sandbox || !repo) return;
-    // Follow the LIVE branch (the agent may have `git checkout -b …` mid-build) — `discoverOpenPr` matches
-    // on `sandbox.branch`, so hand it the live branch, mirroring the full ship path.
-    const liveSandbox = {
-      ...sandbox,
-      branch: job.currentBranch ?? sandbox.branch,
-    };
-    await this.ship.latchPr(job, repo, liveSandbox).catch(() => undefined);
+    return;
   }
 
   /** Which thread-kind registry key this turn runs as: a re-homed turn (post_build/ci) uses its thread's
@@ -3271,7 +3264,8 @@ export class AgentSessionManager
         return;
       }
       // DISPLAY-ONLY (d8): mark the thread parked on a session limit — cleared at its next (auto-)resume start.
-      if (haltThreadId) await this.markHaltReason(haltThreadId, 'session_limit');
+      if (haltThreadId)
+        await this.markHaltReason(haltThreadId, 'session_limit');
       const rlType = result.sessionLimit.rateLimitType;
       const source = result.sessionLimit.source;
       const util =
@@ -3621,7 +3615,11 @@ export class AgentSessionManager
           loggedDecision: true,
         });
       }
-      await this.chatToolProvider.writeDecisionRecordMd(stimulus.jobId, stimulus.orgId, all);
+      await this.chatToolProvider.writeDecisionRecordMd(
+        stimulus.jobId,
+        stimulus.orgId,
+        all,
+      );
       // Echo the running provenance balance so the brain sees how much it has actually CONFIRMED vs authored.
       const confirmedCount = all.filter((d) => d.confirmedByOperator).length;
       return {
@@ -3667,7 +3665,8 @@ export class AgentSessionManager
 
       forget: this.chatToolProvider.selfSufficiencyTools(stimulus).forget,
 
-      update_memory: this.chatToolProvider.selfSufficiencyTools(stimulus).update_memory,
+      update_memory:
+        this.chatToolProvider.selfSufficiencyTools(stimulus).update_memory,
 
       ask_question: async (args) => {
         const question = String(args['question'] ?? '').trim();
@@ -3964,7 +3963,11 @@ export class AgentSessionManager
             knownIds: all.map((d) => d.id),
           };
         }
-        await this.chatToolProvider.writeDecisionRecordMd(stimulus.jobId, stimulus.orgId, all);
+        await this.chatToolProvider.writeDecisionRecordMd(
+          stimulus.jobId,
+          stimulus.orgId,
+          all,
+        );
         return { ok: true, removed: id, remainingIds: all.map((d) => d.id) };
       },
 
@@ -4200,9 +4203,9 @@ export class AgentSessionManager
       },
 
       dispatch_build: async (_args) => {
-        // GATED tool — only starts an already-approved (status=running) job, AFTER the base-check judged the
+        // GATED tool — only starts an already-approved (status=building) job, AFTER the base-check judged the
         // plan still valid. Resolve the job by id (NOT openJobOnThread, which is planning-only) and let the
-        // running-status check gate it; idempotent (a re-fire lands on the same 'running' job harmlessly, and
+        // building-status check gate it; idempotent (a re-fire lands on the same 'building' job harmlessly, and
         // the dispatcher it calls is the SOLE start of the build).
         const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
         if (!job) {
@@ -4214,7 +4217,7 @@ export class AgentSessionManager
         if (job.status !== 'building' || job.halt != null) {
           return {
             ok: false,
-            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'running' (approved), un-halted jobs can be dispatched`,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ` and halted (${job.halt.kind})` : ''} — only 'building' (approved), un-halted jobs can be dispatched`,
           };
         }
         // Both build paths dispatch to the SAME scheduler (d6 — direct build is a real builder Section, not an
@@ -4255,7 +4258,7 @@ export class AgentSessionManager
         if (job.status !== 'building' || job.halt != null) {
           return {
             ok: false,
-            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ' and halted' : ''} — hold_build only applies to a running, un-halted job in the pre-start base-check window.`,
+            reason: `Job ${job.id} is in status '${job.status}'${job.halt != null ? ' and halted' : ''} — hold_build only applies to a building, un-halted job in the pre-start base-check window.`,
           };
         }
         if (!(await this.store.buildNotStarted(job.id))) {
@@ -4365,77 +4368,10 @@ export class AgentSessionManager
       },
 
       finalize_build: async (_args) => {
-        // GATED — callable only inside the autonomous implementation turn of an APPROVED direct build
-        // (status 'running'). Commits whatever was written, then runs the shared terminal ship. Resolve
-        // the job by id (NOT openJobOnThread, which is planning-only — approval already flipped it to
-        // 'running', so that lookup would always return null here) and let the status check gate it.
-        const job = await this.store.loadJob(stimulus.jobId).catch(() => null);
-        if (!job)
-          return {
-            ok: false,
-            reason: 'No job on this thread — nothing to finalize',
-          };
-        const jobId = job.id;
-        if (job.status !== 'building') {
-          return {
-            ok: false,
-            reason: `Job ${jobId} is '${job.status}' — only an approved (running) build can be finalized`,
-          };
-        }
-        const sandbox = await this.lifecycle.findSandbox(
-          stimulus.jobId,
-          stimulus.orgId,
-        );
-        if (!sandbox)
-          return {
-            ok: false,
-            reason: 'No sandbox for this thread — cannot finalize',
-          };
-
-        const repo = await this.repos.resolve(job);
-
-        // HOST PRE-SHIP GATE only (no-token + leak-scan — the host NEVER commits). We are ALREADY inside this
-        // brain turn, so we cannot seed a nested open-PR turn (that is the driver/boot ship path). Hand
-        // `shipOpenPrBody` back as the tool result so the brain — still in THIS turn — commits anything
-        // uncommitted, reconciles, pushes, and opens the PR itself. The git-state reconciler then records
-        // `pr_url` + flips the job `done` on discovery, and `latchDirectBuildAtTurnEnd` latches the PR the
-        // moment the turn completes.
-        const pre = await this.ship.preShip(job, repo, sandbox, (m) =>
-          this.say(stimulus, m),
-        );
-
-        if (!pre.ok) {
-          if (pre.reason === 'leak-scan') {
-            // Hard security block — a hydrated secret/seed path is on the branch (committed OR staged in the
-            // working tree). NOT ok: the brain must clean it before it can ship.
-            return {
-              ok: false,
-              jobId,
-              reason:
-                `PR blocked by the pre-ship security scan — a managed secret/seed file is on ` +
-                `this branch: ${pre.leaked.join(', ')}. Remove it from the branch history and retry.`,
-            };
-          }
-          return {
-            ok: true,
-            jobId,
-            message:
-              'No GitHub token is configured — PR not opened. Commit your work; connect a token to ship.',
-          };
-        }
-
-        // The brain opens the PR inline later in THIS turn; flag the job so the turn-end latch
-        // (`latchDirectBuildAtTurnEnd`) records the PR + flips running→done the moment the turn completes,
-        // rather than waiting on the reconciler. A latch miss leaves the job for the boot backstop.
-        this.directBuildShipPending.set(jobId, true);
         return {
-          ok: true,
-          jobId,
-          message: shipOpenPrBody({
-            branch: sandbox.branch,
-            defaultBranch: repo.defaultBranch,
-            title: job.title?.trim() || sandbox.branch,
-          }),
+          ok: false,
+          reason:
+            'finalize_build is no longer available; direct builds run as real builder Sections and ship through the driver',
         };
       },
 
@@ -4586,13 +4522,20 @@ export class AgentSessionManager
     // any job) AND amend the repo's DB-backed workspace config (mounts/seed) — writes land instantly for
     // every job on the repo, no PR/ship step needed outside the ceremony (see `write_workspace_config`).
     const intake = {
-      request_secret: this.chatToolProvider.selfSufficiencyTools(stimulus).request_secret,
-      request_file: this.chatToolProvider.selfSufficiencyTools(stimulus).request_file,
-      withdraw_file_request: this.chatToolProvider.buildWithdrawFileRequestTool(stimulus),
-      withdraw_secret_request: this.chatToolProvider.buildWithdrawSecretRequestTool(stimulus),
-      write_workspace_config: this.chatToolProvider.buildWriteWorkspaceConfigTool(stimulus),
-      write_setup_script: this.chatToolProvider.buildWriteSetupScriptTool(stimulus),
-      read_setup_script: this.chatToolProvider.buildReadSetupScriptTool(stimulus),
+      request_secret:
+        this.chatToolProvider.selfSufficiencyTools(stimulus).request_secret,
+      request_file:
+        this.chatToolProvider.selfSufficiencyTools(stimulus).request_file,
+      withdraw_file_request:
+        this.chatToolProvider.buildWithdrawFileRequestTool(stimulus),
+      withdraw_secret_request:
+        this.chatToolProvider.buildWithdrawSecretRequestTool(stimulus),
+      write_workspace_config:
+        this.chatToolProvider.buildWriteWorkspaceConfigTool(stimulus),
+      write_setup_script:
+        this.chatToolProvider.buildWriteSetupScriptTool(stimulus),
+      read_setup_script:
+        this.chatToolProvider.buildReadSetupScriptTool(stimulus),
       write_preview_instructions:
         this.chatToolProvider.buildWritePreviewInstructionsTool(stimulus),
       read_preview_instructions:
@@ -4603,12 +4546,17 @@ export class AgentSessionManager
       // by any job, not just onboarding: list what exists + propose new/edited ones (owner-approved).
       list_skills: this.chatToolProvider.buildListSkillsTool(stimulus),
       propose_skill: this.chatToolProvider.buildProposeSkillTool(stimulus),
-      propose_skill_install: this.chatToolProvider.buildProposeSkillInstallTool(stimulus),
-      request_skill_edit_access: this.chatToolProvider.buildRequestSkillEditAccessTool(stimulus),
-      propose_skill_removal: this.chatToolProvider.buildProposeSkillRemovalTool(stimulus),
+      propose_skill_install:
+        this.chatToolProvider.buildProposeSkillInstallTool(stimulus),
+      request_skill_edit_access:
+        this.chatToolProvider.buildRequestSkillEditAccessTool(stimulus),
+      propose_skill_removal:
+        this.chatToolProvider.buildProposeSkillRemovalTool(stimulus),
       list_mcp_servers: this.chatToolProvider.buildListMcpServersTool(stimulus),
-      propose_mcp_servers: this.chatToolProvider.buildProposeMcpServersTool(stimulus),
-      propose_mcp_removal: this.chatToolProvider.buildProposeMcpRemovalTool(stimulus),
+      propose_mcp_servers:
+        this.chatToolProvider.buildProposeMcpServersTool(stimulus),
+      propose_mcp_removal:
+        this.chatToolProvider.buildProposeMcpRemovalTool(stimulus),
     };
 
     // atlas-prod: relocated prod-diagnostics reads + the gated write. Registered ONLY when this repo is the
@@ -4705,12 +4653,14 @@ export class AgentSessionManager
       create_job: tools.create_job,
       link_job_dependency: tools.link_job_dependency,
       ...intake,
-      list_convention_profiles: this.chatToolProvider.buildListConventionProfilesTool(stimulus),
+      list_convention_profiles:
+        this.chatToolProvider.buildListConventionProfilesTool(stimulus),
       propose_convention_profile:
         this.chatToolProvider.buildProposeConventionProfileTool(stimulus),
       propose_convention_profile_change:
         this.chatToolProvider.buildProposeConventionProfileChangeTool(stimulus),
-      finish_onboarding: this.chatToolProvider.buildFinishOnboardingTool(stimulus),
+      finish_onboarding:
+        this.chatToolProvider.buildFinishOnboardingTool(stimulus),
       ...taskTools,
       ...atlasProd,
     };
@@ -5102,7 +5052,10 @@ export class AgentSessionManager
       jobId: job.id,
       orgId: job.orgId,
       repoId: job.repoId,
-      author: { id: SYSTEM_SEED_AUTHOR.id, displayName: SYSTEM_SEED_AUTHOR.name },
+      author: {
+        id: SYSTEM_SEED_AUTHOR.id,
+        displayName: SYSTEM_SEED_AUTHOR.name,
+      },
       // Empty body — a pure mechanism to drive `actOnApprovalVerdict`; the verdict itself is visible.
       type: 'user',
       body: '',
@@ -5950,7 +5903,9 @@ function seedEnvelope(
     body,
     ...(seedRow ? { seedRow } : {}),
     ...(opts?.resumeThreadId ? { resumeThreadId: opts.resumeThreadId } : {}),
-    ...(opts?.deliveredFileIds ? { deliveredFileIds: opts.deliveredFileIds } : {}),
+    ...(opts?.deliveredFileIds
+      ? { deliveredFileIds: opts.deliveredFileIds }
+      : {}),
   };
 }
 

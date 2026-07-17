@@ -93,7 +93,7 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
     h.mod.onApplicationShutdown();
   });
 
-  it('the leader reap tick re-drives running jobs (at-least-once backstop for the yield-vs-repromote race)', async () => {
+  it('the leader reap tick does not re-drive jobs; it is housekeeping only', async () => {
     vi.useFakeTimers();
     const h = harness();
     await h.mod.onApplicationBootstrap();
@@ -101,10 +101,9 @@ describe('DriverModule — promote wiring re-drives yielded jobs (leadership fen
 
     expect(h.driver.resume).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000); // one reap interval (default)
-    // The tick's idempotent resume() ran, re-driving any stranded running job.
-    expect(
-      (h.driver.resume as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBeGreaterThanOrEqual(2);
+    // Dormant threads are woken only by operator action or explicit host events; the slow reap no longer
+    // calls resume().
+    expect(h.driver.resume).toHaveBeenCalledTimes(1);
 
     h.mod.onApplicationShutdown();
   });

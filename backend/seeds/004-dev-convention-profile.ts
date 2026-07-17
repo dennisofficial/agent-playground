@@ -1,5 +1,8 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { ConventionProfileEntity } from '../src/app/persistence/entities';
+import {
+  ConventionProfileEntity,
+  OrganizationEntity,
+} from '../src/app/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
@@ -13,6 +16,15 @@ export default (async (ds) => {
   const profiles = ds.getRepository(ConventionProfileEntity);
   const org_id = DEV_SEED_IDS.orgs.atlasTest;
   const slug = 'nestjs-next-shared';
+  const org = await ds
+    .getRepository(OrganizationEntity)
+    .findOne({ where: { id: org_id } });
+  if (!org) {
+    console.log(
+      `  004: org ${org_id} missing — skipping convention profile ${slug} (run 001-dev-org first)`,
+    );
+    return;
+  }
 
   const row =
     (await profiles.findOne({ where: { org_id, slug } })) ??

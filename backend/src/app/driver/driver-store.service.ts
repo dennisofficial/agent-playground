@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, IsNull, MoreThan, Raw, Repository } from 'typeorm';
+import { DataSource, In, IsNull, MoreThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import type {
   Decision,
@@ -253,17 +253,30 @@ export class DriverStoreService {
    *  These are the phases the deterministic driver owns a live thread turn in (`building` → `master_review`
    *  → `shipping`); operator-parked (`awaiting_approval`, `ready`, `amending`), brain-driven (`scoping`,
    *  `planning`, `plan_reviewing`), watch-only (`pr_open`), dependency-parked (`blocked`), and terminal
-   *  phases are NOT re-driven here. Leave future `session_resume_at` parks alone: boot must not re-drive a
-   *  still-cooling host retry early. */
+   *  phases are NOT re-driven here. Leave future `session_resume_at` parks alone, and do not wake dormant
+   *  threads whose last turn already ended with a display halt reason — those are resumed only by an operator
+   *  message/action or an explicit subscribed host event. */
   async runningJobs(): Promise<Job[]> {
-    const rows = await this.jobs.find({
-      where: {
-        status: In(['building', 'master_review', 'shipping']),
-        session_resume_at: Raw(
-          (alias) => `(${alias} IS NULL OR ${alias} <= now())`,
-        ),
-      },
-    });
+    const rows = await this.jobs
+      .createQueryBuilder('job')
+      .where('job.status IN (:...statuses)', {
+        statuses: ['building', 'master_review', 'shipping'],
+      })
+      .andWhere(
+        '(job.session_resume_at IS NULL OR job.session_resume_at <= now())',
+      )
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1
+          FROM "threads" t
+          WHERE t."job_id" = job."id"
+            AND t."parent_thread_id" IS NULL
+            AND t."status" <> 'done'
+            AND t."role" IN ('builder', 'master_review')
+            AND t."halt_reason" IS NOT NULL
+        )`,
+      )
+      .getMany();
     return rows.map(toJob);
   }
 
@@ -333,7 +346,10 @@ export class DriverStoreService {
         where: { thread_group_id: g.id, role: 'builder' },
         select: { id: true, status: true },
       });
-      if (builders.length > 0 && builders.every((t) => builderFinished(t.status)))
+      if (
+        builders.length > 0 &&
+        builders.every((t) => builderFinished(t.status))
+      )
         done += 1;
     }
     await this.jobs
@@ -434,7 +450,7 @@ export class DriverStoreService {
         .update(JobEntity)
         .set({ status: 'ready' })
         .where('id = :jobId', { jobId })
-        .andWhere("status IN ('building', 'amending')")
+        .andWhere("status IN ('building', 'master_review', 'amending')")
         .execute();
       if ((res.affected ?? 0) === 0) return false;
       const messages = m.getRepository(TranscriptMessageEntity);
@@ -1116,7 +1132,9 @@ export class DriverStoreService {
       .createQueryBuilder()
       .update(TaskEntity)
       .set({ status: 'dropped' })
-      .where('thread_group_id = :threadGroupId', { threadGroupId: thread.thread_group_id })
+      .where('thread_group_id = :threadGroupId', {
+        threadGroupId: thread.thread_group_id,
+      })
       .andWhere("status IN ('pending', 'in_progress')")
       .execute();
     return res.affected ?? 0;
@@ -1299,16 +1317,23 @@ export class DriverStoreService {
 
   /** CAS-claim one consecutive UNCORROBORATED text-fallback session-limit misfire for the job; refuses at
    *  `cap`. */
-  async claimSessionLimitTextMisfire(jobId: string, cap: number): Promise<{ ok: boolean; used: number }> {
+  async claimSessionLimitTextMisfire(
+    jobId: string,
+    cap: number,
+  ): Promise<{ ok: boolean; used: number }> {
     const res = await this.jobs
       .createQueryBuilder()
       .update(JobEntity)
-      .set({ session_limit_text_misfires: () => 'session_limit_text_misfires + 1' })
+      .set({
+        session_limit_text_misfires: () => 'session_limit_text_misfires + 1',
+      })
       .where('id = :jobId', { jobId })
       .andWhere('session_limit_text_misfires < :cap', { cap })
       .returning('session_limit_text_misfires')
       .execute();
-    const used = res.raw?.[0]?.session_limit_text_misfires as number | undefined;
+    const used = res.raw?.[0]?.session_limit_text_misfires as
+      | number
+      | undefined;
     return used != null ? { ok: true, used } : { ok: false, used: cap };
   }
 
@@ -1344,7 +1369,6 @@ export class DriverStoreService {
       lastAttemptAt: row?.retry_last_attempt_at ?? null,
     };
   }
-
 
   // ── review children (post-build review fan-out as real child threads) ──────────────────────────
   // A builder's post-build review is N `review_lens` rows + 1 `post_review` row, each a first-class
@@ -1572,14 +1596,16 @@ export class DriverStoreService {
         order: { ordinal: 'ASC' },
       });
       const mainTasks = planningThreadGroup
-        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(toTaskItem)
+        ? (await this.tasksForThreadGroup(planningThreadGroup.id)).map(
+            toTaskItem,
+          )
         : [];
       return {
         status: 'no_job',
         mainTasks,
         // The planning lane's pre-turn footer default — so a planning job shows "Opus 4.8" before its first
         // brain turn completes (no `turn_meta` to derive from yet).
-        mainDefaultFooter: laneDefaultFooter('planning'),
+        mainDefaultFooter: laneDefaultFooter('planner'),
         // The routing pointer even a pre-build (scoping/planning) job carries — it points at the planner
         // thread so the console can resolve /workspace/:jobId/:threadId before any pipeline exists.
         focusedThreadId: job.focused_thread_id ?? null,
@@ -1653,7 +1679,9 @@ export class DriverStoreService {
 
     const mapThreadGroup = (s: ThreadGroupEntity) => {
       const threadGroupThreads = threadsByThreadGroup.get(s.id) ?? [];
-      const roots = threadGroupThreads.filter((t) => t.parent_thread_id == null);
+      const roots = threadGroupThreads.filter(
+        (t) => t.parent_thread_id == null,
+      );
       return {
         id: s.id,
         kind: s.kind,
@@ -1792,7 +1820,9 @@ export class DriverStoreService {
   /** Every thread of a thread group as the driver's {@link DriverThread} domain shape, in execution order — the
    *  thread-group-driven drive loop reads this LIVE between builder iterations (a leg rotation appends a fresh
    *  builder row mid-drive, so a start-of-thread-group snapshot goes stale). */
-  async driverThreadsForThreadGroup(threadGroupId: string): Promise<DriverThread[]> {
+  async driverThreadsForThreadGroup(
+    threadGroupId: string,
+  ): Promise<DriverThread[]> {
     const rows = await this.threads.find({
       where: { thread_group_id: threadGroupId },
       order: { ordinal: 'ASC' },
@@ -1837,7 +1867,8 @@ export class DriverStoreService {
     decisionRecordId?: string | null;
     config?: Record<string, unknown>;
   }): Promise<ThreadGroupEntity> {
-    const ordinal = (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
+    const ordinal =
+      (await this.maxThreadGroupOrdinal(input.jobId)) + ORDINAL_GAP;
     return this.threadGroups.save(
       this.threadGroups.create({
         job_id: input.jobId,

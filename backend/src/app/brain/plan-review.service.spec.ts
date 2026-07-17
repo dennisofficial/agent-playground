@@ -11,7 +11,10 @@ import {
 } from './plan-review.service';
 import type { PlanReviewInput } from './plan-review.service';
 import { BrainStoreService } from './brain-store.service';
-import type { EngineRunnerPort, EngineRunResult } from '@shared/engine/engine.types';
+import type {
+  EngineRunnerPort,
+  EngineRunResult,
+} from '@shared/engine/engine.types';
 import type { JobLifecycleService } from '../driver/job-lifecycle.service';
 import type { CredentialResolver } from '../onboarding';
 import type { Repository } from 'typeorm';
@@ -575,26 +578,25 @@ function capturingJobsRepo() {
   };
 }
 
-describe('PlanReviewService.review — reflects onto jobs.activity (§6)', () => {
-  it('writes plan_review while running, then idle once the review completes', async () => {
+describe('PlanReviewService.review — activity column removed', () => {
+  it('does not write jobs.activity while the review runs or completes', async () => {
     const threads = fakePlanReviewThreadsRepo();
     const cap = capturingJobsRepo();
     const svc = makeService({ threads, jobs: cap.repo });
     await svc.review(baseInput);
-    // persistRow('running') → plan_review, persistRow('complete') → idle, in that order.
-    expect(cap._activities()).toEqual(['plan_review', 'idle']);
+    expect(cap._activities()).toEqual([]);
   });
 
-  it('writes plan_review then idle even when the review fails (no sandbox)', async () => {
+  it('does not write jobs.activity when the review fails', async () => {
     const threads = fakePlanReviewThreadsRepo();
     const cap = capturingJobsRepo();
     const svc = makeService({ threads, jobs: cap.repo, ensureContainer: null });
     await svc.review(baseInput);
-    expect(cap._activities()[cap._activities().length - 1]).toBe('idle');
+    expect(cap._activities()).toEqual([]);
   });
 });
 
-// ── BrainStoreService activity writers (§4b + §7 nesting) ────────────────────────────────────────
+// ── BrainStoreService activity compatibility no-ops ──────────────────────────────────────────────
 
 /** A capturing `jobs` repo shared by the BrainStoreService unit tests. */
 function fakeStoreJobs() {
@@ -646,37 +648,32 @@ function makeBrainStore(opts: {
 }
 
 describe('BrainStoreService activity writers', () => {
-  it('setActivity writes the given activity', async () => {
+  it('setActivity is a no-op after jobs.activity was removed', async () => {
     const jobs = fakeStoreJobs();
     const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
     await store.setActivity('job-1', 'turn');
-    expect(jobs._patches()).toEqual([{ activity: 'turn' }]);
+    expect(jobs._patches()).toEqual([]);
   });
 
-  it('setHalted(true) clears activity to idle; setHalted(false) leaves activity untouched', async () => {
+  it('setHalted is a no-op after jobs.halted was removed', async () => {
     const jobs = fakeStoreJobs();
     const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
     await store.setHalted('job-1', true);
     await store.setHalted('job-1', false);
-    expect(jobs._patches()).toEqual([
-      { halted: true, activity: 'idle' },
-      { halted: false },
-    ]);
+    expect(jobs._patches()).toEqual([]);
   });
 
-  it('endTurnActivity → idle when no review is running (turn ended, nothing outlives it)', async () => {
+  it('endTurnActivity is a no-op when no review is running', async () => {
     const jobs = fakeStoreJobs();
     const store = makeBrainStore({ reviewRunning: false, jobs: jobs.repo });
     await store.endTurnActivity('job-1');
-    expect(jobs._patches()).toEqual([{ activity: 'idle' }]);
+    expect(jobs._patches()).toEqual([]);
   });
 
-  it('endTurnActivity → plan_review while a plan_review thread still runs (review outlives the turn)', async () => {
-    // The §7 crux: the turn finalizes first but a `review_plan` review is still `running`, so activity must
-    // stay plan_review (dot suppressed) — never landing idle until the review row itself leaves running.
+  it('endTurnActivity is a no-op while a plan_review thread still runs', async () => {
     const jobs = fakeStoreJobs();
     const store = makeBrainStore({ reviewRunning: true, jobs: jobs.repo });
     await store.endTurnActivity('job-1');
-    expect(jobs._patches()).toEqual([{ activity: 'plan_review' }]);
+    expect(jobs._patches()).toEqual([]);
   });
 });

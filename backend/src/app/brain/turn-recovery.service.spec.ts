@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Repository } from 'typeorm';
-import type { TranscriptMessageEntity, JobSandboxEntity } from '../persistence/entities';
+import type {
+  TranscriptMessageEntity,
+  JobSandboxEntity,
+} from '../persistence/entities';
 import type { SandboxProvider } from '../sandbox/sandbox-provider.port';
 import { TurnRecoveryService } from './turn-recovery.service';
 
@@ -224,10 +227,11 @@ describe('TurnRecoveryService', () => {
     expect(times.every((t, i) => i === 0 || t > times[i - 1])).toBe(true);
   });
 
-  it('SKIPS a thread whose transcript is the session compaction is abandoning (no summary leak)', async () => {
+  it('recovers a thread even when compacting_session_id matches the transcript session', async () => {
     const projects = seedTranscript(); // transcript sessionId = 's1'
     const { repo, saved } = makeMessages(INTERRUPTED_FIRST_TURN);
-    // compacting_session_id === 's1' → the tail is the internal compaction summary; recovery must not surface it.
+    // The compaction-continuation special case was removed; recovery treats the interrupted transcript like
+    // any other durable turn.
     const svc = new TurnRecoveryService(
       repo,
       makeSandboxRows([THREAD_ID], { [THREAD_ID]: 's1' }),
@@ -236,8 +240,8 @@ describe('TurnRecoveryService', () => {
       makeBootstrap(),
     );
 
-    expect(await svc.recoverInterruptedTurns()).toBe(0);
-    expect(saved.length).toBe(INTERRUPTED_FIRST_TURN.length); // nothing back-filled
+    expect(await svc.recoverInterruptedTurns()).toBe(1);
+    expect(saved.length).toBeGreaterThan(INTERRUPTED_FIRST_TURN.length);
   });
 
   it('still recovers when compacting_session_id is a DIFFERENT (older) session than the transcript', async () => {

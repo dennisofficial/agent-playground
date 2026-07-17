@@ -42,6 +42,7 @@ export const ATLAS_HOST_BRIDGE_TOOLS = [
   'review_plan',
   'propose_plan',
   'report_findings',
+  'propose_replan',
   'dispatch_build',
   'hold_build',
   'start_direct_build',

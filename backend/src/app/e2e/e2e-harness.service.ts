@@ -476,16 +476,16 @@ export class E2eHarness {
         if (!acted) return { name: 'feature', ok: false, steps };
       }
 
-      // Poll until the shipping re-drive opens the PR — terminal state is `done` WITH a recorded `pr_url`
+      // Poll until the shipping re-drive opens the PR — terminal state is `pr_open` WITH a recorded `pr_url`
       // (see `DriverStoreService.setPrReady`).
       const job = await this.waitForPrReady(card.jobId, 120_000);
-      const ok = !!job?.pr_url && job.status === 'done';
+      const ok = this.isPrReady(job ?? null);
       record(
         'pr-ready',
         ok,
         job
           ? `status=${job.status} pr=${job.pr_url ?? '-'}`
-          : 'job never reached pr_ready (done + pr_url)',
+          : 'job never reached pr_ready (pr_open + pr_url)',
       );
 
       // The "PR ready" message threads into the conversation too (visibility).
@@ -684,7 +684,7 @@ export class E2eHarness {
       // Give any (erroneous) dispatch a beat, then assert no event-origin job reached a build on its own.
       await delay(750);
       const autoBuilt = await this.repo(JobEntity).count({
-        where: { org_id: TEAM_ID, origin: 'event', status: 'running' },
+        where: { org_id: TEAM_ID, origin: 'event', status: 'building' },
       });
       record(
         'no-autonomous-build',
@@ -789,7 +789,7 @@ export class E2eHarness {
         repo_id: PROJECT_ID,
         origin: 'control',
         kind: 'feature',
-        status: 'running',
+        status: 'building',
         feature_branch: branch,
         current_branch: branch,
         title,
@@ -888,7 +888,7 @@ export class E2eHarness {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const row = await this.repo(JobEntity).findOne({ where: { id: jobId } });
-      if (row?.status === 'running' && row.build_path) return row;
+      if (row?.status === 'building' && row.build_path) return row;
       await delay(100);
     }
     return (

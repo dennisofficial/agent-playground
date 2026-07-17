@@ -152,10 +152,10 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   );
 
   it.each(['ship', 'both'] as const)(
-    'mode %s while awaiting_ship_review: immediately resolves the parked ship gate',
+    'mode %s while ready: immediately resolves the parked ship gate',
     async (mode) => {
       const { controller, mocks } = makeController({
-        status: 'awaiting_ship_review',
+        status: 'ready',
       });
 
       const result = await controller.setAutoApprove(
@@ -178,10 +178,10 @@ describe('WebSurfaceController — setAutoApprove endpoint', () => {
   );
 
   it.each(['plan', 'off'] as const)(
-    'mode %s while awaiting_ship_review: does NOT resolve the parked ship gate',
+    'mode %s while ready: does NOT resolve the parked ship gate',
     async (mode) => {
       const { controller, mocks } = makeController({
-        status: 'awaiting_ship_review',
+        status: 'ready',
       });
 
       const result = await controller.setAutoApprove(

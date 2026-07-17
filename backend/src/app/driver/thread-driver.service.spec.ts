@@ -87,11 +87,13 @@ interface ReviewChildRow {
   config: Record<string, unknown>;
   status: ThreadStatus;
   condition: ThreadCondition;
+  haltReason: string | null;
   reviewFindings: unknown[] | null;
 }
 
 interface StoreDriverThread extends DriverThread {
   config?: Record<string, unknown>;
+  haltReason?: string | null;
 }
 
 interface StoreState {
@@ -158,7 +160,8 @@ function makeStore(state: StoreState): {
   const threadIdForAnchor = (anchorId: string): string =>
     state.steps.find((step) => step.id === anchorId)?.threadId ?? anchorId;
   const threadGroupIdForThread = (thread: StoreDriverThread): string =>
-    (thread.config?.threadGroupId as string | undefined) ?? `thread-group-${thread.id}`;
+    (thread.config?.threadGroupId as string | undefined) ??
+    `thread-group-${thread.id}`;
   const threadGroupKindForThread = (thread: StoreDriverThread): string =>
     thread.kind === 'master_review'
       ? 'master_review'
@@ -176,7 +179,10 @@ function makeStore(state: StoreState): {
         thread.kind === input.kind,
     );
     if (existing) {
-      return { threadGroupId: threadGroupIdForThread(existing), threadId: existing.id };
+      return {
+        threadGroupId: threadGroupIdForThread(existing),
+        threadId: existing.id,
+      };
     }
     const ordinal =
       Math.max(
@@ -248,17 +254,29 @@ function makeStore(state: StoreState): {
     }
     return [{ ...parent }];
   };
+  const hasDormantHaltedExecutableThread = () =>
+    state.threads.some(
+      (thread) =>
+        thread.parentThreadId == null &&
+        ['builder', 'master_review'].includes(thread.kind) &&
+        thread.status !== 'done' &&
+        thread.haltReason != null,
+    );
   const store = {
     loadJob: vi.fn(async () => ({ ...state.job })),
     runningJobs: vi.fn(async () =>
-      state.job.status === 'building' && state.job.halt == null
+      ['building', 'master_review', 'shipping'].includes(state.job.status) &&
+      state.job.halt == null &&
+      !hasDormantHaltedExecutableThread()
         ? [{ ...state.job }]
         : [],
     ),
     setJobStatus: vi.fn(async (_id: string, status: Job['status']) => {
       state.job.status = status;
     }),
-    setFocusedThread: vi.fn(async (_id: string, _threadId: string) => undefined),
+    setFocusedThread: vi.fn(
+      async (_id: string, _threadId: string) => undefined,
+    ),
     recomputeBuildStageProgress: vi.fn(async (_id: string) => undefined),
     hasRecentSystemOperatorNotice: vi.fn(async (_id: string, text: string) => {
       return (state.systemNotices ?? []).includes(text);
@@ -274,7 +292,8 @@ function makeStore(state: StoreState): {
     }),
     // ── ship-review gate fakes ───────────────────────────────────────────────────────────────────────
     parkForShipReview: vi.fn(async (_id: string) => {
-      if (state.job.status !== 'building') return false;
+      if (!['building', 'master_review', 'amending'].includes(state.job.status))
+        return false;
       state.job.status = 'ready';
       return true;
     }),
@@ -309,7 +328,9 @@ function makeStore(state: StoreState): {
       }),
     ),
     decisionRecord: vi.fn(async () => state.record),
-    threadGroupsForJob: vi.fn(async (jobId: string) => threadGroupsForJob(jobId)),
+    threadGroupsForJob: vi.fn(async (jobId: string) =>
+      threadGroupsForJob(jobId),
+    ),
     driverThreadsForThreadGroup: vi.fn(async (threadGroupId: string) =>
       driverThreadsForThreadGroup(threadGroupId),
     ),
@@ -334,6 +355,13 @@ function makeStore(state: StoreState): {
         if (c) c.condition = condition;
       },
     ),
+    setThreadHaltReason: vi.fn(async (id: string, reason: string | null) => {
+      const s = state.threads.find((x) => x.id === id);
+      if (s) s.haltReason = reason;
+      // Child rows (review_agent / review_fix) share this setter.
+      const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+      if (c) c.haltReason = reason;
+    }),
     // Set-once persist of the thread's start HEAD; returns the authoritative (first-written) sha.
     ensureThreadStartSha: vi.fn(async (id: string, candidate: string) => {
       const s = state.threads.find((x) => x.id === id);
@@ -380,6 +408,7 @@ function makeStore(state: StoreState): {
           config: c.config,
           status: 'idle',
           condition: 'none',
+          haltReason: null,
           reviewFindings: null as unknown[] | null,
         }));
         kids.push(...created);
@@ -395,6 +424,14 @@ function makeStore(state: StoreState): {
       const c = (state.reviewChildren ?? []).find((x) => x.id === id);
       if (c) c.reviewFindings = findings;
     }),
+    appendThreadReviewFindings: vi.fn(
+      async (id: string, findings: unknown[]) => {
+        const c = (state.reviewChildren ?? []).find((x) => x.id === id);
+        if (!c) return 0;
+        c.reviewFindings = [...(c.reviewFindings ?? []), ...findings];
+        return c.reviewFindings.length;
+      },
+    ),
     // PR Review lifecycle writes — no-ops for the driver flow tests (display state only).
     startPrReview: vi.fn(async () => undefined),
     setPrReviewStatus: vi.fn(async () => undefined),
@@ -1310,7 +1347,10 @@ function assemble(
   if (opts.autoShipApprove !== false) {
     (store.parkForShipReview as ReturnType<typeof vi.fn>).mockImplementation(
       async (jobId: string) => {
-        if (state.job.status !== 'building') return false;
+        if (
+          !['building', 'master_review', 'amending'].includes(state.job.status)
+        )
+          return false;
         state.job.status = 'ready';
         // Fire the "Ship it" on a MACROtask to preserve the historical operator-after-park shape for most
         // tests. A dedicated regression below covers the tighter click-while-parking race.
@@ -1398,6 +1438,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     // in-sandbox as part of the ship turn, which ran).
     expect(state.job.featureBranch).toBe('atlas/feature-job-abcd');
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
+    expect(h.store.setJobStatus).toHaveBeenCalledWith(state.job.id, 'shipping');
     expect(state.job.status).toBe('pr_open');
   });
 
@@ -1501,6 +1542,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
         config: { lensId: 'correctness' },
         status: 'done',
         condition: 'none',
+        haltReason: null,
         reviewFindings: [],
       },
     ];
@@ -1531,11 +1573,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.job.status).toBe('pr_open');
   });
 
-  it('resumes an auto_fixing builder as finished — no re-execute, review resumes, and handoff advances', async () => {
+  it('resumes a done builder by running its review, without re-executing the builder', async () => {
     // A restart can catch a builder after it completed and while its review children are running:
     // `runReviewChildren` has flipped the builder to `auto_fixing`, but the builder's own work and
     // handoff are already durable. The build loop must resume review/advance, not re-run that builder.
-    const backend = thread('sec-be', 10, 'Backend', 'idle');
+    const backend = thread('sec-be', 10, 'Backend', 'done');
     backend.handoffOut = 'Backend handoff from completed builder';
     backend.startSha = 'sha-before-backend';
     const frontend = thread('sec-fe', 20, 'Frontend');
@@ -1557,10 +1599,6 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       .map((c) => c.stepId);
     expect(executeStepIds).not.toContain('sec-be-ph0');
     expect(executeStepIds).toContain('sec-fe-ph0');
-    expect(h.store.setThreadStatus).not.toHaveBeenCalledWith(
-      'sec-be',
-      'executing',
-    );
     expect(h.store.materializeReviewChildren).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sec-be' }),
       expect.any(Array),
@@ -1832,7 +1870,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
           const events: Array<{ kind: string; [k: string]: unknown }> = [
             { kind: 'thinking', text: 'planning the edit' },
             { kind: 'text', text: 'editing the file' },
-            { kind: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } },
+            {
+              kind: 'tool_use',
+              id: 't1',
+              name: 'Edit',
+              input: { file_path: 'a.ts' },
+            },
             { kind: 'tool_result', id: 't1', result: 'ok' },
           ];
           for (const e of events) {
@@ -1945,7 +1988,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       skillResolver: {
         resolveForTurn: async () =>
           [
-            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+            {
+              name: 'nestjs-best-practices',
+              description: 'NestJS conventions',
+            },
           ] as never,
         resolveReviewSkillsForThread: async () => [],
       },
@@ -1970,7 +2016,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
       'thread-group-sec-be',
       expect.objectContaining({
-        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
+        skills: [
+          { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
+        ],
       }),
     );
   });
@@ -2010,7 +2058,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       skillResolver: {
         resolveForTurn: async () =>
           [
-            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+            {
+              name: 'nestjs-best-practices',
+              description: 'NestJS conventions',
+            },
           ] as never,
         resolveReviewSkillsForThread: async () => [],
       },
@@ -2059,7 +2110,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       skillResolver: {
         resolveForTurn: async () =>
           [
-            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+            {
+              name: 'nestjs-best-practices',
+              description: 'NestJS conventions',
+            },
           ] as never,
         resolveReviewSkillsForThread: async () => [],
       },
@@ -2107,7 +2161,10 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       skillResolver: {
         resolveForTurn: async () =>
           [
-            { name: 'nestjs-best-practices', description: 'NestJS conventions' },
+            {
+              name: 'nestjs-best-practices',
+              description: 'NestJS conventions',
+            },
           ] as never,
         resolveReviewSkillsForThread: async () => [],
       },
@@ -2121,7 +2178,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.store.persistGroupSkillNudge).toHaveBeenCalledWith(
       'thread-group-sec-be',
       expect.objectContaining({
-        skills: [{ name: 'nestjs-best-practices', reason: 'backend NestJS work' }],
+        skills: [
+          { name: 'nestjs-best-practices', reason: 'backend NestJS work' },
+        ],
       }),
     );
     const prompt = String(
@@ -2380,7 +2439,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.shipSeeds.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('relays a clear "build failed — why" when a step errors, never dead-ends silently (issue #2)', async () => {
+  it('labels the dormant thread when a step errors and does not ship', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2398,19 +2457,14 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'failed');
+    await flushUntil(() => state.threads[0].haltReason === 'error');
 
-    expect(state.job.halt?.kind).toBe('failed');
-    expect(
-      h.posts.some(
-        (p) =>
-          p.includes('Build failed') && p.includes('engine exploded mid-step'),
-      ),
-    ).toBe(true);
+    expect(state.threads[0].haltReason).toBe('error');
+    expect(state.job.status).toBe('building');
     expect(h.opened).toHaveLength(0); // no PR opened on a failed build
   });
 
-  it('marks the thread INCOMPLETE and HALTS (no PR) when the orchestrator never calls complete_thread (ADR 0004)', async () => {
+  it('marks the thread incomplete and does not ship when the orchestrator never calls complete_thread', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2424,12 +2478,12 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'incomplete');
+    await flushUntil(() => state.threads[0].haltReason === 'incomplete');
 
-    // The STEP stays at `executing`; the halt is carried on the orthogonal condition overlay.
+    // The thread stays dormant; the explanation is carried on the thread display overlays.
     expect(state.threads[0].status).toBe('idle'); // halted, NOT silently done
     expect(state.threads[0].condition).toBe('incomplete');
-    expect(state.job.halt?.kind).toBe('incomplete'); // needs-you, recoverable — NOT done, NOT failed
+    expect(state.threads[0].haltReason).toBe('incomplete');
     expect(h.opened).toHaveLength(0); // nothing shipped
     expect(
       h.posts.some((p) => p.includes('without asserting completion')),
@@ -2475,7 +2529,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       );
 
       expect(existsSync(trail)).toBe(true);
-      expect(readFileSync(trail, 'utf8')).toContain('# Thread not done: Backend');
+      expect(readFileSync(trail, 'utf8')).toContain(
+        '# Thread not done: Backend',
+      );
 
       // Regression guard (the whole point): nothing is written into the git worktree.
       expect(existsSync(join(worktreeDir, '.atlas'))).toBe(false);
@@ -2577,7 +2633,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false); // no phantom failure relay
   });
 
-  it('an infra error retries up to MAX_HOST_RETRIES at the fixed HOST_RETRY_BACKOFF_MS, posting a durable quiet notice + fanning turn_retry each attempt', async () => {
+  it('an infra error retries up to MAX_HOST_RETRIES at the fixed HOST_RETRY_BACKOFF_MS and fans turn_retry each attempt', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2600,22 +2656,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
       calls.filter((c) => c.mode === 'execute').length,
     ).toBeGreaterThanOrEqual(MAX_HOST_RETRIES + 1);
 
-    // Each attempt posts a durable quiet `system_notice` (never the scary "Build failed" relay).
-    const retryNotices = h.sunk.filter(
-      (s) =>
-        (s.block.meta as { source?: string } | null)?.source ===
-        'system_notice',
-    );
-    expect(retryNotices).toHaveLength(MAX_HOST_RETRIES);
-    expect(retryNotices[0].block.text).toContain(
-      `auto-retry 1/${MAX_HOST_RETRIES}`,
-    );
-    expect(retryNotices[MAX_HOST_RETRIES - 1].block.text).toContain(
-      `auto-retry ${MAX_HOST_RETRIES}/${MAX_HOST_RETRIES}`,
-    );
     expect(h.posts.some((p) => p.includes('Build failed'))).toBe(false);
 
-    // Each attempt also fans a best-effort `turn_retry` indicator, attempts numbered 1..MAX_HOST_RETRIES.
+    // Each attempt fans a best-effort `turn_retry` indicator, attempts numbered 1..MAX_HOST_RETRIES.
     const retryCalls = (h.liveTurns.retry as ReturnType<typeof vi.fn>).mock
       .calls;
     expect(retryCalls).toHaveLength(MAX_HOST_RETRIES);
@@ -2641,8 +2684,8 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     const h = assemble(state);
     // Start as leader so the drive's leadership fence lets the turn RUN; SIGTERM then arrives mid-turn (the
     // mock flips `draining` before throwing), so the in-flight turn's host-side await is cut off → it throws
-    // like a generic abort. Without the guard this would flip the job `failed` and boot-resume would never
-    // re-drive it (`runningJobs()` only re-drives `status:'running'`).
+    // like a generic abort. Without the guard this would leave a dormant error label and boot-resume would
+    // never re-drive it (`runningJobs()` only re-drives unhalted `status:'building'` jobs).
     (h.turn.runTurn as ReturnType<typeof vi.fn>).mockImplementation(
       async () => {
         h.electionState.draining = true; // SIGTERM lands while the turn is in flight
@@ -2700,7 +2743,7 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     expect(state.job.status).toBe('building');
   });
 
-  it('aborts + relays a step that exceeds PHASE_TIMEOUT_MS (issue #3 circuit breaker)', async () => {
+  it('aborts and labels a step that exceeds PHASE_TIMEOUT_MS', async () => {
     const state: StoreState = {
       job: makeJob(),
       record: makeRecord(),
@@ -2717,14 +2760,11 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'failed');
+    await flushUntil(() => state.threads[0].haltReason === 'error');
 
-    expect(state.job.halt?.kind).toBe('failed');
-    expect(
-      h.posts.some(
-        (p) => p.includes('Build failed') && p.includes('PHASE_TIMEOUT_MS'),
-      ),
-    ).toBe(true);
+    expect(state.threads[0].haltReason).toBe('error');
+    expect(state.job.status).toBe('building');
+    expect(h.opened).toHaveLength(0);
   });
 
   it('relays off-spec DEVIATION lines a step flags in its report (issue #7)', async () => {
@@ -2836,12 +2876,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+    await flushUntil(() => state.threads[0].haltReason === 'session_limit');
 
-    expect(state.job.halt?.kind).toBe('session_limit');
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
+    expect(state.threads[0].haltReason).toBe('session_limit');
     const resumeCall = (
       h.store.setSessionResume as ReturnType<typeof vi.fn>
     ).mock.calls.find((args) => args[0] === state.job.id);
@@ -2879,12 +2916,9 @@ describe('ThreadDriver — the legible thread/step pipeline', () => {
     );
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'session_limit');
+    await flushUntil(() => state.threads[0].haltReason === 'session_limit');
 
-    expect(state.job.halt?.kind).toBe('session_limit');
-    expect(
-      h.posts.filter((p) => p.includes("You've hit your session limit")),
-    ).toHaveLength(1);
+    expect(state.threads[0].haltReason).toBe('session_limit');
     const resumeCall = (
       h.store.setSessionResume as ReturnType<typeof vi.fn>
     ).mock.calls.find((args) => args[0] === state.job.id);
@@ -2989,15 +3023,7 @@ describe('ThreadDriver — reviewAgentsForThread selection + semaphore concurren
       job: makeJob(),
       record: makeRecord(),
       threads: [
-        thread(
-          'sec-data',
-          10,
-          'Data migration',
-          'idle',
-          false,
-          'none',
-          'data',
-        ),
+        thread('sec-data', 10, 'Data migration', 'idle', false, 'none', 'data'),
       ],
       steps: [],
       route: { channel: 'C1', threadTs: 't1' },
@@ -3452,7 +3478,11 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     const h = assemble(state);
     // A stale `retry_thread` (the brain acting on an old view) must not clear the record + flip the finished
     // thread back to `executing` — that would erase the `done` evidence and re-run a completed thread.
-    const r = await h.driver.redriveThread(state.job.id, 'sec-be', 'stale retry');
+    const r = await h.driver.redriveThread(
+      state.job.id,
+      'sec-be',
+      'stale retry',
+    );
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/already complete/i);
     // Untouched: status still done, no terminal-record clear, no `executing` flip, no budget spent, no drive.
@@ -3474,7 +3504,6 @@ describe('ThreadDriver — not-done handling, operator redrive, and complete_thr
     expect(md).toContain('atlas-tx show sess-xyz');
   });
 });
-
 
 // ── async helpers ────────────────────────────────────────────────────────────────────────────────
 
@@ -3812,21 +3841,20 @@ describe('ThreadDriver — 401 auth recovery', () => {
     };
   }
 
-  it('a mid-build 401 PAUSES the job (not fails); a ping resumes it to ONE PR', async () => {
+  it('a mid-build 401 leaves the thread dormant; a ping resumes it to ONE PR', async () => {
     const state = freshState();
     const h = assemble(state, { turn: flakyAuthTurn() });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+    await flushUntil(() => state.threads[0].haltReason === 'error');
 
-    expect(state.job.halt?.kind).toBe('blocked_credentials'); // halted, NOT 'failed'
+    expect(state.threads[0].haltReason).toBe('error');
     expect(state.job.prUrl).toBeNull();
-    expect(h.posts.some((p) => p.toLowerCase().includes('paused'))).toBe(true);
 
-    // Boot reconciliation must NOT auto-retry a credential-halted job (it would just 401 again).
+    // Boot reconciliation must NOT auto-retry a dormant credential-stopped thread (it would just 401 again).
     await h.driver.resume();
     await flushUntil(() => false, 5);
-    expect(state.job.halt?.kind).toBe('blocked_credentials');
+    expect(state.threads[0].haltReason).toBe('error');
 
     // PING → resume the SAME session → drive to completion (one PR).
     await h.driver.resumePaused(state.job.id);
@@ -3857,11 +3885,11 @@ describe('ThreadDriver — 401 auth recovery', () => {
 
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
-      await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+      await flushUntil(() => markNeedsReauth.mock.calls.length > 0);
     });
 
     // Surfaced only once the retry budget is spent — flips the credential to needs_reauth.
-    expect(state.job.halt?.kind).toBe('blocked_credentials');
+    expect(state.threads[0].haltReason).toBe('error');
     expect(markNeedsReauth).toHaveBeenCalledTimes(1);
     expect(markNeedsReauth).toHaveBeenCalledWith(
       'T1',
@@ -3875,14 +3903,7 @@ describe('ThreadDriver — 401 auth recovery', () => {
       MAX_HOST_RETRIES + 1,
     );
 
-    // No paused banner during the retry window — only the durable quiet notice + live indicator fan, once
-    // per retry attempt.
-    const retryNotices = h.sunk.filter(
-      (s) =>
-        (s.block.meta as { source?: string } | null)?.source ===
-        'system_notice',
-    );
-    expect(retryNotices).toHaveLength(MAX_HOST_RETRIES);
+    // No paused banner during the retry window — only the live indicator fan, once per retry attempt.
     expect(
       (h.liveTurns.retry as ReturnType<typeof vi.fn>).mock.calls,
     ).toHaveLength(MAX_HOST_RETRIES);
@@ -3919,11 +3940,19 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     await withInstantHostRetryBackoff(async () => {
       await h.driver.dispatch(state.job);
       await flushUntil(
-        () => state.job.halt?.kind === 'codex_review_unavailable',
+        () =>
+          (h.store.setSessionResume as ReturnType<typeof vi.fn>).mock.calls
+            .length > 0,
       );
     });
 
-    expect(state.job.halt?.kind).toBe('codex_review_unavailable');
+    expect(state.job.status).toBe('master_review');
+    expect(state.threads[0].haltReason).toBe('error');
+    expect(h.store.setSessionResume).toHaveBeenCalledWith(
+      state.job.id,
+      expect.any(String),
+      expect.objectContaining({ lane: 'build' }),
+    );
     expect(state.threads[0].status).not.toBe('done');
   });
 
@@ -3950,9 +3979,9 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     const h = assemble(state, { turn });
 
     await h.driver.dispatch(state.job);
-    await flushUntil(() => state.job.halt?.kind === 'blocked_credentials');
+    await flushUntil(() => state.threads[0].haltReason === 'error');
 
-    expect(state.job.halt?.kind).toBe('blocked_credentials');
+    expect(state.threads[0].haltReason).toBe('error');
   });
 
   it('surfaces a not-done master_review as advisory on the ship-review card', async () => {
@@ -3964,6 +3993,10 @@ describe('ThreadDriver — master_review Codex-outage hold', () => {
     await flushUntil(() => state.job.status === 'ready');
 
     expect(state.job.status).toBe('ready');
+    expect(h.store.setJobStatus).toHaveBeenCalledWith(
+      state.job.id,
+      'master_review',
+    );
     expect(state.threads[0].condition).toBe('incomplete');
     const card = (
       h.store.parkForShipReview as unknown as ReturnType<typeof vi.fn>
@@ -4113,6 +4146,63 @@ describe('ThreadDriver — master-review bridged task list', () => {
     }
   });
 
+  it('exposes report_findings only to review_agent threads and appends findings incrementally', async () => {
+    const state = baseState();
+    state.reviewChildren = [
+      {
+        id: 'sec-be-review-correctness',
+        parentId: 'sec-be',
+        kind: 'review_agent',
+        brief: 'Review correctness',
+        ordinal: 10,
+        config: { lensId: 'correctness' },
+        status: 'idle',
+        condition: 'none',
+        haltReason: null,
+        reviewFindings: null,
+      },
+    ];
+    const h = assemble(state);
+    const reviewThread = {
+      ...thread('sec-be-review-correctness', 10, 'Review correctness'),
+      kind: 'review_agent',
+      parentThreadId: 'sec-be',
+    } as DriverThread;
+
+    const tools = bridgeFor(h, reviewThread).tools;
+    expect(typeof tools.report_findings).toBe('function');
+
+    await expect(
+      tools.report_findings({
+        findings: [
+          {
+            lens: 'correctness',
+            severity: 'high',
+            file: 'backend/src/app/driver/thread-driver.service.ts',
+            title: 'Incorrect resume',
+            detail: 'Dormant halted threads must not be auto-resumed.',
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      recorded: 1,
+      total: 1,
+    });
+    expect(state.reviewChildren[0].reviewFindings).toEqual([
+      {
+        lens: 'correctness',
+        severity: 'high',
+        file: 'backend/src/app/driver/thread-driver.service.ts',
+        title: 'Incorrect resume',
+        detail: 'Dormant halted threads must not be auto-resumed.',
+      },
+    ]);
+
+    const builderTools = bridgeFor(h, thread('sec-be', 10, 'Backend')).tools;
+    expect(builderTools.report_findings).toBeUndefined();
+  });
+
   it('task_create writes the row through the sink and returns the durable id string to the model', async () => {
     const h = assemble(baseState());
     const tools = bridgeFor(
@@ -4183,7 +4273,8 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         if (!current) return null;
         const rootId = current.parentThreadId ?? current.id;
         const threadGroupId =
-          (current.config?.threadGroupId as string | undefined) ?? `thread-group-${rootId}`;
+          (current.config?.threadGroupId as string | undefined) ??
+          `thread-group-${rootId}`;
         const siblings = h.state.threads
           .filter(
             (thread) =>
@@ -4203,7 +4294,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
         current.config = {
           ...(current.config ?? {}),
           threadGroupId,
-          threadGroupKind: 'build',
+          threadGroupKind: 'section',
         };
         h.state.threads.push({
           ...current,
@@ -4219,7 +4310,7 @@ describe('ThreadDriver — Leg rotation (context-rot mitigation)', () => {
           config: {
             ...(current.config ?? {}),
             threadGroupId,
-            threadGroupKind: 'build',
+            threadGroupKind: 'section',
             pendingLegSeed: inp.seed,
             ...(inp.rotationCapped ? { rotationCapped: true } : {}),
           },

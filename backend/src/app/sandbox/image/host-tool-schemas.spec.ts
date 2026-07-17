@@ -62,6 +62,17 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
     handoff: 'Finished the migration; next leg wires the API.',
   },
   record_deviation: { note: 'Renamed a var for clarity.' },
+  report_findings: {
+    findings: [
+      {
+        lens: 'correctness',
+        severity: 'high',
+        file: 'src/app.ts',
+        title: 'Missing error handling',
+        detail: 'The endpoint drops database errors.',
+      },
+    ],
+  },
   task_create: {
     subject: 'Wire the endpoint',
     description: 'Add the route and controller.',
@@ -117,6 +128,7 @@ const PAYLOADS: Record<string, Record<string, unknown>> = {
   withdraw_question: { questionId: 'q1', reason: 'No longer relevant.' },
   withdraw_plan: { reason: 'Scope changed.' },
   withdraw_ship: { reason: 'More changes needed.' },
+  propose_replan: { reason: 'Main changed enough to revisit the plan.' },
   set_job_kind: { kind: 'feature' },
   create_decision: {
     decisionClass: 'data_model',

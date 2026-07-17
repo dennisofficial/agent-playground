@@ -1196,9 +1196,9 @@ export class ThreadDriver implements JobDispatcher {
    */
   private async runJob(jobId: string): Promise<void> {
     const job = await this.store.loadJob(jobId);
-    if (job.status !== 'building') {
+    if (!['building', 'master_review', 'shipping'].includes(job.status)) {
       this.logger.warn(
-        `job=${jobId} not running (status=${job.status}) — not driving`,
+        `job=${jobId} not drivable (status=${job.status}) — not driving`,
       );
       return;
     }
@@ -1236,7 +1236,9 @@ export class ThreadDriver implements JobDispatcher {
     // planning/plan_review are render-only (their runtime lives in the brain), and post_build/ci don't
     // exist yet. Route off the registry, never a hardcoded kind list.
     const executableThreadGroups = currentThreadGroups.filter((s) =>
-      threadGroupKindSpec(s.kind).roles.some((r) => isDriverExecutableKind(r.role)),
+      threadGroupKindSpec(s.kind).roles.some((r) =>
+        isDriverExecutableKind(r.role),
+      ),
     );
     // NON-DRIVER GUARD: a job with NO executable thread groups is brain-owned — a pure planning/chat job
     // (only render-only thread groups). The driver must not fall through to the ship gate and spuriously
@@ -1304,6 +1306,12 @@ export class ThreadDriver implements JobDispatcher {
       const isMasterReviewThreadGroup = spec.roles.some(
         (r) => r.role === 'master_review',
       );
+      await this.store
+        .setJobStatus(
+          jobId,
+          isMasterReviewThreadGroup ? 'master_review' : 'building',
+        )
+        .catch(() => undefined);
       const res: ThreadGroupDriveResult = isMasterReviewThreadGroup
         ? await this.driveMasterReviewThreadGroup(
             job,
@@ -1364,6 +1372,7 @@ export class ThreadDriver implements JobDispatcher {
         if (!autoApproved) return;
       }
     }
+    await this.store.setJobStatus(job.id, 'shipping').catch(() => undefined);
     await this.finalizeBuild(job, record, route, repo, sandbox);
   }
 
@@ -1436,7 +1445,10 @@ export class ThreadDriver implements JobDispatcher {
     // GROUP's `type` (d7). A DIRECT build (d6) runs a real builder Section but with reviews OFF: it uses the
     // same `section` kind (`hasReview:true`), so the review skip is gated on the JOB's `build_path`, not the
     // kind — direct builds have no review children and no `master_review` group.
-    if (job.buildPath !== 'direct' && threadGroupKindSpec(threadGroup.kind).hasReview) {
+    if (
+      job.buildPath !== 'direct' &&
+      threadGroupKindSpec(threadGroup.kind).hasReview
+    ) {
       const builders = (
         await this.store.driverThreadsForThreadGroup(threadGroup.id)
       ).filter((t) => t.kind === 'builder');
@@ -1495,7 +1507,9 @@ export class ThreadDriver implements JobDispatcher {
     threadGroup: ThreadGroupEntity,
     incomingHandoff: string | null,
   ): Promise<ThreadGroupDriveResult> {
-    const threads = await this.store.driverThreadsForThreadGroup(threadGroup.id);
+    const threads = await this.store.driverThreadsForThreadGroup(
+      threadGroup.id,
+    );
     const mr = threads.find((t) => t.kind === 'master_review');
     if (!mr) return { kind: 'advanced', handoff: incomingHandoff };
     if (mr.status === 'done') {
@@ -1890,9 +1904,7 @@ export class ThreadDriver implements JobDispatcher {
     // Advance the routing pointer (d4): this thread is now the active pipeline head — the first builder Leg
     // after plan approval, a rotated Leg, or the master_review thread. Write-gated in the store, so a resume
     // of the same thread is a no-op.
-    await this.store
-      .setFocusedThread(job.id, thread.id)
-      .catch(() => undefined);
+    await this.store.setFocusedThread(job.id, thread.id).catch(() => undefined);
     this.logger.log(`thread ${thread.ordinal} "${thread.brief}" — planning`);
     await this.post(
       route,
@@ -2071,7 +2083,6 @@ export class ThreadDriver implements JobDispatcher {
     return { outcome: 'done', handoff: handoffOut };
   }
 
-
   /**
    * Drive a builder's post-build review as CHILD threads (everything is a typed thread). Materialize the
    * builder's `review_lens` × N + `post_review` child rows (idempotent across resume / a concurrent drive),
@@ -2122,9 +2133,7 @@ export class ThreadDriver implements JobDispatcher {
     const spec = threadKindSpec(thread.kind);
     if (!spec.children) return;
     // The review window: show the builder `auto_fixing` (the unchanged web affordance) while children run.
-    await this.store
-      .setThreadStatus(thread.id, 'idle')
-      .catch(() => undefined);
+    await this.store.setThreadStatus(thread.id, 'idle').catch(() => undefined);
 
     const channel = route.channel ?? job.repoId;
 
@@ -2307,9 +2316,7 @@ export class ThreadDriver implements JobDispatcher {
         .catch(() => undefined);
       return;
     }
-    await this.store
-      .setThreadStatus(child.id, 'idle')
-      .catch(() => undefined);
+    await this.store.setThreadStatus(child.id, 'idle').catch(() => undefined);
     // Advance the routing pointer (d4): this review_agent lens child is now the active pipeline head.
     if (ctx.jobId)
       await this.store
@@ -2364,9 +2371,7 @@ export class ThreadDriver implements JobDispatcher {
     thread: DriverThread,
     child: ReviewChildThread,
   ): Promise<void> {
-    await this.store
-      .setThreadStatus(child.id, 'idle')
-      .catch(() => undefined);
+    await this.store.setThreadStatus(child.id, 'idle').catch(() => undefined);
     // Advance the routing pointer (d4): this review_fix child is now the active pipeline head.
     if (ctx.jobId)
       await this.store
@@ -2546,7 +2551,9 @@ export class ThreadDriver implements JobDispatcher {
         // leftovers via `dropOpenThreadTasks` (see runThread). The native task-fold id reconciliation is
         // unreliable and being retired for durable task_* tools, so completion must not hinge on it.
         const openTasks = (
-          await this.store.getThreadTasks(thread.id).catch(() => [] as TaskItem[])
+          await this.store
+            .getThreadTasks(thread.id)
+            .catch(() => [] as TaskItem[])
         ).filter((t) => t.status === 'pending' || t.status === 'in_progress');
         const taskAdvisory = openTasks.length
           ? renderOpenTasksAdvisory(openTasks)
@@ -2603,7 +2610,9 @@ export class ThreadDriver implements JobDispatcher {
         // (`dropOpenThreadTasks`); surface the advisory note about them, but never let it block the latch.
         terminated = 'done';
         await this.store.recordThreadTermination(thread.id, candidate);
-        return taskAdvisory ? { ok: true, warning: taskAdvisory } : { ok: true };
+        return taskAdvisory
+          ? { ok: true, warning: taskAdvisory }
+          : { ok: true };
       },
       request_operator_input: async (args) => {
         const question = String(args['question'] ?? '').trim();
@@ -2805,7 +2814,8 @@ export class ThreadDriver implements JobDispatcher {
     threadId: string,
     reason: ThreadHaltReason | null,
   ): Promise<void> {
-    if (this.sessionRunner) return this.sessionRunner.markHalt(threadId, reason);
+    if (this.sessionRunner)
+      return this.sessionRunner.markHalt(threadId, reason);
     // Fallback for the direct-construction unit tests (no injected runner) — byte-identical inline write.
     try {
       await this.store.setThreadHaltReason(threadId, reason);
@@ -4256,7 +4266,10 @@ export class ThreadDriver implements JobDispatcher {
 
       const picked = await this.skillNudge.select({
         context,
-        skills: resolved.map(({ name, description }) => ({ name, description })),
+        skills: resolved.map(({ name, description }) => ({
+          name,
+          description,
+        })),
         orgId: job.orgId,
       });
       await this.store.persistGroupSkillNudge(groupId, {

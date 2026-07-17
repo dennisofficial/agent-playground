@@ -5,10 +5,8 @@ import type { JobEntity, ThreadEntity } from '../persistence/entities';
 import type { JobDependencyService } from '../job-deps';
 
 /**
- * `BrainStoreService.endTurnActivity` — the turn-tail activity settle. Mirrors the mocking pattern in
- * `brain-store.build-not-started.spec.ts`'s `makeStore` (bare-bones `jobs`/`threads` repo stubs, everything
- * else a `never`-cast stub since `endTurnActivity` only reads `this.threads` (a `plan_review` thread's
- * `config.status`, folded off the retired `codex_reviews` row per d7) + `this.jobs`).
+ * `BrainStoreService.endTurnActivity` — retained as a compatibility no-op after the job activity/halt
+ * columns were removed.
  */
 
 function fakeJobsRepo() {
@@ -53,7 +51,7 @@ function makeStore(opts: {
 }
 
 describe('BrainStoreService.endTurnActivity', () => {
-  it('settles to idle when no review is running and the job has no retry park', async () => {
+  it('does not write the removed activity column when no review is running', async () => {
     const jobs = fakeJobsRepo();
     jobs.findOne.mockResolvedValue({ id: 'job-1', session_resume: null });
     const threads = fakeThreadsRepo(false);
@@ -61,28 +59,21 @@ describe('BrainStoreService.endTurnActivity', () => {
 
     await store.endTurnActivity('job-1');
 
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { activity: 'idle' },
-    );
+    expect(jobs.update).not.toHaveBeenCalled();
   });
 
-  it('settles to plan_review when a review is running — the existing carve-out, regardless of session_resume', async () => {
+  it('does not write the removed activity column when a review is running', async () => {
     const jobs = fakeJobsRepo();
     const threads = fakeThreadsRepo(true);
     const store = makeStore({ jobs, threads });
 
     await store.endTurnActivity('job-1');
 
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { activity: 'plan_review' },
-    );
-    // A running review short-circuits the retry-park read entirely (reviewing ? null : jobs.findOne(...)).
     expect(jobs.findOne).not.toHaveBeenCalled();
+    expect(jobs.update).not.toHaveBeenCalled();
   });
 
-  it('settles to retrying when the job is parked on a host-retry clock (kind:"retry") and no review is running', async () => {
+  it('does not write retrying when the job is parked on a host-retry clock', async () => {
     const jobs = fakeJobsRepo();
     jobs.findOne.mockResolvedValue({
       id: 'job-1',
@@ -99,13 +90,10 @@ describe('BrainStoreService.endTurnActivity', () => {
 
     await store.endTurnActivity('job-1');
 
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { activity: 'retrying' },
-    );
+    expect(jobs.update).not.toHaveBeenCalled();
   });
 
-  it('settles to idle (not retrying) when session_resume is a session_limit park, not a retry park', async () => {
+  it('does not write idle when session_resume is a session_limit park', async () => {
     const jobs = fakeJobsRepo();
     jobs.findOne.mockResolvedValue({
       id: 'job-1',
@@ -122,9 +110,6 @@ describe('BrainStoreService.endTurnActivity', () => {
 
     await store.endTurnActivity('job-1');
 
-    expect(jobs.update).toHaveBeenCalledWith(
-      { id: 'job-1' },
-      { activity: 'idle' },
-    );
+    expect(jobs.update).not.toHaveBeenCalled();
   });
 });

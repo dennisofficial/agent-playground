@@ -35,6 +35,7 @@ export const BRIDGE_TOOL_LABELS: Record<AtlasHostBridgeTool, string> = {
   review_plan: "Codex review",
   propose_plan: "Propose plan",
   report_findings: "Report findings",
+  propose_replan: "Propose re-plan",
   dispatch_build: "Dispatch build",
   hold_build: "Hold build",
   start_direct_build: "Direct build",

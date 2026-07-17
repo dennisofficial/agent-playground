@@ -1081,74 +1081,22 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     expect(mockApprovals.request).not.toHaveBeenCalled();
   });
 
-  it('(c) finalize_build: an APPROVED (running) direct build ships (Atlas opens the PR in-sandbox)', async () => {
-    // Regression: finalize_build previously resolved the job via openJobOnThread (planning-only), so once
-    // approval flipped the job to 'running' the gate ALWAYS returned "No open job — nothing to finalize"
-    // and the PR was never opened. It must now load the running job by id and ship it.
+  it('(c) finalize_build: refuses because direct builds now ship through the driver', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: FAKE_JOB_ID,
-      status: 'running',
-      title: 'Fix the pagination cursor',
-      repoId: PROJECT_ID,
-      orgId: TEAM_ID,
-    });
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: 'sbx-1',
-      branch: 'feature/abc12345',
-    });
-    (
-      mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>
-    ).mockResolvedValue({
-      overview: 'Fix off-by-one',
-      decisions: [],
-    });
-    (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
-      owner: 'o',
-      repo: 'r',
-      defaultBranch: 'main',
-      token: 't',
-    });
-    // Mid-turn: the host gate passes; finalize_build hands the open-PR instructions back so the brain opens
-    // the PR inline in THIS turn (no separate ship session). The reconciler latches the url + flips done.
-    (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-    });
 
     const result = await tools['finalize_build']({});
 
-    expect(mockShip.preShip).toHaveBeenCalledOnce();
-    // The old planning-only lookup must NOT gate this path anymore.
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toContain(
+      'direct builds run as real builder Sections',
+    );
+    expect(mockShip.preShip).not.toHaveBeenCalled();
+    expect(mockLifecycle.findSandbox).not.toHaveBeenCalled();
     expect(mockStore.openJobOnThread).not.toHaveBeenCalled();
-    // The tool returns the open-PR instructions for the brain to act on in-turn (host no longer opens it).
-    expect(result).toMatchObject({ ok: true, jobId: FAKE_JOB_ID });
-    expect((result as { message: string }).message).toContain('gh pr create');
   });
 
-  it('(c) finalize_build: a leak-scan block returns a hard failure (brain must clean the branch)', async () => {
+  it('(c) finalize_build: does not run leak-scan/pre-ship work', async () => {
     const tools = manager.buildTools(fakeStimulus);
-    (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: FAKE_JOB_ID,
-      status: 'running',
-      title: 'Fix the pagination cursor',
-      repoId: PROJECT_ID,
-      orgId: TEAM_ID,
-    });
-    (mockLifecycle.findSandbox as ReturnType<typeof vi.fn>).mockResolvedValue({
-      id: 'sbx-1',
-    });
-    (
-      mockDriverStore.getDecisionRecord as ReturnType<typeof vi.fn>
-    ).mockResolvedValue({
-      overview: 'x',
-      decisions: [],
-    });
-    (mockRepos.resolve as ReturnType<typeof vi.fn>).mockResolvedValue({
-      owner: 'o',
-      repo: 'r',
-      defaultBranch: 'main',
-      token: 't',
-    });
     (mockShip.preShip as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: false,
       reason: 'leak-scan',
@@ -1157,12 +1105,11 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
 
     const result = await tools['finalize_build']({});
 
-    expect(mockShip.preShip).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ ok: false, jobId: FAKE_JOB_ID });
-    expect((result as { reason: string }).reason).toContain('.env.keys');
+    expect(result).toMatchObject({ ok: false });
+    expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
-  it('(c) finalize_build: refuses a non-running job (no ship)', async () => {
+  it('(c) finalize_build: refusal is independent of current job status', async () => {
     const tools = manager.buildTools(fakeStimulus);
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
@@ -1174,7 +1121,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     const result = await tools['finalize_build']({});
 
     expect(result).toMatchObject({ ok: false });
-    expect((result as { reason: string }).reason).toContain("'planning'");
+    expect((result as { reason: string }).reason).toContain(
+      'finalize_build is no longer available',
+    );
     expect(mockShip.preShip).not.toHaveBeenCalled();
   });
 
@@ -1527,12 +1476,14 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   });
 
   // Drift guard for the shared backend↔web contract (`ATLAS_HOST_BRIDGE_TOOLS` in @workspace/shared).
-  // The host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile server's tools,
-  // unioned across every session kind. This asserts the contract equals what the backend actually
-  // registers — so adding/renaming/removing a host tool fails CI unless the contract (and, being an
-  // exhaustive Record, the web label map) is updated in lockstep.
+  // AgentSessionManager's host-bridge tool set is `Object.keys(buildTools())` MINUS the workspace-profile
+  // server's tools, unioned across every session kind. Driver-owned tools are checked in the driver specs.
+  // This asserts the manager-owned contract matches what the backend actually registers — so
+  // adding/renaming/removing a host tool fails CI unless the contract (and, being an exhaustive Record, the
+  // web label map) is updated in lockstep.
   it('ATLAS_HOST_BRIDGE_TOOLS matches the host-bridge tools registered across all session kinds', () => {
     const profile = new Set<string>(WORKSPACE_PROFILE_TOOL_NAMES);
+    const driverOwned = new Set<string>(['report_findings']);
     const registered = new Set<string>();
     for (const kind of [undefined, 'onboarding', 'review'] as const) {
       for (const role of [undefined, 'post_build', 'ship'] as const) {
@@ -1555,6 +1506,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
     }
     // …and every contract entry is really registered (no stale name like the old `log_decision`).
     for (const name of contract) {
+      if (driverOwned.has(name)) continue;
       expect(
         registered.has(name),
         `ATLAS_HOST_BRIDGE_TOOLS lists "${name}" but no kind registers it`,
@@ -2509,9 +2461,9 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
         decisionRecordId: FAKE_RECORD_ID,
       }),
     );
-    expect(mockDispatcher.dispatch as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(
-      directJob,
-    );
+    expect(
+      mockDispatcher.dispatch as ReturnType<typeof vi.fn>,
+    ).toHaveBeenCalledWith(directJob);
     // The durable start marker is stamped BEFORE the Section is appended (closes the pre-start base-check
     // window the instant the build begins).
     const markOrder = (
@@ -3138,7 +3090,7 @@ describe('R3 gate: AgentSessionManager.buildTools() — submit_plan (offline, fa
   it('(d6) prepareRepropose refuses a job already past the approval gate, without touching withdrawPlan', async () => {
     (mockStore.loadJob as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: FAKE_JOB_ID,
-      status: 'running',
+      status: 'building',
     });
 
     const result = await (
@@ -3561,8 +3513,18 @@ describe('AgentSessionManager.handleChatTurn — provisioning + live streaming/p
       { kind: 'session', sessionId: 'sess-1' },
       { kind: 'thinking', text: 'reasoning…' },
       { kind: 'text', text: 'Hello' },
-      { kind: 'tool_use', id: 'tu1', name: 'Read', input: { path: 'README.md' } },
-      { kind: 'tool_result', id: 'tu1', result: 'file contents', isError: false },
+      {
+        kind: 'tool_use',
+        id: 'tu1',
+        name: 'Read',
+        input: { path: 'README.md' },
+      },
+      {
+        kind: 'tool_result',
+        id: 'tu1',
+        result: 'file contents',
+        isError: false,
+      },
       { kind: 'text', text: 'Done.' },
       { kind: 'result', text: 'Done.' },
     ];
@@ -5185,21 +5147,16 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
       }
     ).latchDirectBuildAtTurnEnd(s);
 
-  it('flag set + running + owning feature_branch → latches the PR on the LIVE branch', async () => {
+  it('flag set + building + owning feature_branch no longer latches a PR inline', async () => {
     const { manager, ship } = makeManager();
     pending(manager).set(JOB_ID, true);
 
     await runLatch(manager, stimulus);
 
-    // latchPr ran against the LIVE branch (current_branch overrides the host-named feature branch).
-    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
-    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
-    expect((sandboxArg as { branch: string }).branch).toBe('atlas/live');
-    // The flag is CONSUMED (a second turn-end must not re-latch).
-    expect(pending(manager).has(JOB_ID)).toBe(false);
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
   });
 
-  it('falls back to the host feature branch when current_branch is null', async () => {
+  it('does not fall back to the host feature branch when current_branch is null', async () => {
     const { manager, ship } = makeManager({
       loadJob: vi
         .fn()
@@ -5209,8 +5166,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
 
     await runLatch(manager, stimulus);
 
-    const [, , sandboxArg] = mock(ship.latchPr).mock.calls[0];
-    expect((sandboxArg as { branch: string }).branch).toBe('atlas/feature');
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
   });
 
   it('flag NOT set → no latch (a normal chat turn ends untouched)', async () => {
@@ -5221,7 +5177,7 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
     expect(mock(ship.latchPr)).not.toHaveBeenCalled();
   });
 
-  it('latch MISS (PR not indexed yet) → job left running for the reconciler backstop', async () => {
+  it('latch miss path is inert because direct build ships through the driver', async () => {
     const { manager, ship } = makeManager({
       latchPr: vi.fn().mockResolvedValue(undefined),
     });
@@ -5229,10 +5185,10 @@ describe('AgentSessionManager — direct-build turn-end latch (decision d3)', ()
 
     await runLatch(manager, stimulus);
 
-    expect(mock(ship.latchPr)).toHaveBeenCalledOnce();
+    expect(mock(ship.latchPr)).not.toHaveBeenCalled();
   });
 
-  it('does NOT latch a non-running job (mirrors the finalize_build refusal gate)', async () => {
+  it('does NOT latch a non-building job', async () => {
     const { manager, ship } = makeManager({
       loadJob: vi.fn().mockResolvedValue({ ...runningJob, status: 'done' }),
     });
