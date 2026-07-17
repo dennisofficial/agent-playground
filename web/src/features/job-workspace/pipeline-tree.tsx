@@ -15,7 +15,6 @@ import type {
   TaskItem,
   JobStatus,
   ThreadStatus,
-  ThreadCondition,
 } from "@/lib/api/types";
 
 /**
@@ -53,41 +52,19 @@ export function Divider({
 
 // ── status helpers ───────────────────────────────────────────────────────────────────────────────
 
-/** The halt thread for a failed job: the furthest in-flight (non-done, non-pending) thread, else the
- *  last non-done one. Exported so the navigator's halt banner derives the same index. */
-export function haltThreadIdx(
-  threads: { status: ThreadStatus; condition: ThreadCondition }[],
-): number {
-  // A halted/paused/failed lane carries a non-none condition — that's the row that owns the job halt.
-  for (let i = threads.length - 1; i >= 0; i -= 1) {
-    if (threads[i].condition !== "none") return i;
-  }
-  // Fallbacks (no lane flagged a condition): the furthest in-flight, else the last non-done step.
-  for (let i = threads.length - 1; i >= 0; i -= 1) {
-    const st = threads[i].status;
-    if (st !== "done" && st !== "pending") return i;
-  }
-  for (let i = threads.length - 1; i >= 0; i -= 1) {
-    if (threads[i].status !== "done") return i;
-  }
-  return -1;
-}
-
-/** The design's thread states — every wire `ThreadStatus` folds onto one of these. `blocked` is a RESTING
- *  state (the thread halted awaiting the operator), visually distinct from `in_progress` (actively running)
- *  so a thread parked on `block_thread`/a question doesn't masquerade as a live turn. */
-type LaneState = "draft" | "in_progress" | "blocked" | "done" | "failed";
+/** The design's thread states — a thread's `idle | done` status + its display-only `haltReason` fold onto
+ *  one of these. `failed` is a thread whose last turn ended abnormally (a non-null `haltReason`). */
+type LaneState = "draft" | "in_progress" | "done" | "failed";
 
 function laneState(
-  s: ThreadStatus,
-  condition: ThreadCondition,
+  status: ThreadStatus,
+  haltReason: string | null,
   drafted: boolean,
 ): LaneState {
-  if (drafted || s === "pending") return "draft";
-  if (condition === "failed" || condition === "incomplete") return "failed"; // terminal halts (nothing shipped)
-  if (condition === "paused") return "blocked"; // halted, waiting on the operator — NOT a running turn
-  if (s === "done") return "done";
-  return "in_progress"; // planning / reviewing / executing / auto_fixing
+  if (status === "done") return "done";
+  if (haltReason) return "failed"; // the last turn ended abnormally (session_limit / error / …)
+  if (drafted) return "draft"; // pre-approval / not yet reached — nothing has run
+  return "in_progress"; // idle but reached: the currently-active thread
 }
 
 /** The open accordion's state-colored left rail + soft wash (handoff §State colors). */
@@ -112,11 +89,6 @@ function railStyle(
       return {
         borderLeftColor: "var(--red)",
         background: "color-mix(in srgb, var(--red) 5%, transparent)",
-      };
-    case "blocked":
-      return {
-        borderLeftColor: "var(--slate)",
-        background: "color-mix(in srgb, var(--slate) 6%, transparent)",
       };
     default:
       return {
@@ -226,29 +198,16 @@ function DashedRing({
 }
 
 /** The 13px status glyph slot on a thread header row. */
-function ThreadStatusGlyph({
-  state,
-  isHalt,
-}: {
-  state: LaneState;
-  isHalt: boolean;
-}) {
-  // The lane's OWN state owns its glyph: a `blocked` (paused) or `done` lane keeps its glyph even when it
-  // is the job's halt row, so it never masquerades as a red failure. `isHalt` only paints red as a fallback
-  // for a halt whose lane state doesn't already show it (e.g. a job-level halt on an in-flight lane).
-  const haltRed =
-    state === "failed" || (isHalt && state !== "blocked" && state !== "done");
+function ThreadStatusGlyph({ state }: { state: LaneState }) {
   return (
     <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
-      {haltRed ? (
+      {state === "failed" ? (
         <span
           className="h-[9px] w-[9px] rounded-full"
           style={{ background: "var(--red)" }}
         />
       ) : state === "done" ? (
         <DoneDisc />
-      ) : state === "blocked" ? (
-        <BlockedRing />
       ) : state === "in_progress" ? (
         <SpinRing />
       ) : (
@@ -275,30 +234,34 @@ export interface TreeProps {
   onSelectNode: (node: string) => void;
 }
 
-/** The thread-group-kind → sidebar label, used when a thread group carries no explicit `title`. */
-const THREAD_GROUP_LABELS: Record<ThreadGroupKind, string> = {
+/** The thread-group-kind → sidebar label for the singleton kinds. `section` is labeled "Section N §"
+ *  separately (it carries a derived per-kind index); an unrecognized kind falls back to "Other". */
+const THREAD_GROUP_LABELS: Partial<Record<ThreadGroupKind, string>> = {
   planning: "Planning",
-  plan_review: "Plan Review",
-  build: "Build",
-  direct_build: "Direct Build",
-  master_review: "Master Review",
-  post_build: "Post Build",
-  ci: "CI",
+  master_review: "Master review",
+  post_build: "Post-build",
+  ship: "Ship",
 };
 
-/** A thread group's sidebar label — its explicit `title` (a build slice name, or a "Re-plan #N" round) when
- *  set, else derived from its kind. */
-function threadGroupLabel(threadGroup: PipelineThreadGroup): string {
-  return threadGroup.title?.trim() || THREAD_GROUP_LABELS[threadGroup.kind];
+/**
+ * A thread group's sidebar label. A `section` reads "Section N §" — the DERIVED per-kind index (its
+ * position among same-kind groups), NOT the raw ordinal — with its slice name appended when set. Every
+ * other kind derives a static label from its kind; an unknown kind buckets under "Other".
+ */
+function threadGroupLabel(group: PipelineThreadGroup, sectionIndex: number): string {
+  if (group.kind === "section") {
+    const name = group.title?.trim();
+    return name ? `Section ${sectionIndex} § · ${name}` : `Section ${sectionIndex} §`;
+  }
+  return THREAD_GROUP_LABELS[group.kind] ?? group.title?.trim() ?? "Other";
 }
 
 /**
- * The THREADS build lanes — one accordion fold per THREAD GROUP. Each thread group owns its live TASKS
- * (server-folded from the SDK task tools) and, for a build thread group, its ordered builder LEGS +
- * read-only REVIEW AGENTS (the builders' review-child threads) capped by the derived Post-review fixes row.
- * Draft thread groups (pre-approval or not yet reached) fold to the drafting empty state. The Main
- * (planning) row and the plan-review row are pinned above the tree by the navigator, so they are skipped
- * here.
+ * The THREADS accordion — one fold per THREAD GROUP, driven by its KIND. `planning` shows the planner
+ * (chattable "Main") + the read-only Codex-review dialogue; a `section` shows its ordered builder LEGS +
+ * read-only REVIEW AGENTS; `master_review`/`post_build`/`ship` are singleton folds; any unrecognized kind
+ * buckets under "Other" so nothing silently disappears. Each fold owns its live TASKS (server-folded from
+ * the SDK task tools).
  */
 export function PipelineTree({
   job,
@@ -307,86 +270,81 @@ export function PipelineTree({
   laneNode,
   onSelectNode,
 }: TreeProps) {
-  const threadGroups = job.threadGroups.filter(
-    (s) => s.kind !== "planning" && s.kind !== "plan_review",
-  );
-  // Pre-approval every thread is a draft (dashed dot, no tasks — the plan shows only the threads).
+  // Pre-approval every build thread is a draft (dashed dot, no tasks — the plan shows only the threads).
+  // Planning is always live, so its own fold never drafts (handled per-fold below).
   const drafted =
     status === "planning" ||
     status === "plan_review" ||
     status === "awaiting_approval";
-  // Halted: threads aren't persisted with the halt (only the job carries it), so derive the halt point over
-  // the whole flattened thread list — the in-flight thread (furthest non-`done`/non-`pending`) is where the
-  // run stopped; later ones never ran. Identify it by id so it maps across the thread group grouping.
-  const allThreads = job.threadGroups.flatMap((s) => s.threads);
-  const haltIdx = job.halt != null ? haltThreadIdx(allThreads) : -1;
-  const haltThreadId = haltIdx >= 0 ? (allThreads[haltIdx]?.id ?? null) : null;
-  const notReached = new Set(
-    haltIdx >= 0 ? allThreads.slice(haltIdx + 1).map((t) => t.id) : [],
-  );
+
+  // DERIVED per-kind display index — the Nth `section` among the ordinal-sorted groups (never the raw
+  // ordinal, which the backend spaces 10/20/30…).
+  let sectionCount = 0;
 
   return (
     <>
-      {threadGroups.map((threadGroup) => (
-        <ThreadGroupFold
-          key={threadGroup.id}
-          threadGroup={threadGroup}
-          jobId={jobId}
-          drafted={drafted}
-          haltThreadId={haltThreadId}
-          notReached={notReached}
-          laneNode={laneNode}
-          onSelectNode={onSelectNode}
-        />
-      ))}
+      {job.threadGroups.map((group) => {
+        const sectionIndex = group.kind === "section" ? ++sectionCount : 0;
+        return (
+          <ThreadGroupFold
+            key={group.id}
+            group={group}
+            label={threadGroupLabel(group, sectionIndex)}
+            jobId={jobId}
+            drafted={drafted}
+            laneNode={laneNode}
+            onSelectNode={onSelectNode}
+          />
+        );
+      })}
     </>
   );
 }
 
 /**
- * One accordion fold — the clickable thread group header (status glyph · label · count chip) over the open
- * body (TASKS → LEGS → REVIEW children → Post-review fixes, or the draft empty state). A thread group is
- * OPEN when one of its threads (a builder leg / master review / the singleton thread) OR one of its review
- * CHILD threads is the open lane — they all ride the same LEFT pane as bare thread nodes. Clicking the
- * header opens the thread group's latest thread; navigate back to Main by clicking the Main row itself.
+ * One accordion fold — the clickable thread-group header (status glyph · label · count chip) over the open
+ * body (TASKS → LEGS / Codex-review → REVIEW children, or the draft empty state). A fold is OPEN when the
+ * routed thread is one of its threads (a builder leg / planner / codex_review / singleton) or one of its
+ * review CHILD threads. The header routes to the group's primary thread: the planner for `planning`, the
+ * latest leg for a `section`, else the group's single thread.
  */
 function ThreadGroupFold({
-  threadGroup,
+  group,
+  label,
   jobId,
   drafted,
-  haltThreadId,
-  notReached,
   laneNode,
   onSelectNode,
 }: {
-  threadGroup: PipelineThreadGroup;
+  group: PipelineThreadGroup;
+  label: string;
   jobId: string;
   drafted: boolean;
-  /** The id of the thread that owns the job halt, or null when the job is healthy. */
-  haltThreadId: string | null;
-  /** Thread ids the run never reached (after the halt point) — rendered muted. */
-  notReached: Set<string>;
-  /** The open LEFT-pane lane node (`?lane=`) — a bare thread/child id, or null for Main. */
+  /** The routed thread id (`/workspace/:jobKey/:threadId`) — a bare thread/child id, or null transiently. */
   laneNode: string | null;
   onSelectNode: (node: string) => void;
 }) {
-  const roots = threadGroup.threads;
-  // The latest thread drives the header glyph + live task overlay (a build thread group's newest builder
-  // leg; a singleton thread group's one thread). A thread group should never be empty, but guard so a
-  // malformed one renders nothing.
-  const primary = roots[roots.length - 1];
+  const roots = group.threads;
+  const isPlanning = group.kind === "planning";
+  const isSection = group.kind === "section";
+  const legs = isSection ? roots.filter((t) => t.role === "builder") : [];
+  const codexReview = isPlanning
+    ? (roots.find((t) => t.role === "codex_review") ?? null)
+    : null;
+  // The header routes to the group's PRIMARY thread: the planner for planning (the "Main" chat), the latest
+  // leg for a section, else the group's single thread. It also drives the header glyph + live task overlay.
+  const primary = isPlanning
+    ? (roots.find((t) => t.role === "planner") ?? roots[0])
+    : roots[roots.length - 1];
 
-  // REALTIME: fold the latest thread's live lane over the durable list, so mid-turn task calls tick instantly
-  // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup.
-  // Hook must run unconditionally (Rules of Hooks) — threadGroup.threads can be empty on some renders of the
-  // same component instance (e.g. a freshly materialized thread group), so the early-return below must come
-  // after.
+  // REALTIME: fold the primary thread's live lane over the durable list, so mid-turn task calls tick instantly
+  // (the pipeline query only refetches at turn end). Idle lanes read a dead key — cheap store lookup. Hook must
+  // run unconditionally (Rules of Hooks), so the empty-group guard comes after it.
   const liveTurn = useLiveTurn(jobId, threadLane(primary?.id ?? ""));
   if (!primary) return null;
 
-  const state = laneState(primary.status, primary.condition, drafted);
-  const isHalt = roots.some((t) => t.id === haltThreadId);
-  const threadGroupNotReached = roots.every((t) => notReached.has(t.id));
+  // Planning is always live, so it never drafts even pre-approval.
+  const state = laneState(primary.status, primary.haltReason, drafted && !isPlanning);
 
   const reviewChildren = roots.flatMap((t) => t.children ?? []);
   const reviewLenses = reviewChildren.filter((c) => c.role === "review_agent");
@@ -397,7 +355,7 @@ function ThreadGroupFold({
     (roots.some((t) => t.id === laneNode) ||
       reviewChildren.some((c) => c.id === laneNode));
 
-  const tasks = overlayLiveTasks(threadGroup.tasks, liveTurn);
+  const tasks = overlayLiveTasks(group.tasks, liveTurn);
   const done = tasks.filter((t) => t.status === "completed").length;
   const isDraft = state === "draft";
   const count = isDraft
@@ -411,23 +369,16 @@ function ThreadGroupFold({
       <button
         type="button"
         onClick={() => onSelectNode(primary.id)}
-        className={cn(
-          "flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2",
-          threadGroupNotReached && "opacity-60",
-        )}
+        className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
       >
-        <ThreadStatusGlyph state={state} isHalt={isHalt} />
+        <ThreadStatusGlyph state={state} />
         <span
           className={cn(
             "flex-1 truncate text-[12px]",
-            open
-              ? "font-semibold text-text"
-              : threadGroupNotReached
-                ? "font-medium text-faint"
-                : "font-medium text-dim",
+            open ? "font-semibold text-text" : "font-medium text-dim",
           )}
         >
-          {threadGroupLabel(threadGroup)}
+          {label}
         </span>
         {count ? (
           <span className="shrink-0 text-right font-mono text-[8px] text-faint">
@@ -442,9 +393,20 @@ function ThreadGroupFold({
         ) : (
           <>
             <TasksBody tasks={tasks} done={done} total={tasks.length} />
-            {roots.length > 1 ? (
+            {codexReview ? (
+              <div className="nav-expand mb-2 ml-[9px] flex flex-col gap-[2px]">
+                <BodyHeader label="PLAN REVIEW" right="" />
+                <LegRow
+                  label="Codex review"
+                  state={laneState(codexReview.status, codexReview.haltReason, false)}
+                  selected={laneNode === codexReview.id}
+                  onOpen={() => onSelectNode(codexReview.id)}
+                />
+              </div>
+            ) : null}
+            {legs.length > 1 ? (
               <LegsBody
-                threads={roots}
+                threads={legs}
                 drafted={drafted}
                 laneNode={laneNode}
                 onSelectNode={onSelectNode}
@@ -684,19 +646,14 @@ function BlockedRing({ size = 13 }: { size?: number }) {
 
 // ── REVIEW children — each review lens + the post-review fix are first-class child threads ─────────
 
-/** The design's agent states — a review child's wire `ThreadStatus` folds onto these. */
-type AgentDisplay = "pending" | "in_progress" | "done" | "skipped" | "failed";
+/** The design's agent states — a review child's `idle | done` status + `haltReason` fold onto these. */
+type AgentDisplay = "in_progress" | "done" | "failed";
 
-/** Map a review CHILD thread's step + condition to its navigator display state. */
-function childDisplay(
-  status: ThreadStatus,
-  condition: ThreadCondition,
-): AgentDisplay {
-  if (condition === "failed") return "failed"; // the lens did NOT run (e.g. engine/auth error) — surface it
-  if (condition === "skipped") return "skipped"; // nothing to do (unknown lens / no diff) — terminal, not a failure
+/** Map a review CHILD thread's status + halt reason to its navigator display state. */
+function childDisplay(status: ThreadStatus, haltReason: string | null): AgentDisplay {
+  if (haltReason) return "failed"; // the lens's last turn ended abnormally (engine/auth error) — surface it
   if (status === "done") return "done"; // terminal — the lens ran clean
-  if (status === "pending") return "pending";
-  return "in_progress"; // planning / reviewing / executing / auto_fixing
+  return "in_progress"; // idle: running or awaiting its turn
 }
 
 function ReviewAgentsBody({
@@ -723,7 +680,7 @@ function ReviewAgentsBody({
       ))}
       {postReview ? (
         <PostReviewFixesRow
-          state={postReviewState(postReview.status, postReview.condition)}
+          state={postReviewState(postReview.status, postReview.haltReason)}
           selected={laneNode === postReview.id}
           onOpen={() => onSelectNode(postReview.id)}
         />
@@ -755,8 +712,8 @@ function LegsBody({
       {threads.map((leg, i) => (
         <LegRow
           key={leg.id}
-          index={i}
-          state={laneState(leg.status, leg.condition, drafted)}
+          label={`Leg ${i + 1}`}
+          state={laneState(leg.status, leg.haltReason, drafted)}
           selected={laneNode === leg.id}
           onOpen={() => onSelectNode(leg.id)}
         />
@@ -765,15 +722,15 @@ function LegsBody({
   );
 }
 
-/** One Leg — a navigable single-line row (session dot · "Leg N" · status word). Opens that builder thread's
- *  own transcript (mirrors the review-child rows). */
+/** One navigable single-line row (session dot · label · status word) — a builder Leg or the read-only
+ *  Codex-review thread. Opens that thread's own transcript in the LEFT pane. */
 function LegRow({
-  index,
+  label,
   state,
   selected,
   onOpen,
 }: {
-  index: number;
+  label: string;
   state: LaneState;
   selected: boolean;
   onOpen: () => void;
@@ -785,9 +742,7 @@ function LegRow({
         ? "done"
         : state === "failed"
           ? "failed"
-          : state === "blocked"
-            ? "blocked"
-            : "draft";
+          : "draft";
   const wordColor =
     state === "in_progress"
       ? "var(--blue)"
@@ -815,7 +770,7 @@ function LegRow({
           selected ? "font-semibold text-text" : "font-medium text-dim",
         )}
       >
-        Leg {index + 1}
+        {label}
       </span>
       <span className="shrink-0 text-[10px] font-medium" style={{ color: wordColor }}>
         {word}
@@ -824,21 +779,14 @@ function LegRow({
   );
 }
 
-/** The post-review fix child's step + condition → its row's display states. */
+/** The post-review fix child's status + halt reason → its row's display states. */
 function postReviewState(
   status: ThreadStatus,
-  condition: ThreadCondition,
-): "queued" | "running" | "done" | "failed" {
-  if (condition === "failed") return "failed"; // the fix turn errored out — don't paint it done
-  if (status === "pending") return "queued";
-  if (
-    status === "executing" ||
-    status === "auto_fixing" ||
-    status === "planning" ||
-    status === "reviewing"
-  )
-    return "running";
-  return "done";
+  haltReason: string | null,
+): "running" | "done" | "failed" {
+  if (haltReason) return "failed"; // the fix turn ended abnormally — don't paint it done
+  if (status === "done") return "done";
+  return "running"; // idle: applying fixes / awaiting its turn
 }
 
 /** One review lens — a single-line navigable child thread: status tile · name · status word · chevron.
@@ -853,25 +801,14 @@ function AgentRow({
   selected: boolean;
   onOpen: () => void;
 }) {
-  const d = childDisplay(c.status, c.condition);
-  const word =
-    d === "failed"
-      ? "failed"
-      : d === "done"
-        ? "done"
-        : d === "in_progress"
-          ? "reviewing"
-          : d === "skipped"
-            ? "skipped"
-            : "pending";
+  const d = childDisplay(c.status, c.haltReason);
+  const word = d === "failed" ? "failed" : d === "done" ? "done" : "reviewing";
   const wordColor =
     d === "failed"
       ? "var(--red)"
       : d === "done"
         ? "var(--green)"
-        : d === "in_progress"
-          ? "var(--blue)"
-          : "var(--faint)";
+        : "var(--blue)";
   return (
     <button
       type="button"
@@ -884,12 +821,7 @@ function AgentRow({
       )}
     >
       <AgentStatusTile display={d} />
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[11.5px] font-semibold",
-          d === "pending" || d === "skipped" ? "text-dim" : "text-text",
-        )}
-      >
+      <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold text-text">
         {c.brief}
       </span>
       <span
@@ -918,7 +850,7 @@ function AgentRow({
 function AgentStatusTile({
   display,
 }: {
-  display: AgentDisplay | "queued" | "running";
+  display: AgentDisplay | "running";
 }) {
   const done = display === "done";
   const failed = display === "failed";
@@ -1009,7 +941,7 @@ function PostReviewFixesRow({
   selected,
   onOpen,
 }: {
-  state: "queued" | "running" | "done" | "failed";
+  state: "running" | "done" | "failed";
   selected: boolean;
   onOpen: () => void;
 }) {
@@ -1026,7 +958,7 @@ function PostReviewFixesRow({
       )}
       style={{ borderColor: "var(--border-2)" }}
     >
-      <AgentStatusTile display={state === "queued" ? "pending" : state} />
+      <AgentStatusTile display={state} />
       <span
         className={cn(
           "min-w-0 flex-1 text-[11.5px] font-semibold",

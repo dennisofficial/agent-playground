@@ -732,24 +732,13 @@ function ThreadRow({
       }
     >
       <span className="relative mt-px flex-none">
-        {/* A halted thread (an unresolved turn-stopping error) shows the failed ✕ over everything — it
-            needs attention above its PR glyph. Otherwise, once a PR exists the leaf shows its PR status
-            (GitHub color convention); until then, the build-lifecycle status pie. */}
-        {thread.halted ? (
-          <StatusPie status={thread.status} halted size={14} />
-        ) : thread.pr ? (
+        {/* Once a PR exists the leaf shows its PR status (GitHub color convention); until then, the
+            build-lifecycle status pie. */}
+        {thread.pr ? (
           <PrStatusIcon pr={thread.pr} size={14} />
         ) : (
           <StatusPie status={thread.status} size={14} />
         )}
-        {thread.halt ? (
-          <span
-            className="absolute -bottom-px -right-0.5 h-[7px] w-[7px] rounded-full border-[1.5px] border-panel"
-            style={{ background: "var(--red)" }}
-            title={`Halted — ${thread.halt.reason}`}
-            aria-label="Halted"
-          />
-        ) : null}
         {thread.pr ? <CiStatusDot ci={thread.ci} /> : null}
       </span>
       <span className="min-w-0 flex-1">

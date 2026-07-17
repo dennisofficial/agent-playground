@@ -189,10 +189,10 @@ export function PhaseView({
     subtitle = selectedNode;
     body = <NodeNotFound node={selectedNode} onConversation={onConversation} />;
   } else if (selectedNode === "plan") {
-    // The plan's slices — each build/direct_build thread group's builder-thread brief(s). Falls back to the
-    // approval card's own thread list when present.
+    // The plan's slices — each Section thread group's builder-thread brief(s). Falls back to the approval
+    // card's own thread list when present.
     const planThreads = (job?.threadGroups ?? [])
-      .filter((s) => s.kind === "build" || s.kind === "direct_build")
+      .filter((s) => s.kind === "section")
       .flatMap((s) =>
         s.threads.filter((t) => t.role === "builder").map((t) => t.brief),
       );
@@ -287,10 +287,7 @@ export function PhaseView({
     const isFix = reviewChild.role === "review_fix";
     title = isFix ? "Post-review fixes" : reviewChild.brief;
     subtitle = isFix
-      ? reviewChild.status === "executing" ||
-        reviewChild.status === "auto_fixing"
-        ? "applying fixes · verify"
-        : "fix · apply · verify"
+      ? "fix · apply · verify"
       : `review agent · ${reviewChild.status}`;
     body = (
       <TranscriptView
@@ -326,6 +323,24 @@ export function PhaseView({
     title = sec ? threadTitle(sec.brief) : "Thread plan";
     subtitle = "thread plan";
     body = <SectionPlanDoc />;
+  } else if (thread && thread.role === "codex_review") {
+    // The Codex plan-review thread streams on the SHARED `codex-review:<jobId>` lane (the synchronous
+    // `review_plan` turn), not its own `thread:<id>` lane — so route it through the same read-only renderer
+    // as the pinned Codex-review row. Its real thread id is what the planning fold navigates to.
+    title = "Codex review";
+    subtitle = "the plan-review dialogue";
+    body = (
+      <TranscriptView
+        jobRef={jobRef}
+        messages={messages}
+        lane={codexReviewLane(jobRef.jobId)}
+        composer
+        readOnly
+        defaultFooter={thread.defaultFooter ?? job?.planReview?.defaultFooter}
+        emptyText="No review activity yet — Codex’s reasoning appears here as it runs."
+        onSelectNode={onSelectNode}
+      />
+    );
   } else if (thread) {
     title = thread.isMasterReview
       ? "Master review"

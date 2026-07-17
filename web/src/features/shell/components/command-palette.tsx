@@ -9,7 +9,7 @@ import { orgSwatch } from "@/lib/org-display";
 import { threadHref } from "@/lib/routes";
 
 /**
- * ⌘K command palette — cross-org thread search over `GET /web/threads`. Picking a result opens its thread
+ * ⌘K command palette — cross-org thread search over `GET /web/jobs`. Picking a result opens its thread
  * workspace. `esc` closes (handled by the host).
  */
 export function CommandPalette({

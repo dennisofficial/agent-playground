@@ -7,7 +7,7 @@ import { qk } from "./query-keys";
 import { subscribeSse, type SseHandle } from "./sse-manager";
 import { uiStatus, type InboxThread } from "./inbox";
 import { toJobKind } from "./status";
-import type { WireJobKind, WireJobHalt, WireJobActivity, PrState, CiStatus, CiCounts } from "./types";
+import type { WireJobKind, PrState, CiStatus, CiCounts } from "./types";
 
 /**
  * The flat realtime `threads` row pushed by the backend engine (`GET /web/jobs/realtime`). Mirrors the
@@ -24,11 +24,6 @@ interface RealtimeRow {
   kind?: string | null;
   status: string;
   needsYou: boolean;
-  /** The orthogonal "system is working" axis — replaces the old `turnActive`/`reviewRunning` inputs.
-   *  `needsYou` already folds it in server-side; retained on the row for an optional live label. */
-  activity: WireJobActivity;
-  /** An unresolved turn-failure box is outstanding — drives the sidebar failed-style ✕ glyph. */
-  halted: boolean;
   orgId: string;
   repoId: string;
   /** The OBSERVED live branch — a change (agent `git checkout`) invalidates the open thread's pipeline so
@@ -50,8 +45,6 @@ interface RealtimeRow {
   buildStagesTotal?: number | null;
   /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship". */
   shipping?: boolean;
-  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
-  halt?: WireJobHalt | null;
 }
 
 /** A pg-realtime delta (mirrors the backend `RowDelta`), plus the `disabled` control frame. */
@@ -62,13 +55,6 @@ type RowDelta =
   | { kind: "remove"; pk: string }
   // Sent by the backend when realtime is unavailable — we close and rely on polling (no reconnect storm).
   | { kind: "disabled" };
-
-function sameHalt(
-  a: WireJobHalt | null,
-  b: WireJobHalt | null,
-): boolean {
-  return a?.kind === b?.kind && a?.reason === b?.reason && a?.at === b?.at;
-}
 
 /** Equal iff both null or every category count matches — so a counts-only delta still refreshes the row. */
 function sameCiCounts(a: CiCounts | null, b: CiCounts | null): boolean {
@@ -106,7 +92,6 @@ export function useAllJobsRealtime(): void {
     const patchUpdate = (row: RealtimeRow) => {
       let found = false;
       let statusChanged = false;
-      let haltChanged = false;
       let prChanged = false;
       let ciChanged = false;
       const nextStatus = uiStatus(row.status, row.origin);
@@ -118,7 +103,6 @@ export function useAllJobsRealtime(): void {
       const nextPrMergeable = row.prMergeable ?? null;
       const nextCi = (row.ciStatus ?? null) as CiStatus | null;
       const nextCounts = row.ciCounts ?? null;
-      const nextHalt = "halt" in row ? (row.halt ?? null) : undefined;
       qc.setQueryData<InboxThread[]>(qk.allJobs(), (prev) => {
         if (!prev) return prev;
         const idx = prev.findIndex((t) => t.id === row.jobId);
@@ -133,17 +117,13 @@ export function useAllJobsRealtime(): void {
         ciChanged =
           (prev[idx].ci ?? null) !== nextCi ||
           !sameCiCounts(prev[idx].ciCounts ?? null, nextCounts);
-        const halt = nextHalt === undefined ? prev[idx].halt : nextHalt;
-        haltChanged = !sameHalt(prev[idx].halt, halt);
         const next = [...prev];
         next[idx] = {
           ...next[idx],
           title: row.title?.trim() || next[idx].title,
           kind: row.kind ? toJobKind(row.kind as WireJobKind) : next[idx].kind,
           status: nextStatus,
-          activity: row.activity ?? next[idx].activity,
           needsYou: row.needsYou,
-          halted: row.halted,
           // Flips true→false exactly when status leaves `running` (ship finalize done), which also flips
           // `status`, so the section re-group already re-renders — just keep the flag in sync.
           shipping: row.shipping ?? false,
@@ -166,7 +146,6 @@ export function useAllJobsRealtime(): void {
           portState: row.portState ?? null,
           buildStagesDone: row.buildStagesDone ?? null,
           buildStagesTotal: row.buildStagesTotal ?? null,
-          halt,
         };
         return next;
       });
@@ -174,19 +153,17 @@ export function useAllJobsRealtime(): void {
         invalidate(); // a thread we don't have cached yet → refetch the enriched list
         return;
       }
-      // A status transition (e.g. approve → running, → building, cancelled), branch switch, HALT change, or
-      // PR-state change means the OPEN thread's detail pane is stale. Halt is intentionally orthogonal to
-      // status, so without the explicit haltChanged gate a failed/paused build could update the sidebar but
-      // leave the workspace banner and pipeline tree stale until a later refetch. A GitHub-originated PR merge
-      // moves only pr_state (status already latched to `done` when the PR opened), so it needs its own gate.
-      if (statusChanged || branchChanged || haltChanged || prChanged || ciChanged) {
+      // A status transition (e.g. approve → running, → building, cancelled), branch switch, or PR-state
+      // change means the OPEN thread's detail pane is stale. A GitHub-originated PR merge moves only pr_state
+      // (status already latched to `done` when the PR opened), so it needs its own gate.
+      if (statusChanged || branchChanged || prChanged || ciChanged) {
         const ref = { orgId: row.orgId, repoId: row.repoId, jobId: row.jobId };
         // The pipeline carries the branch fields the drift badge reads AND the PR state the workspace badge
         // reads — refresh on a status flip, a live branch switch, or a PR-state/mergeable transition.
         void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) });
-        // Halt writes also append a durable operator message; the PR-sync path does not, so PR changes alone
+        // A status flip also appends durable messages; the PR-sync path does not, so PR changes alone
         // don't refresh messages.
-        if (statusChanged || haltChanged) {
+        if (statusChanged) {
           void qc.invalidateQueries({ queryKey: qk.threadMessages(ref) });
         }
       }

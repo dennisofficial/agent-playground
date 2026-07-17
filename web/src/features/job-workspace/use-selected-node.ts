@@ -5,24 +5,23 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { isDetailNode, parseFileNode } from "./node-registry";
 
 /**
- * The workspace has TWO panes, each with its own selection, plus a stacked sub-agent layer on the right
- * (design "Atlas Workspace HiFi"):
+ * The workspace has TWO panes, plus a stacked sub-agent layer on the right (design "Atlas Workspace HiFi"):
  *
- *  - the LEFT pane (`?lane=`) is a THREADS lane — the Main brain conversation (no param), a build
- *    thread/step transcript, the Codex plan-review dialogue, or a review-agent / post-review-fix child
- *    thread (`rev:`/`fix:` — they're threads, not detail nodes). Highlighted ORANGE in the navigator.
+ *  - the LEFT pane is the ROUTED thread (`/workspace/:jobKey/:threadId`) — the planner ("Main") conversation,
+ *    a build/leg transcript, the Codex plan-review dialogue, or a review-agent / review-fix child thread.
+ *    Selecting one is a ROUTE navigation (the last path segment changes), not a query param.
  *  - the RIGHT pane (`?node=`) is a DETAIL node — an OUTPUT (spec/artifact/generated), a sandbox port, a
  *    service log, the diff/plan/decision docs. Highlighted BLUE in the navigator.
  *  - a SUB-AGENT (`?sub=`) STACKS on top of the right pane: opening one keeps `?node=` (its nav row stays
  *    selected) and renders the sub-agent transcript with a breadcrumb back to that base node. It's a
  *    second-level page, not a replacement — closing it returns to the base.
  *
- * All three live in the URL as separate params so they're independent (Main + a spec + a sub-agent can all
- * be open at once), deep-linkable, refresh-stable, and Back-aware. A param change is a query-only navigation
- * on the same `[jobKey]` route, so `JobWorkspace` stays mounted and its live SSE connection
- * (`useJobEvents`) is NOT torn down — only a real thread switch (different `[jobKey]`) reconnects.
+ * The detail layers live in the URL as separate query params so they're independent (a thread + a spec + a
+ * sub-agent can all be open at once), deep-linkable, refresh-stable, and Back-aware. A query change is a
+ * query-only navigation on the same route, so `JobWorkspace` stays mounted and its live SSE connection
+ * (`useJobEvents`) is NOT torn down. A thread switch changes only the `:threadId` segment (same `[jobKey]`),
+ * preserving those query layers.
  */
-const LANE_PARAM = "lane";
 const NODE_PARAM = "node";
 const SUB_PARAM = "sub";
 const FILE_PARAM = "file";
@@ -31,8 +30,6 @@ const FILE_PARAM = "file";
 export { isDetailNode } from "./node-registry";
 
 export interface SelectedNode {
-  /** The LEFT pane's open lane (`?lane=`) — a thread/step id, or `null` for the Main conversation. */
-  laneNode: string | null;
   /** The RIGHT pane's open detail node (`?node=`), or `null` for the empty detail pane. */
   detailNode: string | null;
   /** The sub-agent (parent tool-use id) stacked on top of the right pane (`?sub=`), or `null`. */
@@ -43,12 +40,10 @@ export interface SelectedNode {
   subLane: string | null;
   /** Open a node in whichever pane/layer it belongs to: `subagent:<lane>::<id>` → the stacked `?sub=` layer
    *  (base detail preserved); {@link isDetailNode} → the right pane (`?node=`, clearing any stacked sub);
-   *  else the left lane (`?lane=`). The other panes' selections are preserved. `{ push: true }` forces a
-   *  history entry (e.g. following a link inside a doc). */
+   *  else a THREAD select → route navigation to `/workspace/:jobKey/:threadId`. The detail layers are
+   *  preserved. `{ push: true }` forces a history entry (e.g. following a link inside a doc). */
   selectNode: (node: string, opts?: { push?: boolean }) => void;
-  /** Return the LEFT pane to the Main conversation (drop `?lane=`); the right detail + sub stay open. */
-  openConversation: () => void;
-  /** Close the RIGHT detail pane (drop `?node=` AND any stacked `?sub=`); the left lane stays open. */
+  /** Close the RIGHT detail pane (drop `?node=` AND any stacked `?sub=`); the routed thread stays. */
   closeDetail: () => void;
   /** Pop the stacked sub-agent (drop `?sub=`), returning to the base detail node. */
   closeSub: () => void;
@@ -64,7 +59,6 @@ export function useSelectedNode(): SelectedNode {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const laneNode = params.get(LANE_PARAM);
   const detailNode = params.get(NODE_PARAM);
   const subParam = params.get(SUB_PARAM);
   // `subagentNode` encodes `<lane>::<parentId>`; tolerate a bare id (no `::`) for old links/bookmarks.
@@ -83,6 +77,23 @@ export function useSelectedNode(): SelectedNode {
   const selectNode = useCallback(
     (node: string, opts?: { push?: boolean }) => {
       const qs = new URLSearchParams(params.toString());
+      // A THREAD select changes the last path segment (`:threadId`), preserving the detail-pane query
+      // layers — a route navigation, not a query set.
+      if (
+        !node.startsWith("file:") &&
+        !node.startsWith("subagent:") &&
+        !isDetailNode(node)
+      ) {
+        const segs = pathname.split("/");
+        // pathname is `/workspace/:jobKey/:threadId`; swap the thread segment (append it if a bare
+        // `/workspace/:jobKey` shell hasn't got one yet).
+        if (segs.length >= 4) segs[3] = encodeURIComponent(node);
+        else segs.push(encodeURIComponent(node));
+        const query = qs.toString();
+        const href = `${segs.join("/")}${query ? `?${query}` : ""}`;
+        router.push(href);
+        return;
+      }
       let key: string;
       if (node.startsWith("file:")) {
         // Stack the file view on top of the right pane — the base `?node=` (spec/plan) stays selected.
@@ -92,14 +103,11 @@ export function useSelectedNode(): SelectedNode {
         // Stack the sub-agent on top of the right pane — the base `?node=` (and its nav highlight) stays.
         key = SUB_PARAM;
         qs.set(SUB_PARAM, node.slice("subagent:".length));
-      } else if (isDetailNode(node)) {
+      } else {
         key = NODE_PARAM;
         qs.set(NODE_PARAM, node);
         qs.delete(SUB_PARAM); // a new base detail resets the stacked sub-agent
         qs.delete(FILE_PARAM); // ...and the stacked file view
-      } else {
-        key = LANE_PARAM;
-        qs.set(LANE_PARAM, node);
       }
       const wasEmpty = !params.get(key); // this pane/layer had no selection → opening it is a discrete step
       const href = `${pathname}?${qs.toString()}`;
@@ -122,10 +130,6 @@ export function useSelectedNode(): SelectedNode {
     [params, pathname, router],
   );
 
-  const openConversation = useCallback(
-    () => dropParams([LANE_PARAM]),
-    [dropParams],
-  );
   const closeDetail = useCallback(
     () => dropParams([NODE_PARAM, SUB_PARAM, FILE_PARAM]),
     [dropParams],
@@ -134,12 +138,10 @@ export function useSelectedNode(): SelectedNode {
   const closeFile = useCallback(() => dropParams([FILE_PARAM]), [dropParams]);
 
   return {
-    laneNode,
     detailNode,
     subNode,
     subLane,
     selectNode,
-    openConversation,
     closeDetail,
     closeSub,
     fileNode: fileSel?.path ?? null,

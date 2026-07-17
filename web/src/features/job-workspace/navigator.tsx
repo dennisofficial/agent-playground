@@ -5,28 +5,21 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowUpRight,
-  ChevronRight,
   CornerUpLeft,
   FileText,
   FlaskConical,
-  Folder,
   GitBranch,
   GitFork,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   Globe,
-  Hourglass,
   Image as ImageIcon,
   Lock,
-  MoreHorizontal,
-  Pause,
-  Pencil,
   RotateCw,
   Server,
   ShieldCheck,
   SquareTerminal,
-  Trash2,
 } from "lucide-react";
 import {
   CiHeaderGlyph,
@@ -44,27 +37,19 @@ import {
   useJobDiffSummary,
   useRetryJob,
   useServices,
-  useShipWithoutReview,
 } from "@/lib/api/job-queries";
 import { threadHref } from "@/lib/routes";
-import { Divider, PipelineTree, TasksBody } from "./pipeline-tree";
-import { codexReviewNode } from "./codex-review";
+import { Divider, PipelineTree } from "./pipeline-tree";
 import {
   NavigatorApproveButton,
   NavigatorAutoMergingButton,
   NavigatorMergeButton,
   NavigatorShipButton,
 } from "./spec-approval";
-import {
-  pipelineAutoApproveMode,
-  pipelineAutoMerge,
-  pipelineMainTasks,
-} from "@/lib/api/types";
+import { pipelineAutoApproveMode, pipelineAutoMerge } from "@/lib/api/types";
 import type { AutoApproveMode } from "@workspace/shared";
 import { autoPillView } from "./auto-approve-mode";
 import { AutoApprovePopover } from "./auto-approve-popover";
-import { useLiveTurn } from "@/lib/api/job-stream";
-import { overlayLiveTasks } from "./live-tasks";
 import type {
   ContextFile,
   JobBlocker,
@@ -75,10 +60,8 @@ import type {
   JobKind,
   JobStatus,
   ServiceInfo,
-  TaskItem,
 } from "@/lib/api/types";
 import type { JobRef } from "@/lib/api/job-api";
-import { PlanReviewRow } from "@/features/job-workspace/plan-review-row";
 import { JobMenu } from "@/features/job-workspace/job-menu";
 import { FolderRow } from "@/features/job-workspace/folder-row";
 import { EphemeralToast, useEphemeralToast } from "./ephemeral-toast";
@@ -305,6 +288,7 @@ export function Navigator({
     !hasPr &&
     meta.status !== "done" &&
     meta.status !== "running" &&
+    meta.status !== "master_review" &&
     meta.status !== "awaiting_ship_review" &&
     meta.status !== "amending";
   const [editing, setEditing] = useState(false);
@@ -656,33 +640,12 @@ export function Navigator({
              carry their own px, so each is a full-width band (design "Atlas Workspace HiFi") and the
              selected `.nav-selected` band + left accent bar can run flush to the rail edge. ─────────── */}
       <div className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto py-3">
-        <StateBanner
-          job={job}
-          jobRef={jobRef}
-          onConversation={onConversation}
-          onNotice={showToast}
-        />
+        <StateBanner job={job} jobRef={jobRef} onConversation={onConversation} />
 
-        {/* THREADS — the Main planning lane + each build lane, as an ACCORDION (design handoff "thread
-            navigation"): selecting a thread opens its fold (state rail + wash + tasks/review agents) and
-            collapses whichever was open. Selecting opens it in the LEFT pane. */}
-        <MainLaneRow
-          active={laneNode === null}
-          running={st === "running" || st === "planning"}
-          jobId={jobRef.jobId}
-          durableTasks={pipelineMainTasks(pipeline)}
-          onClick={onConversation}
-        />
-        {/* CODEX REVIEW — the plan-review dialogue as its own first-class navigator row (Main communicates
-            with it). Present once a review has run; opens the `codex-review:<jobId>` lane in the LEFT pane. */}
-        {job?.planReview ? (
-          <PlanReviewRow
-            jobId={jobRef.jobId}
-            status={job.planReview.status}
-            laneNode={laneNode}
-            onSelectNode={onSelectNode}
-          />
-        ) : null}
+        {/* THREADS — one accordion fold per thread group, driven by KIND (design handoff "thread
+            navigation"): the `planning` fold holds the planner ("Main") + the read-only Codex-review
+            dialogue; each `section` holds its builder Legs + review agents; master_review/post_build/ship
+            are singleton folds. Selecting a thread routes to it (`/workspace/:jobKey/:threadId`). */}
         <ThreadRows
           status={st}
           job={job}
@@ -691,9 +654,6 @@ export function Navigator({
           onSelectNode={onSelectNode}
           isDirectBuild={isDirectBuild}
         />
-
-        {/* The whole-diff master review is now just another thread in the THREADS list above (rendered
-            "Master review", no pinned region) — see the master-review-as-thread change. */}
 
         {/* OUTPUTS — specs / artifacts / generated, merged. Open in the RIGHT pane (blue highlight). */}
         <OutputsRegion
@@ -728,66 +688,10 @@ export function Navigator({
 /** The Main planning lane — the job's brain conversation, the accordion's always-first row (the design's
  *  `active` thread: solid green dot, green rail + wash while it's the open lane). Active when no other
  *  lane is selected; its fold shows the brain session's OWN task list (`job.mainTasks`), with the live
- *  `main` lane folded on top so mid-turn task calls tick in realtime (see `live-tasks.ts`). */
-function MainLaneRow({
-  active,
-  running,
-  jobId,
-  durableTasks,
-  onClick,
-}: {
-  active: boolean;
-  running: boolean;
-  jobId: string;
-  durableTasks: TaskItem[];
-  onClick: () => void;
-}) {
-  const liveTurn = useLiveTurn(jobId);
-  const tasks = overlayLiveTasks(durableTasks, liveTurn);
-  const done = tasks.filter((t) => t.status === "completed").length;
-  return (
-    <div
-      className="border-l-[3px]"
-      style={
-        active
-          ? {
-              borderLeftColor: "var(--green)",
-              background: "color-mix(in srgb, var(--green) 6%, transparent)",
-            }
-          : { borderLeftColor: "transparent", background: "transparent" }
-      }
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className="flex w-full items-center gap-2 py-1.5 pl-1.5 pr-2 text-left transition hover:bg-surface-2"
-      >
-        <span className="grid h-[13px] w-[13px] shrink-0 place-items-center">
-          <Dot color="var(--green)" pulse={running} size={9} />
-        </span>
-        <span
-          className={cn(
-            "flex-1 truncate text-[12px]",
-            active ? "font-semibold text-text" : "font-medium text-dim",
-          )}
-        >
-          Main
-        </span>
-        <span className="shrink-0 font-mono text-[8px] text-faint">
-          {tasks.length > 0 ? `[${done}/${tasks.length}]` : "planning"}
-        </span>
-      </button>
-      {active && tasks.length > 0 ? (
-        <TasksBody tasks={tasks} done={done} total={tasks.length} />
-      ) : null}
-    </div>
-  );
-}
-
-/** The build lanes under THREADS — one row per thread. The live/failed/done tree, the triage lane, or (pre-
- *  approval) the draft threads. Flows directly under the Main lane row (no section header); the first OUTPUTS
- *  sub-group divider below separates it from the outputs. Each thread's subitems are its live task list (the
- *  SDK task tools) — see {@link PipelineTree}; submit-plan shows only the threads (no steps). */
+ *  the accordion via {@link PipelineTree}. */
+/** The THREADS accordion — the whole pipeline as kind-driven folds (planning + sections + review homes +
+ *  post-build + ship), the triage lane, or (pre-approval) the "no build lanes yet" ghost. See
+ *  {@link PipelineTree}. */
 function ThreadRows({
   status,
   job,
@@ -830,33 +734,29 @@ function ThreadRows({
     );
   }
 
-  // One renderer for every thread group: running/done/failed threads expand to their live task list;
-  // pre-approval drafts render as bare thread rows (dashed dots, no tasks). Empty (early planning) → the
-  // hero ghost row — EXCEPT a committed direct build, which never grows lanes, so its "approve the plan"
-  // ghost is just noise.
-  // PLAN VERSIONING: prior revisions (browsable history) render below the active lanes; a re-propose/direct
-  // build over already-DONE work can leave the active lanes empty while history persists — show history then.
+  // A pre-plan (scoping) job has no pipeline yet — the planner conversation is the workPane, so THREADS is
+  // just the "no build lanes yet" teach ghost (suppressed for a committed direct build, which never grows
+  // lanes). PLAN VERSIONING: prior revisions (browsable history) render below the active folds.
   const prior = job?.priorRevisions ?? [];
-  // The tree renders every thread group EXCEPT planning/plan_review (those are pinned above), so "no lanes
-  // yet" is the absence of any buildable thread group — not just an empty thread group list.
-  const hasBuildThreadGroups =
-    job != null &&
-    job.threadGroups.some(
-      (s) => s.kind !== "planning" && s.kind !== "plan_review",
-    );
-  if (!job || (!hasBuildThreadGroups && prior.length === 0)) {
+  if (!job) {
     return isDirectBuild ? null : <BuildLanesEmpty />;
   }
+  // The planning fold is always present once the pipeline exists; "no build lanes yet" is the absence of any
+  // NON-planning group, in which case we still show the planning fold plus the teach ghost below it.
+  const hasBuildThreadGroups = job.threadGroups.some(
+    (s) => s.kind !== "planning",
+  );
   return (
     <>
-      {hasBuildThreadGroups ? (
-        <PipelineTree
-          job={job}
-          status={status}
-          jobId={jobId}
-          laneNode={laneNode}
-          onSelectNode={onSelectNode}
-        />
+      <PipelineTree
+        job={job}
+        status={status}
+        jobId={jobId}
+        laneNode={laneNode}
+        onSelectNode={onSelectNode}
+      />
+      {!hasBuildThreadGroups && prior.length === 0 && !isDirectBuild ? (
+        <BuildLanesEmpty />
       ) : null}
       {prior.map((rev) => (
         <PriorRevisionSection
@@ -894,7 +794,6 @@ function PriorRevisionSection({
   const revJob: PipelineJob = {
     ...job,
     threadGroups: revision.threadGroups,
-    halt: null,
   };
   return (
     <details className="mt-1 opacity-70">
@@ -1309,144 +1208,52 @@ function StateBanner({
   job,
   jobRef,
   onConversation,
-  onNotice,
 }: {
   job: PipelineJob | null;
   jobRef: JobRef;
   onConversation: () => void;
-  /** Surface a human-readable notice (the server's refusal `reason`) — a banner control the backend
-   *  declines (HTTP 200 `{ ok:false, reason }`) toasts instead of silently navigating away. */
-  onNotice: (message: string) => void;
 }) {
   const retry = useRetryJob(jobRef);
-  const shipWithoutReview = useShipWithoutReview(jobRef);
   // Re-drive the halted build, then drop to the conversation to watch it resume.
   const onRetry = () => {
     retry.mutate(undefined, { onSuccess: onConversation });
   };
 
-  // The Codex-outage hold on the ship-time master_review: a transient infra hold, not a terminal
-  // failure — the job auto-retries on the resume clock, or the operator can jump straight to the
-  // ship-review gate without the automated whole-diff pass.
-  if (job?.halt?.kind === "codex_review_unavailable") {
-    const pending = retry.isPending || shipWithoutReview.isPending;
-    const onShipWithoutReview = () =>
-      shipWithoutReview.mutate(undefined, {
-        onSuccess: (res) =>
-          res.ok
-            ? onConversation()
-            : onNotice(res.reason ?? "Ship without review was refused."),
-      });
-    return (
-      <div
-        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
-        style={{
-          borderColor: "var(--border)",
-          borderLeftColor: "var(--accent-line)",
-          background: "var(--surface-2)",
-        }}
-      >
-        <div className="mb-1 flex items-center gap-1.5">
-          <Hourglass size={11} className="text-dim" />
-          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
-            MASTER REVIEW PAUSED
-          </span>
-        </div>
-        <p className="text-[10.5px] leading-snug text-dim">
-          Codex is unreachable — it&apos;s retrying automatically. You can
-          retry now, or ship without the automated review and review the diff
-          yourself.
-        </p>
-        <div className="mt-2 flex gap-1.5">
-          <BannerBtn
-            tone="accent"
-            icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Retrying…" : "Retry now"}
-            onClick={onRetry}
-            disabled={pending}
-          />
-          <BannerBtn
-            tone="neutral"
-            label={
-              shipWithoutReview.isPending
-                ? "Shipping…"
-                : "Ship without review"
-            }
-            onClick={onShipWithoutReview}
-            disabled={pending}
-          />
-        </div>
+  // The job-level `halt` axis is gone; a build that ended abnormally now surfaces via a thread's display-only
+  // `haltReason`. Show a single "not done" banner (with the reason) when any thread carries one — Retry
+  // re-drives the halted build, or the operator can steer it via chat.
+  const haltReason =
+    job?.threadGroups
+      .flatMap((s) => s.threads)
+      .find((t) => t.haltReason)?.haltReason ?? null;
+  if (!haltReason) return null;
+  return (
+    <div
+      className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
+      style={{ borderColor: "var(--red-line)", background: "var(--red-soft)" }}
+    >
+      <div className="mb-1 flex items-center gap-1.5">
+        <AlertTriangle size={11} className="text-red" />
+        <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
+          NOT DONE
+        </span>
       </div>
-    );
-  }
-
-  if (
-    job?.halt &&
-    (job.halt.kind === "failed" || job.halt.kind === "incomplete")
-  ) {
-    return (
-      <div
-        className="mx-1.5 my-1 rounded-md border px-3 py-2.5"
-        style={{
-          borderColor: "var(--red-line)",
-          background: "var(--red-soft)",
-        }}
-      >
-        <div className="mb-1 flex items-center gap-1.5">
-          <AlertTriangle size={11} className="text-red" />
-          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-red">
-            NOT DONE
-          </span>
-        </div>
-        <p className="text-[10.5px] leading-snug text-dim">
-          This build didn&apos;t reach a clean finish — it needs you. Steer it
-          via chat, or retry.
-        </p>
-        <div className="mt-2 flex gap-1.5">
-          <BannerBtn
-            tone="red"
-            icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Retrying…" : "Retry"}
-            onClick={onRetry}
-            disabled={retry.isPending}
-          />
-          <BannerBtn tone="neutral" label="Revert" onClick={onConversation} />
-        </div>
+      <p className="text-[10.5px] leading-snug text-dim">
+        This build didn&apos;t reach a clean finish ({haltReason}) — it needs
+        you. Steer it via chat, or retry.
+      </p>
+      <div className="mt-2 flex gap-1.5">
+        <BannerBtn
+          tone="red"
+          icon={<RotateCw size={10} />}
+          label={retry.isPending ? "Retrying…" : "Retry"}
+          onClick={onRetry}
+          disabled={retry.isPending}
+        />
+        <BannerBtn tone="neutral" label="Revert" onClick={onConversation} />
       </div>
-    );
-  }
-  if (job?.halt?.kind === "blocked_credentials") {
-    return (
-      <div
-        className="mx-1.5 my-1 rounded-md border border-l-2 px-3 py-2.5"
-        style={{
-          borderColor: "var(--border)",
-          borderLeftColor: "var(--faint)",
-          background: "var(--surface-2)",
-        }}
-      >
-        <div className="mb-1 flex items-center gap-1.5">
-          <Pause size={11} className="text-dim" />
-          <span className="font-mono text-[9px] font-semibold tracking-[0.04em] text-dim">
-            SESSION SAVED
-          </span>
-        </div>
-        <p className="text-[10.5px] leading-snug text-dim">
-          The live session is held — reply to resume the same session.
-        </p>
-        <div className="mt-2 flex gap-1.5">
-          <BannerBtn
-            tone="accent"
-            icon={<RotateCw size={10} />}
-            label={retry.isPending ? "Resuming…" : "Re-ping"}
-            onClick={onRetry}
-            disabled={retry.isPending}
-          />
-        </div>
-      </div>
-    );
-  }
-  return null;
+    </div>
+  );
 }
 
 function BannerBtn({

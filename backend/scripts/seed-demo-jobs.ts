@@ -55,6 +55,8 @@ type DemoJob = {
   halted?: boolean;
   halt?: { at: string; kind: 'failed'; reason: string };
   section: string;
+  build_path?: 'direct' | 'plan';
+  focused_thread_id?: string;
 };
 
 // Do not seed unhalted `running` rows here: the real backend boot sweep treats those as resumable
@@ -92,15 +94,17 @@ const DEMO_JOBS: DemoJob[] = [
     kind: 'feature',
     title:
       'Implement real-time collaborative cursor presence in the job workspace conversation view',
-    status: 'awaiting_ship_review',
+    status: 'ready',
     section: 'ready_to_ship (rich job)',
+    build_path: 'plan',
+    focused_thread_id: threadId(7),
   },
   {
     id: jobId(5),
     repo_id: REPO_1_ID,
     kind: 'bugfix',
     title: 'Retry webhook delivery on 5xx',
-    status: 'running',
+    status: 'building',
     halted: true,
     halt: {
       at: new Date('2026-07-09T18:42:00.000Z').toISOString(),
@@ -115,7 +119,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_1_ID,
     kind: 'feature',
     title: 'Polish onboarding empty states',
-    status: 'awaiting_ship_review',
+    status: 'ready',
     section: 'ready_to_ship',
   },
   {
@@ -123,7 +127,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_2_ID,
     kind: 'feature',
     title: 'Add repo webhook re-validation button',
-    status: 'awaiting_ship_review',
+    status: 'ready',
     section: 'ready_to_ship (awaiting_ship_review)',
   },
   {
@@ -131,7 +135,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_1_ID,
     kind: 'feature',
     title: 'Spike: evaluate pgvector index tuning',
-    status: 'done',
+    status: 'merged',
     section: 'done',
   },
   {
@@ -139,7 +143,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_1_ID,
     kind: 'feature',
     title: 'Add dark mode toggle to settings',
-    status: 'done',
+    status: 'pr_open',
     pr_state: 'open',
     pr_url: 'https://github.com/dennisofficial/test-repo/pull/42',
     pr_number: 42,
@@ -150,7 +154,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_2_ID,
     kind: 'bugfix',
     title: 'Migrate steps table index to include leg_ordinal',
-    status: 'done',
+    status: 'merged',
     pr_state: 'merged',
     pr_url: 'https://github.com/dennisofficial/demo-repo-2/pull/7',
     pr_number: 7,
@@ -177,7 +181,7 @@ const DEMO_JOBS: DemoJob[] = [
     repo_id: REPO_2_ID,
     kind: 'feature',
     title: 'Update README',
-    status: 'done',
+    status: 'merged',
     section: 'done',
   },
   {
@@ -193,7 +197,7 @@ const DEMO_JOBS: DemoJob[] = [
 type DemoThreadGroup = {
   id: string;
   ordinal: number;
-  kind: 'planning' | 'build' | 'master_review';
+  kind: 'planning' | 'section' | 'master_review' | 'post_build';
   title: string | null;
 };
 
@@ -204,18 +208,26 @@ const RICH_THREAD_GROUPS: DemoThreadGroup[] = [
   {
     id: threadGroupId(2),
     ordinal: 200,
-    kind: 'build',
+    kind: 'section',
     title: 'Presence + remote cursors',
   },
   { id: threadGroupId(3), ordinal: 300, kind: 'master_review', title: null },
+  { id: threadGroupId(4), ordinal: 400, kind: 'post_build', title: null },
 ];
 
 type DemoThread = {
   id: string;
   thread_group_id: string;
   ordinal: number;
-  role: 'planning' | 'builder' | 'master_review';
+  role:
+    | 'planner'
+    | 'builder'
+    | 'master_review'
+    | 'review_agent'
+    | 'review_fix'
+    | 'post_build';
   brief: string;
+  parent_thread_id?: string;
 };
 
 const RICH_THREADS: DemoThread[] = [
@@ -223,7 +235,7 @@ const RICH_THREADS: DemoThread[] = [
     id: threadId(1),
     thread_group_id: threadGroupId(1),
     ordinal: 100,
-    role: 'planning',
+    role: 'planner',
     brief: 'Main conversation',
   },
   {
@@ -241,11 +253,34 @@ const RICH_THREADS: DemoThread[] = [
     brief: 'Render remote cursors in the editor',
   },
   {
+    id: threadId(5),
+    thread_group_id: threadGroupId(2),
+    ordinal: 310,
+    role: 'review_agent',
+    brief: 'Review — frontend lens',
+    parent_thread_id: threadId(3),
+  },
+  {
+    id: threadId(6),
+    thread_group_id: threadGroupId(2),
+    ordinal: 320,
+    role: 'review_fix',
+    brief: 'Post-review fixes',
+    parent_thread_id: threadId(3),
+  },
+  {
     id: threadId(4),
     thread_group_id: threadGroupId(3),
     ordinal: 400,
     role: 'master_review',
     brief: 'Master review of the full diff',
+  },
+  {
+    id: threadId(7),
+    thread_group_id: threadGroupId(4),
+    ordinal: 500,
+    role: 'post_build',
+    brief: 'Post-build wrap-up',
   },
 ];
 
@@ -432,8 +467,7 @@ async function upsertJob(ds: DataSource, demo: DemoJob): Promise<void> {
   // future so GitStateReconciler never marks them DUE and re-latches pr_state to 'closed' after a 404.
   row.next_poll_at =
     demo.pr_number != null ? new Date('2999-01-01T00:00:00Z') : null;
-  row.halted = demo.halted ?? false;
-  row.halt = demo.halt ?? null;
+  if (demo.build_path != null) row.build_path = demo.build_path;
   await jobs.save(row);
   console.log(
     `  seeded job "${demo.title.slice(0, 60)}${demo.title.length > 60 ? '…' : ''}" [${demo.section}] (${demo.id})`,
@@ -469,6 +503,7 @@ async function upsertRichThreads(ds: DataSource): Promise<void> {
     row.ordinal = t.ordinal;
     row.brief = t.brief;
     row.role = t.role;
+    row.parent_thread_id = t.parent_thread_id ?? null;
     row.config = {};
     await threads.save(row);
   }
@@ -530,6 +565,15 @@ async function main(): Promise<void> {
     await upsertRichThreads(ds);
     await upsertRichTasks(ds);
     await upsertRichMessages(ds);
+    // Threads must exist before the job's focused_thread_id FK can point at one.
+    const jobs = ds.getRepository(JobEntity);
+    for (const demo of DEMO_JOBS) {
+      if (demo.focused_thread_id == null) continue;
+      const row = await jobs.findOne({ where: { id: demo.id } });
+      if (!row) continue;
+      row.focused_thread_id = demo.focused_thread_id;
+      await jobs.save(row);
+    }
     console.log(
       `seed-demo-jobs: done — ${DEMO_JOBS.length} jobs, rich job = ${RICH_JOB_ID}`,
     );

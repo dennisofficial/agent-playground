@@ -20,6 +20,7 @@ import {
   useRenameJob,
   useSetAutoApprove,
   useSetAutoMerge,
+  useSetFocus,
   useMessage,
 } from "@/lib/api/job-queries";
 import { useJobEvents } from "@/lib/api/job-events";
@@ -32,6 +33,7 @@ import {
   APPROVE_ACTION_ID,
   SHIP_ACTION_ID,
   pipelineMainDefaultFooter,
+  pipelinePlannerThreadId,
   type JobKind,
   type JobStatus,
   type WebApprovalCard,
@@ -47,11 +49,17 @@ import { SelectionCommentPopover } from "./selection-comment-popover";
 import { DeleteJobPrDialog } from "./delete-job-pr-dialog";
 
 /**
- * The thread workspace — the navigator (pipeline / state panels) + the work column (Conversation or
- * Step). Resolves its own data from the org → repo → thread API. The shell's "needs you" dots come from
- * the server-owned thread-list fields (no longer fed from here); this just renders the open thread.
+ * The job workspace — the navigator (pipeline / state panels) + the work column (Conversation or Phase).
+ * Routed by thread (`/workspace/:jobKey/:threadId`): `threadId` is the server-focused thread the console is
+ * showing; the planner thread renders the bespoke Conversation, every other thread a read/steer PhaseView.
+ * Resolves its own data from the org → repo → job API.
  */
-export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
+export function JobWorkspace({
+  orgId,
+  repoId,
+  jobId,
+  threadId,
+}: JobRef & { threadId: string }) {
   const router = useRouter();
   const ref = useMemo<JobRef>(
     () => ({ orgId, repoId, jobId }),
@@ -67,7 +75,16 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   const rename = useRenameJob(ref);
   const autoApprove = useSetAutoApprove(ref);
   const autoMerge = useSetAutoMerge(ref);
+  const focus = useSetFocus(ref);
   useJobEvents(ref);
+
+  // Follow the operator's navigation with the server-authoritative routing pointer (d4): whenever the shown
+  // thread changes, advance `jobs.focused_thread_id`. Fire-and-forget — the URL is the source of truth for
+  // what's rendered, so a failed focus write never blocks the view.
+  const focusMutate = focus.mutate;
+  useEffect(() => {
+    if (threadId) focusMutate(threadId);
+  }, [threadId, focusMutate]);
 
   // One send-into-this-thread action, shared by every `Markdown` in the workspace (conversation AND the
   // detail-pane spec viewer) — that's why a broken mermaid diagram's "send to Atlas" button appears in
@@ -81,16 +98,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     [sendMessage],
   );
 
-  // Two independent selections: `laneNode` (?lane=) drives the LEFT pane (a THREADS lane — Main or a build
-  // thread/step); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT / port / subagent / doc). A thread
-  // switch navigates to a fresh clean URL with no query, so both reset — no reset effect needed.
+  // The LEFT pane is the ROUTED thread (`:threadId`); `detailNode` (?node=) drives the RIGHT pane (an OUTPUT
+  // / port / subagent / doc). Selecting a thread is a route navigation (see `use-selected-node`); the detail
+  // query layers persist across a thread switch.
   const {
-    laneNode,
     detailNode,
     subNode,
     subLane,
     selectNode,
-    openConversation,
     closeDetail,
     closeSub,
     fileNode,
@@ -126,12 +141,12 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   useEffect(() => {
     if (!navAsDrawer) setNavOpen(false);
   }, [navAsDrawer]);
-  // Close the nav drawer on ANY selection made from it: a lane switch (?lane=) OR a detail-node pick
-  // (?node=, which leaves laneNode unchanged). Without detailNode here, tapping a spec/artifact/log/diff
-  // row in the open left drawer would open the right detail drawer on top of it — two stacked drawers.
+  // Close the nav drawer on ANY selection made from it: a thread switch (the routed `:threadId`) OR a
+  // detail-node pick (?node=). Without detailNode here, tapping a spec/artifact/log/diff row in the open
+  // left drawer would open the right detail drawer on top of it — two stacked drawers.
   useEffect(() => {
     setNavOpen(false);
-  }, [laneNode, detailNode]);
+  }, [threadId, detailNode]);
 
   const openNav = () => setNavOpen(true);
   const openDetail = () => selectNode(lastDetail.current ?? "plan");
@@ -229,10 +244,14 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
   // proposed threads instead (the same list `PlanDoc` renders as "Sections"/"Changes"), which IS known at
   // approval time.
   const stepCount = approvalCard?.threads.length ?? 0;
-  // Main's transcript is the planning thread group's own thread (undefined pre-plan, where the single brain
-  // thread needs no scoping) — see `Conversation`'s `mainThreadId`.
-  const mainThreadId = job?.threadGroups.find((s) => s.kind === "planning")
-    ?.threads[0]?.id;
+  // The planner ("Main") thread — the planning group's planner thread (undefined pre-plan, where the single
+  // brain thread needs no scoping). When the routed `:threadId` is this thread, the workPane shows the
+  // bespoke Conversation; every other thread renders a PhaseView.
+  const plannerThreadId = pipelinePlannerThreadId(pipeline);
+  const mainThreadId = plannerThreadId;
+  // "Show the conversation" = the routed thread is the planner, OR there's no pipeline yet (a pre-plan
+  // scoping job whose only thread IS the planner the redirect shell focused).
+  const showConversation = !job || threadId === plannerThreadId;
 
   const meta: JobMeta = {
     title: inboxThread?.title ?? job?.title ?? "Thread",
@@ -252,7 +271,11 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       : (inboxThread?.blockedSeedMessage ?? null),
   };
 
-  const onConversation = openConversation;
+  // "Back to the conversation" = route to the planner thread. Pre-plan (no planner id resolved yet) the
+  // operator is already on the planner, so this is a no-op.
+  const onConversation = () => {
+    if (plannerThreadId) selectNode(plannerThreadId);
+  };
   const onSelectNode = selectNode;
   const onOpenPlan = () => selectNode("plan");
   const onRename = (title: string) => rename.mutate(title);
@@ -277,7 +300,7 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
       pipeline={pipeline}
       context={context}
       contextLoading={contextLoading}
-      laneNode={laneNode}
+      laneNode={threadId}
       detailNode={detailNode}
       jobRef={ref}
       approveValue={awaitingApproval ? approveValue : ""}
@@ -297,19 +320,20 @@ export function JobWorkspace({ orgId, repoId, jobId }: JobRef) {
     />
   );
 
-  // The LEFT work pane — the Main brain conversation by default; a selected THREADS lane replaces it with that
-  // lane's transcript. Authored once so the desktop Panel and the narrow single-pane share it; the two toggle
-  // callbacks are the only thing that changes across tiers (undefined = no top-bar button, i.e. desktop).
+  // The LEFT work pane — the bespoke planner ("Main") conversation when the routed thread IS the planner
+  // (or pre-plan); every other routed thread renders its transcript via PhaseView. Authored once so the
+  // desktop Panel and the narrow single-pane share it; the two toggle callbacks are the only thing that
+  // changes across tiers (undefined = no top-bar button, i.e. desktop).
   const workPane = (onOpenNav?: () => void, onOpenDetail?: () => void) =>
-    laneNode ? (
+    !showConversation ? (
       <PhaseView
         jobRef={ref}
         pipeline={pipeline}
         pipelineLoading={pipelineLoading}
         messages={messages}
         approvalCard={approvalCard}
-        selectedNode={laneNode}
-        onConversation={openConversation}
+        selectedNode={threadId}
+        onConversation={onConversation}
         onSelectNode={(node) => selectNode(node, { push: true })}
         onOpenNav={onOpenNav}
         onOpenDetail={onOpenDetail}

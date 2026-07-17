@@ -8,8 +8,6 @@ import { toJobStatus, toJobKind } from "./status";
 import type {
   WireJobStatus,
   WireJobKind,
-  WireJobHalt,
-  WireJobActivity,
   JobStatus,
   JobKind,
   JobBlocker,
@@ -36,15 +34,10 @@ export interface RawInboxThread {
   /** The job's build kind ('feature' | 'bugfix' | 'onboarding' | 'event'); null until scoped. Preferred
    *  over `origin` for the badge when present (see `deriveInboxKind`). */
   kind?: string | null;
-  /** Raw backend thread status ('open' | 'planning' | … | 'cancelled'). */
+  /** Raw backend thread status ('scoping' | 'planning' | … | 'cancelled'). */
   status: string;
-  /** Orthogonal backend activity axis; the server folds this into `needsYou`. */
-  activity: WireJobActivity;
   /** Server-derived: the thread is awaiting the operator (AI idle, not terminal). */
   needsYou: boolean;
-  /** An unresolved turn-failure box is outstanding — the sidebar renders the failed-style ✕ glyph
-   *  regardless of `status`, and `needsYou` is already true. */
-  halted: boolean;
   createdAt: string;
   /** The observed PR (null until one exists) — drives the sidebar PR-status glyph. */
   pr?: InboxPr | null;
@@ -56,15 +49,13 @@ export interface RawInboxThread {
   /** Sidebar port badge tri-state (`jobs.port_state`): a live service exposed via a public preview URL,
    *  a live but unexposed service, or null when nothing is running. */
   portState?: "exposed" | "internal" | null;
-  /** Count of build/direct_build thread groups whose builder work has finished (`jobs.build_stages_done`).
+  /** Count of Section thread groups whose builder work has finished (`jobs.build_stages_done`).
    *  null = not applicable / never computed. */
   buildStagesDone?: number | null;
-  /** Total build/direct_build thread groups in the job's plan (`jobs.build_stages_total`). */
+  /** Total Section thread groups in the job's plan (`jobs.build_stages_total`). */
   buildStagesTotal?: number | null;
-  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
-  halt?: WireJobHalt | null;
-  /** True only while a "Ship it" is being finalized (PR opening). The job re-uses the `running` status
-   *  during shipping, so this keeps the card in "Ready to Ship" instead of "Building". */
+  /** True while a "Ship it" is being finalized (the `shipping` wire status, folded onto the `running`
+   *  presentation dot) — keeps the card in "Ready to Ship" instead of "Building". */
   shipping?: boolean;
   /** Who spawned this job (immutable snapshot), or null for a top-level job — the fallback source for the
    *  navigator's "Created by" row before the full pipeline resolves (a fresh `open` job has `no_job`). */
@@ -83,12 +74,8 @@ export interface InboxThread {
   kind: JobKind;
   /** UI status (mapped from the backend status) — drives the status pie. */
   status: JobStatus;
-  /** Backend activity axis, retained so realtime and REST cache rows match the wire contract. */
-  activity: WireJobActivity;
   /** The alert dot: this thread is waiting on you. */
   needsYou: boolean;
-  /** A turn-stopping error is outstanding — the sidebar shows the failed ✕ glyph over the status pie. */
-  halted: boolean;
   createdAt: string;
   /** The observed PR (null until one exists) — when present the sidebar shows a PR-status glyph
    *  instead of the build `status` pie. */
@@ -100,14 +87,12 @@ export interface InboxThread {
   /** Sidebar port badge tri-state: a live service exposed via a public preview URL, a live but
    *  unexposed service, or null when nothing is running. Exposed-wins is resolved server-side. */
   portState: "exposed" | "internal" | null;
-  /** Count of build/direct_build thread groups whose builder work has finished. null = not applicable. */
+  /** Count of Section thread groups whose builder work has finished. null = not applicable. */
   buildStagesDone: number | null;
-  /** Total build/direct_build thread groups in the job's plan. */
+  /** Total Section thread groups in the job's plan. */
   buildStagesTotal: number | null;
-  /** Failure/pause axis, orthogonal to `status` (the build phase) — null when healthy. */
-  halt: WireJobHalt | null;
-  /** True only while a "Ship it" is being finalized (PR opening) — keeps the card in "Ready to Ship"
-   *  (with the `running` working spinner) instead of routing it to "Building". */
+  /** True while a "Ship it" is being finalized — keeps the card in "Ready to Ship" (with the `running`
+   *  working spinner) instead of routing it to "Building". */
   shipping: boolean;
   /** Who spawned this job (immutable snapshot), or null for a top-level job. */
   createdBy: JobProvenance | null;
@@ -129,9 +114,11 @@ function deriveInboxKind(r: RawInboxThread): JobKind {
   return r.origin === "event" ? "event" : "feat";
 }
 
-/** Backend status (incl. `open`, which `toJobStatus` doesn't cover) → UI status for the pie. */
+/** Backend status → UI status for the pie. A pre-build `scoping` job reads as `triaging` for an untrusted
+ *  event (the autonomous triage lane) or plain `planning` otherwise. */
 export function uiStatus(backend: string, origin: string): JobStatus {
-  if (backend === "open") return origin === "event" ? "triaging" : "planning";
+  if (backend === "scoping")
+    return origin === "event" ? "triaging" : "planning";
   return toJobStatus(backend as WireJobStatus);
 }
 
@@ -141,9 +128,7 @@ export function normalize(r: RawInboxThread): InboxThread {
     title: r.title?.trim() || "Untitled thread",
     kind: deriveInboxKind(r),
     status: uiStatus(r.status, r.origin),
-    activity: r.activity ?? "idle",
     needsYou: r.needsYou,
-    halted: r.halted ?? false,
     createdAt: r.createdAt,
     pr: r.pr ?? null,
     ci: r.ciStatus ?? null,
@@ -151,7 +136,6 @@ export function normalize(r: RawInboxThread): InboxThread {
     portState: r.portState ?? null,
     buildStagesDone: r.buildStagesDone ?? null,
     buildStagesTotal: r.buildStagesTotal ?? null,
-    halt: r.halt ?? null,
     shipping: r.shipping ?? false,
     createdBy: r.createdBy ?? null,
     blockedBy: r.blockedBy ?? [],

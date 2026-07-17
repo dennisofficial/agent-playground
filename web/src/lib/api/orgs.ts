@@ -794,7 +794,7 @@ export function useMcpOAuthConnect(orgId: string) {
 
 // ── Org CRUD (create / rename / delete) ──────────────────────────────────────────────────────────
 // The org rail + settings read orgs off the SESSION (`GET /auth/session`), so every write invalidates
-// `qk.session()`. The cross-org inbox (`/web/threads`, `useAllJobs`) embeds `org.name` per row and
+// `qk.session()`. The cross-org inbox (`/web/jobs`, `useAllJobs`) embeds `org.name` per row and
 // feeds the sidebar / workspace / command palette / rail badges, so rename + delete also invalidate it.
 
 /** Create an org — the caller becomes its owner; it starts in `onboarding`. */

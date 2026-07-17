@@ -2,7 +2,7 @@
 export const qk = {
   /** The operator session (identity + orgs) from `GET /auth/session`. */
   session: () => ["session"] as const,
-  /** Every thread across all the operator's orgs (`GET /web/threads`). */
+  /** Every thread across all the operator's orgs (`GET /web/jobs`). */
   allJobs: () => ["all-threads"] as const,
   /** One org's members (`GET /web/orgs/:orgId/members`). */
   orgMembers: (orgId: string) => ["org-members", orgId] as const,

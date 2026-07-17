@@ -432,6 +432,18 @@ export function fetchPipeline(ref: JobRef): Promise<PipelineState> {
   return webJson<PipelineState>(threadPath(ref, "/pipeline"));
 }
 
+/** Advance the server-authoritative routing pointer (`jobs.focused_thread_id`) — the operator-override
+ *  half of d4. Called as a side effect of navigating to a thread so the console pointer follows. */
+export function setFocus(
+  ref: JobRef,
+  threadId: string,
+): Promise<{ status: "ok" }> {
+  return webJson(threadPath(ref, "/focus"), {
+    method: "POST",
+    body: JSON.stringify({ threadId }),
+  });
+}
+
 // ── Supervised services (atlas-svc) ───────────────────────────────────────────────────────────
 export function fetchServices(
   ref: JobRef,

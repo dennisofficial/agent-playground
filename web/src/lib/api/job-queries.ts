@@ -37,6 +37,7 @@ import {
   renameJob,
   setAutoApprove,
   setAutoMerge,
+  setFocus,
   retryJob,
   retryTurn,
   shipWithoutReview,
@@ -108,13 +109,19 @@ export function useJobMessages(ref: JobRef) {
   });
 }
 
-/** A thread's pipeline (job + threads), or `{ status: 'no_job' }` before a plan is approved. */
-export function usePipeline(ref: JobRef) {
+/**
+ * A thread's pipeline (job + threads), or `{ status: 'no_job' }` before a plan is approved.
+ * `refetchInterval` defaults off (SSE via `useJobEvents` keeps most consumers fresh); pass one for a
+ * caller with no SSE subscription of its own that needs to poll for a value to appear (e.g. the job
+ * redirect shell polling for `focused_thread_id`).
+ */
+export function usePipeline(ref: JobRef, refetchInterval?: number | false) {
   return useQuery({
     queryKey: qk.threadPipeline(ref),
     queryFn: () => fetchPipeline(ref),
     enabled: hasRef(ref),
     staleTime: 5_000,
+    ...(refetchInterval !== undefined ? { refetchInterval } : {}),
   });
 }
 
@@ -610,6 +617,17 @@ export function useSetAutoMerge(ref: JobRef) {
     mutationFn: (body: { autoMerge: boolean }) => setAutoMerge(ref, body),
     onSuccess: () =>
       void qc.invalidateQueries({ queryKey: qk.threadPipeline(ref) }),
+  });
+}
+
+/**
+ * Advance the server-authoritative routing pointer to a thread (d4) — fired as a side effect of navigating
+ * to it so `jobs.focused_thread_id` follows the operator. Fire-and-forget: the URL is the source of truth
+ * for what's shown, so a failed focus write never blocks navigation (no cache invalidation needed).
+ */
+export function useSetFocus(ref: JobRef) {
+  return useMutation({
+    mutationFn: (threadId: string) => setFocus(ref, threadId),
   });
 }
 

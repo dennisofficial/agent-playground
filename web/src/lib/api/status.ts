@@ -23,6 +23,9 @@ export const STATUS_META: Record<JobStatus, StatusMeta> = {
   // Codex reviewing the submitted plan — still the pre-approval, you're-in-the-loop phase (NOT the
   // autonomous post-approval build), so it reads blue like Planning, never the orange Running accent.
   plan_review: { label: "Reviewing", color: "var(--blue)", pulse: true },
+  // The post-build Codex master review — same hands-off "step away" read as plan review, so it shares
+  // the blue reviewing treatment rather than the autonomous-build orange.
+  master_review: { label: "Reviewing", color: "var(--blue)", pulse: true },
   // One muted slate covers every "needs you" gate (handoff: restrained palette).
   awaiting_approval: {
     label: "Awaiting approval",
@@ -63,25 +66,40 @@ export const KIND_META: Record<JobKind, KindMeta> = {
   review: { label: "REVIEW", color: "var(--dim)" },
 };
 
-/** Wire JobStatus → UI JobStatus. */
+/**
+ * Wire JobStatus → the web's UI-presentation JobStatus. The backend enum was widened (`scoping`,
+ * `plan_reviewing`, `building`, `master_review`, `ready`, `shipping`, `pr_open`, `merged`); the console
+ * keeps its coarser presentation vocab, so several wire values fold onto one presentation dot:
+ *  - `building`/`shipping` → the autonomous `running` spinner (a build lane owns the work; `sectionOf`
+ *    still splits "Ready to Ship" out via the `shipping` flag);
+ *  - `master_review` → its own `master_review` dot, reusing `plan_review`'s hands-off "Reviewing" blue
+ *    (kept distinct from `running` so the Inbox can bucket it into its own section, same as before);
+ *  - `ready` → the `awaiting_ship_review` gate;
+ *  - `pr_open`/`merged` → the terminal `done` dot (the sidebar swaps in the PR glyph from `pr.state`).
+ */
 export function toJobStatus(status: WireJobStatus): JobStatus {
   switch (status) {
-    case "running":
-      return "running";
+    case "scoping":
     case "planning":
       return "planning";
-    case "plan_review":
+    case "plan_reviewing":
       return "plan_review";
     case "awaiting_approval":
       return "awaiting_approval";
-    case "awaiting_ship_review":
+    case "building":
+    case "shipping":
+      return "running";
+    case "master_review":
+      return "master_review";
+    case "ready":
       return "awaiting_ship_review";
+    case "pr_open":
+    case "merged":
+      return "done";
     case "amending":
       return "amending";
     case "blocked":
       return "blocked";
-    case "done":
-      return "done";
     case "cancelled":
       return "cancelled";
     case "deleting":

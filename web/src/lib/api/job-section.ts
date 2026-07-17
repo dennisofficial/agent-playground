@@ -46,13 +46,10 @@ export function sectionOf(t: InboxThread): JobSection | null {
   switch (t.status) {
     case "planning":
     case "triaging":
-      // The synchronous Codex plan review keeps the `planning` status and only flips the orthogonal
-      // `activity` axis to `plan_review` — surface it in its own hands-off Reviewing section (mirrors the
-      // `master_review` carve-out in the `running` branch below) so it reads as "step away".
-      if (t.activity === "plan_review") return "reviewing";
       return "planning";
     // A hands-off, system-owned phase (Codex reviewing the plan + the review→revise loop): its own
-    // section so it reads as "step away", separate from Planning's you're-in-the-loop grilling.
+    // section so it reads as "step away", separate from Planning's you're-in-the-loop grilling. The wire
+    // `plan_reviewing` status folds onto this presentation value (`toJobStatus`).
     case "plan_review":
       return "reviewing";
     case "blocked":
@@ -63,12 +60,12 @@ export function sectionOf(t: InboxThread): JobSection | null {
       return "amending";
     case "awaiting_ship_review":
       return "ready_to_ship";
+    case "master_review":
+      return "master_review";
     case "running":
-      // The ship-time Codex master review (after all builder threads) keeps the `running` status;
-      // surface it as its own section rather than an indistinct "Building" row.
-      if (t.activity === "master_review") return "master_review";
-      // A shipping job re-uses the `running` status while its PR opens — keep it in "Ready to Ship"
-      // (showing the `running` working spinner) rather than teleporting it to "Building".
+      // `building` and `shipping` both fold onto the `running` presentation dot. A shipping job (the
+      // `shipping` flag) stays in "Ready to Ship" (showing the `running` working spinner) rather than
+      // teleporting to "Building".
       return t.shipping ? "ready_to_ship" : "building";
     case "done":
       if (t.pr?.state === "open") return "pr_open";

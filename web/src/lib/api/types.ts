@@ -9,8 +9,6 @@
 
 import type {
   AutoApproveMode,
-  JobActivity as WireJobActivity,
-  JobHalt as WireJobHalt,
   JobStatus as WireJobStatus,
   OrgUsage,
 } from "@workspace/shared";
@@ -21,8 +19,6 @@ import type {
  * backend's `JobStatus`. (The web's own UI-presentation `JobStatus` — below — is a separate type.)
  */
 export type { WireJobStatus };
-/** The backend job halt reason — single-sourced in `@workspace/shared`. Null when the job is healthy. */
-export type { WireJobHalt };
 /**
  * Host-side Claude subscription usage snapshot — single-sourced in `@workspace/shared`. Carries the
  * OPTIONAL panel-header fields (`accountLabel` = the selected account's email/label, `plan` = its
@@ -30,11 +26,6 @@ export type { WireJobHalt };
  * neutral single-account header.
  */
 export type WireOrgUsage = OrgUsage;
-/**
- * The backend "system is working" axis (`idle | turn | plan_review | build | master_review`) —
- * single-sourced in `@workspace/shared`. Carried on the realtime row; the dot itself reads `needsYou`.
- */
-export type { WireJobActivity };
 
 export type WireJobKind =
   | "feature"
@@ -43,27 +34,10 @@ export type WireJobKind =
   | "event"
   | "review";
 
-/** The lane (Thread) PURE LINEAR STEP — one build lane within a Job. Pause/failure/skip are NOT steps;
- *  they live on the orthogonal {@link ThreadCondition} overlay. Mirrors backend `ThreadStatus`. */
-export type ThreadStatus =
-  | "pending"
-  | "planning"
-  | "reviewing"
-  | "executing"
-  | "auto_fixing"
-  | "done";
-
-/**
- * The orthogonal condition overlay on a lane (a lightweight denormalized tag, like job-level `halt.kind`),
- * independent of the linear {@link ThreadStatus} step. Detail (stderr, block reason, verification) stays in
- * the backend `terminal_record`/`halt_outcome`. Mirrors backend `ThreadCondition`.
- */
-export type ThreadCondition =
-  | "none"
-  | "paused" // a mid-build pause (request_operator_input / thread-level approval) — the step is preserved
-  | "incomplete" // halted without asserting completion (ADR 0004)
-  | "failed" // crashed / errored out
-  | "skipped"; // a review child that had nothing to do (unknown lens / no diff) — terminal, not a failure
+/** A Thread's collapsed lifecycle: `idle` (not finished — seeded, running, or waiting) or `done`
+ *  (asserted complete). Mirrors backend `ThreadStatus`. The old step/condition split is gone; a
+ *  thread's abnormal-end reason now rides the display-only {@link PipelineThread.haltReason}. */
+export type ThreadStatus = "idle" | "done";
 
 /** Per-step status (the execute folder's leaves). Mirrors backend `StepStatus` in `domain/thread.ts`. */
 export type StepStatus = "pending" | "building" | "reviewing" | "done";
@@ -449,8 +423,9 @@ export interface PipelineReviewChild {
   role: "review_agent" | "review_fix";
   brief: string;
   status: ThreadStatus;
-  /** The orthogonal condition overlay (skipped/failed/…) — independent of the linear {@link status} step. */
-  condition: ThreadCondition;
+  /** Display-only reason this child's LAST turn ended abnormally (`session_limit|error|…`), or null on a
+   *  clean end / before its first turn. Never drives auto-resume — purely a UI signal. */
+  haltReason: string | null;
   /** The lens id (`best_practices`/…) for a `review_agent` child; absent for `review_fix`. */
   lensId?: string;
   /** Findings this lens surfaced, or null until it has run (`review_fix` is always null). */
@@ -480,19 +455,19 @@ export interface TaskItem {
   blockedBy?: string[];
 }
 
-/** The thread ROLE — the single differentiator (subsumes the old `kind`/`is_master_review` split).
- *  Mirrors backend `ThreadRole` (`thread-kind/spec.ts`). `planning`/`post_build`/`ci` all reuse the brain's
- *  conversational session machinery; `builder`/`master_review` are top-level executable; `review_agent`/
- *  `review_fix` are thread-group-scoped children of a builder; `plan_review` is the Codex plan-review dialogue. */
+/** The thread ROLE — the single differentiator. Mirrors backend `ThreadRole` (`thread-kind/spec.ts`).
+ *  `planner` is the operator conversation ("Main"); `codex_review` is the synchronous Codex plan-review
+ *  dialogue; `builder`/`master_review` are top-level executable; `review_agent`/`review_fix` are
+ *  thread-group-scoped children of a builder; `post_build`/`ship` reuse the brain's conversational session. */
 export type ThreadRole =
-  | "planning"
-  | "plan_review"
+  | "planner"
+  | "codex_review"
   | "builder"
   | "review_agent"
   | "review_fix"
   | "master_review"
   | "post_build"
-  | "ci";
+  | "ship";
 
 /**
  * One THREAD — a first-class row differentiated by {@link ThreadRole}, grouped under a {@link PipelineThreadGroup}.
@@ -509,8 +484,9 @@ export interface PipelineThread {
   /** The thread's scope type (backend/frontend/docs/…), `'general'` fallback. */
   type: string;
   status: ThreadStatus;
-  /** The orthogonal condition overlay (pause/terminal tag) — independent of the linear {@link status} step. */
-  condition: ThreadCondition;
+  /** Display-only reason this thread's LAST turn ended abnormally (`session_limit|error|…`), or null on a
+   *  clean end / before its first turn. Never drives auto-resume/gating — purely a UI signal. */
+  haltReason: string | null;
   /** Whether a just-in-time plan was generated — gates the optional `plan` leaf in the nav tree. */
   hasPlan: boolean;
   /** The resumable engine session id, or null before the thread's first turn. */
@@ -536,16 +512,14 @@ export interface PipelineThread {
 }
 
 /** The thread group KIND — the single differentiator for a pipeline grouping. Mirrors backend `ThreadGroupKind`
- *  (`thread-group-kind/spec.ts`). Only `build`/`direct_build` hold multiple threads (sequential builder legs +
- *  review children); every other kind is a singleton thread group (exactly one thread). */
+ *  (`thread-group-kind/spec.ts`). `planning` holds the planner + codex_review threads; a `section` holds the
+ *  sequential builder legs + review children; every other kind is a singleton thread group. */
 export type ThreadGroupKind =
   | "planning"
-  | "plan_review"
-  | "build"
-  | "direct_build"
+  | "section"
   | "master_review"
   | "post_build"
-  | "ci";
+  | "ship";
 
 /**
  * A THREAD GROUP — the first-class §N pipeline grouping. A job's pipeline is the ordinal-ordered sequence of
@@ -564,7 +538,6 @@ export interface PipelineThreadGroup {
   type: string | null;
   ordinal: number;
   status: ThreadStatus;
-  condition: ThreadCondition;
   /** The plan revision this thread group belongs to, or null for a revision-agnostic/legacy thread group. */
   decisionRecordId: string | null;
   /** This thread group's ROOT threads, ordinal-sorted (a build thread group's sequential builder legs, oldest
@@ -593,7 +566,10 @@ export interface PipelineJob {
   title: string;
   kind: WireJobKind;
   status: WireJobStatus;
-  halt: WireJobHalt | null;
+  /** The server-authoritative routing pointer (`jobs.focused_thread_id`) — which thread the console should
+   *  open to (d4). The `[jobKey]` redirect shell resolves it; an operator clicking a thread advances it via
+   *  the focus-setter endpoint. Null before the planner thread exists. */
+  focusedThreadId: string | null;
   /** Who spawned this job (immutable snapshot), or null for a top-level job. Powers the "Created by"
    *  header row. */
   createdBy?: JobProvenance | null;
@@ -671,6 +647,9 @@ export type PipelineState =
   | PipelineJob
   | {
       status: "no_job";
+      /** The routing pointer even a pre-build (scoping/planning) job carries — it points at the planner
+       *  thread so the redirect shell can resolve `/workspace/:jobKey/:threadId` before any pipeline exists. */
+      focusedThreadId?: string | null;
       mainTasks?: TaskItem[];
       mainDefaultFooter?: LaneDefaultFooter;
       /** Carried on the open/pre-plan shape too, so the auto-approve toggle works from job creation onward. */
@@ -707,6 +686,28 @@ export function pipelineMainDefaultFooter(
   if (pipeline.status === "no_job") return pipeline.mainDefaultFooter;
   return pipeline.threadGroups.find((s) => s.kind === "planning")?.threads[0]
     ?.defaultFooter;
+}
+
+/** The server-authoritative routing pointer, from either pipeline shape — which thread the console should
+ *  open to (d4). Null until the planner thread exists. Read by the `[jobKey]` redirect shell. */
+export function pipelineFocusedThreadId(
+  pipeline: PipelineState | undefined,
+): string | null {
+  if (!pipeline) return null;
+  return pipeline.focusedThreadId ?? null;
+}
+
+/** The planner ("Main") thread id — the planning thread group's first thread. Undefined pre-plan (the
+ *  `no_job` shape carries no thread groups). Drives the workspace's Conversation-vs-PhaseView split. */
+export function pipelinePlannerThreadId(
+  pipeline: PipelineState | undefined,
+): string | undefined {
+  if (!pipeline || pipeline.status === "no_job") return undefined;
+  const planning = pipeline.threadGroups.find((s) => s.kind === "planning");
+  return (
+    planning?.threads.find((t) => t.role === "planner")?.id ??
+    planning?.threads[0]?.id
+  );
 }
 
 /** The job's per-job auto-approve mode, from either pipeline shape (`no_job` carries the mode too). */
@@ -855,6 +856,7 @@ export type JobStatus =
   | "running"
   | "planning"
   | "plan_review"
+  | "master_review"
   | "awaiting_approval"
   | "awaiting_ship_review"
   | "amending"

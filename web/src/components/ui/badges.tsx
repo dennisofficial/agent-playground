@@ -102,7 +102,7 @@ export function KindBadge({
  * Status "pie" — a 14px glyph whose SHAPE encodes the thread's stage and whose COLOR (from
  * {@link STATUS_META}) names the specific status. Every status is visually distinct:
  *   forming  (planning / triaging)  → dashed ring          · triaging breathes
- *   reviewing(plan_review)          → faint dashed base + a solid arc scanning around it
+ *   reviewing(plan_review / master_review) → faint dashed base + a solid arc scanning around it
  *   working  (running)              → spinning arc          · the autonomous "build is churning" spinner
  *   waiting  (awaiting_approval)    → ring + center dot      · bullseye = your move
  *   parked   (blocked)              → ring + a single center bar · a gate, not your move
@@ -130,6 +130,7 @@ const STATUS_SHAPE: Record<
   planning: "forming",
   triaging: "forming",
   plan_review: "reviewing",
+  master_review: "reviewing",
   running: "working",
   awaiting_approval: "waiting",
   // The ship-review gate — the second "your move" bullseye, same shape as the plan-approval gate.

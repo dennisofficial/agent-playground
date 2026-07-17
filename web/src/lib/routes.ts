@@ -2,9 +2,10 @@
  * Typed route helpers (house pattern from rs-crm/cubix `SITE_MAP`, hand-rolled here since
  * `@workspace/site-map` isn't vendored in this repo).
  *
- * A thread is addressed by its real `org/repo/thread` coordinate — every thread API call is org+repo
- * scoped, and the cross-org inbox (`/web/threads`) carries all three ids per row. The triple is encoded
- * into the single `[jobKey]` path segment so the route shape (`/workspace/:jobKey`) is stable.
+ * A job is addressed by its real `org/repo/job` coordinate — every job API call is org+repo scoped, and
+ * the cross-org inbox (`/web/jobs`) carries all three ids per row. The triple is encoded into the single
+ * `[jobKey]` path segment so the route shape (`/workspace/:jobKey/:threadId`) is stable — a job link
+ * (`/workspace/:jobKey`) hits the redirect shell, which forwards to the server-focused thread.
  */
 
 /** The ids needed to address one thread against the org → repo → thread API. */
@@ -39,9 +40,11 @@ export function decodeJobRef(jobKey: string): ThreadRefParts | null {
   }
 }
 
-/** Full href to a thread workspace. */
-export function threadHref(ref: ThreadRefParts): string {
-  return `/workspace/${encodeJobRef(ref)}`;
+/** Full href to a job workspace. Omit `threadId` to link the job itself (the redirect shell forwards to
+ *  the server-focused thread); pass one to deep-link a specific thread (`/workspace/:jobKey/:threadId`). */
+export function threadHref(ref: ThreadRefParts, threadId?: string): string {
+  const base = `/workspace/${encodeJobRef(ref)}`;
+  return threadId ? `${base}/${encodeURIComponent(threadId)}` : base;
 }
 
 export const ROUTES = {
