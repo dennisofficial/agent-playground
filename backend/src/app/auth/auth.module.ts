@@ -23,7 +23,7 @@ import { User, UserRepo } from './entities/user.entity';
       },
     }),
   ],
-  // OrgModule is re-exported so AuthController can resolve OrganizationService for /auth/session.
+  // OrgModule is re-exported so AuthController can resolve OrgService for /auth/session.
   modules: [OrgModule],
   entities: [{ entity: User, repoClass: UserRepo }],
   controllers: [AuthController],

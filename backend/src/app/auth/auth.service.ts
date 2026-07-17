@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
 import { JwtService } from '@workspace/auth/server';
-import type { AuthSession } from '@workspace/shared';
+import { EUserRole, EUserStatus, type AuthSession } from '@workspace/shared';
 import type { CookieOptions, Request, Response } from 'express';
 import { User, UserRepo } from './entities/user.entity';
 
@@ -41,8 +41,8 @@ export class AuthService implements OnApplicationBootstrap {
         email,
         name: 'Admin',
         passwordHash: await hash(password),
-        role: 'admin',
-        status: 'active',
+        role: EUserRole.ADMIN,
+        status: EUserStatus.ACTIVE,
       }),
     );
     this.logger.log(`Seed admin ${email} provisioned.`);
@@ -61,8 +61,8 @@ export class AuthService implements OnApplicationBootstrap {
         email,
         name: name ?? null,
         passwordHash: await hash(password),
-        role: 'operator',
-        status: 'pending',
+        role: EUserRole.OPERATOR,
+        status: EUserStatus.PENDING,
       }),
     );
     throw new ForbiddenException('Your account is pending approval.');
@@ -113,10 +113,10 @@ export class AuthService implements OnApplicationBootstrap {
   }
 
   private assertActive(user: User): void {
-    if (user.status === 'pending') {
+    if (user.status === EUserStatus.PENDING) {
       throw new ForbiddenException('Your account is pending approval.');
     }
-    if (user.status === 'suspended') {
+    if (user.status === EUserStatus.SUSPENDED) {
       throw new ForbiddenException('Your account has been suspended.');
     }
   }

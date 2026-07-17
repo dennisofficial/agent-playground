@@ -1,13 +1,12 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import type { MemberView, OrgSummary } from '@workspace/shared';
+import { CreateOrgDto, UpdateOrgDto, type MemberView, type OrgSummary } from '@workspace/shared';
 import type { User } from '../auth/entities/user.entity';
-import { CreateOrgDto, UpdateOrgDto } from './dto/org.dto';
-import { OrganizationService } from './organization.service';
+import { OrgService } from './org.service';
 
 @Controller('web/orgs')
 export class OrgController {
-  constructor(private readonly orgs: OrganizationService) {}
+  constructor(private readonly orgs: OrgService) {}
 
   @Post()
   create(@CurrentUser() user: User, @Body() body: CreateOrgDto): Promise<OrgSummary> {

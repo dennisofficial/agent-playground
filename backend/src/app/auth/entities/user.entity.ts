@@ -1,9 +1,6 @@
+import { EUserRole, EUserStatus } from '@workspace/shared';
 import { Column, Entity, Index, PrimaryGeneratedColumn, Repository } from 'typeorm';
 import { TimestampedEntity } from '../../../_lib/database/base.entity';
-
-export type UserRole = 'admin' | 'operator';
-/** New sign-ups land as `pending` and must be approved before they can log in. */
-export type UserStatus = 'pending' | 'active' | 'suspended';
 
 @Entity({ name: 'users' })
 export class User extends TimestampedEntity {
@@ -20,11 +17,11 @@ export class User extends TimestampedEntity {
   @Column({ type: 'text', nullable: true })
   name!: string | null;
 
-  @Column({ type: 'text', default: 'operator' })
-  role!: UserRole;
+  @Column({ type: 'enum', enum: EUserRole, default: EUserRole.OPERATOR })
+  role!: EUserRole;
 
-  @Column({ type: 'text', default: 'pending' })
-  status!: UserStatus;
+  @Column({ type: 'enum', enum: EUserStatus, default: EUserStatus.PENDING })
+  status!: EUserStatus;
 }
 
 /** Injectable DI token / typed alias for the User repository. */

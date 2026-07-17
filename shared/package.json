@@ -16,16 +16,6 @@
         "types": "./src/index.ts",
         "default": "./dist/index.js"
       }
-    },
-    "./schemas": {
-      "import": {
-        "types": "./src/schemas/index.ts",
-        "default": "./dist/schemas.mjs"
-      },
-      "require": {
-        "types": "./src/schemas/index.ts",
-        "default": "./dist/schemas.js"
-      }
     }
   },
   "files": [
@@ -42,6 +32,10 @@
   "license": "ISC",
   "dependencies": {
     "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2"
   },
   "devDependencies": {
     "@swc/core": "^1.15.32",

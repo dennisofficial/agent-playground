@@ -1,9 +1,8 @@
+import { EOrgRole } from '@workspace/shared';
 import { Column, Entity, Index, JoinColumn, ManyToOne, PrimaryColumn, Repository } from 'typeorm';
-import { User } from '../../auth/entities/user.entity';
 import { TimestampedEntity } from '../../../_lib/database/base.entity';
+import { User } from '../../auth/entities/user.entity';
 import { Organization } from './organization.entity';
-
-export type OrgMemberRole = 'owner' | 'member';
 
 /** Join table: which users belong to which orgs, and in what role. Composite PK (orgId, userId). */
 @Entity({ name: 'organization_members' })
@@ -23,8 +22,8 @@ export class OrganizationMember extends TimestampedEntity {
   @JoinColumn({ name: 'user_id' })
   user?: User;
 
-  @Column({ type: 'text', default: 'member' })
-  role!: OrgMemberRole;
+  @Column({ type: 'enum', enum: EOrgRole, default: EOrgRole.MEMBER })
+  role!: EOrgRole;
 }
 
 /** Injectable DI token / typed alias for the OrganizationMember repository. */

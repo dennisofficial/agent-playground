@@ -14,12 +14,11 @@ const external = [
 ];
 
 export default defineConfig({
-  // Subpath entries: `@workspace/shared` (DTOs/types — safe for the web bundle) and
-  // `@workspace/shared/schemas` (TypeORM entities — backend-only; kept out of the root barrel
-  // so the web never pulls TypeORM decorators).
+  // Single entry: `@workspace/shared` — the web-safe frontend/backend contract (DTOs, enums,
+  // types). TypeORM entities live backend-local; the legacy `src/schemas/` is kept only as
+  // archive and is intentionally NOT exported or built (see package.json exports).
   entry: {
     index: 'src/index.ts',
-    schemas: 'src/schemas/index.ts',
   },
   format: ['cjs', 'esm'],
   dts: false,

@@ -1,8 +1,6 @@
-import type { AutoApproveMode } from '@workspace/shared';
-import { Column, Entity, Index, PrimaryGeneratedColumn, Repository } from 'typeorm';
+import { EOrgStatus } from '@workspace/shared';
+import { Column, Entity, PrimaryGeneratedColumn, Repository } from 'typeorm';
 import { TimestampedEntity } from '../../../_lib/database/base.entity';
-
-export type OrgStatus = 'onboarding' | 'active' | 'suspended';
 
 @Entity({ name: 'organizations' })
 export class Organization extends TimestampedEntity {
@@ -12,15 +10,15 @@ export class Organization extends TimestampedEntity {
   @Column({ type: 'text' })
   name!: string;
 
-  @Index({ unique: true })
-  @Column({ type: 'text' })
-  slug!: string;
+  @Column({ type: 'enum', enum: EOrgStatus, default: EOrgStatus.ONBOARDING })
+  status!: EOrgStatus;
 
-  @Column({ type: 'text', default: 'onboarding' })
-  status!: OrgStatus;
+  // Org-level defaults applied when a job is created; each is independently overridable per job.
+  @Column({ type: 'boolean', default: false })
+  defaultAutoApprove!: boolean;
 
-  @Column({ type: 'text', default: 'off' })
-  defaultAutoApproveMode!: AutoApproveMode;
+  @Column({ type: 'boolean', default: false })
+  defaultAutoShip!: boolean;
 
   @Column({ type: 'boolean', default: false })
   defaultAutoMerge!: boolean;

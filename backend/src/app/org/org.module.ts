@@ -1,18 +1,15 @@
 import { CreateModule } from '@workspace/nestjs-core';
-import {
-  OrganizationMember,
-  OrganizationMemberRepo,
-} from './entities/organization-member.entity';
+import { OrganizationMember, OrganizationMemberRepo } from './entities/organization-member.entity';
 import { Organization, OrganizationRepo } from './entities/organization.entity';
 import { OrgController } from './org.controller';
-import { OrganizationService } from './organization.service';
+import { OrgService } from './org.service';
 
 @CreateModule({
   entities: [
     { entity: Organization, repoClass: OrganizationRepo },
     { entity: OrganizationMember, repoClass: OrganizationMemberRepo },
   ],
-  services: [OrganizationService],
+  services: [OrgService],
   controllers: [OrgController],
 })
 export class OrgModule {}

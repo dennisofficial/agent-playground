@@ -1,17 +1,16 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
-import type { AuthSession, CurrentUserResponse } from '@workspace/shared';
+import { LoginDto, RegisterDto, type AuthSession, type CurrentUserResponse } from '@workspace/shared';
 import type { Request, Response } from 'express';
-import { OrganizationService } from '../org/organization.service';
+import { OrgService } from '../org/org.service';
 import { AuthService } from './auth.service';
-import { LoginDto, RegisterDto } from './dto/auth.dto';
 import type { User } from './entities/user.entity';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
-    private readonly orgs: OrganizationService,
+    private readonly orgs: OrgService,
   ) {}
 
   @Public()
