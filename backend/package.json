@@ -13,7 +13,7 @@
     "dev": "pnpm dev:env -- nest start app --watch",
     "e2e:engine": "tsx src/engine/__e2e__/run-all.ts",
     "start:prod": "node dist/main",
-    "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app/e2e/e2e-main.ts",
+    "e2e": "pnpm dev:env -- cross-env TS_NODE_PROJECT=tsconfig.e2e.json node -r tsconfig-paths/register -r ts-node/register src/app_old/e2e/e2e-main.ts",
     "reap": "cross-env TS_NODE_PROJECT=tsconfig.cli.json node -r ts-node/register cli/reap-sandboxes.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:cli": "tsc --noEmit -p tsconfig.cli.json",

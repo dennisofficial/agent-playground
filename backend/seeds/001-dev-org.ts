@@ -3,7 +3,7 @@ import {
   OrganizationEntity,
   OrganizationMemberEntity,
   UserEntity,
-} from '../src/app/persistence/entities';
+} from '../src/app_old/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**

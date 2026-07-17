@@ -3,7 +3,7 @@ import 'reflect-metadata';
 import { resolve } from 'path';
 import { DataSource } from 'typeorm';
 import { CustomNamingStrategy } from '../src/_lib/database/custom-naming.strategy';
-import { ENTITIES } from '../src/app/persistence/entities';
+import { ENTITIES } from '../src/app_old/persistence/entities';
 
 /**
  * Standalone DataSource for the TypeORM CLI on Atlas v2's OWN schema — the `app` entities +

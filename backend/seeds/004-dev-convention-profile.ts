@@ -1,5 +1,5 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { ConventionProfileEntity } from '../src/app/persistence/entities';
+import { ConventionProfileEntity } from '../src/app_old/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**

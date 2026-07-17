@@ -6,10 +6,10 @@ import {
   ThreadGroupEntity,
   ThreadEntity,
   TranscriptMessageEntity,
-} from '../src/app/persistence/entities';
+} from '../src/app_old/persistence/entities';
 import { atlasAgentHomeBase } from '../src/shared/engine/engine-home';
-import { parseSessionTranscriptTurns } from '../src/app/brain/session-transcript';
-import { backfillThreadFromTurns } from '../src/app/brain/turn-backfill';
+import { parseSessionTranscriptTurns } from '../src/app_old/brain/session-transcript';
+import { backfillThreadFromTurns } from '../src/app_old/brain/turn-backfill';
 
 /**
  * ONE-OFF back-fill of a brain thread's durable transcript from its SDK session JSONL — the manual twin of

@@ -1,5 +1,5 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
-import { DENSE_TASK_ORDINALS_UP } from '../src/app/persistence/dense-task-ordinals.sql';
+import { DENSE_TASK_ORDINALS_UP } from '../src/app_old/persistence/dense-task-ordinals.sql';
 
 /**
  * Backfill: renumber existing `tasks.ordinal` to a DENSE per-stage sequence (1, 2, 3…) so the short `#N`

@@ -1,6 +1,6 @@
 import { hash } from '@node-rs/argon2';
 import type { Seeder } from '@workspace/nestjs-core';
-import { UserEntity } from '../src/app/persistence/entities';
+import { UserEntity } from '../src/app_old/persistence/entities';
 import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
 
 /**
