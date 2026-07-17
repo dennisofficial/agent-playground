@@ -23,7 +23,7 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@core/*": ["./src/_core/*"],
-      "@shared/*": ["./src/_shared/*"],
+      "@shared/*": ["./src/_shared_old/*"],
     },
     "types": ["node", "vitest/globals"],
   },

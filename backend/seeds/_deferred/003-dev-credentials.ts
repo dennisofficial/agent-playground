@@ -1,12 +1,16 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { isNewerCodexAuth } from '../src/app_old/onboarding/codex-auth-freshness';
-import { decryptSecret, encryptSecret, loadSecretsKey } from '../src/app_old/onboarding/secret-cipher';
+import { isNewerCodexAuth } from '../../src/app_old/onboarding/codex-auth-freshness';
+import {
+  decryptSecret,
+  encryptSecret,
+  loadSecretsKey,
+} from '../../src/app_old/onboarding/secret-cipher';
 import {
   OrgClaudeCredentialEntity,
   OrgCredentialsEntity,
   OrganizationEntity,
-} from '../src/app_old/persistence/entities';
-import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
+} from '../../src/app_old/persistence/entities';
+import { DEV_SEED_IDS } from '../_shared/dev-seed-ids';
 
 /**
  * Dev credentials for the seeded org — writes the encrypted `org_credentials` row (`scope='*'`) for the

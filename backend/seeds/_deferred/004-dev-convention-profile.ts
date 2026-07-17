@@ -1,6 +1,6 @@
 import type { Seeder } from '@workspace/nestjs-core';
-import { ConventionProfileEntity } from '../src/app_old/persistence/entities';
-import { DEV_SEED_IDS } from './_shared/dev-seed-ids';
+import { ConventionProfileEntity } from '../../src/app_old/persistence/entities';
+import { DEV_SEED_IDS } from '../_shared/dev-seed-ids';
 
 /**
  * The dev org's reusable house-style profile — Dennis's standard NestJS-backend + Next.js-frontend +
