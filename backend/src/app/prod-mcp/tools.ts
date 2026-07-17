@@ -1,18 +1,8 @@
-import {
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-} from 'node:fs';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DataSource } from 'typeorm';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import {
-  JobEntity,
-  JobSandboxEntity,
-  ThreadEntity,
-} from '../persistence/entities';
+import { JobEntity, JobSandboxEntity, ThreadEntity } from '../persistence/entities';
 import type { ThreadTerminalRecord } from '../persistence/entities/thread.entity';
 import { QUERY_FORMATS, renderRows, type QueryFormat } from './format';
 import { resolveJailed } from './path-jail';
@@ -28,10 +18,7 @@ import {
   resolveSessionFile,
 } from './session-jsonl';
 
-/** A file this reader will not slurp into a tool response whole (keeps a runaway `atlas_worktree_file` /
- *  `atlas_context_read` call from blowing up the MCP response). */
 const MAX_FILE_BYTES = 2_000_000;
-/** Tree-listing caps — a worktree or context dir can be huge; these bound one `tree` response. */
 const MAX_TREE_ENTRIES = 2_000;
 const MAX_TREE_DEPTH = 10;
 
@@ -40,9 +27,6 @@ export interface ToolRoots {
   repos: string;
 }
 
-/** Per-call context threaded into every handler. `audit` is a mutable out-param the handler stamps
- *  `orgId` onto the moment it resolves the job, so the caller (main.ts) can audit the org even when the
- *  call later fails deeper in the handler. */
 export interface ToolCtx {
   ds: DataSource;
   roots: ToolRoots;
@@ -58,10 +42,7 @@ function requireNonEmptyString(value: unknown, name: string): string {
 
 function parseQueryFormat(value: unknown): QueryFormat {
   if (value === undefined) return 'jsonl';
-  if (
-    typeof value === 'string' &&
-    QUERY_FORMATS.includes(value as QueryFormat)
-  ) {
+  if (typeof value === 'string' && QUERY_FORMATS.includes(value as QueryFormat)) {
     return value as QueryFormat;
   }
   throw new Error(`format must be one of: ${QUERY_FORMATS.join(', ')}`);
@@ -83,10 +64,7 @@ async function loadJob(ctx: ToolCtx, jobId: unknown): Promise<JobEntity> {
   return job;
 }
 
-async function loadSandbox(
-  ctx: ToolCtx,
-  jobId: string,
-): Promise<JobSandboxEntity> {
+async function loadSandbox(ctx: ToolCtx, jobId: string): Promise<JobSandboxEntity> {
   const sandbox = await ctx.ds
     .getRepository(JobSandboxEntity)
     .findOne({ where: { job_id: jobId } });
@@ -99,7 +77,6 @@ function deriveFailureSummary(tr: ThreadTerminalRecord | null): string | null {
   return tr.summary ?? null;
 }
 
-// ── atlas_query / atlas_schema ────────────────────────────────────────────────────────────────────────
 
 async function atlasQuery(
   ctx: ToolCtx,
@@ -111,27 +88,16 @@ async function atlasQuery(
   },
 ): Promise<unknown> {
   const sql = requireNonEmptyString(args.sql, 'sql');
-  // Stamp the SQL BEFORE running so a guard rejection / timeout / permission error still lands the SQL in
-  // main.ts's failed-query audit line.
   ctx.audit.sql = sql;
   const format = parseQueryFormat(args.format);
   const limit = parseQueryLimit(args.limit);
   const params = Array.isArray(args.params) ? args.params : [];
-  const { rows, rowCount, truncated } = await runReadOnlyQuery(
-    ctx.ds,
-    sql,
-    params,
-    limit,
-  );
+  const { rows, rowCount, truncated } = await runReadOnlyQuery(ctx.ds, sql, params, limit);
   ctx.audit.rowCount = rowCount;
-  // Redact the row OBJECTS before flattening to text. redact.ts's key-name masking (SECRET_KEY_PATTERN)
-  // blanks opaque values in secret-named columns (e.g. `access_token`, `password`), but that key context
-  // is lost once rows are rendered to csv/tsv — the header and value land on separate lines, so the
-  // string-pattern scan main.ts runs on the flattened text can't recover it. Redacting here preserves the
-  // key-name masking for all rendered formats.
-  const redactedRows = redactSecrets(
-    rows as Record<string, unknown>[],
-  ) as Record<string, unknown>[];
+  const redactedRows = redactSecrets(rows as Record<string, unknown>[]) as Record<
+    string,
+    unknown
+  >[];
   return {
     format,
     rowCount,
@@ -144,12 +110,8 @@ async function atlasSchema(ctx: ToolCtx): Promise<unknown> {
   return introspectSchema(ctx.ds);
 }
 
-// ── atlas_job_overview ────────────────────────────────────────────────────────────────────────────────
 
-async function jobOverview(
-  ctx: ToolCtx,
-  args: { jobId: string },
-): Promise<unknown> {
+async function jobOverview(ctx: ToolCtx, args: { jobId: string }): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const threads = await ctx.ds
     .getRepository(ThreadEntity)
@@ -189,7 +151,6 @@ async function jobOverview(
   };
 }
 
-// ── atlas_session_raw ─────────────────────────────────────────────────────────────────────────────────
 
 interface SessionRawArgs {
   jobId: string;
@@ -205,14 +166,10 @@ interface SessionRawArgs {
   grep?: string;
 }
 
-async function sessionRaw(
-  ctx: ToolCtx,
-  args: SessionRawArgs,
-): Promise<unknown> {
+async function sessionRaw(ctx: ToolCtx, args: SessionRawArgs): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const sandboxDir = findSandboxDir(ctx.roots.agentHome, job.id);
-  if (!sandboxDir)
-    throw new Error(`no sandbox transcripts found on disk for job ${job.id}`);
+  if (!sandboxDir) throw new Error(`no sandbox transcripts found on disk for job ${job.id}`);
 
   if (args.grep) {
     let pattern: RegExp;
@@ -258,27 +215,19 @@ function requireSessionFile(
   sandboxDir: string,
   sessionId: string,
 ): { sessionId: string; path: string } {
-  if (!isValidSessionId(sessionId))
-    throw new Error(`invalid session id '${sessionId}'`);
+  if (!isValidSessionId(sessionId)) throw new Error(`invalid session id '${sessionId}'`);
   const path = resolveSessionFile(sandboxDir, sessionId);
   if (!path) throw new Error(`session '${sessionId}' not found`);
   return { sessionId, path };
 }
 
-// ── filesystem tree helper (shared by atlas_context_read / atlas_worktree_tree) ─────────────────────────
 
 interface TreeEntry {
   path: string;
   type: 'file' | 'dir';
 }
 
-/** Recursively list `absRoot`, capped at {@link MAX_TREE_ENTRIES} entries / {@link MAX_TREE_DEPTH} deep so
- *  a huge worktree/context dir can't blow up a tool response. Silently stops descending past the caps
- *  rather than failing the whole listing. */
-function listTree(
-  absRoot: string,
-  skipDirs: ReadonlySet<string> = new Set(),
-): TreeEntry[] {
+function listTree(absRoot: string, skipDirs: ReadonlySet<string> = new Set()): TreeEntry[] {
   const out: TreeEntry[] = [];
   const walk = (dir: string, rel: string, depth: number): void => {
     if (out.length >= MAX_TREE_ENTRIES || depth > MAX_TREE_DEPTH) return;
@@ -299,8 +248,6 @@ function listTree(
       } catch {
         continue;
       }
-      // Don't follow symlinks: a symlink planted inside the jail could point outside it, so
-      // enumerating its target would leak names outside the jail. Skip them entirely.
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
         out.push({ path: relPath, type: 'dir' });
@@ -317,21 +264,15 @@ function listTree(
 function readFileCapped(path: string): string {
   const st = statSync(path);
   if (st.size > MAX_FILE_BYTES) {
-    throw new Error(
-      `file too large to read (${st.size} bytes, cap is ${MAX_FILE_BYTES})`,
-    );
+    throw new Error(`file too large to read (${st.size} bytes, cap is ${MAX_FILE_BYTES})`);
   }
   return readFileSync(path, 'utf8');
 }
 
-// ── atlas_context_read ────────────────────────────────────────────────────────────────────────────────
 
 const CONTEXT_SUBDIRS = ['specs', 'generated', 'artifacts', 'evidence'];
 
-async function contextRead(
-  ctx: ToolCtx,
-  args: { jobId: string; path?: string },
-): Promise<unknown> {
+async function contextRead(ctx: ToolCtx, args: { jobId: string; path?: string }): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const root = join(ctx.roots.agentHome, 'contexts', job.org_id, job.id);
 
@@ -351,8 +292,7 @@ async function contextRead(
   }
 
   const resolved = resolveJailed(root, args.path);
-  if (!existsSync(resolved))
-    throw new Error(`${args.path} not found under context root`);
+  if (!existsSync(resolved)) throw new Error(`${args.path} not found under context root`);
   const st = statSync(resolved);
   if (st.isDirectory()) {
     return { root, path: args.path, tree: listTree(resolved) };
@@ -360,7 +300,6 @@ async function contextRead(
   return { root, path: args.path, content: readFileCapped(resolved) };
 }
 
-// ── atlas_worktree_tree / atlas_worktree_file ────────────────────────────────────────────────────────
 
 const WORKTREE_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
@@ -371,8 +310,7 @@ async function worktreeTree(
   const job = await loadJob(ctx, args.jobId);
   const sandbox = await loadSandbox(ctx, job.id);
   const target = resolveJailed(sandbox.worktree_path, args.subpath ?? '.');
-  if (!existsSync(target))
-    throw new Error(`${args.subpath ?? '.'} not found under worktree`);
+  if (!existsSync(target)) throw new Error(`${args.subpath ?? '.'} not found under worktree`);
   return {
     root: sandbox.worktree_path,
     subpath: args.subpath ?? null,
@@ -380,16 +318,12 @@ async function worktreeTree(
   };
 }
 
-async function worktreeFile(
-  ctx: ToolCtx,
-  args: { jobId: string; path: string },
-): Promise<unknown> {
+async function worktreeFile(ctx: ToolCtx, args: { jobId: string; path: string }): Promise<unknown> {
   const job = await loadJob(ctx, args.jobId);
   const sandbox = await loadSandbox(ctx, job.id);
   const filePath = requireNonEmptyString(args.path, 'path');
   const target = resolveJailed(sandbox.worktree_path, filePath);
-  if (!existsSync(target))
-    throw new Error(`${filePath} not found under worktree`);
+  if (!existsSync(target)) throw new Error(`${filePath} not found under worktree`);
   const st = statSync(target);
   if (!st.isFile()) throw new Error(`${filePath} is not a file`);
   return {
@@ -399,7 +333,6 @@ async function worktreeFile(
   };
 }
 
-// ── registry ──────────────────────────────────────────────────────────────────────────────────────────
 
 export const TOOL_DEFS: Tool[] = [
   {
@@ -504,10 +437,7 @@ export const TOOL_DEFS: Tool[] = [
   },
 ];
 
-export type ToolHandler = (
-  ctx: ToolCtx,
-  args: Record<string, unknown>,
-) => Promise<unknown>;
+export type ToolHandler = (ctx: ToolCtx, args: Record<string, unknown>) => Promise<unknown>;
 
 export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   atlas_query: (ctx, args) =>
@@ -521,14 +451,10 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
       },
     ),
   atlas_schema: (ctx) => atlasSchema(ctx),
-  atlas_job_overview: (ctx, args) =>
-    jobOverview(ctx, args as { jobId: string }),
-  atlas_session_raw: (ctx, args) =>
-    sessionRaw(ctx, args as unknown as SessionRawArgs),
-  atlas_context_read: (ctx, args) =>
-    contextRead(ctx, args as { jobId: string; path?: string }),
+  atlas_job_overview: (ctx, args) => jobOverview(ctx, args as { jobId: string }),
+  atlas_session_raw: (ctx, args) => sessionRaw(ctx, args as unknown as SessionRawArgs),
+  atlas_context_read: (ctx, args) => contextRead(ctx, args as { jobId: string; path?: string }),
   atlas_worktree_tree: (ctx, args) =>
     worktreeTree(ctx, args as { jobId: string; subpath?: string }),
-  atlas_worktree_file: (ctx, args) =>
-    worktreeFile(ctx, args as { jobId: string; path: string }),
+  atlas_worktree_file: (ctx, args) => worktreeFile(ctx, args as { jobId: string; path: string }),
 };

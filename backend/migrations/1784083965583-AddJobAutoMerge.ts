@@ -10,9 +10,7 @@ export class AddJobAutoMerge1784020000000 implements MigrationInterface {
   name = 'AddJobAutoMerge1784020000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "auto_merge" boolean NOT NULL DEFAULT false`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "auto_merge" boolean NOT NULL DEFAULT false`);
     await queryRunner.query(
       `ALTER TABLE "jobs" ADD "auto_merge_method" text NOT NULL DEFAULT 'squash'`,
     );
@@ -26,16 +24,10 @@ export class AddJobAutoMerge1784020000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP CONSTRAINT "fk_jobs_auto_merge_by_users"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP CONSTRAINT "fk_jobs_auto_merge_by_users"`);
     await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge_by"`);
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "auto_merge_delete_branch"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "auto_merge_method"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge_delete_branch"`);
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge_method"`);
     await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "auto_merge"`);
   }
 }

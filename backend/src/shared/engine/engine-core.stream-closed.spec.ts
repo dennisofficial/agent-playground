@@ -1,20 +1,6 @@
-/**
- * Regression for the "Stream closed" host-tool failure (prod incident b30616d2). Drives the REAL
- * EngineCore streaming-input lifecycle with a fake SDK that models the bundled CLI faithfully:
- *   - it CONSUMES the engine's manual `input` stream in the background and records the instant the engine
- *     calls `input.end()` (→ the CLI's stdin EOF → input closed);
- *   - it emits ONE success `result` mid-turn with a scripted `terminal_reason` / `stop_reason`, then waits
- *     past STEER_IDLE_GRACE_MS and attempts a host-tool call, returning the tool_result as
- *     `is_error:'Stream closed'` iff input was already closed at call time — exactly like the CLI's
- *     control-request client.
- *
- * The fix (decision d1): the engine arms the end-of-turn close ONLY on a genuinely-completed result
- * (`terminal_reason:'completed'`, or absent + `stop_reason:'end_turn'`). A paused/interrupted success
- * result (rate-limit / retry / budget) keeps input OPEN so the pending host-tool call still succeeds.
- */
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rmSync } from 'node:fs';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { EngineCore } from './engine-core';
 import type { EngineHomeKey } from './engine-home';
@@ -22,17 +8,14 @@ import type { EngineHomeKey } from './engine-home';
 const HOME_ROOT = join(tmpdir(), `atlas-stream-closed-${process.pid}`);
 afterAll(() => rmSync(HOME_ROOT, { recursive: true, force: true }));
 
-/** A steerInput that never yields — it only flips the engine into streaming-input mode so `input` exists. */
 const idleSteerInput: AsyncIterable<{ id?: string; text: string }> = {
   [Symbol.asyncIterator]() {
     return {
-      next: () =>
-        new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
+      next: () => new Promise<IteratorResult<{ id?: string; text: string }>>(() => {}),
     };
   },
 };
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 type ResultFields = { terminal_reason?: string; stop_reason?: string | null };
 type RunState = {
@@ -41,21 +24,10 @@ type RunState = {
   inputClosedAtAttempt?: boolean;
 };
 
-/**
- * Faithful CLI stand-in. Emits one success `result` carrying `resultFields`, then — after a pause LONGER
- * than the grace window — attempts a host-tool call. `state` is shared so the test can observe whether the
- * engine had closed input by the time the host tool was invoked.
- */
 function streamClosedSdk(resultFields: ResultFields, state: RunState) {
   return {
-    query: ({
-      prompt,
-    }: {
-      prompt: AsyncIterable<unknown>;
-      options: Record<string, unknown>;
-    }) =>
+    query: ({ prompt }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) =>
       (async function* () {
-        // Background: drain the engine's manual input stream; note when it ENDS (input.end()).
         let inputClosed = false;
         const it = prompt[Symbol.asyncIterator]();
         void (async () => {
@@ -80,7 +52,6 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
           },
         };
         await sleep(5);
-        // The success result under test. Its terminal_reason/stop_reason decide whether the engine closes.
         yield {
           type: 'result',
           subtype: 'success',
@@ -90,8 +61,6 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
           ...resultFields,
         };
 
-        // Pause LONGER than the 350ms grace (the incident had 70s gaps under heavy throttling), then try the
-        // host-tool call. If the engine closed input during the pause, the control round-trip can't complete.
         await sleep(STEER_GRACE_PAD);
         state.toolAttemptedAt = Date.now();
         state.inputClosedAtAttempt = inputClosed;
@@ -126,7 +95,6 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
           },
         };
         await sleep(5);
-        // The turn genuinely finishes now — the generator returns, ending the run.
         yield {
           type: 'result',
           subtype: 'success',
@@ -140,7 +108,6 @@ function streamClosedSdk(resultFields: ResultFields, state: RunState) {
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
 
-// Well past STEER_IDLE_GRACE_MS (350) so a scheduled close would definitely have fired before the tool call.
 const STEER_GRACE_PAD = 500;
 
 type ToolResult = { id: string; isError?: boolean; result: unknown };
@@ -150,11 +117,9 @@ async function runTurn(
 ): Promise<{ state: RunState; toolResults: ToolResult[] }> {
   const state: RunState = {};
   const toolResults: ToolResult[] = [];
-  const core = new EngineCore(
-    streamClosedSdk(resultFields, state),
-    {} as never,
-    { homeRoot: HOME_ROOT },
-  );
+  const core = new EngineCore(streamClosedSdk(resultFields, state), {} as never, {
+    homeRoot: HOME_ROOT,
+  });
   await core.run({
     engine: 'claude',
     task: 'trace the withdraw flow and post the scope card',
@@ -170,12 +135,7 @@ async function runTurn(
     richStream: true,
     auth: { secret: 'oauth-tok' },
     steerInput: idleSteerInput,
-    onEvent: (e: {
-      kind: string;
-      id?: string;
-      isError?: boolean;
-      result?: unknown;
-    }) => {
+    onEvent: (e: { kind: string; id?: string; isError?: boolean; result?: unknown }) => {
       if (e.kind === 'tool_result')
         toolResults.push({
           id: e.id ?? '',
@@ -193,7 +153,6 @@ describe('EngineCore — streaming input-close gated on a genuinely-completed re
       terminal_reason: 'blocking_limit',
     });
     expect(state.inputClosedAtAttempt).toBe(false);
-    // Input closes only during normal teardown (the finally block), strictly AFTER the host tool ran.
     expect(state.inputClosedAt!).toBeGreaterThan(state.toolAttemptedAt!);
     expect(toolResults).toHaveLength(1);
     expect(toolResults[0].isError).toBe(false);
@@ -227,21 +186,9 @@ describe('EngineCore — streaming input-close gated on a genuinely-completed re
   });
 });
 
-// ── Circuit breaker on a SEVERED control channel (d1) ────────────────────────────────────────────────
-//
-// Once stdin is gone, every pending/queued host-tool call the CLI still attempts comes back as a
-// `tool_result` with `is_error:true` and a "Stream closed" body — that's the control-channel client's own
-// failure text, not something the engine invents. Rather than let those pile up forever, the engine counts
-// CONSECUTIVE stream-closed results (any healthy result resets the run) and — at STREAM_CLOSED_THRESHOLD —
-// aborts the orphaned CLI child and rejects the turn instead of hanging.
 
 type CircuitState = { abortController?: AbortController };
 
-/**
- * A fake SDK that yields an init + assistant frame, then one `user` message per scripted tool_result, then
- * (optionally) a genuinely-completed final result. Captures the `AbortController` the engine passed into
- * `options` so the test can prove the breaker aborted it.
- */
 function toolResultStreamSdk(
   results: Array<{ isError: boolean; content: unknown }>,
   emitFinalResult: boolean,
@@ -257,7 +204,6 @@ function toolResultStreamSdk(
     }) => {
       state.abortController = options.abortController as AbortController;
       return (async function* () {
-        // Drain the engine's manual input stream in the background so pushes never block.
         const it = prompt[Symbol.asyncIterator]();
         void (async () => {
           while (true) {
@@ -308,8 +254,7 @@ function toolResultStreamSdk(
   } as unknown as typeof import('@anthropic-ai/claude-agent-sdk');
 }
 
-const STREAM_CLOSED_TEXT =
-  'Tool permission request failed: Error: Stream closed';
+const STREAM_CLOSED_TEXT = 'Tool permission request failed: Error: Stream closed';
 const HEALTHY_TEXT = 'ok';
 
 function runCircuitTurn(
@@ -338,8 +283,7 @@ function runCircuitTurn(
 describe('EngineCore — stream-closed circuit breaker (d1)', () => {
   const ORIG_THRESHOLD = process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
   afterEach(() => {
-    if (ORIG_THRESHOLD === undefined)
-      delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
+    if (ORIG_THRESHOLD === undefined) delete process.env.ENGINE_STREAM_CLOSED_THRESHOLD;
     else process.env.ENGINE_STREAM_CLOSED_THRESHOLD = ORIG_THRESHOLD;
   });
 
@@ -378,7 +322,6 @@ describe('EngineCore — stream-closed circuit breaker (d1)', () => {
     );
 
     const res = await runCircuitTurn(sdk);
-    // Total across the whole turn (not the consecutive run), surfaced only because it's > 0.
     expect(res.streamClosedCount).toBe(3);
   });
 });

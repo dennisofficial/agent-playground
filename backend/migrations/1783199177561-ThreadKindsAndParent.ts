@@ -17,26 +17,16 @@ export class ThreadKindsAndParent1783199177561 implements MigrationInterface {
   name = 'ThreadKindsAndParent1783199177561';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP CONSTRAINT "uq_threads_job_id_ordinal"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP CONSTRAINT "uq_threads_job_id_ordinal"`);
     // `kind` NOT NULL would reject the existing rows — add nullable, backfill, then constrain.
     await queryRunner.query(`ALTER TABLE "threads" ADD "kind" text`);
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "parent_thread_id" uuid`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "config" jsonb NOT NULL DEFAULT '{}'`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ADD "review_findings" jsonb`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" ADD "parent_thread_id" uuid`);
+    await queryRunner.query(`ALTER TABLE "threads" ADD "config" jsonb NOT NULL DEFAULT '{}'`);
+    await queryRunner.query(`ALTER TABLE "threads" ADD "review_findings" jsonb`);
     await queryRunner.query(
       `UPDATE "threads" SET "kind" = CASE WHEN "is_master_review" = true THEN 'master_review' ELSE 'builder' END WHERE "kind" IS NULL`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "threads" ALTER COLUMN "kind" SET NOT NULL`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" ALTER COLUMN "kind" SET NOT NULL`);
     await queryRunner.query(
       `CREATE INDEX "idx_threads_parent_thread_id" ON "threads" ("parent_thread_id") `,
     );
@@ -52,22 +42,14 @@ export class ThreadKindsAndParent1783199177561 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "public"."uq_threads_job_parent_ordinal"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."uq_threads_job_parent_ordinal"`);
     await queryRunner.query(
       `ALTER TABLE "threads" DROP CONSTRAINT "fk_threads_parent_thread_id_threads"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_threads_parent_thread_id"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "review_findings"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_threads_parent_thread_id"`);
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "review_findings"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "config"`);
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "parent_thread_id"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "parent_thread_id"`);
     await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "kind"`);
     await queryRunner.query(
       `ALTER TABLE "threads" ADD CONSTRAINT "uq_threads_job_id_ordinal" UNIQUE ("job_id", "ordinal")`,

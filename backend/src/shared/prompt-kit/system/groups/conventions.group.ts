@@ -1,28 +1,10 @@
-/**
- * prompt-kit / groups / conventions — the REPO's opt-in house-style profile, injected build-facing.
- *
- * TOPIC bucket: per-repo convention customization. This is the repo-scoped sibling of `operator.group`
- * (org-scoped): a fixed Atlas-owned ENVELOPE wrapped around the profile `body` DATA resolved from
- * `repos.convention_profile_slug` (`ctx.settings.repoConventions`). CONDITIONAL on `hasRepoConventions`, so a
- * repo with no attached profile assembles byte-identical to today — a profile can never misfire on a repo
- * that doesn't follow the style. Ordered `9100` — after the operator band, so it reads as operator-layer
- * guidance, not Atlas-authoritative.
- *
- * `usedBy` is the full BUILD-FACING set across BOTH assembly layers: the exploded ATLAS_MAIN stages
- * (`PLANNING`/`POST_BUILD`/`CI`), the host-assembled build/review/fix prompts (`WORKER`, `META_PLAN_REVIEW`,
- * `AUTOFIX_REVIEW`, `AUTOFIX_FIX`),
- * AND the engine-assembled subagents (`FAN_OUT` writer, `REVIEW_AGENT`) — for which the resolved profile is
- * forwarded across the host→container wire (`RunEngineArgs.repoConventions`) and fed into `renderAgentPrompt`
- * inside the engine. Read-only advisory subagents (explore/docs/debug/test) are intentionally excluded.
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { hasRepoConventions, isBuildBrain } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class ConventionsGroup {
-  /** The repo's attached house-style profile (only when a profile is attached to the repo). */
   @Fragment({
     usedBy: [
       Agent.PLANNING,
@@ -51,14 +33,6 @@ export class ConventionsGroup {
     ].join('\n');
   }
 
-  /**
-   * The build brain's "notice the house style should evolve" affordance. Every exploded ATLAS_MAIN stage
-   * (PLANNING/POST_BUILD/CI — `ENGINEERING_STAGES`) on a real build (`isBuildBrain`) with a profile attached
-   * (`hasRepoConventions`) gets it — a worker/reviewer/onboarding turn does not. It closes the gap the
-   * operator flagged: the house style is a REUSABLE, cross-repo org resource, so a build must never silently
-   * rewrite it, but it SHOULD flag when the convention itself is stale — routed to the owner-gated
-   * `propose_convention_profile_change`.
-   */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 9110,

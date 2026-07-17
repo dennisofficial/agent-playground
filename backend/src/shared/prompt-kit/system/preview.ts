@@ -1,33 +1,21 @@
-/**
- * prompt-kit / preview — the DEV-ONLY catalog for the `GET /test/prompts` preview endpoint + `dump-prompts`.
- *
- * Every system prompt is assembled via `renderAgentPrompt(agent, ctx)`; this maps a stable preview `id` to its
- * agent + a representative context, so the preview renders EXACTLY what production sends. (Replaces the former
- * `registry.ts` — there is only one assembly path now.)
- */
-import { Agent } from './agent';
 import type { JobKind } from '../../domain';
-import type { PromptCtx } from './prompt-ctx';
+import { Agent } from './agent';
 import { renderAgentPrompt } from './assemble';
+import type { PromptCtx } from './prompt-ctx';
 
 export interface AgentPromptInfo {
-  /** Stable preview id (kept close to the old registry ids so `/test/prompts/<id>` URLs still resolve). */
   id: string;
   agent: Agent;
-  /** Where this prompt is sent from. */
   note: string;
-  /** The representative context (a job kind for the job-kind-composed personas). */
   ctx: PromptCtx;
 }
 
-/** Representative multi-line standing operator/org instructions (the `brain-org-instructions` variant). */
 const SAMPLE_ORG_INSTRUCTIONS = [
   'Prefer pnpm over npm/yarn across every repo.',
   'Always open PRs against `main`, never `master`.',
   'Tag Dennis for review on anything touching billing.',
 ].join('\n');
 
-/** Representative repo house-style body (shared by the `-conventions` variants + `brain-repo-conventions`). */
 const SAMPLE_REPO_CONVENTIONS_BODY = [
   'Folder layout: `src/app/<domain>/` per bounded context, one `*.module.ts` per domain.',
   'Prefer `type` over `interface` for object shapes; reserve `interface` for declaration merging.',
@@ -39,11 +27,9 @@ const SAMPLE_REPO_CONVENTIONS = {
   body: SAMPLE_REPO_CONVENTIONS_BODY,
 };
 
-/** Representative saved preview recipe (the `-preview-recipe` variants). */
 const SAMPLE_RECIPE =
   '## Sample\n- docker compose up -d postgres\n- atlas-svc run --name web --port 3000 …';
 
-/** Representative rendered workspace-profile snapshot (the `brain-workspace-profile` variant). */
 const SAMPLE_WORKSPACE_PROFILE = [
   'Mounts: shared-rw `~/.cache/acme-build` (build cache).',
   'Setup script: `pnpm install --frozen-lockfile && pnpm build:packages`.',
@@ -257,7 +243,6 @@ export const AGENT_PROMPTS: AgentPromptInfo[] = [
   },
 ];
 
-/** The previewable prompts (id + agent + note) for `GET /test/prompts`. */
 export function listAgentPrompts(): Array<{
   id: string;
   agent: string;
@@ -270,21 +255,14 @@ export function listAgentPrompts(): Array<{
   }));
 }
 
-/** Whether `id` is a previewable prompt. */
 export function hasAgentPrompt(id: string): boolean {
   return AGENT_PROMPTS.some((a) => a.id === id);
 }
 
-/** Render a previewable prompt by id, optionally overriding the job kind. Returns null for an unknown id. */
-export function renderPreview(
-  id: string,
-  jobKindOverride?: JobKind | null,
-): string | null {
+export function renderPreview(id: string, jobKindOverride?: JobKind | null): string | null {
   const entry = AGENT_PROMPTS.find((a) => a.id === id);
   if (!entry) return null;
   const ctx =
-    jobKindOverride !== undefined
-      ? { ...entry.ctx, jobKind: jobKindOverride }
-      : entry.ctx;
+    jobKindOverride !== undefined ? { ...entry.ctx, jobKind: jobKindOverride } : entry.ctx;
   return renderAgentPrompt(entry.agent, ctx);
 }

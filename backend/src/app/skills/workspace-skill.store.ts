@@ -9,16 +9,8 @@ import {
   type SkillUpdatePolicy,
 } from '../persistence/entities';
 
-/** The org-wide scope sentinel (mirrors `McpServerStore.ORG_SCOPE`); a non-`*` scope is a repo id. */
 export const ORG_SCOPE = '*';
 
-/**
- * The registry metadata a `PUT` writes (replaces the row). There is no file-content field here — the
- * skill's actual `SKILL.md`/support files live on the host store (see `skill-store-paths.ts`) and are
- * written by the installer/custom-authoring path (not this store), which owns `provenance`/`source_*`/
- * `installed_sha`. This is the metadata-only upsert: toggling `enabled`/`surfaces` on an existing skill,
- * or registering a row whose files were placed on disk out of band.
- */
 export interface SkillInput {
   description: string;
   provenance?: SkillProvenance;
@@ -29,16 +21,12 @@ export interface SkillInput {
   update_policy?: SkillUpdatePolicy | null;
   forked_from?: string | null;
   surfaces?: McpSurface[];
-  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_types`. */
   reviewForTypes?: string[];
-  /** Applicability for the framework-conformance review lens — see `WorkspaceSkillEntity.review_for_globs`. */
   reviewForGlobs?: string[];
   enabled?: boolean;
 }
 
-/** A skill as returned to a client (no secrets exist on a skill — it's registry metadata, not content). */
 export interface SkillView {
-  /** 'org' for an org-wide skill, otherwise the repo id. */
   scope: 'org' | string;
   name: string;
   description: string;
@@ -50,21 +38,12 @@ export interface SkillView {
   update_policy: SkillUpdatePolicy | null;
   forked_from: string | null;
   surfaces: McpSurface[];
-  /** Applicability for the framework-conformance review lens. */
   reviewForTypes: string[];
-  /** Applicability for the framework-conformance review lens. */
   reviewForGlobs: string[];
   enabled: boolean;
-  /** Set by `SkillUpdaterService` for a `pinned`/`manual` git skill whose remote has moved past
-   *  `installed_sha` — the console's "update available" badge. Always false for non-git skills. */
   update_available: boolean;
 }
 
-/**
- * The read/write path for the skills REGISTRY (metadata only — see `SkillInput`). Mirrors
- * {@link McpServerStore}'s shape (composite (org_id, scope, name) PK, `'org'` ⇄ `'*'` scope alias,
- * `rowsForTurn` for the resolver) MINUS the encryption — a skill has no secrets.
- */
 @Injectable()
 export class WorkspaceSkillStore {
   private readonly logger = new Logger(WorkspaceSkillStore.name);
@@ -74,7 +53,6 @@ export class WorkspaceSkillStore {
     private readonly skills: Repository<WorkspaceSkillEntity>,
   ) {}
 
-  /** URL-facing `'org'` ⇄ DB `'*'`; any other value is a repo id passed through unchanged. */
   static toDbScope(scope: string): string {
     return scope === 'org' ? ORG_SCOPE : scope;
   }
@@ -82,20 +60,13 @@ export class WorkspaceSkillStore {
     return scope === ORG_SCOPE ? 'org' : scope;
   }
 
-  // ── reads ──────────────────────────────────────────────────────────────────────────────────
 
-  /** Every skill for an org (org-wide + all repo scopes). */
   async list(orgId: string): Promise<SkillView[]> {
     const rows = await this.skills.find({ where: { org_id: orgId } });
     return rows.map((r) => this.view(r));
   }
 
-  /** One skill by (org, dbScope, name), or null. */
-  async get(
-    orgId: string,
-    dbScope: string,
-    name: string,
-  ): Promise<SkillView | null> {
+  async get(orgId: string, dbScope: string, name: string): Promise<SkillView | null> {
     const row = await this.skills.findOne({
       where: { org_id: orgId, scope: dbScope, name },
     });
@@ -115,26 +86,15 @@ export class WorkspaceSkillStore {
       update_policy: r.update_policy,
       forked_from: r.forked_from,
       surfaces: r.surfaces,
-      reviewForTypes: Array.isArray(r.review_for_types)
-        ? r.review_for_types
-        : [],
-      reviewForGlobs: Array.isArray(r.review_for_globs)
-        ? r.review_for_globs
-        : [],
+      reviewForTypes: Array.isArray(r.review_for_types) ? r.review_for_types : [],
+      reviewForGlobs: Array.isArray(r.review_for_globs) ? r.review_for_globs : [],
       enabled: r.enabled,
       update_available: r.update_available,
     };
   }
 
-  // ── writes ─────────────────────────────────────────────────────────────────────────────────
 
-  /** Upsert a skill's registry metadata (does NOT touch the on-disk skill dir — see `SkillInput`). */
-  async write(
-    orgId: string,
-    dbScope: string,
-    name: string,
-    input: SkillInput,
-  ): Promise<void> {
+  async write(orgId: string, dbScope: string, name: string, input: SkillInput): Promise<void> {
     const row =
       (await this.skills.findOne({
         where: { org_id: orgId, scope: dbScope, name },
@@ -147,8 +107,7 @@ export class WorkspaceSkillStore {
     row.installed_sha = input.installed_sha ?? null;
     row.update_policy = input.update_policy ?? null;
     row.forked_from = input.forked_from ?? null;
-    row.surfaces =
-      input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
+    row.surfaces = input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['build'];
     row.review_for_types = input.reviewForTypes ?? [];
     row.review_for_globs = input.reviewForGlobs ?? [];
     row.enabled = input.enabled ?? true;
@@ -161,13 +120,8 @@ export class WorkspaceSkillStore {
     this.logger.log(`deleted skill org=${orgId} scope=${dbScope} name=${name}`);
   }
 
-  // ── resolution helpers (used by SkillResolver + the Workspace Profile snapshot) ──────────────
 
-  /** Raw rows for the org's `'*'` scope plus one repo scope — the input to `SkillResolver`. */
-  async rowsForTurn(
-    orgId: string,
-    repoId: string,
-  ): Promise<WorkspaceSkillEntity[]> {
+  async rowsForTurn(orgId: string, repoId: string): Promise<WorkspaceSkillEntity[]> {
     return this.skills.find({
       where: [
         { org_id: orgId, scope: ORG_SCOPE },

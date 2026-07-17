@@ -1,9 +1,7 @@
-import { describe, expect, it } from 'vitest';
 import type { SDKControlGetContextUsageResponse } from '@anthropic-ai/claude-agent-sdk';
+import { describe, expect, it } from 'vitest';
 import { normalizeContextBreakdown } from './context-breakdown';
 
-/** A realistic-shaped raw fixture, trimmed to the fields the normalizer actually reads (mirrors a real
- *  captured `getContextUsage()` response — see the brief's spike output). */
 function makeRaw(
   overrides: Partial<SDKControlGetContextUsageResponse> = {},
 ): SDKControlGetContextUsageResponse {
@@ -27,9 +25,7 @@ function makeRaw(
     gridRows: [],
     model: 'claude-opus-4-...',
     memoryFiles: [{ path: '/some/CLAUDE.md', type: 'project', tokens: 5897 }],
-    mcpTools: [
-      { name: 'some_tool', serverName: 'some-server', tokens: 120, isLoaded: true },
-    ],
+    mcpTools: [{ name: 'some_tool', serverName: 'some-server', tokens: 120, isLoaded: true }],
     agents: [{ agentType: 'general-purpose', source: 'builtin', tokens: 0 }],
     isAutoCompactEnabled: true,
     ...overrides,
@@ -54,12 +50,9 @@ describe('normalizeContextBreakdown', () => {
   });
 
   it('drops zero-token entries from mcpTools/memoryFiles/agents', () => {
-    // The fixture's `agents` entry is 0 tokens — it must be dropped, leaving `agents` omitted entirely.
     const out = normalizeContextBreakdown(makeRaw());
     expect(out.agents).toBeUndefined();
-    expect(out.mcpTools).toEqual([
-      { name: 'some_tool', serverName: 'some-server', tokens: 120 },
-    ]);
+    expect(out.mcpTools).toEqual([{ name: 'some_tool', serverName: 'some-server', tokens: 120 }]);
     expect(out.memoryFiles).toEqual([{ path: '/some/CLAUDE.md', tokens: 5897 }]);
   });
 
@@ -72,7 +65,6 @@ describe('normalizeContextBreakdown', () => {
     }));
     const out = normalizeContextBreakdown(makeRaw({ mcpTools }));
     expect(out.mcpTools).toHaveLength(20);
-    // Highest-token entries (6..25 → tokens 6..25) survive; the lowest 5 (tokens 1..5) are dropped.
     const tokens = out.mcpTools!.map((t) => t.tokens).sort((a, b) => a - b);
     expect(tokens).toEqual(
       Array.from({ length: 20 }, (_, i) => i + 6), // [6, 7, ..., 25]
@@ -80,9 +72,7 @@ describe('normalizeContextBreakdown', () => {
   });
 
   it('omits mcpTools/memoryFiles/agents entirely when the filtered list is empty', () => {
-    const out = normalizeContextBreakdown(
-      makeRaw({ mcpTools: [], memoryFiles: [], agents: [] }),
-    );
+    const out = normalizeContextBreakdown(makeRaw({ mcpTools: [], memoryFiles: [], agents: [] }));
     expect(out.mcpTools).toBeUndefined();
     expect(out.memoryFiles).toBeUndefined();
     expect(out.agents).toBeUndefined();

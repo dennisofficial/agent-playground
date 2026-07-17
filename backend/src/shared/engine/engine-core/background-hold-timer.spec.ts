@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundHoldTimer } from './background-hold-timer';
 import { bgTaskCapRule } from '../../prompt-kit/jit';
+import { BackgroundHoldTimer } from './background-hold-timer';
 
 const HOLD_MS = 1_000;
 
@@ -98,7 +98,6 @@ describe('BackgroundHoldTimer', () => {
     timer.trackTaskStarted('t1', false);
     timer.trackTaskStarted('t2', false);
 
-    // One settles — a bare bg task remains, so the hold re-arms and still caps.
     timer.trackTaskSettled('t1');
     expect(timer.hasLiveBgTasks).toBe(true);
     vi.advanceTimersByTime(HOLD_MS);

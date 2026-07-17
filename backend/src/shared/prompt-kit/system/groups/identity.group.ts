@@ -1,17 +1,10 @@
-/**
- * prompt-kit / groups / identity — who Atlas IS this turn (the opening persona line).
- *
- * TOPIC bucket: identity. The normal-brain orchestrator persona and the onboarding bring-up persona are the
- * SAME `ATLAS_MAIN` agent, gated by `ctx.jobKind`.
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding, isReview } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class IdentityGroup {
-  /** The orchestrator identity. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1000,
@@ -24,16 +17,6 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /**
-   * The per-job CURRENT JOB orientation block — which repo / branch THIS turn runs against. The working
-   * directory is deliberately NOT emitted here: the sandbox worktree path is a HOST path that does not
-   * exist inside the container (the checkout is bind-mounted at `/workspace`), and the FILESYSTEM MAP
-   * fragment is the single source of truth for where the checkout lives.
-   * Sits right after the persona line (order 1002; 1005 is conversation, 1010 the sandbox map). Renders
-   * ONLY when the call site supplies `ctx.job` (the brain turn), so the boot smoke-test probes and every
-   * subagent — which pass no `job` — keep the prompt byte-identical. Each line is guarded, so a field that
-   * isn't known yet (e.g. no feature branch before it's cut) just drops its line.
-   */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1002,
@@ -52,11 +35,9 @@ export class IdentityGroup {
     } else if (job.branch) {
       lines.push(`- Branch: ${job.branch}`);
     }
-    // Nothing beyond the header ⇒ emit nothing (drop-empty join keeps the prompt clean).
     return lines.length > 1 ? lines.join('\n') : '';
   }
 
-  /** The POST_BUILD (ship-review gate) identity — a fresh session, no planning transcript. */
   @Fragment({
     usedBy: [Agent.POST_BUILD],
     order: 1003,
@@ -72,7 +53,6 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /** The CI (post-ship PR-lifecycle) identity — a fresh session, no planning transcript. */
   @Fragment({
     usedBy: [Agent.CI],
     order: 1003,
@@ -86,7 +66,6 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /** The PR-reviewer identity (order 1001: unique vs atlasIdentity@1000, still first). */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1001, condition: isReview })
   reviewIdentity(): string {
     return [
@@ -98,7 +77,6 @@ export class IdentityGroup {
     ].join('\n');
   }
 
-  /** The repo bring-up identity. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2000,

@@ -1,11 +1,5 @@
-/**
- * prompt-kit / jit — the install-awareness detector + render table (Stage 1, decision d5).
- */
 import { describe, expect, it } from 'vitest';
-import {
-  detectInstallCommand,
-  renderInstallAwareness,
-} from './install-awareness';
+import { detectInstallCommand, renderInstallAwareness } from './install-awareness';
 
 describe('detectInstallCommand — add verbs', () => {
   it.each([
@@ -37,21 +31,9 @@ describe('detectInstallCommand — add verbs', () => {
     ['gcloud components install kubectl', 'gcloud:kubectl', 'env-binary'],
     ['asdf plugin add nodejs', 'asdf:nodejs', 'env-binary'],
     ['mise plugin add python', 'mise:python', 'env-binary'],
-    [
-      'curl -fsSL https://get.docker.com | sh',
-      'curl:get.docker.com',
-      'env-binary',
-    ],
-    [
-      'curl -fsSL https://www.example.com/install.sh | sudo bash',
-      'curl:example.com',
-      'env-binary',
-    ],
-    [
-      'wget -qO- https://example.com/install.sh | bash',
-      'wget:example.com',
-      'env-binary',
-    ],
+    ['curl -fsSL https://get.docker.com | sh', 'curl:get.docker.com', 'env-binary'],
+    ['curl -fsSL https://www.example.com/install.sh | sudo bash', 'curl:example.com', 'env-binary'],
+    ['wget -qO- https://example.com/install.sh | bash', 'wget:example.com', 'env-binary'],
   ])('%s → add %s (%s)', (cmd, key, kind) => {
     const m = detectInstallCommand(cmd);
     expect(m).not.toBeNull();
@@ -88,32 +70,22 @@ describe('detectInstallCommand — remove verbs', () => {
 
 describe('detectInstallCommand — key normalization', () => {
   it('takes only the FIRST package on a multi-package command', () => {
-    expect(detectInstallCommand('pnpm add eslint prettier')?.key).toBe(
-      'pnpm:eslint',
-    );
+    expect(detectInstallCommand('pnpm add eslint prettier')?.key).toBe('pnpm:eslint');
   });
 
   it('skips option values before the package token', () => {
-    expect(detectInstallCommand('pnpm add --filter web eslint')?.key).toBe(
-      'pnpm:eslint',
-    );
+    expect(detectInstallCommand('pnpm add --filter web eslint')?.key).toBe('pnpm:eslint');
     expect(
-      detectInstallCommand(
-        'pip install --index-url https://pypi.example/simple pytest',
-      )?.key,
+      detectInstallCommand('pip install --index-url https://pypi.example/simple pytest')?.key,
     ).toBe('pip:pytest');
     expect(
-      detectInstallCommand(
-        'apt-get install -o Dpkg::Options::=--force-confold doctl',
-      )?.key,
+      detectInstallCommand('apt-get install -o Dpkg::Options::=--force-confold doctl')?.key,
     ).toBe('apt:doctl');
     expect(detectInstallCommand('brew install -f jq')?.key).toBe('brew:jq');
   });
 
   it('normalizes apt-get to apt', () => {
-    expect(detectInstallCommand('apt-get install doctl')?.key).toBe(
-      'apt:doctl',
-    );
+    expect(detectInstallCommand('apt-get install doctl')?.key).toBe('apt:doctl');
   });
 });
 

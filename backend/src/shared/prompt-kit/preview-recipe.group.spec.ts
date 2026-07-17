@@ -2,11 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { renderAgentPrompt } from './system/assemble';
 
-/**
- * The repo's saved preview recipe reaches the WORKER orchestrator (rendered server-side) and the `validate`
- * subagent (re-rendered in-sandbox via `applyPerRunCtxToAgents`) as READ-ONLY standing context — never
- * anywhere else, and never when absent (byte-identical to today).
- */
 const MARKER = 'UNIQUEMARKER123';
 
 describe('preview recipe — WORKER + validate', () => {
@@ -47,15 +42,8 @@ describe('preview recipe — WORKER + validate', () => {
   });
 
   it('never reaches other build-facing agents', () => {
-    for (const agent of [
-      Agent.PLANNING,
-      Agent.FAN_OUT,
-      Agent.REVIEW_AGENT,
-      Agent.EXPLORE,
-    ]) {
-      expect(
-        renderAgentPrompt(agent, { previewInstructions: MARKER }),
-      ).not.toContain(MARKER);
+    for (const agent of [Agent.PLANNING, Agent.FAN_OUT, Agent.REVIEW_AGENT, Agent.EXPLORE]) {
+      expect(renderAgentPrompt(agent, { previewInstructions: MARKER })).not.toContain(MARKER);
     }
   });
 });

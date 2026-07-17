@@ -17,9 +17,7 @@ export class RenameWorktreeToWorkspace1783559326944 implements MigrationInterfac
     await queryRunner.query(
       `ALTER TABLE "org_worktree_secret_files" RENAME TO "org_workspace_secret_files"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_worktree_mounts" RENAME TO "org_workspace_mounts"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_worktree_mounts" RENAME TO "org_workspace_mounts"`);
     // Primary keys (renames the backing index too)
     await queryRunner.query(
       `ALTER TABLE "org_workspace_secret_files" RENAME CONSTRAINT "pk_org_worktree_secret_files" TO "pk_org_workspace_secret_files"`,
@@ -86,9 +84,7 @@ export class RenameWorktreeToWorkspace1783559326944 implements MigrationInterfac
     await queryRunner.query(
       `ALTER TABLE "org_workspace_secret_files" RENAME CONSTRAINT "pk_org_workspace_secret_files" TO "pk_org_worktree_secret_files"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_workspace_mounts" RENAME TO "org_worktree_mounts"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_workspace_mounts" RENAME TO "org_worktree_mounts"`);
     await queryRunner.query(
       `ALTER TABLE "org_workspace_secret_files" RENAME TO "org_worktree_secret_files"`,
     );

@@ -1,24 +1,8 @@
-/**
- * prompt-kit / groups / meta — the Codex plan-review turn's system prompt (`META_PLAN_REVIEW`). A single,
- * self-contained (raw) prompt that frames Codex as a READINESS JUDGE; its per-run task (operator intent +
- * the structured plan) is `plan-review.service.renderPlanForReview`. (The decision-class classifier, the
- * thread-titler, and the live-verification judge are host-side LangChain chains — their prompts live WITH
- * those chains, not here.)
- */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class MetaGroup {
-  /**
-   * The Codex plan-review turn — a STRUCTURED brief that frames Codex as a READINESS JUDGE, not a nit
-   * hunter. Atlas invokes it synchronously mid-conversation (mandatory to RUN before proposing, but
-   * ADVISORY — its findings never block; Atlas is the judge), so the calibration goal is to surface what
-   * MATTERS (severity-tagged, each with a concrete consequence) and to treat `NO_FINDINGS` as the expected
-   * good outcome — not to manufacture issues because it was asked to look. On a RESUMED review it must
-   * concede what Atlas fixed and NOT escalate into ever-smaller findings. The operator's INTENT and the
-   * structured plan arrive in the per-run task (`renderPlanForReview`).
-   */
   @Fragment({ usedBy: [Agent.META_PLAN_REVIEW], order: 100 })
   planReview(): string {
     return [

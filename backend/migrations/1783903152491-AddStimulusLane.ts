@@ -8,9 +8,7 @@ export class AddStimulusLane1783903152491 implements MigrationInterface {
     // 'thread:<threadId>' (a build lane). NOT NULL DEFAULT 'main' backfills existing rows so
     // brain callers, which never set it, route unchanged. Generator noise (unrelated FK/index
     // churn from the naming-strategy diff) pruned per the migrations house rule.
-    await queryRunner.query(
-      `ALTER TABLE "stimuli" ADD "lane" text NOT NULL DEFAULT 'main'`,
-    );
+    await queryRunner.query(`ALTER TABLE "stimuli" ADD "lane" text NOT NULL DEFAULT 'main'`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

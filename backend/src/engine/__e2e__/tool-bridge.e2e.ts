@@ -1,15 +1,5 @@
-// TOOL BRIDGE — the bidirectional host tool-bridge round-trips over Redis end to end (ports
-// `redis-toolbridge-smoke.mjs`): the engine registers proxy tools for `spec.toolBridgeTools`, calls them
-// mid-turn (XADD `tool_request` on `turn:{T}:tools`), this script (mirroring `RedisEngineRunner.consumeTools`)
-// answers on `turn:{T}:replies`, and the engine continues.
-//
-// NOTE (porting divergence): the old smoke used a synthetic `get_info` tool. The NEW engine's
-// `makeProxyTool` (turn-runner.service.ts) requires a `TOOL_SHAPES` entry per bridged tool and THROWS on a
-// missing one ("no TOOL_SHAPES entry for bridged tool 'get_info'"), so `get_info` no longer works — it was
-// a test-only name. This exercises TWO real read-only host tools instead, proving more than one bridge
-// SHAPE: `list_skills` routes through the GENERAL host bridge; `read_setup_script` routes through the
-// dedicated WORKSPACE-PROFILE bridge (partitioned in turn-runner) — two distinct MCP servers, one turn.
 import {
+  newTurnId as _uid,
   cleanup,
   finalResult,
   frameKinds,
@@ -17,7 +7,6 @@ import {
   makeSpec,
   newRedis,
   newTurnId,
-  newTurnId as _uid,
   report,
   requireSandboxArg,
   startToolResponder,
@@ -41,7 +30,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
         'You have two tools. First call the list_skills tool with empty arguments, then call the ' +
         'read_setup_script tool with empty arguments. Then reply with EXACTLY the two string values they ' +
         'returned, separated by a single space, and nothing else.',
-      systemPrompt: 'You are a terse test assistant. Use the provided tools, then report their outputs verbatim.',
+      systemPrompt:
+        'You are a terse test assistant. Use the provided tools, then report their outputs verbatim.',
     });
     console.log(`[bridge] turn ${turnId} on ${sandbox}; secrets=${secretSkills},${secretSetup}`);
     await xadd(redis, k.spec, spec);
@@ -63,7 +53,8 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
 
     console.log(`[bridge] frames: ${frameKinds(frames)}`);
     console.log(`[bridge] tools the engine called: ${JSON.stringify(responder.called)}`);
-    if (error) return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
+    if (error)
+      return { pass: false, detail: `error frame: ${String(error.message).slice(0, 200)}` };
     if (!final) return { pass: false, detail: 'no final frame' };
 
     const result = finalResult(final);

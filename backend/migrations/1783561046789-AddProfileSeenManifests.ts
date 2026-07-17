@@ -7,14 +7,10 @@ export class AddProfileSeenManifests1783561046789 implements MigrationInterface 
   // new-stack detection (`repos.profile_seen_manifests`). Generator index churn (HNSW / partial-unique)
   // pruned.
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "repos" ADD "profile_seen_manifests" jsonb`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" ADD "profile_seen_manifests" jsonb`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "repos" DROP COLUMN "profile_seen_manifests"`,
-    );
+    await queryRunner.query(`ALTER TABLE "repos" DROP COLUMN "profile_seen_manifests"`);
   }
 }

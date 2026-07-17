@@ -19,8 +19,6 @@ export class AddThreadPipelineAwareness1782492856423 implements MigrationInterfa
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "pipeline_awareness"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "pipeline_awareness"`);
   }
 }

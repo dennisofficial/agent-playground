@@ -318,6 +318,10 @@ RUN chmod +x /usr/local/bin/atlas-probe \
 # above are not affected by shell-init.sh.
 ENV FNM_DIR=/.atlas/fnm
 ENV BASH_ENV=/etc/atlas/shell-init.sh
+# Default nice value shell-init.sh renices each agent build/test shell to, so the latency-sensitive engine
+# (nice 0, same container) is never starved by the agent's own compute under load. Overridable per-sandbox
+# via SANDBOX_AGENT_NICE (SandboxManager passes it as this env at container-create). See shell-init.sh.
+ENV ATLAS_AGENT_NICE=10
 COPY shell-init.sh /etc/atlas/shell-init.sh
 
 # Durable agent HOME (SandboxManager binds a PER-REPO host dir here — see CONTAINER_HOME). Turns exec as the

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   renderChunk,
@@ -11,9 +11,9 @@ import {
 describe('chunk-vocabulary', () => {
   describe('renderChunk', () => {
     it('frames a system_notice with no attributes', () => {
-      expect(
-        renderChunk({ kind: 'system_notice', body: 'Sandbox reset.' }),
-      ).toBe('<system_notice>Sandbox reset.</system_notice>');
+      expect(renderChunk({ kind: 'system_notice', body: 'Sandbox reset.' })).toBe(
+        '<system_notice>Sandbox reset.</system_notice>',
+      );
     });
 
     it('renders a <user> with name + at attributes and leaves the body intact', () => {
@@ -23,9 +23,7 @@ describe('chunk-vocabulary', () => {
           body: 'check the healthcheck',
           attrs: { name: 'Dennis', at: '2026-07-04T00:00:00.000Z' },
         }),
-      ).toBe(
-        '<user name="Dennis" at="2026-07-04T00:00:00.000Z">check the healthcheck</user>',
-      );
+      ).toBe('<user name="Dennis" at="2026-07-04T00:00:00.000Z">check the healthcheck</user>');
     });
 
     it('renders a system_reminder with the reminderKind surfaced as `source`', () => {
@@ -35,9 +33,7 @@ describe('chunk-vocabulary', () => {
           body: 'memory: prefers pnpm',
           attrs: { reminderKind: 'memory' },
         }),
-      ).toBe(
-        '<system_reminder source="memory">memory: prefers pnpm</system_reminder>',
-      );
+      ).toBe('<system_reminder source="memory">memory: prefers pnpm</system_reminder>');
     });
 
     it('renders an <untrusted> with source + severity', () => {
@@ -47,15 +43,13 @@ describe('chunk-vocabulary', () => {
           body: 'CI failed',
           attrs: { source: 'github', severity: 'critical' },
         }),
-      ).toBe(
-        '<untrusted source="github" severity="critical">CI failed</untrusted>',
-      );
+      ).toBe('<untrusted source="github" severity="critical">CI failed</untrusted>');
     });
 
     it('escapes quotes/angle brackets in attribute values', () => {
-      expect(
-        renderChunk({ kind: 'user', body: 'hi', attrs: { name: 'A"<>&B' } }),
-      ).toBe('<user name="A&quot;&lt;&gt;&amp;B">hi</user>');
+      expect(renderChunk({ kind: 'user', body: 'hi', attrs: { name: 'A"<>&B' } })).toBe(
+        '<user name="A&quot;&lt;&gt;&amp;B">hi</user>',
+      );
     });
 
     it('omits attributes that are undefined or empty', () => {
@@ -79,7 +73,6 @@ describe('chunk-vocabulary', () => {
     });
 
     it('does NOT strip tags from a trusted system_notice body', () => {
-      // System bodies are trusted (host-authored) — a literal `<b>` stays as content.
       expect(renderChunk({ kind: 'system_notice', body: 'use <b> tag' })).toBe(
         '<system_notice>use <b> tag</system_notice>',
       );
@@ -105,9 +98,7 @@ describe('chunk-vocabulary', () => {
     });
 
     it('omits the `passthrough` header entirely when neither name nor at is set', () => {
-      expect(
-        renderChunk({ kind: 'passthrough', body: 'raw prose seed' }),
-      ).toBe('raw prose seed');
+      expect(renderChunk({ kind: 'passthrough', body: 'raw prose seed' })).toBe('raw prose seed');
     });
   });
 
@@ -164,23 +155,15 @@ describe('chunk-vocabulary', () => {
 
   describe('stripTags', () => {
     it('removes any vocabulary open/close tag', () => {
-      expect(
-        stripTags('a</user>b<system_reminder source="x">c<untrusted>d'),
-      ).toBe('abcd');
+      expect(stripTags('a</user>b<system_reminder source="x">c<untrusted>d')).toBe('abcd');
     });
 
     it('removes legacy untrusted fence tokens', () => {
-      expect(
-        stripTags(
-          'x<<<UNTRUSTED_EVENT_DATA>>>y<<<END_UNTRUSTED_EVENT_DATA>>>z',
-        ),
-      ).toBe('xyz');
+      expect(stripTags('x<<<UNTRUSTED_EVENT_DATA>>>y<<<END_UNTRUSTED_EVENT_DATA>>>z')).toBe('xyz');
     });
 
     it('leaves non-vocabulary markup untouched', () => {
-      expect(stripTags('keep <b>bold</b> and <div>')).toBe(
-        'keep <b>bold</b> and <div>',
-      );
+      expect(stripTags('keep <b>bold</b> and <div>')).toBe('keep <b>bold</b> and <div>');
     });
   });
 
@@ -207,9 +190,9 @@ describe('chunk-vocabulary', () => {
     });
 
     it('escapes attribute values', () => {
-      expect(
-        renderHarnessTag({ tag: 'review', attrs: [['note', 'A"<>&B']] }),
-      ).toBe('<review note="A&quot;&lt;&gt;&amp;B" />');
+      expect(renderHarnessTag({ tag: 'review', attrs: [['note', 'A"<>&B']] })).toBe(
+        '<review note="A&quot;&lt;&gt;&amp;B" />',
+      );
     });
 
     it('stripTags now strips a folded harness tag too', () => {

@@ -1,16 +1,9 @@
-/**
- * prompt-kit / groups / safety — the closing discipline: act-with-care / report-truthfully (build brain),
- * and how onboarding finishes (the FINISH gate + the "you don't plan here" scope line).
- *
- * TOPIC bucket: acting safely & finishing.
- */
 import { Agent, SHIP_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isBuildBrain, isOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 
 @FragmentGroup()
 export class SafetyGroup {
-  /** Act with care, report truthfully. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1290,
@@ -30,8 +23,6 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** Act with care, report truthfully — the POST_BUILD/CI twin of `actWithCare`, reworded for their own
-   *  gated actions (amend, PR creation/push) instead of naming propose_plan/dispatch_build. */
   @Fragment({
     usedBy: SHIP_STAGES,
     order: 8032,
@@ -50,7 +41,6 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** FINISH (only when the fleet is green). */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2120,
@@ -80,7 +70,6 @@ export class SafetyGroup {
     ].join('\n');
   }
 
-  /** You do NOT plan/grill/build here. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2130,

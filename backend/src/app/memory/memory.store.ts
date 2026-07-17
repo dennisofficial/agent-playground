@@ -6,16 +6,6 @@ import { DB_CONNECTION } from '../persistence/database.module';
 import { MemoryEntity } from '../persistence/entities';
 import { EMBEDDING_PROVIDER, type EmbeddingProvider } from './embedding';
 
-/**
- * Atlas v2 semantic memory — the pgvector read/write primitives ONLY (a clean-room rewrite of v1's
- * `SemanticMemory` with the board/pipeline/identity-tier machinery DROPPED). It is the only channel
- * for cross-thread coherence: threads never share transcripts. Scopes are plain strings
- * (`team:<id>` | `project:<id>`) and memory is strictly tenant-scoped — every fact belongs to an
- * `org_id` (there is no shared/global tier).
- *
- * Stored against the `memory` table on Atlas's OWN datasource. Vector ops use the pgvector text
- * literal (`[0.1,0.2,…]`) and rank with `embedding <=> :qv`. Zero v1 imports.
- */
 
 export interface StoredFact {
   id: string;
@@ -28,17 +18,12 @@ export interface StoredFact {
 }
 
 export interface RecalledFact extends StoredFact {
-  /** Cosine similarity to the query (1 = identical). */
   sim: number;
 }
 
-// Cosine ≥ this in the same scope = "the same fact" → merge, not a duplicate.
 export const DEDUP_THRESHOLD = 0.92;
-// Recall floor: facts below this cosine to the query are not relevant enough to inject.
 export const MIN_RECALL_SIM = 0.3;
 
-/** Serialize a JS vector to the pgvector SQL literal. Non-null assertion is safe (we always pass a
- * non-null number[] from the embedder). */
 const vecSql = (v: number[]): string => toSql(v)!;
 
 function toStored(f: MemoryEntity): StoredFact {
@@ -55,9 +40,7 @@ function toStored(f: MemoryEntity): StoredFact {
 
 export interface RememberInput {
   fact: string;
-  /** Access tier scope, e.g. 'team:T04' | 'project:acme'. */
   scope: string;
-  /** The tenant (org id) that owns this fact. Required — memory is strictly tenant-scoped. */
   orgId: string;
   assertedBy?: string;
 }
@@ -71,18 +54,11 @@ export class MemoryStore {
     private readonly embedder: EmbeddingProvider,
   ) {}
 
-  /** Embed text to the pgvector SQL literal the queries use (`orgId` selects the tenant's OpenAI key). */
   async embed(text: string, orgId?: string): Promise<string> {
     return vecSql(await this.embedder.embed(text, orgId));
   }
 
-  /**
-   * Store a fact at its scope, or merge into a near-duplicate (cosine ≥ DEDUP_THRESHOLD) in that
-   * same scope/team. Strict team equality — a fact only ever merges within its own tenant.
-   */
-  async remember(
-    input: RememberInput,
-  ): Promise<{ action: 'inserted' | 'updated'; id: string }> {
+  async remember(input: RememberInput): Promise<{ action: 'inserted' | 'updated'; id: string }> {
     const qv = vecSql(await this.embedder.embed(input.fact, input.orgId));
 
     const qb = this.facts
@@ -131,10 +107,6 @@ export class MemoryStore {
     return { action: 'inserted', id: result.identifiers[0].id as string };
   }
 
-  /**
-   * Semantic recall over the given scopes, filtered to this tenant. Facts below `floor` cosine are
-   * dropped; the rest come back most-similar-first.
-   */
   async recall(
     query: string,
     opts: { scopes: string[]; orgId: string; limit?: number; floor?: number },
@@ -161,7 +133,6 @@ export class MemoryStore {
     }));
   }
 
-  /** Soft-delete a fact by id, scoped to its owning org (a foreign/already-gone id is a no-op). */
   async forget(id: string, orgId: string): Promise<{ deleted: boolean }> {
     const res = await this.facts
       .createQueryBuilder()
@@ -173,12 +144,7 @@ export class MemoryStore {
     return { deleted: (res.affected ?? 0) > 0 };
   }
 
-  /** Rewrite a fact by id (re-embeds), scoped to its owning org; a forgotten/foreign row is a no-op. */
-  async updateFact(
-    id: string,
-    fact: string,
-    orgId: string,
-  ): Promise<{ updated: boolean }> {
+  async updateFact(id: string, fact: string, orgId: string): Promise<{ updated: boolean }> {
     const existing = await this.facts
       .createQueryBuilder('f')
       .select('f.id', 'id')

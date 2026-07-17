@@ -1,69 +1,37 @@
 import { Injectable } from '@nestjs/common';
+import { ConventionProfileResolver } from '../conventions/convention-profile.resolver';
+import { McpServerStore } from '../mcp/mcp-server.store';
 import { WorkspaceConfigStore } from '../onboarding/workspace-config.store';
 import { WorkspaceSecretFileStore } from '../onboarding/workspace-secret.store';
-import { McpServerStore } from '../mcp';
-import { WorkspaceSkillStore } from '../skills';
-import { ConventionProfileResolver } from '../conventions';
+import { WorkspaceSkillStore } from '../skills/workspace-skill.store';
 
-/**
- * The current state of a repo's WORKSPACE PROFILE — the one named area (secrets, mounts, caches, setup,
- * MCP servers, skills, house style) Atlas provisions ONCE at onboarding and keeps current on every job
- * after. A read-only projection: never a secret VALUE, only refs/metadata safe to show the brain.
- */
 export interface WorkspaceProfileSnapshot {
-  /** Durable bind mounts (cache/state dirs) — `write_workspace_config`. */
   mounts: { path: string; mode: string }[];
-  /** The cold-boot setup script — `write_setup_script`. Presence + size only (the body can be long). */
   setupScript: { present: boolean; length: number };
-  /** The demo-ready preview recipe — `write_preview_instructions`. Presence + size only. */
   previewRecipe: { present: boolean; length: number };
-  /** Secret FILE refs the hydrator renders in — `request_secret`/`request_file`. Path + label ONLY. */
   secretFiles: { path: string; label: string | null }[];
-  /** MCP servers effective for this repo — `propose_mcp_servers`. Name/tier/surfaces/enabled, no secrets. */
   mcpServers: {
     name: string;
     tier: 'org' | 'repo';
     surfaces: string[];
     enabled: boolean;
   }[];
-  /** Skills effective for this repo — `propose_skill`. Name/tier/description/enabled. */
   skills: {
     name: string;
     tier: 'org' | 'repo';
     description: string;
     enabled: boolean;
   }[];
-  /** The attached house-style profile — `propose_convention_profile`. Slug + display name, or null. */
   houseStyle: { slug: string; name: string | null } | null;
 }
 
-/**
- * A host-DERIVED gap in the Workspace Profile — a misconfiguration the brain cannot see from the
- * snapshot alone, surfaced conditionally so upkeep is a concrete signal rather than standing prompt
- * prose. Covers: an approved MCP server with an unfilled secret slot (silently can't authenticate), and
- * a NEW dependency manifest the profile hasn't acknowledged (a stack that may want a skill/MCP), and an
- * MCP server whose auth USED to work and later FAILED (expired static secret / dead OAuth refresh token).
- */
 export interface ProfileGap {
-  kind:
-    | 'unfilled_mcp_secret'
-    | 'new_stack'
-    | 'broken_auth'
-    | 'needs_oauth_connect';
-  /** Human-readable, secret-SAFE (names only) description including the tool to fix it. */
+  kind: 'unfilled_mcp_secret' | 'new_stack' | 'broken_auth' | 'needs_oauth_connect';
   detail: string;
 }
 
 const gapKey = (scope: string, name: string): string => `${scope}\u0000${name}`;
 
-/**
- * Read-model over the seven Workspace Profile dimensions. It COMPOSES the existing per-dimension stores —
- * it owns NO storage of its own — and renders a compact snapshot the brain sees every turn (see
- * `prompt-kit/system/groups/workspace-profile.group.ts`). This is what makes "keep it up to date" actionable:
- * the brain can only maintain the profile if it can see what already exists.
- *
- * `@Global` module; injected next to `ConventionProfileResolver` on the brain turn-assembly path.
- */
 @Injectable()
 export class WorkspaceProfileService {
   constructor(
@@ -74,11 +42,7 @@ export class WorkspaceProfileService {
     private readonly conventions: ConventionProfileResolver,
   ) {}
 
-  /** Aggregate the current state across all seven dimensions (~5 cheap queries). */
-  async describe(
-    orgId: string,
-    repoId: string,
-  ): Promise<WorkspaceProfileSnapshot> {
+  async describe(orgId: string, repoId: string): Promise<WorkspaceProfileSnapshot> {
     const [
       mounts,
       setupScript,
@@ -122,21 +86,10 @@ export class WorkspaceProfileService {
         description: r.description,
         enabled: r.enabled,
       })),
-      houseStyle: houseStyleSlug
-        ? { slug: houseStyleSlug, name: houseStyle?.name ?? null }
-        : null,
+      houseStyle: houseStyleSlug ? { slug: houseStyleSlug, name: houseStyle?.name ?? null } : null,
     };
   }
 
-  /**
-   * Host-derived gaps in the profile — misconfigurations the brain cannot see from the snapshot. Cheap,
-   * conditional: returns [] when the profile is healthy, so the caller renders nothing (no prompt bloat).
-   * Sources: (1) an approved MCP server with a declared secret slot that has never been filled (silently
-   * fails auth); (2) a NEW dependency manifest present in the worktree that the profile hasn't yet
-   * acknowledged (`repos.profile_seen_manifests`) — the "noticed a new package" signal. Pass
-   * `currentManifests` (from `detectRepoManifests`) to enable (2); omit it to skip the worktree-dependent
-   * check. Returns secret-SAFE strings only.
-   */
   async computeGaps(
     orgId: string,
     repoId: string,
@@ -152,15 +105,10 @@ export class WorkspaceProfileService {
       });
     }
 
-    // Broken auth: a server that USED to work and later failed its validation probe (expired static
-    // secret / dead OAuth refresh token). De-dupe against the unfilled set (name+scope): a never-filled
-    // slot is already reported above and shouldn't also read as "broken" — unfilled wins.
     const unfilledKeys = new Set(unfilled.map((u) => gapKey(u.scope, u.name)));
     const authFailing = await this.mcp.authFailingServers(orgId, repoId);
     for (const s of authFailing) {
       if (unfilledKeys.has(gapKey(s.scope, s.name))) continue;
-      // The fix differs by auth kind: the brain CAN re-provide a static secret itself, but OAuth
-      // re-consent is operator-only (it cannot re-authorize an OAuth flow).
       const detail =
         s.authKind === 'oauth'
           ? `MCP server "${s.name}" [${s.scope}] needs re-authorization (OAuth refresh failed) — the OWNER must Reconnect it from the MCP proposal card or the console (MCP settings → Reconnect); the brain cannot re-consent OAuth itself.`
@@ -168,10 +116,6 @@ export class WorkspaceProfileService {
       gaps.push({ kind: 'broken_auth', detail });
     }
 
-    // Needs-connect: an OAuth server registered but never connected (no access token — a never-started or
-    // started-but-cancelled consent). Only the OWNER can complete OAuth consent, so the brain can't fix it
-    // itself; the nudge keeps it from being silently forgotten once the proposal card scrolls away. Dedup
-    // defensively against the already-emitted keys (exclusive with broken_auth/unfilled in practice).
     const emitted = new Set([
       ...unfilled.map((u) => gapKey(u.scope, u.name)),
       ...authFailing.map((s) => gapKey(s.scope, s.name)),
@@ -185,8 +129,6 @@ export class WorkspaceProfileService {
       });
     }
 
-    // New-stack: only once the profile has been SEEDED (seen !== null) — an un-onboarded repo never
-    // nags. A manifest present now but not acknowledged means a stack the profile hasn't covered.
     if (currentManifests && currentManifests.length > 0) {
       const seen = await this.workspaceConfig.getSeenManifests(orgId, repoId);
       if (seen) {
@@ -204,7 +146,6 @@ export class WorkspaceProfileService {
     return gaps;
   }
 
-  /** Render gaps as a compact block appended after the snapshot. Returns '' when there are none. */
   renderGaps(gaps: ProfileGap[]): string {
     if (gaps.length === 0) return '';
     return [
@@ -213,7 +154,6 @@ export class WorkspaceProfileService {
     ].join('\n');
   }
 
-  /** Render a snapshot as a compact markdown block for the brain prompt. Returns '' when totally empty. */
   render(s: WorkspaceProfileSnapshot): string {
     const lines: string[] = [];
 
@@ -244,9 +184,6 @@ export class WorkspaceProfileService {
             .join(', ')}`
         : '- MCP servers: none',
     );
-    // NOTE: no "Skills:" line here (dropped) — the SDK's native `skills: 'all'` listing (engine-core.ts)
-    // now owns skill surfacing for the model, with its own 1%-context budget + progressive disclosure.
-    // Repeating bare names here was pure duplication (see the skills-redesign plan's duplication finding).
     lines.push(
       s.houseStyle
         ? `- House style: ${s.houseStyle.name ?? s.houseStyle.slug} (${s.houseStyle.slug})`

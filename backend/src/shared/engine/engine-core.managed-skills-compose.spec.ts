@@ -1,21 +1,9 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readlinkSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { composeSkillsDir } from './engine-core';
 
-/**
- * `composeSkillsDir`'s handling of `ResolvedSkill.managed` — the P5 system-skills tier. Not a resolver
- * test (see `skill-resolver.managed-tier.spec.ts` for the precedence MERGE); this checks the compose step
- * itself picks the right root per entry and never leaves a dangling symlink.
- */
 const ROOT = join(tmpdir(), `atlas-managed-skills-compose-spec-${process.pid}`);
 const CLAUDE_CONFIG_DIR = join(ROOT, 'claude-config');
 const SKILLS_ROOT = join(ROOT, 'org-skills');
@@ -25,10 +13,7 @@ afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 function writeSkillMd(dir: string, description: string): void {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'SKILL.md'),
-    `---\ndescription: ${description}\n---\nbody\n`,
-  );
+  writeFileSync(join(dir, 'SKILL.md'), `---\ndescription: ${description}\n---\nbody\n`);
 }
 
 describe('composeSkillsDir — managed (system) skills', () => {
@@ -129,8 +114,6 @@ describe('composeSkillsDir — managed (system) skills', () => {
       MANAGED_ROOT,
       MANAGED_GIT_ROOT,
     );
-    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(
-      false,
-    );
+    expect(existsSync(join(CLAUDE_CONFIG_DIR, 'skills', 'unsynced'))).toBe(false);
   });
 });

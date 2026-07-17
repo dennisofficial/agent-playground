@@ -11,11 +11,7 @@ export class AddMcpOAuth1783489265450 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "mcp_servers" DROP COLUMN "oauth_enc"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "mcp_servers" DROP COLUMN "auth_kind"`,
-    );
+    await queryRunner.query(`ALTER TABLE "mcp_servers" DROP COLUMN "oauth_enc"`);
+    await queryRunner.query(`ALTER TABLE "mcp_servers" DROP COLUMN "auth_kind"`);
   }
 }

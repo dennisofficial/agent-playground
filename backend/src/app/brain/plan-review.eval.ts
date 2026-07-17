@@ -9,43 +9,14 @@ import { defineModule, scorer } from '@workspace/ai-testing';
 import { Agent, renderAgentPrompt, renderReviewIntent } from '../prompt-kit';
 import { parsePlanFindings, type ReviewFinding } from './plan-review.service';
 
-/**
- * REVIEWER-CALIBRATION EVAL — the "LLMs always find something" concern from the synchronous Codex
- * plan-review redesign. Codex review is MANDATORY TO RUN but ADVISORY TO PASS: Atlas is the judge, so
- * findings never block. That only works if the reviewer's signal is actually calibrated — surfacing what
- * MATTERS (BLOCKING) and staying quiet on a genuinely clean plan, never manufacturing issues because it
- * was asked to look, and never rubber-stamping a real gap either.
- *
- * SCOPE / WHAT THIS DOES NOT TEST: the real reviewer runs Codex-in-a-Docker-sandbox reading live
- * `/context/specs/` files (`PlanReviewService.review`, `redis-engine-runner.ts`) — that needs a running
- * container + Codex credentials and is validated LIVE, not in this eval. What IS shared with production
- * and therefore genuinely regression-tested here: the EXACT system prompt (`Agent.META_PLAN_REVIEW`,
- * `renderAgentPrompt`) and the EXACT output parser (`parsePlanFindings`). This eval feeds that prompt a
- * plain multi-turn chat completion (Claude standing in for Codex — the prompt's role/severity/output
- * contract is model-agnostic text, not Codex-specific) with the plan + supporting code CONTEXT INLINED
- * directly in the task (standing in for what Codex would have read from files), then grades the parsed
- * findings. This is a proxy for calibration, not an end-to-end replacement for the live-run check.
- *
- * Three fixtures, three failure modes:
- *   - `clean`      — a well-specified, gap-free plan. Assert 0 BLOCKING (the "always finds something" guard).
- *   - `planted-gap`— a plan with a real, concrete intent gap. Assert it's caught as BLOCKING (the
- *                    rubber-stamp guard — a lenient reviewer is just as useless as an over-eager one).
- *   - `resume`     — a second round where Atlas's fix genuinely resolved the prior finding. Assert the
- *                    reviewer CONCEDES (0 BLOCKING) rather than inventing a new, smaller issue to justify
- *                    another round (the anti-escalation instruction in the output contract).
- */
 
 type In = { messages: BaseMessageLike[] };
 type Out = { raw: string; findings: ReviewFinding[] };
 
-/** Stand-in reviewer model — a capable model, not the cheap Haiku reserved for judges elsewhere in this
- *  repo's evals. Swap freely; the fixtures test the PROMPT, not this specific model's quirks. */
 const MODEL = 'claude-sonnet-5';
 
 const SYSTEM = renderAgentPrompt(Agent.META_PLAN_REVIEW);
 
-/** Frame a fixture the same way `renderPlanForReview` does (intent → authored plan → judge), but with
- *  supporting code inlined as CONTEXT instead of a `/context/specs/` file pointer (no sandbox here). */
 function renderTask(input: {
   goal: string;
   overview: string;
@@ -71,10 +42,8 @@ function renderTask(input: {
   ].join('\n');
 }
 
-// ── fixture: clean — a well-specified plan with no real gap ──────────────────────────────────────────
 
 const CLEAN_CONTEXT = `
-// user.entity.ts
 @Entity({ name: 'users' })
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid') id!: string;
@@ -82,7 +51,6 @@ export class UserEntity {
   @CreateDateColumn() created_at!: Date;
 }
 
-// auth.service.ts
 @Injectable()
 export class AuthService {
   constructor(
@@ -98,23 +66,18 @@ export class AuthService {
   }
 }
 
-// user.dto.ts
 export class UserDto {
   id!: string;
   email!: string;
   createdAt!: Date;
 }
 
-// users.controller.ts
 @Get(':id')
 async getUser(@Param('id') id: string): Promise<UserDto> {
   const user = await this.users.findOneOrFail({ where: { id } });
   return { id: user.id, email: user.email, createdAt: user.created_at };
 }
 
-// This repo's existing migration convention: after an entity change, run
-// \`pnpm typeorm migration:generate migrations/<Name> -d data-source.ts\` and commit the generated file;
-// \`pnpm db:migrate\` applies it in CI/deploy.
 `.trim();
 
 const CLEAN_PLAN = `
@@ -130,10 +93,8 @@ Verify: an integration test logs in, then GETs the user and asserts lastLoginAt 
   "pnpm db:migrate" applies the new migration cleanly against the test DB.
 `.trim();
 
-// ── fixture: planted-gap — the plan overlooks a real, concrete intent gap ────────────────────────────
 
 const GAP_CONTEXT = `
-// user.entity.ts
 @Entity({ name: 'users' })
 export class UserEntity {
   @PrimaryGeneratedColumn('uuid') id!: string;
@@ -141,7 +102,6 @@ export class UserEntity {
   @CreateDateColumn() created_at!: Date;
 }
 
-// auth.service.ts
 @Injectable()
 export class AuthService {
   constructor(
@@ -157,10 +117,6 @@ export class AuthService {
   }
 }
 
-// user-cache.service.ts
-// EVERY user read in this codebase goes through this cache — GET /users/:id NEVER queries Postgres
-// directly. Entries are written once on creation and have a 24h TTL; nothing else ever refreshes or
-// invalidates them.
 @Injectable()
 export class UserCacheService {
   async getUser(id: string): Promise<UserEntity> {
@@ -172,23 +128,18 @@ export class UserCacheService {
   }
 }
 
-// user.dto.ts
 export class UserDto {
   id!: string;
   email!: string;
   createdAt!: Date;
 }
 
-// users.controller.ts
 @Get(':id')
 async getUser(@Param('id') id: string): Promise<UserDto> {
   const user = await this.userCache.getUser(id); // ALWAYS cache, never the repository directly
   return { id: user.id, email: user.email, createdAt: user.created_at };
 }
 
-// This repo's existing migration convention: after an entity change, run
-// \`pnpm typeorm migration:generate migrations/<Name> -d data-source.ts\` and commit the generated file;
-// \`pnpm db:migrate\` applies it in CI/deploy.
 `.trim();
 
 const GAP_PLAN = `
@@ -205,10 +156,8 @@ Verify: an integration test logs in, then GETs the user and asserts lastLoginAt 
   "pnpm db:migrate" applies the new migration cleanly against the test DB.
 `.trim();
 
-// ── fixture: resume — round 2 genuinely fixes round 1's finding; expect concession, not escalation ────
 
 const RESUME_ROUND1_CONTEXT = `
-// reports.controller.ts
 @Controller('reports')
 export class ReportsController {
   @Post('export')
@@ -227,7 +176,6 @@ Verify: hitting the endpoint returns a CSV body with one email per line.
 `.trim();
 
 const RESUME_ROUND2_CONTEXT = `
-// reports.controller.ts
 @Controller('reports')
 export class ReportsController {
   @Post('export')
@@ -246,33 +194,21 @@ I added @UseGuards(AdminGuard) so only admins can call the export endpoint, and 
 Please re-review.
 `.trim();
 
-// ── the runnable: a plain multi-turn chat completion through the REAL system prompt ────────────────────
 
-/** This model's `content` is a block array (thinking + text, extended-thinking style) — pull out just
- *  the text parts; `parsePlanFindings` only ever needs to see the model's final prose. */
 function extractText(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
-    .filter(
-      (b): b is { type: string; text: string } =>
-        (b as { type?: string })?.type === 'text',
-    )
+    .filter((b): b is { type: string; text: string } => (b as { type?: string })?.type === 'text')
     .map((b) => b.text)
     .join('\n');
 }
 
 function buildRunnable() {
-  // NOTE: `temperature` is deprecated/rejected on this model (400 invalid_request_error) — omit it.
-  // maxTokens is generous: this model emits an extended-thinking block before its answer, and a tight
-  // budget can be consumed entirely by thinking, leaving zero room for the actual FINDING/NO_FINDINGS text.
   const model = new ChatAnthropic({ model: MODEL, maxTokens: 8_000 });
   return {
     async invoke(input: In): Promise<Out> {
-      const res = await model.invoke([
-        new SystemMessage(SYSTEM),
-        ...input.messages,
-      ]);
+      const res = await model.invoke([new SystemMessage(SYSTEM), ...input.messages]);
       const raw = extractText(res.content);
       return { raw, findings: parsePlanFindings(raw) };
     },
@@ -289,8 +225,7 @@ export default defineModule<In, Out>({
           new HumanMessage(
             renderTask({
               goal: "Show each user's last login time on their profile.",
-              overview:
-                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: CLEAN_PLAN,
               context: CLEAN_CONTEXT,
             }),
@@ -305,8 +240,7 @@ export default defineModule<In, Out>({
           new HumanMessage(
             renderTask({
               goal: "Show each user's last login time on their profile.",
-              overview:
-                'Stamp last_login_at on successful login and expose it on GET /users/:id.',
+              overview: 'Stamp last_login_at on successful login and expose it on GET /users/:id.',
               plan: GAP_PLAN,
               context: GAP_CONTEXT,
             }),
@@ -357,23 +291,17 @@ export default defineModule<In, Out>({
   ],
   runnable: buildRunnable,
   evaluators: [
-    // Applies to every case: the reviewer must actually follow the output contract (parseable), not
-    // free-form prose that produces zero structured signal either way.
     scorer<In, Out>({
       key: 'well-formed-output',
       threshold: 1,
-      run: ({ output }) =>
-        output.findings.length > 0 || /\bNO_FINDINGS\b/i.test(output.raw),
+      run: ({ output }) => output.findings.length > 0 || /\bNO_FINDINGS\b/i.test(output.raw),
     }),
-    // clean → the "always finds something" guard: a gap-free plan must not draw a false BLOCKING.
     scorer<In, Out>({
       key: 'no-false-blocking-on-clean-plan',
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'clean') return undefined; // scoped to this case only
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         return {
           key: 'no-false-blocking-on-clean-plan',
           grade: blocking.length === 0 ? 1 : 0,
@@ -381,35 +309,26 @@ export default defineModule<In, Out>({
         };
       },
     }),
-    // planted-gap → the rubber-stamp guard: the real gap must be caught, and named specifically enough
-    // that it's clearly THIS gap (not a coincidental unrelated nit).
     scorer<In, Out>({
       key: 'catches-planted-gap',
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'planted-gap') return undefined;
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         const caught = blocking.some((f) => /cache/i.test(f.text));
         return {
           key: 'catches-planted-gap',
           grade: caught ? 1 : 0,
-          comment:
-            blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
+          comment: blocking.map((f) => f.text).join(' | ') || '(no blocking findings)',
         };
       },
     }),
-    // resume → the anti-escalation guard: a genuinely resolved finding must be conceded, not replaced by
-    // a smaller invented one to justify another round.
     scorer<In, Out>({
       key: 'no-escalation-after-genuine-fix',
       threshold: 1,
       run: ({ label, output }) => {
         if (label !== 'resume') return undefined;
-        const blocking = output.findings.filter(
-          (f) => f.severity === 'BLOCKING',
-        );
+        const blocking = output.findings.filter((f) => f.severity === 'BLOCKING');
         return {
           key: 'no-escalation-after-genuine-fix',
           grade: blocking.length === 0 ? 1 : 0,

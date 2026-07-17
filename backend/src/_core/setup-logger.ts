@@ -1,9 +1,5 @@
 import { LoggerAdapter } from '@workspace/nestjs-core';
 
-/**
- * Builds the Nest logger used by every app's bootstrap. Reads raw `process.env`
- * (it runs before the DI container exists, so EnvService isn't available yet).
- */
 export const setupLogger = (): LoggerAdapter => {
   const logger = new LoggerAdapter('Bootstrap', { timestamp: false });
 

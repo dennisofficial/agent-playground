@@ -8,19 +8,9 @@ import {
   Post,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  IsArray,
-  IsBoolean,
-  IsIn,
-  IsOptional,
-  IsString,
-  IsUrl,
-  MinLength,
-} from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUrl, MinLength } from 'class-validator';
 import { Repository } from 'typeorm';
 import { CurrentOrg, type CurrentOrgCtx } from '../org/current-org.decorator';
 import { OrgMembershipGuard } from '../org/org-membership.guard';
@@ -36,10 +26,7 @@ import { BUNDLED_CLAUDE_CODE_SKILLS } from './bundled-skills';
 import { SkillFileWriter } from './skill-file-writer.service';
 import { SkillInstallerService } from './skill-installer.service';
 import { SkillUpdaterService } from './skill-updater.service';
-import {
-  SystemSkillResolver,
-  type SystemSkillView,
-} from './system-skill-resolver.service';
+import { SystemSkillResolver, type SystemSkillView } from './system-skill-resolver.service';
 import {
   ORG_SCOPE,
   WorkspaceSkillStore,
@@ -51,8 +38,6 @@ const SURFACES = ['brain', 'build', 'review'] as const;
 const PROVENANCES = ['git', 'custom', 'managed'] as const;
 const UPDATE_POLICIES = ['pinned', 'track-ref', 'manual'] as const;
 
-/** `POST /skills/install` body — `scope` is the URL-facing sentinel (`'org'` | repo id), same as `:scope`
- *  route params elsewhere in this controller. */
 class InstallSkillDto {
   @IsString() @MinLength(1) scope!: string;
   @IsUrl({ protocols: ['https'], require_protocol: true }) sourceUrl!: string;
@@ -65,13 +50,6 @@ class InstallSkillDto {
   surfaces?: McpSurface[];
 }
 
-/**
- * Registry-metadata upsert, PLUS (when `body` is present) the on-disk `SKILL.md` write for a `custom`
- * skill — mirrors how `WebSurfaceController.approveSkillProposal` pairs `store.write` with
- * `skillFiles.writeSkillMd` for a brain-authored skill. `provenance`/`source_*`/`installed_sha`/
- * `forked_from` are normally installer/authoring-owned; exposed here so a row can also be registered
- * against files placed on the store out of band.
- */
 class SetSkillDto implements SkillInput {
   @IsString() @MinLength(1) description!: string;
   @IsOptional() @IsIn(PROVENANCES) provenance?: SkillProvenance;
@@ -88,21 +66,11 @@ class SetSkillDto implements SkillInput {
   @IsOptional() @IsArray() @IsString({ each: true }) reviewForTypes?: string[];
   @IsOptional() @IsArray() @IsString({ each: true }) reviewForGlobs?: string[];
   @IsOptional() @IsBoolean() enabled?: boolean;
-  /** A custom skill's `SKILL.md` body (frontmatter-stripped) — console create/edit only; a git skill's
-   *  content comes from the installer, never this endpoint. */
   @IsOptional() @IsString() body?: string;
 }
 
-/**
- * `/web/orgs/:orgId/skills` — manage the org's user/brain-defined skills REGISTRY, in two writable tiers
- * (org-wide `scope='org'` + repo-scoped `scope=<repoId>`). GET (list + the `:scope/:name/files` read-only
- * viewer) is readable by any member; all mutations are an Administer action — owner only (`OrgOwnerGuard`),
- * mirroring {@link McpServersController}. A skill carries no secret, so GET returns the full row + (via
- * `files`) its on-disk tree and `SKILL.md` content.
- */
 @Controller('web/orgs/:orgId/skills')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class SkillsController {
   constructor(
     private readonly store: WorkspaceSkillStore,
@@ -114,9 +82,6 @@ export class SkillsController {
     private readonly repos: Repository<RepoEntity>,
   ) {}
 
-  /** `system` = Atlas's own code-defined built-ins (read-only); `bundled` = the Claude Code CLI's own
-   *  bundled skill names (display-only — already active via `skills: 'all'`, see `bundled-skills.ts`);
-   *  `skills` = this org's Organization/Repository tiers, unchanged. */
   @Get()
   async list(@CurrentOrg() org: CurrentOrgCtx): Promise<{
     system: SystemSkillView[];
@@ -130,7 +95,6 @@ export class SkillsController {
     };
   }
 
-  /** Install (or re-install) a skill — or every skill a marketplace manifest lists — from a git repo. */
   @Post('install')
   @UseGuards(OrgOwnerGuard)
   async install(
@@ -150,7 +114,6 @@ export class SkillsController {
     return { skills };
   }
 
-  /** Apply-now: re-vendor a `git` skill from its recorded source, regardless of `update_policy`. */
   @Post(':scope/:name/update')
   @UseGuards(OrgOwnerGuard)
   async update(
@@ -173,21 +136,12 @@ export class SkillsController {
   ): Promise<{ ok: boolean }> {
     const dbScope = await this.resolveScope(org.id, scope);
     await this.store.write(org.id, dbScope, name, body);
-    // A create/edit from the console carries the SKILL.md body directly — the row alone would leave a
-    // custom skill with no file on the host store to symlink into a turn (see SkillFileWriter's header).
     if (body.body !== undefined) {
-      this.skillFiles.writeSkillMd(
-        org.id,
-        dbScope,
-        name,
-        body.description,
-        body.body,
-      );
+      this.skillFiles.writeSkillMd(org.id, dbScope, name, body.description, body.body);
     }
     return { ok: true };
   }
 
-  /** Read-only file-tree + `SKILL.md` viewer (not an editor — see the module doc). Member-readable, like GET. */
   @Get(':scope/:name/files')
   async files(
     @CurrentOrg() org: CurrentOrgCtx,
@@ -201,9 +155,6 @@ export class SkillsController {
     };
   }
 
-  /** Fork a `git`-provenance skill to a fresh, freely-editable `custom` copy in the same scope — the
-   *  console counterpart of `WebSurfaceController.forkSkillToCustom` (the `request_skill_edit_access`
-   *  approval path); same `<name>-custom`(`-2`/`-3`…) naming so the two paths never collide. */
   @Post(':scope/:name/fork')
   @UseGuards(OrgOwnerGuard)
   async fork(
@@ -213,10 +164,7 @@ export class SkillsController {
   ): Promise<{ skill: SkillView }> {
     const dbScope = await this.resolveScope(org.id, scope);
     const source = await this.store.get(org.id, dbScope, name);
-    if (!source)
-      throw new BadRequestException(
-        `no such skill '${name}' at scope '${scope}'`,
-      );
+    if (!source) throw new BadRequestException(`no such skill '${name}' at scope '${scope}'`);
     let forkName = `${name}-custom`;
     for (let n = 2; await this.store.get(org.id, dbScope, forkName); n++) {
       forkName = `${name}-custom-${n}`;
@@ -248,22 +196,16 @@ export class SkillsController {
   ): Promise<{ ok: boolean }> {
     const dbScope = await this.resolveScope(org.id, scope);
     await this.store.delete(org.id, dbScope, name);
-    // Mirror WebSurfaceController's skill-proposal 'remove' mode — a registry-only delete would orphan the
-    // dir on the host store (and a later re-registration under the same name would resurrect stale files).
     this.skillFiles.removeSkillDir(org.id, dbScope, name);
     return { ok: true };
   }
 
-  /** Map `'org'` → the `'*'` sentinel; otherwise require the repo to belong to this org. */
   private async resolveScope(orgId: string, scope: string): Promise<string> {
     if (scope === 'org') return ORG_SCOPE;
     const repo = await this.repos.findOne({
       where: { id: scope, org_id: orgId },
     });
-    if (!repo)
-      throw new BadRequestException(
-        `unknown repo scope '${scope}' for this org`,
-      );
+    if (!repo) throw new BadRequestException(`unknown repo scope '${scope}' for this org`);
     return scope;
   }
 }

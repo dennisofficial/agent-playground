@@ -10,8 +10,6 @@ export class AddOpenSecretCount1783991528908 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "open_secret_count"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "open_secret_count"`);
   }
 }

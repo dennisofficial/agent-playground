@@ -2,29 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { McpServerEntity } from '../persistence/entities';
 import { McpServerStore } from './mcp-server.store';
 
-/**
- * Best-effort MCP server validation. For a remote (http/sse) server it opens an MCP `initialize`
- * handshake and lists the server's tools; for a stdio server it can only structurally check the launch
- * command (the process only spawns in-sandbox, so a live spawn is deferred). Never throws — a failure is
- * returned as `{ error }` so the caller can persist it as the server's validation state.
- *
- * NOTE: the handshake is intentionally dependency-light (plain JSON-RPC over the streamable-HTTP POST),
- * not the full MCP SDK client. Re-verify against a real server if you extend it.
- */
 @Injectable()
 export class McpProbeService {
   private readonly logger = new Logger(McpProbeService.name);
 
   constructor(private readonly store: McpServerStore) {}
 
-  async validate(
-    row: McpServerEntity,
-  ): Promise<{ discoveredTools?: string[]; error?: string }> {
+  async validate(row: McpServerEntity): Promise<{ discoveredTools?: string[]; error?: string }> {
     try {
       if (row.transport === 'stdio') {
-        if (!row.config.command)
-          return { error: 'stdio server has no command' };
-        // A live spawn only happens in-sandbox; here we only confirm the definition is well-formed.
+        if (!row.config.command) return { error: 'stdio server has no command' };
         return {};
       }
       const url = row.config.url;
@@ -43,7 +30,6 @@ export class McpProbeService {
     }
   }
 
-  /** JSON-RPC `initialize` then `tools/list` over the streamable-HTTP POST endpoint. */
   private async probeRemote(
     url: string,
     headers: Record<string, string>,
@@ -51,11 +37,7 @@ export class McpProbeService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const rpc = async (
-        method: string,
-        params: unknown,
-        id: number,
-      ): Promise<unknown> => {
+      const rpc = async (method: string, params: unknown, id: number): Promise<unknown> => {
         const res = await fetch(url, {
           method: 'POST',
           headers: {
@@ -80,8 +62,7 @@ export class McpProbeService {
       );
       const tools = await rpc('tools/list', {}, 2);
       const list =
-        (tools as { result?: { tools?: Array<{ name?: string }> } })?.result
-          ?.tools ?? [];
+        (tools as { result?: { tools?: Array<{ name?: string }> } })?.result?.tools ?? [];
       return { discoveredTools: list.map((t) => t.name ?? '').filter(Boolean) };
     } finally {
       clearTimeout(timeout);
@@ -89,10 +70,6 @@ export class McpProbeService {
   }
 }
 
-/**
- * Parse a JSON-RPC response that may arrive as plain JSON or as an SSE frame (`data: {...}`) — streamable
- * HTTP MCP servers use either. Returns the parsed object (throws on a JSON-RPC `error`).
- */
 function parseJsonRpc(text: string): unknown {
   let payload = text.trim();
   if (payload.startsWith('event:') || payload.startsWith('data:')) {

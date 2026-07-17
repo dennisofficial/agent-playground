@@ -1,10 +1,3 @@
-// ERROR HANDLING — a turn that fails produces a terminal `error` frame carrying the EXPECTED
-// CLASSIFICATION, not just any error. The most deterministic classified failure is a missing subscription
-// credential: the engine's `EngineCore.resolveAuth` has NO env fallback and THROWS an `EngineAuthError`
-// (`isAuthError`, `engine`) when a spec carries no `auth`. `TurnRunner`'s catch maps that onto the error
-// frame as `auth:true` + `engine:'claude'`, with the `NO_ENGINE_CREDENTIAL` marker in the message. This
-// asserts those classification fields (not merely that some error occurred), and that the failure is
-// FAST — no hang, no crash-without-a-frame.
 import {
   cleanup,
   frameKinds,
@@ -25,7 +18,6 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
   const turnId = newTurnId();
   const k = turnKeys(turnId);
   try {
-    // `auth: false` → build a spec with NO auth block, driving the deterministic no-credential auth halt.
     const spec = makeSpec(turnId, {
       auth: false,
       task: 'Reply with exactly one word: pong.',
@@ -34,10 +26,17 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
     await xadd(redis, k.spec, spec);
     kickEngine(sandbox, turnId, { detached: true, quiet: true });
 
-    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, { timeoutMs: 60_000 });
+    const { frames, final, error, timedOut } = await tailEvents(redis, turnId, {
+      timeoutMs: 60_000,
+    });
     console.log(`[error] frames: ${frameKinds(frames)}`);
-    if (timedOut) return { pass: false, detail: 'HANG: no terminal frame within 60s (should fail fast)' };
-    if (final) return { pass: false, detail: 'unexpected success final (auth was omitted — expected an error)' };
+    if (timedOut)
+      return { pass: false, detail: 'HANG: no terminal frame within 60s (should fail fast)' };
+    if (final)
+      return {
+        pass: false,
+        detail: 'unexpected success final (auth was omitted — expected an error)',
+      };
     if (!error) return { pass: false, detail: 'no error frame produced' };
 
     const message = String(error.message ?? '');

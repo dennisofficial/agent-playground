@@ -5,12 +5,7 @@
     "outDir": "../../dist",
     "sourceMap": true
   },
-  "include": [
-    "**/*",
-    "../shared/**/*",
-    "../_core/**/*",
-    "../_lib/**/*"
-  ],
+  "include": ["**/*", "../shared/**/*", "../_core/**/*", "../_lib/**/*"],
   "exclude": [
     "../../node_modules",
     "dist",

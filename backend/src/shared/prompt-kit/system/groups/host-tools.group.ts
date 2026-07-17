@@ -1,27 +1,13 @@
-/**
- * prompt-kit / groups / host-tools — the host MCP tool surface: the fully-qualified tool list, the flat
- * top-level calling convention, and the create_job tool; plus the onboarding session's curated tool list.
- *
- * TOPIC bucket: host tools. Interpolates the runtime `BRIDGE_SERVER_NAME` and reuses the shared
- * `TOOL_QUALIFICATION_NOTE` catalog block.
- */
-import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
-import {
-  isAtlasRepo,
-  isBuildBrain,
-  isOnboarding,
-  isReview,
-  notOnboarding,
-} from '../conditions';
+import { ATLAS_PROD_BRIDGE_NAME } from '../../../bridge-names/atlas-prod-bridge-options';
 import { BRIDGE_SERVER_NAME } from '../../../bridge-names/bridge-options';
 import { WORKSPACE_PROFILE_BRIDGE_NAME } from '../../../bridge-names/workspace-profile-bridge-options';
-import { ATLAS_PROD_BRIDGE_NAME } from '../../../bridge-names/atlas-prod-bridge-options';
+import { Agent, ENGINEERING_STAGES } from '../agent';
+import { isAtlasRepo, isBuildBrain, isOnboarding, isReview, notOnboarding } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { LSP_TOOLS_NOTE, TOOL_QUALIFICATION_NOTE } from '../fragments';
 
 @FragmentGroup()
 export class HostToolsGroup {
-  /** The host tools — qualification + enumeration + ambient capability tools. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1040,
@@ -70,19 +56,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** The POST_BUILD/CI curated host tools (orders 1042/1043: unique vs hostTools@1040/reviewTools@1041, and
-   *  from EACH OTHER since each fragment now targets its own single agent, not the shared `SHIP_STAGES`
-   *  audience). Both stages lose the PLANNING-only `hostTools()` catalog above IN FULL — no
-   *  ask_question/withdraw_question (grill), no create_decision/update_decision/delete_decision/
-   *  get_decision_record, no review_plan/propose_plan/withdraw_plan/dispatch_build/hold_build/
-   *  start_direct_build/finalize_build/set_job_kind/propose_convention_profile_change — that whole apparatus
-   *  belongs to PLANNING, the plan-author/approver they were split off from. Both stages ACT (verify a fix,
-   *  amend), they don't plan. Mirroring `reviewTools()`/`onboardingTools()`, each gets its own qualification
-   *  note + curated list so the `mcp__` calling convention and the ambient capability tools (referenced
-   *  bare-name elsewhere, e.g. `cloudSandbox()`, `environmentGaps()`, `atlasSvc()`, `createJob()`) are
-   *  actually documented for them. `withdraw_ship` is POST_BUILD-only: it owns the amend loop; CI does not,
-   *  and does not get the tool registered (see `buildTools` in agent-session-manager.service.ts) — CI owns
-   *  PR creation/maintenance directly via `gh`/git (Bash), not a host tool. */
   @Fragment({
     usedBy: [Agent.POST_BUILD],
     order: 1042,
@@ -118,8 +91,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** The CI curated host tools (order 1043). Same as `postBuildTools()` minus `withdraw_ship` — CI does not
-   *  own the amend loop; it owns PR creation/maintenance directly via `gh`/git (Bash), not a host tool. */
   @Fragment({ usedBy: [Agent.CI], order: 1043, condition: isBuildBrain })
   ciTools(): string {
     return [
@@ -150,8 +121,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** The atlas-prod host tools — ONLY present on the Atlas repo itself. The 7 read tools mirror the
-   *  prod-diagnostics reader; propose_prod_write is a STRUCTURALLY-GATED write (propose-only). */
   @Fragment({ usedBy: ENGINEERING_STAGES, order: 1044, condition: isAtlasRepo })
   atlasProdTools(): string {
     return [
@@ -167,12 +136,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /**
-   * The LSP tools (`atlas-lsp-ts`, a SEPARATE MCP server from the host bridge above;
-   * the SDK spawns it directly, no host round-trip). Unlike the host-bridge tools, these carry real,
-   * specific descriptions from mcp-language-server's own tool registration, so — unlike `hostTools()`
-   * above — there is no need to hand-enumerate what each one does here; just the behavioral nudge.
-   */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1045,
@@ -182,7 +145,6 @@ export class HostToolsGroup {
     return LSP_TOOLS_NOTE;
   }
 
-  /** The flat top-level calling convention. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1050,
@@ -198,7 +160,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** create_job — spin off a follow-up thread, optionally born blocked on same-repo blockers. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1060,
@@ -221,7 +182,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** The onboarding session's curated host tools. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2050,
@@ -281,7 +241,6 @@ export class HostToolsGroup {
     ].join('\n');
   }
 
-  /** The review session's curated host tools (order 1041: unique vs hostTools@1040). */
   @Fragment({ usedBy: [Agent.PLANNING], order: 1041, condition: isReview })
   reviewTools(): string {
     return [

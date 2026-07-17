@@ -1,12 +1,5 @@
-/**
- * prompt-kit / groups / worker — the build/execute thread ORCHESTRATOR (`worker-orchestrate`). The unique
- * persona body is one fragment (order 100); the shared cloud-sandbox note + job-kind block come from
- * `DriverFramingGroup` (200/300); the behavioral layer (validate-by-running + spike) is the tail (400/410),
- * reproducing the legacy composer order `body → CLOUD_SANDBOX → jobKind → VALIDATE → SPIKE`.
- */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
-import type { PromptCtx } from '../prompt-ctx';
 import {
   CLARITY_OVER_COMMENTS_NOTE,
   DELETION_SAFETY_NOTE,
@@ -27,22 +20,16 @@ import {
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from '../fragments';
+import type { PromptCtx } from '../prompt-ctx';
 
-// Gate for host-tool prose that only makes sense on the BATCH turn — where complete_thread and
-// record_deviation are actually registered. On commit turns those tools aren't in the model's per-turn
-// list, so instructing them there would contradict its real tool set. Absent turnPhase ⇒ batch (back-compat).
 const batchOnly = (c: PromptCtx) => (c.turnPhase ?? 'batch') === 'batch';
 
-// Orchestrator note — the LIVE task list: the shared discipline (TASK_LIST_NOTE) plus the orchestrator's own
-// seeding rule — the list starts from the plan's steps.
 const ORCHESTRATOR_TASKLIST_NOTE =
   ' ' +
   TASK_LIST_NOTE +
   ' Here the list is your visible decomposition of the plan: at kickoff seed it from the steps below, ' +
   'splitting/merging as the real work demands.';
 
-// Orchestrator note — the TYPED TERMINAL ASSERTION (ADR 0004). The driver reads this tool call to decide the
-// thread's outcome; ending the turn without it marks the thread INCOMPLETE and ships nothing.
 const COMPLETE_THREAD_NOTE =
   ' WHEN YOU ARE DONE, you MUST call the `complete_thread` tool to declare the thread finished — this is the ' +
   'ONLY way the driver knows you succeeded. Ending your turn without it marks the thread INCOMPLETE and ships ' +
@@ -58,9 +45,6 @@ const COMPLETE_THREAD_NOTE =
   'thread `incomplete` ("not done — needs the operator") and surfaces it automatically. There is no separate ' +
   'pause tool or reason code — ending the turn without `complete_thread` IS the signal.';
 
-// Orchestrator note — ROUTING out-of-scope surprises by cost, so a builder is neither timid nor reckless.
-// Fix the obvious, block the genuinely-undecided. Names the bridge tool (`record_deviation`) that only the
-// WORKER orchestrator holds.
 const MID_BUILD_ROUTING_NOTE =
   ' WHEN YOU HIT SOMETHING OUT OF SCOPE mid-build — a bug or gap the plan did not cover — do NOT silently ' +
   'absorb it and do NOT rabbit-hole. Route it by certainty: (1) a CHEAP, LOCAL, clearly-correct fix (a dead ' +
@@ -72,8 +56,6 @@ const MID_BUILD_ROUTING_NOTE =
   'fix the obvious, block the genuinely-undecided. NOTE: a locked, approved plan that explicitly scopes ' +
   'something out (its "out of scope" list) OVERRIDES this — leave what the plan says to leave.';
 
-// Orchestrator note — the self-sufficiency toolset (`request_secret`/`request_file`/`recall`/`remember`), so a
-// missing input never stalls the turn.
 const SELF_SUFFICIENCY_NOTE =
   ' You also have a self-serve toolset so a missing input never stalls you: `request_secret`/`request_file` ' +
   'post a secure card straight to the operator and let you KEEP GOING in the same turn — no pause, no ' +
@@ -81,7 +63,6 @@ const SELF_SUFFICIENCY_NOTE =
   'is already known before assuming, and remember anything durably true about this repo (a convention, a ' +
   'gotcha, a decision) so a future thread does not have to rediscover it.';
 
-// Orchestrator note — the WRITER subagents (`implement`/`implement-deep`) alongside the read-only set.
 const ORCHESTRATOR_SUBAGENTS_NOTE =
   ' You have subagents (Task tool). WRITERS that change files: `implement` (Sonnet — your DEFAULT ' +
   'writer) and `implement-deep` (Opus — escalation for genuinely hard, judgment-heavy slices) — hand ' +
@@ -97,8 +78,6 @@ const ORCHESTRATOR_SUBAGENTS_NOTE =
 
 @FragmentGroup()
 export class WorkerGroup {
-  /** The PER-THREAD ORCHESTRATOR persona: one Opus session owns the whole thread and fans the implementation
-   *  out to writer subagents, integrating + verifying as it goes. */
   @Fragment({ usedBy: [Agent.WORKER], order: 100 })
   orchestrateBody(): string {
     return (
@@ -126,23 +105,16 @@ export class WorkerGroup {
     );
   }
 
-  /** The typed terminal assertion + mid-build routing — instructs `complete_thread`, `record_deviation`,
-   *  `request_operator_input`. Only the BATCH turn registers these host tools, so this is gated to the
-   *  batch phase (gate/commit turns get a different, accurate tool set). */
   @Fragment({ usedBy: [Agent.WORKER], order: 105, condition: batchOnly })
   batchToolContract(): string {
     return COMPLETE_THREAD_NOTE + MID_BUILD_ROUTING_NOTE;
   }
 
-  /** The self-sufficiency toolset — `request_secret`/`request_file`/`recall`/`remember`. Batch-turn-only
-   *  host tools, same reasoning as `batchToolContract`. */
   @Fragment({ usedBy: [Agent.WORKER], order: 106, condition: batchOnly })
   selfSufficiencyTools(): string {
     return SELF_SUFFICIENCY_NOTE;
   }
 
-  /** DEVIATION flagging — leans on `record_deviation`, a batch-only host tool. Gated so the
-   *  gate/commit prompts don't instruct tools they can't call. */
   @Fragment({ usedBy: [Agent.WORKER], order: 112, condition: batchOnly })
   deviationFlagging(): string {
     return DEVIATION_NOTE;
@@ -153,8 +125,6 @@ export class WorkerGroup {
     return VALIDATE_BY_RUNNING_NOTE;
   }
 
-  /** RUNNABLE WORKSPACE — the environment-side of verification: a not-yet-runnable env is fixed or escalated,
-   *  never a reason to skip validation or fake it with a stand-in. Sits beside validate-by-running. */
   @Fragment({ usedBy: [Agent.WORKER], order: 401 })
   runnableWorkspace(): string {
     return RUNNABLE_WORKSPACE_NOTE;
@@ -180,28 +150,21 @@ export class WorkerGroup {
     return MINIMAL_CODE_NOTE;
   }
 
-  /** DESIGN DISCIPLINE — the always-on recognition trigger that makes the `design-patterns` skill fire; rides
-   *  on top of MINIMAL_CODE_NOTE. Same nudge the brain + fan-out writers carry. */
   @Fragment({ usedBy: [Agent.WORKER], order: 421 })
   designDiscipline(): string {
     return DESIGN_DISCIPLINE_NOTE;
   }
 
-  /** TYPESCRIPT TYPE STYLE — the orchestrator makes small edits itself; same house rule the brain + writers
-   *  carry. No-op on non-TS repos by its own wording. */
   @Fragment({ usedBy: [Agent.WORKER], order: 422 })
   tsStyle(): string {
     return TS_STYLE_NOTE;
   }
 
-  /** VERIFY DOCS + INSTALLED VERSION before building on a dependency. Shared with the brain + fan-out writers. */
   @Fragment({ usedBy: [Agent.WORKER], order: 423 })
   docVersionVerify(): string {
     return DOC_VERSION_VERIFY_NOTE;
   }
 
-  /** The repo's saved preview recipe, injected READ-ONLY so the orchestrator can follow/adapt it instead of
-   *  re-discovering the preview setup. Only when a recipe exists. */
   @Fragment({
     usedBy: [Agent.WORKER],
     order: 425,
@@ -211,10 +174,6 @@ export class WorkerGroup {
     return renderBuildLanePreviewRecipe(ctx.previewInstructions ?? null);
   }
 
-  /** The evidence-artifact mandate: every build thread leaves durable PROOF under `$ATLAS_EVIDENCE_DIR`.
-   *  Owned jointly with the `validate` subagent — the orchestrator DELEGATES the heavy live-validation +
-   *  capture to `validate` (to keep its own context clean) and, if `validate` already wrote the bundle,
-   *  does NOT recapture. */
   @Fragment({ usedBy: [Agent.WORKER], order: 430, condition: batchOnly })
   evidenceArtifacts(): string {
     return (

@@ -9,9 +9,7 @@ export class AddStimulusDeliveredAt1782760210667 implements MigrationInterface {
   name = 'AddStimulusDeliveredAt1782760210667';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "stimuli" ADD "delivered_at" TIMESTAMP WITH TIME ZONE`,
-    );
+    await queryRunner.query(`ALTER TABLE "stimuli" ADD "delivered_at" TIMESTAMP WITH TIME ZONE`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

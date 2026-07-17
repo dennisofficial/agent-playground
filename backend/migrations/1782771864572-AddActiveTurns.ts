@@ -10,9 +10,7 @@ export class AddActiveTurns1782771864572 implements MigrationInterface {
     await queryRunner.query(
       `CREATE INDEX "idx_active_turns_thread_id" ON "active_turns" ("thread_id") `,
     );
-    await queryRunner.query(
-      `CREATE INDEX "idx_active_turns_status" ON "active_turns" ("status") `,
-    );
+    await queryRunner.query(`CREATE INDEX "idx_active_turns_status" ON "active_turns" ("status") `);
     await queryRunner.query(
       `ALTER TABLE "active_turns" ADD CONSTRAINT "fk_active_turns_thread_id_threads" FOREIGN KEY ("thread_id") REFERENCES "threads"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );

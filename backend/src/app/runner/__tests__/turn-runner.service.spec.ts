@@ -1,0 +1,360 @@
+import {
+  EngineAuthError,
+  isEngineDetachedError,
+  type EngineEvent,
+  type EngineRunnerPort,
+  type RunEngineArgs,
+} from '@shared/engine';
+import { agentMessage } from '@shared/prompt-kit/message';
+import type { Repository } from 'typeorm';
+import { describe, expect, it, vi } from 'vitest';
+import type { TurnUsageProjector } from '../../analytics/turn-usage-projector.service';
+import type { ThreadEntity } from '../../persistence/entities';
+import type { FeatureSandbox } from '../git';
+import { TurnRunnerService } from '../turn-runner.service';
+
+
+function fakeSteps(priorSessionId: string | null = null) {
+  const updates: Array<{ id: unknown; patch: { session_id?: string } }> = [];
+  let current = priorSessionId;
+  const repo = {
+    findOne: vi.fn(async () =>
+      current === null ? null : ({ session_id: current } as ThreadEntity),
+    ),
+    update: vi.fn(async (where: { id: unknown }, patch: { session_id?: string }) => {
+      updates.push({ id: where.id, patch });
+      if (patch.session_id) current = patch.session_id;
+      return { affected: 1 } as never;
+    }),
+  } as unknown as Repository<ThreadEntity>;
+  return { repo, updates, last: () => current };
+}
+
+function fakeUsage() {
+  return {
+    record: vi.fn(async () => undefined),
+  } as unknown as TurnUsageProjector & { record: ReturnType<typeof vi.fn> };
+}
+
+const sandbox: FeatureSandbox = {
+  repoId: 'proj',
+  branch: 'atlas/feat',
+  worktreePath: '/wt/feat',
+  gitUrl: 'https://github.com/acme/widget',
+};
+
+const baseInput = {
+  orgId: 'org-1',
+  jobId: 'job-1',
+  stepId: 'step-1',
+  sandbox,
+  engine: 'claude' as const,
+  mode: 'execute' as const,
+  task: agentMessage('do it'),
+  systemPrompt: agentMessage('persona'),
+};
+
+describe('TurnRunnerService — session-handle durability', () => {
+  it('persists the session id on the early `session` event, BEFORE the turn finishes', async () => {
+    const { repo, last } = fakeSteps();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        args.onEvent?.({ kind: 'session', sessionId: 'sess-early' });
+        expect(last()).toBe('sess-early');
+        args.onEvent?.({ kind: 'tool', name: 'Write' });
+        return { result: 'done', sessionId: 'sess-early' };
+      }),
+    };
+    const runner = new TurnRunnerService(engine, repo);
+    const res = await runner.runTurn(baseInput);
+    expect(res.report).toBe('done');
+    expect(last()).toBe('sess-early');
+  });
+
+  it('keeps the session id even when the turn HALTS mid-flight (continues, not respawns)', async () => {
+    const { repo, last, updates } = fakeSteps();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        args.onEvent?.({ kind: 'session', sessionId: 'sess-mid' });
+        throw new Error('engine process died mid-turn');
+      }),
+    };
+    const runner = new TurnRunnerService(engine, repo);
+    await expect(runner.runTurn(baseInput)).rejects.toThrow(/died mid-turn/);
+    expect(last()).toBe('sess-mid');
+    expect(updates.some((u) => u.patch.session_id === 'sess-mid')).toBe(true);
+  });
+
+  it('on a 401 the auth-error session id is persisted too (resume after credential fix)', async () => {
+    const { repo, last } = fakeSteps();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async () => {
+        throw new EngineAuthError('401 invalid api key', 'sess-401');
+      }),
+    };
+    const runner = new TurnRunnerService(engine, repo);
+    await expect(runner.runTurn(baseInput)).rejects.toBeInstanceOf(EngineAuthError);
+    expect(last()).toBe('sess-401');
+  });
+
+  it('resumes a prior session: the persisted id is threaded back as `sessionId`', async () => {
+    const { repo } = fakeSteps('sess-prior');
+    let seen: string | undefined;
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        seen = args.sessionId;
+        return { result: 'continued', sessionId: args.sessionId };
+      }),
+    };
+    const runner = new TurnRunnerService(engine, repo);
+    await runner.runTurn(baseInput);
+    expect(seen).toBe('sess-prior'); // continues the SAME session, not a new one
+  });
+});
+
+describe('TurnRunnerService — git auth threading', () => {
+  const rowSourced: FeatureSandbox = {
+    repoId: 'proj',
+    branch: 'atlas/feat',
+    worktreePath: '/wt/feat',
+    gitUrl: '',
+    containerId: 'ctr-1',
+    execUser: '1000:1000',
+  };
+
+  it('puts input.gitAuth onto the docker target (sourced from the resolved repo, not the empty sandbox)', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+      gitAuth: { gitUrl: 'https://github.com/o/r.git', token: 'tok' },
+    });
+
+    expect(received[0].target?.gitAuth).toEqual({
+      gitUrl: 'https://github.com/o/r.git',
+      token: 'tok',
+    });
+    expect(received[0].target?.containerId).toBe('ctr-1');
+  });
+
+  it('omits gitAuth on the target when the turn passes none (analysis turns stay unauthenticated)', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+    });
+
+    expect(received[0].target?.gitAuth).toBeUndefined();
+  });
+});
+
+describe('TurnRunnerService — evidence dir threading', () => {
+  const rowSourced: FeatureSandbox = {
+    repoId: 'proj',
+    branch: 'atlas/feat',
+    worktreePath: '/wt/feat',
+    gitUrl: '',
+    containerId: 'ctr-1',
+    execUser: '1000:1000',
+  };
+
+  it('puts input.evidenceDir onto the docker target', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+      evidenceDir: '/context/evidence/010-backend',
+    });
+
+    expect(received[0].target?.evidenceDir).toBe('/context/evidence/010-backend');
+  });
+
+  it('omits evidenceDir on the target when the turn passes none', async () => {
+    const { repo } = fakeSteps();
+    const received: RunEngineArgs[] = [];
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async (args: RunEngineArgs) => {
+        received.push(args);
+        return { result: 'ok' };
+      }),
+    };
+    await new TurnRunnerService(engine, repo).runTurn({
+      ...baseInput,
+      sandbox: rowSourced,
+    });
+
+    expect(received[0].target?.evidenceDir).toBeUndefined();
+  });
+});
+
+describe('TurnRunnerService — provenance threading', () => {
+  it('returns and records the credential id surfaced by a fresh engine run', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(async () => ({
+        result: 'ok',
+        usage: { inputTokens: 10, outputTokens: 2 },
+        credentialId: 'cred-fresh',
+      })),
+    };
+
+    const res = await new TurnRunnerService(engine, repo, usage).runTurn({
+      ...baseInput,
+      turnMeta: {
+        jobId: 'job-1',
+        orgId: 'org-1',
+        channel: 'repo-1',
+        lane: 'thread:t1',
+        kind: 'step',
+      },
+    });
+
+    expect(res.credentialId).toBe('cred-fresh');
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        orgId: 'org-1',
+        lane: 'thread:t1',
+        kind: 'step',
+        engine: 'claude',
+        credentialId: 'cred-fresh',
+      }),
+      expect.objectContaining({ inputTokens: 10, outputTokens: 2 }),
+    );
+  });
+
+  it('records usage for a successful reattach with the dispatch credential id', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      reattach: vi.fn(async () => ({
+        result: 'reattached',
+        sessionId: 'sess-1',
+        usage: { inputTokens: 8, outputTokens: 3 },
+        credentialId: 'cred-reattach',
+      })),
+    };
+
+    const res = await new TurnRunnerService(engine, repo, usage).reattach({
+      turnId: 'turn-1',
+      containerId: 'ctr-1',
+      jobId: 'job-1',
+      orgId: 'org-1',
+      stepId: 'step-1',
+      lane: 'thread:t1',
+      kind: 'step',
+      engine: 'claude',
+      credentialId: 'cred-reattach',
+    });
+
+    expect(res.credentialId).toBe('cred-reattach');
+    expect(engine.reattach).toHaveBeenCalledWith(
+      'turn-1',
+      'ctr-1',
+      expect.objectContaining({ credentialId: 'cred-reattach' }),
+    );
+    expect(usage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: 'job-1',
+        orgId: 'org-1',
+        lane: 'thread:t1',
+        kind: 'step',
+        engine: 'claude',
+        credentialId: 'cred-reattach',
+        metaTag: { phaseId: 'step-1' },
+      }),
+      expect.objectContaining({ inputTokens: 8, outputTokens: 3 }),
+    );
+  });
+
+  it('does not record reattach usage when another finisher already claimed the turn', async () => {
+    const { repo } = fakeSteps();
+    const usage = fakeUsage();
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      reattach: vi.fn(async () => ({
+        result: 'lost',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        credentialId: 'cred-lost',
+        claimed: false,
+      })),
+    };
+
+    await new TurnRunnerService(engine, repo, usage).reattach({
+      turnId: 'turn-1',
+      containerId: 'ctr-1',
+      jobId: 'job-1',
+      credentialId: 'cred-lost',
+    });
+
+    expect(usage.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses a concurrent second reattach of the same turn (double-attach → single delivery)', async () => {
+    const { repo } = fakeSteps();
+    const attached = new Set<string>();
+    const deliveries: string[] = [];
+    let releaseFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const engine: EngineRunnerPort = {
+      run: vi.fn(),
+      tryClaimAttach: (t: string) => (attached.has(t) ? false : (attached.add(t), true)),
+      releaseAttach: (t: string) => {
+        attached.delete(t);
+      },
+      reattach: vi.fn(
+        async (
+          turnId: string,
+          _containerId: string,
+          args: { onEvent?: (e: EngineEvent) => void },
+        ) => {
+          args.onEvent?.({ kind: 'text', text: `evt-${turnId}` });
+          deliveries.push(turnId);
+          await firstInFlight;
+          return { result: 'ok', sessionId: 's1' };
+        },
+      ),
+    };
+    const svc = new TurnRunnerService(engine, repo);
+    const input = { turnId: 'turn-1', containerId: 'ctr-1', jobId: 'job-1' };
+
+    const first = svc.reattach(input);
+    const secondErr = await svc.reattach(input).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(isEngineDetachedError(secondErr)).toBe(true);
+
+    releaseFirst();
+    await first;
+
+    expect(engine.reattach).toHaveBeenCalledTimes(1);
+    expect(deliveries).toEqual(['turn-1']);
+    expect(attached.has('turn-1')).toBe(false);
+  });
+});

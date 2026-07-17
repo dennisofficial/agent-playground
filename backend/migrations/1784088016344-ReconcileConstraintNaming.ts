@@ -9,9 +9,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * it (cheaper, no rebuild, and the generator only ever diffs these by name — never by expression
  * text); the CHECK is dropped/re-added under its new name rather than renamed.
  */
-export class ReconcileConstraintNaming1784088016344
-  implements MigrationInterface
-{
+export class ReconcileConstraintNaming1784088016344 implements MigrationInterface {
   name = 'ReconcileConstraintNaming1784088016344';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -1,21 +1,10 @@
-/**
- * prompt-kit / groups / orientation — how Atlas gets its bearings and exercises the repo: investigate-first
- * + subagent delegation (normal brain), the onboarding bring-up Loop, and dev-login discovery (onboarding).
- *
- * TOPIC bucket: orientation / doing-the-work.
- */
 import { Agent, ENGINEERING_STAGES } from '../agent';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
 import { isOnboarding, notOnboarding } from '../conditions';
-import {
-  DOCS_BEFORE_GREP,
-  SUBAGENT_NUDGE_NOTE,
-  VERIFY_CURRENCY,
-} from '../fragments';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { DOCS_BEFORE_GREP, SUBAGENT_NUDGE_NOTE, VERIFY_CURRENCY } from '../fragments';
 
 @FragmentGroup()
 export class OrientationGroup {
-  /** Investigate first / docs before grep / delegate / other subagents / web access. */
   @Fragment({
     usedBy: ENGINEERING_STAGES,
     order: 1080,
@@ -56,7 +45,6 @@ export class OrientationGroup {
     ].join('\n');
   }
 
-  /** The onboarding grounding gate + bring-up Loop. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2020,
@@ -143,7 +131,6 @@ export class OrientationGroup {
     ].join('\n');
   }
 
-  /** Dev logins for validation. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 2040,

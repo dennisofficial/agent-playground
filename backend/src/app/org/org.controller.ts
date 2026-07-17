@@ -8,19 +8,10 @@ import {
   Patch,
   Post,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser } from '@workspace/auth/server';
-import {
-  IsBoolean,
-  IsEmail,
-  IsIn,
-  IsOptional,
-  IsString,
-  MinLength,
-} from 'class-validator';
 import { AUTO_APPROVE_MODES, type AutoApproveMode } from '@workspace/shared';
+import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import type { UserEntity } from '../persistence/entities';
 import { CurrentOrg, type CurrentOrgCtx } from './current-org.decorator';
@@ -42,8 +33,6 @@ class CreateOrgDto {
 }
 
 class UpdateOrgDto {
-  // Both fields optional — `@IsOptional()` makes class-validator skip the other validators when the field is
-  // absent (otherwise an omitted `name` would still fail `@IsString`/`@MinLength`).
   @IsOptional()
   @IsString()
   @MinLength(2, {
@@ -69,40 +58,23 @@ class InviteDto {
   email!: string;
 }
 
-/**
- * `/web/orgs` — organization CRUD + membership/invites for the web console. Gated by the global
- * `AuthGuard` (logged in); `:orgId` routes additionally require `OrgMembershipGuard`. Creating an
- * org makes the caller its owner. Invites are copy-paste links redeemed via `/web/invites/:token`.
- *
- * Capability tiers (see `OrgOwnerGuard`): roles are just `owner` and `member`. Any member may read
- * org/members and OPERATE on threads; only the `owner` may ADMINISTER — manage members (invites) and, in
- * sibling controllers, set credentials and connect repos. Invite listing is owner-only because the rows
- * carry the live invite-link tokens.
- */
 @Controller('web/orgs')
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class OrgController {
   constructor(
     private readonly orgs: OrganizationService,
     private readonly onboarding: OnboardingService,
   ) {}
 
-  /** `POST /web/orgs` — create an org; the caller becomes owner. */
   @Post()
-  async create(
-    @CurrentUser() user: UserEntity,
-    @Body() body: CreateOrgDto,
-  ): Promise<OrgSummary> {
+  async create(@CurrentUser() user: UserEntity, @Body() body: CreateOrgDto): Promise<OrgSummary> {
     return this.orgs.create(user.id, body.name);
   }
 
-  /** `GET /web/orgs` — every org the caller belongs to. */
   @Get()
   async list(@CurrentUser() user: UserEntity): Promise<OrgSummary[]> {
     return this.orgs.listForUser(user.id);
   }
 
-  /** `GET /web/orgs/:orgId` — org detail + the derived onboarding checklist. */
   @Get(':orgId')
   @UseGuards(OrgMembershipGuard)
   async detail(@CurrentOrg() org: CurrentOrgCtx): Promise<unknown> {
@@ -125,17 +97,12 @@ export class OrgController {
     };
   }
 
-  /** `PATCH /web/orgs/:orgId` — rename / re-slug the org (owner only). */
   @Patch(':orgId')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
-  async update(
-    @CurrentOrg() org: CurrentOrgCtx,
-    @Body() body: UpdateOrgDto,
-  ): Promise<OrgSummary> {
+  async update(@CurrentOrg() org: CurrentOrgCtx, @Body() body: UpdateOrgDto): Promise<OrgSummary> {
     return this.orgs.rename(org.id, body, org.role);
   }
 
-  /** `DELETE /web/orgs/:orgId` — delete the org + all repos/threads/sessions (owner only). */
   @Delete(':orgId')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async remove(@CurrentOrg() org: CurrentOrgCtx): Promise<{ ok: boolean }> {
@@ -143,14 +110,12 @@ export class OrgController {
     return { ok: true };
   }
 
-  /** `GET /web/orgs/:orgId/members` — the org's members. */
   @Get(':orgId/members')
   @UseGuards(OrgMembershipGuard)
   async members(@CurrentOrg() org: CurrentOrgCtx): Promise<MemberView[]> {
     return this.orgs.membersOf(org.id);
   }
 
-  /** `POST /web/orgs/:orgId/invites` — create a copy-paste invite (owner only). Returns the link. */
   @Post(':orgId/invites')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async invite(
@@ -161,14 +126,12 @@ export class OrgController {
     return this.orgs.createInvite(org.id, body.email, user.id);
   }
 
-  /** `GET /web/orgs/:orgId/invites` — pending invites (owner only; rows carry live invite tokens). */
   @Get(':orgId/invites')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async invites(@CurrentOrg() org: CurrentOrgCtx): Promise<InviteView[]> {
     return this.orgs.listInvites(org.id);
   }
 
-  /** `DELETE /web/orgs/:orgId/invites/:token` — revoke a pending invite (owner only). */
   @Delete(':orgId/invites/:token')
   @UseGuards(OrgMembershipGuard, OrgOwnerGuard)
   async revoke(

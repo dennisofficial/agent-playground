@@ -1,30 +1,13 @@
-/**
- * prompt-kit / messages / autofix-lenses — the auto-fix fan-out's per-run task bodies: one (read-only)
- * review pass's prompt for a given lens + context, and the single execute-mode FIX turn's prompt from
- * the deduped, severity-filtered findings. Lens SELECTION/DATA/PARSING (which lenses exist, which run for
- * a thread, and parsing/dedupe of the findings they return) stays in `autofix/autofix-lenses.ts` — this
- * file owns only the agent-facing TEXT.
- */
 import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
+import type { AutoFixContext, ReviewFinding, ReviewLens } from '../../autofix/autofix.types';
 import { fence } from '../../prompt-fence';
-import type {
-  AutoFixContext,
-  ReviewFinding,
-  ReviewLens,
-} from '../../autofix/autofix.types';
 
-/** The JSON shape every review pass returns — identical across scopes, so parse + dedupe are untouched. */
 const REVIEW_OUTPUT_FORMAT = `Return your findings as a SINGLE fenced JSON code block and nothing else after it:
 
 \`\`\`json
 { "findings": [ { "severity": "low|medium|high", "file": "path/relative/to/repo or null", "title": "one line", "detail": "what is wrong + the concrete fix" } ] }
 \`\`\``;
 
-/**
- * The ship-blocker bar + honest-severity rubric — shared by EVERY scope. This is the anti-nitpicking
- * lever: the post-review fix pass only acts on findings >= medium, so an honest severity here directly
- * shrinks what the fix pass churns on (no threshold change needed).
- */
 const SHIP_BLOCKER_BAR = `Bar for reporting — report ONLY what a senior engineer would raise in a PR review that BLOCKS approval:
 - Do NOT report style preferences, restate what a linter/formatter already handles, or nitpick a pattern the surrounding code already accepts.
 - An empty report is the correct, expected outcome for a clean change — return { "findings": [] } and never pad it to look thorough.
@@ -35,7 +18,6 @@ Assign severity honestly — do NOT inflate:
 - low = minor.
 - When unsure an issue truly matters, use low or omit it.`;
 
-/** The scope clause — how far the pass may look. The narrow lenses stay diff-only; holistic may read out. */
 const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
   diff: 'ONLY report issues introduced by (or directly within) the change set — never pre-existing issues outside it.',
   holistic:
@@ -44,7 +26,6 @@ const SCOPE_CLAUSE: Record<NonNullable<ReviewLens['scope']>, string> = {
     'Report ONLY violations of the injected framework best-practices, and only within the change set — never pre-existing issues outside it, and never a general style opinion the injected guidance does not state.',
 };
 
-/** The output contract appended to a review pass, tuned to the lens's scope (shared bar + format). */
 function reviewOutputContract(scope: NonNullable<ReviewLens['scope']>): string {
   return `
 Scope of what you may report:
@@ -59,9 +40,6 @@ Rules:
 - "file" must be repo-relative (or null for a cross-cutting note).`;
 }
 
-/** Render the force-injected framework skill bodies as fenced, per-skill labelled blocks for the
- *  `scope:'framework'` lens. Empty (returns '') when nothing was injected — defensive: the driver only
- *  appends the lens when ≥1 skill matched, but a lens must never render a dangling empty contract. */
 function frameworkInjection(ctx: AutoFixContext): string {
   const bodies = ctx.frameworkBodies ?? [];
   if (bodies.length === 0) return '';
@@ -71,14 +49,6 @@ function frameworkInjection(ctx: AutoFixContext): string {
   return `\nFramework best-practices to enforce for THIS pass (authoritative — sourced from the repo's opted-in review skills):\n\n${blocks}\n`;
 }
 
-/**
- * The change set the pass reviews — delivered as GIT COMMANDS the reviewer runs itself (it has `Bash`),
- * NOT the full diff inlined. A large diff inlined here would balloon the prompt (and be duplicated across
- * every concurrent lens); pulling it via the reviewer's own tools lets each lens read only what its focus
- * needs and fetch enclosing context on demand. Scoped to `ctx.gitRange` (the thread's start-sha range),
- * falling back to `HEAD` when the driver couldn't resolve one. Mirrors the master-review + external-PR-review
- * surfaces, which already hand the agent a `git diff` / `gh pr diff` command instead of inlining.
- */
 function changeSetBlock(ctx: AutoFixContext): string {
   const range = ctx.gitRange ?? 'HEAD';
   const files = ctx.changedFiles?.length
@@ -94,11 +64,7 @@ function changeSetBlock(ctx: AutoFixContext): string {
   );
 }
 
-/** Build one read-only review pass's prompt for a given lens + context. */
-export function buildReviewPrompt(
-  lens: ReviewLens,
-  ctx: AutoFixContext,
-): AgentMessage {
+export function buildReviewPrompt(lens: ReviewLens, ctx: AutoFixContext): AgentMessage {
   const scope = lens.scope ?? 'diff';
   const frameworkBlock = scope === 'framework' ? frameworkInjection(ctx) : '';
   return agentMessage(
@@ -114,11 +80,7 @@ export function buildReviewPrompt(
   );
 }
 
-/** Build the single execute-mode FIX turn's prompt from the deduped, severity-filtered findings. */
-export function buildFixPrompt(
-  findings: ReviewFinding[],
-  ctx: AutoFixContext,
-): AgentMessage {
+export function buildFixPrompt(findings: ReviewFinding[], ctx: AutoFixContext): AgentMessage {
   const list = findings
     .map(
       (f, i) =>

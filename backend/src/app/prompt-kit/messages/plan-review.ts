@@ -1,15 +1,8 @@
-import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import type { Decision } from '@shared/domain';
+import { agentMessage, type AgentMessage } from '@shared/prompt-kit/message';
 import type { PlannedStep } from './render-plan';
 
-/**
- * prompt-kit / messages / plan-review — the synchronous Codex plan-review task bodies: the first-round
- * review (intent → authored plan → judge) and the resumed re-review (adjudicate prior findings against
- * the revised specs). `PlanReviewService` (`brain/plan-review.service.ts`) owns the RUNTIME (dispatch,
- * resume, persistence) — this file owns only the agent-facing TEXT.
- */
 
-/** What `review` needs to render the review task (orientation; the specs on disk are authoritative). */
 export type PlanReviewInput = {
   jobId: string;
   orgId: string;
@@ -18,35 +11,20 @@ export type PlanReviewInput = {
   decisions: Decision[];
   threadTitles: string[];
   stepsByThread?: PlannedStep[][];
-  /** On a RESUME (re-review): what Atlas changed / a point-by-point pushback. Ignored on the first run. */
   note?: string;
 };
 
-/**
- * Render the `<intent>` block shared by the first-round review task and `plan-review.eval.ts`'s stand-in
- * reviewer task — the operator's GOAL (falling back to the overview when unset) + the overview. Single
- * source so the eval's calibration harness can never drift from what the real review turn actually reads.
- */
-export function renderReviewIntent(input: {
-  goal: string;
-  overview: string;
-}): string {
+export function renderReviewIntent(input: { goal: string; overview: string }): string {
   const intent = [
     '<intent>',
     'What the operator is trying to achieve. Judge the plan against THIS — not your own idea of the feature.',
     '',
     `GOAL: ${input.goal || '(see overview)'}`,
   ];
-  intent.push(
-    '',
-    "OVERVIEW (Atlas's framing of the work):",
-    input.overview,
-    '</intent>',
-  );
+  intent.push('', "OVERVIEW (Atlas's framing of the work):", input.overview, '</intent>');
   return intent.join('\n');
 }
 
-/** Render the structured review task: the operator's INTENT first, then the authored plan index to grade. */
 export function renderPlanForReview(input: PlanReviewInput): AgentMessage {
   const decisions = input.decisions.length
     ? input.decisions
@@ -98,16 +76,7 @@ export function renderPlanForReview(input: PlanReviewInput): AgentMessage {
   );
 }
 
-/**
- * Render the task for a RESUMED review (Atlas revised the specs and/or is pushing back). Codex remembers
- * its prior findings from the session history, so this just re-orients it to re-read the live specs and
- * adjudicate per the <output_contract>'s RE-REVIEW rule (concede what's fixed, hold firm on what stands,
- * don't manufacture ever-smaller findings).
- */
-export function renderReReview(
-  input: PlanReviewInput,
-  note?: string,
-): AgentMessage {
+export function renderReReview(input: PlanReviewInput, note?: string): AgentMessage {
   return agentMessage(
     [
       '<re_review>',

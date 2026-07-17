@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { THREAD_TYPES, coerceThreadType } from './thread-types';
 
-/**
- * `coerceThreadType` is the single write-time validator that turns the LLM's free-text `type` into the
- * closed routing vocabulary Thread 3 selects on. Every valid value must survive untouched; everything
- * else — legacy labels, casing, empty/absent — must collapse to the `general` fallback.
- */
 describe('coerceThreadType', () => {
   it('passes every valid THREAD_TYPES value through unchanged', () => {
     for (const t of THREAD_TYPES) {

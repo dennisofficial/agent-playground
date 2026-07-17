@@ -13,11 +13,7 @@ export class AddSkillReviewApplicability1783643401945 implements MigrationInterf
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "workspace_skills" DROP COLUMN "review_for_globs"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "workspace_skills" DROP COLUMN "review_for_types"`,
-    );
+    await queryRunner.query(`ALTER TABLE "workspace_skills" DROP COLUMN "review_for_globs"`);
+    await queryRunner.query(`ALTER TABLE "workspace_skills" DROP COLUMN "review_for_types"`);
   }
 }

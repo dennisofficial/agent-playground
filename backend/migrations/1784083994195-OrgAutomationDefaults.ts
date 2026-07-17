@@ -19,11 +19,7 @@ export class OrgAutomationDefaults1784040000000 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "organizations" DROP COLUMN "default_auto_merge"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "organizations" DROP COLUMN "default_auto_approve_mode"`,
-    );
+    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN "default_auto_merge"`);
+    await queryRunner.query(`ALTER TABLE "organizations" DROP COLUMN "default_auto_approve_mode"`);
   }
 }

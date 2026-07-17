@@ -1,11 +1,3 @@
-/**
- * prompt-kit / groups / job-kind — gated `@Fragment` methods (one per build `jobKind`) that emit the
- * "JOB KIND — …" orientation block for `Agent.PLANNING`. `onboarding` intentionally has NO fragment
- * (`jobKindFragment('onboarding')` is empty — the onboarding persona owns that framing); same for `review`
- * (the ReviewGroup persona owns it).
- *
- * Ordered `19xx` — after all body fragments, before the behavioral tail.
- */
 import { ENGINEERING_STAGES } from '../agent';
 import { jobKindIs } from '../conditions';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
@@ -40,6 +32,4 @@ export class JobKindGroup {
     return jobKindFragment('event');
   }
 
-  // NOTE: no `review` fragment here — a review job composes with the ReviewGroup persona (gated `isReview`),
-  // which owns its framing (like onboarding). See `job-kind.ts` (`review: ''`).
 }

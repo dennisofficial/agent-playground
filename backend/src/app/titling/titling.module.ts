@@ -1,19 +1,9 @@
 import { ChatAnthropic } from '@langchain/anthropic';
 import { Global, Module } from '@nestjs/common';
-import { CredentialResolver } from '../onboarding';
-import {
-  JOB_TITLE_CHAIN,
-  JobTitleChain,
-  type JobTitleChainFactory,
-} from './job-title.chain';
+import { CredentialResolver } from '../onboarding/credential-resolver.service';
+import { JOB_TITLE_CHAIN, JobTitleChain, type JobTitleChainFactory } from './job-title.chain';
 import { JobTitler } from './job-titler.service';
 
-/**
- * TITLING — the shared thread-titling capability, `@Global` so any domain module can inject `JobTitler`
- * without an import edge. Owns the per-org title-model chain factory (moved here from `WebSurfaceModule`):
- * resolve the tenant's Anthropic key (env fallback via `CredentialResolver`) and cache ONE declarative
- * chain per key; key-less → `undefined` (the titler degrades to its deterministic fallback).
- */
 @Global()
 @Module({
   providers: [

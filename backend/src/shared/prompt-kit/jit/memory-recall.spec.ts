@@ -1,7 +1,4 @@
-/**
- * prompt-kit / jit — unit tests for the memory auto-retrieval turn-prefix helpers (d1/d2).
- */
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { isSubstantiveQuery, renderMemoryRecall } from './memory-recall';
 
 describe('renderMemoryRecall', () => {
@@ -47,17 +44,12 @@ describe('renderMemoryRecall', () => {
 });
 
 describe('isSubstantiveQuery', () => {
-  it.each(['ok', 'thanks', 'hi', '', '  '])(
-    'returns false for trivial input %j',
-    (text) => {
-      expect(isSubstantiveQuery(text)).toBe(false);
-    },
-  );
+  it.each(['ok', 'thanks', 'hi', '', '  '])('returns false for trivial input %j', (text) => {
+    expect(isSubstantiveQuery(text)).toBe(false);
+  });
 
   it('returns true for a real multi-word sentence', () => {
-    expect(isSubstantiveQuery('what auth library does this project use')).toBe(
-      true,
-    );
+    expect(isSubstantiveQuery('what auth library does this project use')).toBe(true);
   });
 
   it('returns true right at the 3-word / 12-char boundary', () => {

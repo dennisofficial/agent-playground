@@ -1,13 +1,10 @@
-/**
- * prompt-kit / jit — parity tests for the JIT-context rule catalog (Pillar 4, d1/d4/d5). Each rule's trigger,
- * throttle, and payload must reproduce the ENGINE'S pre-migration behavior byte-for-byte at defaults — these
- * specs are the guardrail for that parity, alongside the driver/engine specs that consume the same catalog.
- */
-import { describe, it, expect } from 'vitest';
-import {
-  ROTATION_REMINDER_NUDGE,
-  ROTATION_SOFT_NUDGE,
-} from '../messages/build-handoff';
+import { describe, expect, it } from 'vitest';
+import { ROTATION_REMINDER_NUDGE, ROTATION_SOFT_NUDGE } from '../messages/build-handoff';
+import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
+import { detectGithubHtmlUrl, renderGithubFetchNudge } from './github-fetch-guard';
+import { detectInstallCommand } from './install-awareness';
+import { planApprovedRule } from './plan-approved';
+import { validateJitRules } from './rule';
 import {
   JIT_RULES,
   bgTaskCapRule,
@@ -19,15 +16,7 @@ import {
   operatorMessageRules,
   svcNudgeRule,
 } from './rules';
-import { planApprovedRule } from './plan-approved';
-import { validateJitRules } from './rule';
 import { renderSvcNudge, svcNudgeShouldFire } from './svc-nudge';
-import {
-  detectGithubHtmlUrl,
-  renderGithubFetchNudge,
-} from './github-fetch-guard';
-import { detectInstallCommand } from './install-awareness';
-import { BG_TASK_CAP_NOTICE } from './bg-task-cap';
 
 describe('svcNudgeRule', () => {
   it.each([
@@ -37,30 +26,22 @@ describe('svcNudgeRule', () => {
     'nohup ./run.sh',
     'node server.js &',
     'uvicorn app:app --reload',
-  ])(
-    'trigger.match fires on %j (parity with detectLongRunningCommand)',
+  ])('trigger.match fires on %j (parity with detectLongRunningCommand)', (cmd) => {
+    if (svcNudgeRule.trigger.kind !== 'tool-match') throw new Error('expected tool-match trigger');
+    expect(svcNudgeRule.trigger.match(cmd)).not.toBeNull();
+  });
+
+  it.each(['pnpm test', 'pnpm build', 'git status', 'atlas-svc run --name web -- pnpm dev'])(
+    'trigger.match does NOT fire on %j',
     (cmd) => {
       if (svcNudgeRule.trigger.kind !== 'tool-match')
         throw new Error('expected tool-match trigger');
-      expect(svcNudgeRule.trigger.match(cmd)).not.toBeNull();
+      expect(svcNudgeRule.trigger.match(cmd)).toBeNull();
     },
   );
 
-  it.each([
-    'pnpm test',
-    'pnpm build',
-    'git status',
-    'atlas-svc run --name web -- pnpm dev',
-  ])('trigger.match does NOT fire on %j', (cmd) => {
-    if (svcNudgeRule.trigger.kind !== 'tool-match')
-      throw new Error('expected tool-match trigger');
-    expect(svcNudgeRule.trigger.match(cmd)).toBeNull();
-  });
-
   it('render is byte-identical to renderSvcNudge', () => {
-    expect(svcNudgeRule.render({ command: 'vite' })).toBe(
-      renderSvcNudge('vite'),
-    );
+    expect(svcNudgeRule.render({ command: 'vite' })).toBe(renderSvcNudge('vite'));
   });
 
   it('throttle mirrors svcNudgeShouldFire at the declared delta', () => {
@@ -79,9 +60,7 @@ describe('githubFetchGuardRule', () => {
   ])('trigger.match fires on %j (parity with detectGithubHtmlUrl)', (url) => {
     if (githubFetchGuardRule.trigger.kind !== 'url-match')
       throw new Error('expected url-match trigger');
-    expect(githubFetchGuardRule.trigger.match(url)).toBe(
-      detectGithubHtmlUrl(url),
-    );
+    expect(githubFetchGuardRule.trigger.match(url)).toBe(detectGithubHtmlUrl(url));
     expect(githubFetchGuardRule.trigger.match(url)).not.toBeNull();
   });
 
@@ -98,17 +77,13 @@ describe('githubFetchGuardRule', () => {
   it('watches the fetch tools and delivers as PostToolUse additionalContext', () => {
     if (githubFetchGuardRule.trigger.kind !== 'url-match')
       throw new Error('expected url-match trigger');
-    expect(githubFetchGuardRule.trigger.toolMatcher).toBe(
-      'WebFetch|mcp__fetch__.*',
-    );
+    expect(githubFetchGuardRule.trigger.toolMatcher).toBe('WebFetch|mcp__fetch__.*');
     expect(githubFetchGuardRule.delivery).toBe('postToolUse-additionalContext');
   });
 
   it('render is byte-identical to renderGithubFetchNudge, empty when absent', () => {
     const url = 'https://github.com/owner/repo/tree/main';
-    expect(githubFetchGuardRule.render({ url })).toBe(
-      renderGithubFetchNudge(url),
-    );
+    expect(githubFetchGuardRule.render({ url })).toBe(renderGithubFetchNudge(url));
     expect(githubFetchGuardRule.render({})).toBe(renderGithubFetchNudge(''));
   });
 
@@ -140,9 +115,9 @@ describe('installAwarenessRule', () => {
   );
 
   it('renders the host-supplied text verbatim, and empty when absent', () => {
-    expect(
-      installAwarenessRule.render({ installAwarenessText: 'checklist text' }),
-    ).toBe('checklist text');
+    expect(installAwarenessRule.render({ installAwarenessText: 'checklist text' })).toBe(
+      'checklist text',
+    );
     expect(installAwarenessRule.render({})).toBe('');
   });
 
@@ -165,16 +140,13 @@ describe('legRotationRule', () => {
   });
 
   it('renders the REMINDER nudge for phase "reminder"', () => {
-    expect(legRotationRule.render({ phase: 'reminder' })).toBe(
-      ROTATION_REMINDER_NUDGE,
-    );
+    expect(legRotationRule.render({ phase: 'reminder' })).toBe(ROTATION_REMINDER_NUDGE);
   });
 });
 
 describe('bgTaskCapRule', () => {
   it('declares the default hold cap and byte-identical notice', () => {
-    if (bgTaskCapRule.trigger.kind !== 'hold-timer')
-      throw new Error('expected hold-timer trigger');
+    if (bgTaskCapRule.trigger.kind !== 'hold-timer') throw new Error('expected hold-timer trigger');
     expect(bgTaskCapRule.trigger.holdMs).toBe(600_000);
     expect(bgTaskCapRule.render({})).toBe(BG_TASK_CAP_NOTICE);
   });
@@ -192,9 +164,9 @@ describe('memoryPrependRule (turn-prefix rail, d18)', () => {
   });
 
   it('renders the supplied prepend text (the rail the follow-up recall job fills)', () => {
-    expect(
-      memoryPrependRule.render({ prependText: 'memory: prefers pnpm' }),
-    ).toBe('memory: prefers pnpm');
+    expect(memoryPrependRule.render({ prependText: 'memory: prefers pnpm' })).toBe(
+      'memory: prefers pnpm',
+    );
   });
 
   it('operatorMessageRules() enumerates it', () => {

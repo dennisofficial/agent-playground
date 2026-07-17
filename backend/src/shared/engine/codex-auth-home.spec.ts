@@ -35,9 +35,7 @@ describe('assertValidCodexAuthJson', () => {
   });
 
   it('accepts an OPENAI_API_KEY-only blob (no tokens object)', () => {
-    expect(() =>
-      assertValidCodexAuthJson({ OPENAI_API_KEY: 'sk-live' }),
-    ).not.toThrow();
+    expect(() => assertValidCodexAuthJson({ OPENAI_API_KEY: 'sk-live' })).not.toThrow();
   });
 
   it('rejects a blob missing id_token — the reported production failure', () => {
@@ -56,9 +54,7 @@ describe('assertValidCodexAuthJson', () => {
 
   it('rejects a non-object / empty blob', () => {
     expect(() => assertValidCodexAuthJson(null)).toThrow(CodexAuthInvalidError);
-    expect(() => assertValidCodexAuthJson('nope')).toThrow(
-      CodexAuthInvalidError,
-    );
+    expect(() => assertValidCodexAuthJson('nope')).toThrow(CodexAuthInvalidError);
   });
 });
 
@@ -104,8 +100,6 @@ describe('codexAuthHomeDir / readCodexAuthHome', () => {
 
   it('readCodexAuthHome returns null when no auth.json has been written', () => {
     const root = mkdtempSync(join(tmpdir(), 'codex-home-'));
-    expect(
-      readCodexAuthHome(root, { ...key, jobId: 'never-written' }),
-    ).toBeNull();
+    expect(readCodexAuthHome(root, { ...key, jobId: 'never-written' })).toBeNull();
   });
 });

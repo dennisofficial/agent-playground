@@ -4,12 +4,8 @@ export class DropDecisionLedger1783560190102 implements MigrationInterface {
   name = 'DropDecisionLedger1783560190102';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "ledger_promoted_at"`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "ledger_promotion_status"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "ledger_promoted_at"`);
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "ledger_promotion_status"`);
     await queryRunner.query(`DROP TABLE "repo_decisions"`);
   }
 
@@ -26,11 +22,7 @@ export class DropDecisionLedger1783560190102 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "repo_decisions" ADD CONSTRAINT "fk_repo_decisions_repo_id_repos" FOREIGN KEY ("repo_id") REFERENCES "repos"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "ledger_promotion_status" text`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "ledger_promoted_at" TIMESTAMP WITH TIME ZONE`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "ledger_promotion_status" text`);
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "ledger_promoted_at" TIMESTAMP WITH TIME ZONE`);
   }
 }

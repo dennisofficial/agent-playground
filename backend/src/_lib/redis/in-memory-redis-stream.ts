@@ -1,66 +1,26 @@
 import type { RedisStreamPort, StreamEntry } from './redis.port';
 
-/**
- * A deterministic, dependency-free in-memory `RedisStreamPort` for UNIT TESTS — the full host↔daemon
- * round-trips run against this with NO live Redis.
- *
- * It models the slice of Redis-stream + pub/sub semantics Phase 5 relies on:
- *  - streams are append-only ordered logs with monotonic `<seq>-0` ids;
- *  - `xadd` wakes any blocked `xread`/`xreadGroup` waiting on that stream (so a daemon consumer loop
- *    and a host event-tail interleave correctly within one process/event-loop);
- *  - consumer groups thread a per-group cursor (last delivered id) so `'>'` reads only NEW entries, a
- *    pending-entries list (PEL) holds delivered-but-un-acked entries, `ack` removes them, and
- *    `claimStale` reassigns idle ones (XAUTOCLAIM) — the crash-recovery slice the tool-bridge needs;
- *  - `xread` resumes strictly AFTER `lastId`, exactly like real Redis, so the host's resume-after-
- *    transient-read logic is exercised faithfully;
- *  - pub/sub `publish`/`subscribe` deliver synchronously to current subscribers.
- *
- * Blocking reads honor `blockMs`: they resolve early when a matching entry arrives, else resolve []
- * at the timeout. Tests drive real time via the event loop (small block windows), so they stay fast.
- */
 export class InMemoryRedisStream implements RedisStreamPort {
   private readonly streams = new Map<string, StreamEntry[]>();
-  /** stream → group → last-delivered entry id (the group cursor). */
   private readonly groups = new Map<string, Map<string, string>>();
-  /**
-   * Pending-entries list (PEL): stream → group → id → {consumer, deliveredAt}. An entry enters on
-   * `xreadGroup` delivery and leaves on `ack`; `claimStale` reassigns idle ones. Models exactly the
-   * crash-recovery slice of XAUTOCLAIM the tool-bridge relies on.
-   */
   private readonly pending = new Map<
     string,
     Map<string, Map<string, { consumer: string; deliveredAt: number }>>
   >();
-  /** Wake callbacks registered by blocked readers, keyed by stream. */
   private readonly waiters = new Map<string, Set<() => void>>();
-  private readonly subscribers = new Map<
-    string,
-    Set<(message: unknown) => void>
-  >();
-  /** Pending block timers — released eagerly by `releaseBlockingReads()` (test teardown speed-up). */
+  private readonly subscribers = new Map<string, Set<(message: unknown) => void>>();
   private readonly blockTimers = new Set<{ resolve: () => void }>();
-  /** Per-key last-access epoch-ms — the slice `OBJECT IDLETIME` needs (stamped on write + read touch). */
   private readonly lastAccess = new Map<string, number>();
   private seq = 0;
 
-  /**
-   * TEST HELPER: immediately resolve every currently-blocked `xread`/`xreadGroup` as a timeout (empty
-   * result), instead of waiting out its `blockMs`. Production code never calls this; tests call it in
-   * teardown so a consumer loop parked in a long blocking read exits at once (no multi-second waits).
-   */
   releaseBlockingReads(): void {
     for (const t of [...this.blockTimers]) t.resolve();
   }
 
-  /**
-   * TEST HELPER: backdate a key's last-access so `objectIdleTime` reports at least `seconds` of idle,
-   * letting a test drive the reaper's idle-floor guard deterministically (production never calls this).
-   */
   setKeyIdleForTest(key: string, seconds: number): void {
     this.lastAccess.set(key, Date.now() - seconds * 1000);
   }
 
-  // ── streams ────────────────────────────────────────────────────────────────────────────────
 
   xadd(stream: string, data: unknown): Promise<string> {
     const id = `${++this.seq}-0`;
@@ -112,15 +72,9 @@ export class InMemoryRedisStream implements RedisStreamPort {
     const take = (): StreamEntry[] => {
       const cursor = this.groups.get(args.stream)?.get(args.group) ?? '0-0';
       const log = this.streams.get(args.stream) ?? [];
-      const fresh = log
-        .filter((e) => cmpId(e.id, cursor) > 0)
-        .slice(0, args.count);
+      const fresh = log.filter((e) => cmpId(e.id, cursor) > 0).slice(0, args.count);
       if (fresh.length) {
-        // Advance the group cursor past the last delivered entry.
-        this.groups
-          .get(args.stream)
-          ?.set(args.group, fresh[fresh.length - 1].id);
-        // Record each delivered entry in the PEL (un-acked, owned by this consumer) for crash recovery.
+        this.groups.get(args.stream)?.set(args.group, fresh[fresh.length - 1].id);
         const pel = this.pelFor(args.stream, args.group);
         for (const e of fresh) {
           pel.set(e.id, { consumer: args.consumer, deliveredAt: Date.now() });
@@ -148,7 +102,6 @@ export class InMemoryRedisStream implements RedisStreamPort {
     const log = this.streams.get(args.stream) ?? [];
     const now = Date.now();
     const out: StreamEntry[] = [];
-    // Oldest-first (insertion order) so recovery drains the longest-stranded entries first.
     for (const [id, meta] of pel) {
       if (out.length >= args.count) break;
       if (now - meta.deliveredAt < args.minIdleMs) continue;
@@ -157,7 +110,6 @@ export class InMemoryRedisStream implements RedisStreamPort {
         pel.delete(id); // entry trimmed away — drop the dangling PEL record
         continue;
       }
-      // Reassign ownership + reset idle (mirrors XAUTOCLAIM), then hand it back for reprocessing.
       meta.consumer = args.consumer;
       meta.deliveredAt = now;
       out.push({ id, data: clone(entry.data) });
@@ -165,7 +117,6 @@ export class InMemoryRedisStream implements RedisStreamPort {
     return Promise.resolve(out);
   }
 
-  /** Get (creating if absent) the PEL map for a stream+group. */
   private pelFor(
     stream: string,
     group: string,
@@ -196,7 +147,6 @@ export class InMemoryRedisStream implements RedisStreamPort {
     return this.blockingRead(args.stream, args.blockMs, take);
   }
 
-  /** Resolve `take()` immediately if it yields, else wait for an `xadd` on this stream (or timeout). */
   private blockingRead(
     stream: string,
     blockMs: number,
@@ -227,9 +177,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
         }
       };
       const timer = setTimeout(finishEmpty, blockMs);
-      // Don't keep the test process alive on a pending block window.
       if (typeof timer.unref === 'function') timer.unref();
-      // Thread for eager release (test teardown) — resolving as a timeout (empty).
       const handle = { resolve: finishEmpty };
       this.blockTimers.add(handle);
       set.add(onWake);
@@ -240,11 +188,9 @@ export class InMemoryRedisStream implements RedisStreamPort {
   private wake(stream: string): void {
     const set = this.waiters.get(stream);
     if (!set) return;
-    // Snapshot — onWake mutates the set as waiters resolve.
     for (const w of [...set]) w();
   }
 
-  // ── pub/sub ────────────────────────────────────────────────────────────────────────────────
 
   publish(channel: string, message: unknown): Promise<number> {
     const subs = this.subscribers.get(channel);
@@ -253,10 +199,7 @@ export class InMemoryRedisStream implements RedisStreamPort {
     return Promise.resolve(subs.size);
   }
 
-  subscribe(
-    channel: string,
-    handler: (message: unknown) => void,
-  ): Promise<() => Promise<void>> {
+  subscribe(channel: string, handler: (message: unknown) => void): Promise<() => Promise<void>> {
     const subs = this.subscribers.get(channel) ?? new Set();
     subs.add(handler);
     this.subscribers.set(channel, subs);
@@ -267,21 +210,15 @@ export class InMemoryRedisStream implements RedisStreamPort {
   }
 }
 
-/** Structured-clone-ish deep copy so a stored frame can't be mutated by a caller after read/write
- * (mirrors the JSON round-trip a real Redis would impose). */
 function clone<T>(v: T): T {
   return v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T);
 }
 
-/** Minimal Redis-glob → RegExp (only `*` is used by callers here). Escapes all other regex metachars. */
 function globToRegExp(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*');
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
 }
 
-/** Compare two `<seq>-<sub>` stream ids numerically (the fake only ever uses `-0`). */
 function cmpId(a: string, b: string): number {
   const [as, asub] = a.split('-').map(Number);
   const [bs, bsub] = b.split('-').map(Number);

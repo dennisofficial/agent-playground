@@ -11,8 +11,6 @@ import {
   Query,
   Res,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { CurrentUser, Public } from '@workspace/auth/server';
 import { IsIn } from 'class-validator';
@@ -31,16 +29,8 @@ class SetGithubAuthModeDto {
   @IsIn(['pat', 'app']) mode!: 'pat' | 'app';
 }
 
-/**
- * `/web/orgs/:orgId/github-app` — connect/disconnect the Atlas GitHub App and switch the org's
- * `githubAuthMode` between `pat` and `app`. Membership-gated; every write is owner-only
- * (`OrgOwnerGuard`) — connecting/disconnecting the App is an Administer action, same tier as
- * `OrgCredentialsController`. Connecting the App (the callback below) does NOT change `githubAuthMode` —
- * the owner switches modes explicitly via `PUT mode`.
- */
 @Controller('web/orgs/:orgId/github-app')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class GithubAppController {
   constructor(
     private readonly store: TenantCredentialStore,
@@ -49,7 +39,6 @@ export class GithubAppController {
     private readonly stateStore: GithubAppStateStore,
   ) {}
 
-  /** Mint the org's install URL: a single-use nonce (see {@link GithubAppStateStore}) + the App's slug. */
   @Post('install-url')
   @UseGuards(OrgOwnerGuard)
   async installUrl(
@@ -57,9 +46,7 @@ export class GithubAppController {
     @CurrentUser() user: UserEntity,
   ): Promise<{ url: string }> {
     if (!this.appTokens.isConfigured()) {
-      throw new BadRequestException(
-        'GitHub App is not configured on this server',
-      );
+      throw new BadRequestException('GitHub App is not configured on this server');
     }
     const nonce = await this.stateStore.stash(org.id, user.id);
     const slug = await this.appTokens.appSlug();
@@ -68,7 +55,6 @@ export class GithubAppController {
     };
   }
 
-  /** Switch the resolved GitHub credential. `app` requires a connected installation first. */
   @Put('mode')
   @UseGuards(OrgOwnerGuard)
   async setMode(
@@ -78,21 +64,16 @@ export class GithubAppController {
     const creds = await this.store.read(org.id);
     if (body.mode === 'app') {
       if (!creds?.githubAppInstallationId) {
-        throw new BadRequestException(
-          'Connect the GitHub App before switching to app mode',
-        );
+        throw new BadRequestException('Connect the GitHub App before switching to app mode');
       }
     } else if (!creds?.githubPat) {
-      throw new BadRequestException(
-        'Save a GitHub PAT before switching to PAT mode',
-      );
+      throw new BadRequestException('Save a GitHub PAT before switching to PAT mode');
     }
     await this.store.write(org.id, { githubAuthMode: body.mode });
     await this.onboarding.tryActivate(org.id);
     return { ok: true, mode: body.mode };
   }
 
-  /** Disconnect the App: clear the installation + fall back to `pat` mode. */
   @Delete()
   @UseGuards(OrgOwnerGuard)
   async disconnect(@CurrentOrg() org: CurrentOrgCtx): Promise<{ ok: true }> {
@@ -105,7 +86,6 @@ export class GithubAppController {
     return { ok: true };
   }
 
-  /** Connect state for the settings UI — member-visible (no secret values). */
   @Get('status')
   async status(@CurrentOrg() org: CurrentOrgCtx): Promise<{
     configured: boolean;
@@ -128,18 +108,6 @@ export class GithubAppController {
   }
 }
 
-/**
- * `GET /web/github-app/callback` — the Atlas App's configured Setup URL. GitHub redirects the owner's
- * browser here after install/update with only `installation_id`/`setup_action`/`state` — no session, no
- * org. `@Public()` bypasses the global `AuthGuard` (mirrors `McpOAuthCallbackController`); the security
- * boundary is the single-use `state` nonce (`GithubAppStateStore`, which also carries the initiating
- * user) plus verifying the installation actually mints a usable token before it's persisted. One GitHub
- * App installs once per GitHub account, so an installation may legitimately back several Atlas orgs owned
- * by the same person: reuse is allowed only when the initiating user OWNS another org that already holds
- * the installation (common-ownership gate) — otherwise it's refused as `already_connected`, blocking
- * cross-tenant installation takeover. That reject is a redirect, not a 409 — there is no caller to
- * receive one, only a browser to send back to the console.
- */
 @Public()
 @Controller('web/github-app')
 export class GithubAppCallbackController {
@@ -173,18 +141,14 @@ export class GithubAppCallbackController {
 
     const consumed = await this.stateStore.consume(state);
     if (!consumed) {
-      this.logger.warn(
-        'github app callback: unknown, expired, or already-used state',
-      );
+      this.logger.warn('github app callback: unknown, expired, or already-used state');
       res.redirect(302, `${frontend}/?githubApp=error&reason=invalid_state`);
       return;
     }
     const { orgId, userId } = consumed;
     const settingsUrl = `${frontend}/orgs/${orgId}/settings`;
 
-    const installation = await this.appTokens
-      .getInstallation(installationId)
-      .catch(() => null);
+    const installation = await this.appTokens.getInstallation(installationId).catch(() => null);
     const mintedOk = await this.appTokens
       .getInstallationToken(installationId)
       .then(() => true)
@@ -193,32 +157,18 @@ export class GithubAppCallbackController {
       this.logger.warn(
         `github app callback: installation ${installationId} failed verification for org ${orgId}`,
       );
-      res.redirect(
-        302,
-        `${settingsUrl}?githubApp=error&reason=verification_failed`,
-      );
+      res.redirect(302, `${settingsUrl}?githubApp=error&reason=verification_failed`);
       return;
     }
 
-    // Common-ownership reuse gate: an installation already held by ANOTHER org may be linked here only
-    // when the initiating user also owns one of those holder orgs (spreading their own installation
-    // across their own orgs). Otherwise it's a cross-tenant takeover attempt — refuse.
-    const otherHolders = await this.store.orgsHoldingInstallation(
-      installationId,
-      orgId,
-    );
+    const otherHolders = await this.store.orgsHoldingInstallation(installationId, orgId);
     if (otherHolders.length > 0) {
-      const mayReuse = userId
-        ? await this.orgs.ownsAnyOf(userId, otherHolders)
-        : false;
+      const mayReuse = userId ? await this.orgs.ownsAnyOf(userId, otherHolders) : false;
       if (!mayReuse) {
         this.logger.warn(
           `github app callback: installation ${installationId} held by another owner's org — denying reuse for org ${orgId}`,
         );
-        res.redirect(
-          302,
-          `${settingsUrl}?githubApp=error&reason=already_connected`,
-        );
+        res.redirect(302, `${settingsUrl}?githubApp=error&reason=already_connected`);
         return;
       }
     }
@@ -228,11 +178,8 @@ export class GithubAppCallbackController {
       githubAppInstallationAccount: installation.account.login,
     });
 
-    // Best-effort — never fail the redirect over an activation hiccup.
     await this.onboarding.tryActivate(orgId).catch((err) => {
-      this.logger.warn(
-        `github app callback: tryActivate failed for org ${orgId}: ${err}`,
-      );
+      this.logger.warn(`github app callback: tryActivate failed for org ${orgId}: ${err}`);
     });
 
     res.redirect(302, `${settingsUrl}?githubApp=connected`);

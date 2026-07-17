@@ -29,15 +29,11 @@ export class AddGithubAppAuth1783732874293 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "UQ_org_credentials_github_app_installation_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "UQ_org_credentials_github_app_installation_id"`);
     await queryRunner.query(
       `ALTER TABLE "org_credentials" DROP CONSTRAINT "CHK_org_credentials_github_auth_mode"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "org_credentials" DROP COLUMN "github_auth_mode"`,
-    );
+    await queryRunner.query(`ALTER TABLE "org_credentials" DROP COLUMN "github_auth_mode"`);
     await queryRunner.query(
       `ALTER TABLE "org_credentials" DROP COLUMN "github_app_installation_account"`,
     );

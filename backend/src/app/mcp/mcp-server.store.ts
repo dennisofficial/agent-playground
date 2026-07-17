@@ -2,6 +2,7 @@ import { EnvService } from '@core/config/env/env.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { decryptSecret, encryptSecret, loadSecretsKey } from '../onboarding/secret-cipher';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
   McpServerEntity,
@@ -12,24 +13,15 @@ import {
   type StoredMcpConfig,
   type StoredMcpOAuthConfig,
 } from '../persistence/entities';
-import {
-  decryptSecret,
-  encryptSecret,
-  loadSecretsKey,
-} from '../onboarding/secret-cipher';
 
-/** The org-wide scope sentinel (mirrors `OrgCredentialsEntity.scope`); a non-`*` scope is a repo id. */
 export const ORG_SCOPE = '*';
 
-/** One header/env entry from the console form. `secret:true` ⇒ its value is encrypted, never returned. */
 export interface McpHeaderInput {
   name: string;
-  /** The value; on edit, an EMPTY value for a `secret` entry PRESERVES the stored one (re-enter to change). */
   value: string;
   secret?: boolean;
 }
 
-/** The full server definition a `PUT` writes (replaces the row). */
 export interface McpServerInput {
   transport: 'http' | 'sse' | 'stdio';
   url?: string;
@@ -39,42 +31,26 @@ export interface McpServerInput {
   env?: McpHeaderInput[];
   surfaces?: McpSurface[];
   enabled?: boolean;
-  /** `'static'` (default) or `'oauth'`. Writing does NOT touch `oauth_enc` — tokens are owned by `McpOAuthService`. */
   authKind?: McpAuthKind;
-  /** Non-secret OAuth knobs (only meaningful when `authKind='oauth'`). */
   oauth?: StoredMcpOAuthConfig;
 }
 
-/** A server as returned to a client — NEVER any secret value (secret slots show as `null` in `config`). */
 export interface RedactedMcpServer {
-  /** 'org' for an org-wide server, otherwise the repo id. */
   scope: 'org' | string;
   name: string;
   transport: 'http' | 'sse' | 'stdio';
   config: StoredMcpConfig;
-  /** `header:<name>` / `env:<name>` keys whose value is a stored secret. */
   secretKeys: string[];
   surfaces: McpSurface[];
   enabled: boolean;
   discoveredTools: string[] | null;
   lastValidatedAt: string | null;
   validationError: string | null;
-  /** `'static'` or `'oauth'`. */
   authKind: McpAuthKind;
-  /** Only for `authKind='oauth'`: whether consent has completed (a token bundle exists). NEVER the token itself. */
   oauthConnected: boolean;
-  /** Only for `authKind='oauth'`: whether the last resolve/refresh failed and re-consent is needed. */
   needsReauth: boolean;
 }
 
-/**
- * The encrypt-on-write / decrypt-on-read path for user-defined MCP servers. Mirrors
- * {@link WorkspaceSecretFileStore} / {@link TenantCredentialStore}: AES-256-GCM via `secret-cipher`, the
- * `SECRETS_ENCRYPTION_KEY` required to write/read a secret value, values NEVER logged or returned.
- *
- * `scope` is `'*'` for an org-wide server or a repo id for a repo-scoped one. The public API takes the
- * URL-friendly `'org'` alias and maps it to the `'*'` sentinel here (one translation point).
- */
 @Injectable()
 export class McpServerStore {
   private readonly logger = new Logger(McpServerStore.name);
@@ -89,7 +65,6 @@ export class McpServerStore {
     return loadSecretsKey(this.env.get('SECRETS_ENCRYPTION_KEY'));
   }
 
-  /** URL-facing `'org'` ⇄ DB `'*'`; any other value is a repo id passed through unchanged. */
   static toDbScope(scope: string): string {
     return scope === 'org' ? ORG_SCOPE : scope;
   }
@@ -97,9 +72,7 @@ export class McpServerStore {
     return scope === ORG_SCOPE ? 'org' : scope;
   }
 
-  // ── reads (redacted) ────────────────────────────────────────────────────────────────────────
 
-  /** Every server for an org (org-wide + all repo scopes), redacted — never a secret value. */
   async list(orgId: string): Promise<RedactedMcpServer[]> {
     const rows = await this.servers.find({ where: { org_id: orgId } });
     return rows.map((r) => this.redact(r));
@@ -120,32 +93,16 @@ export class McpServerStore {
       surfaces: r.surfaces,
       enabled: r.enabled,
       discoveredTools: r.discovered_tools,
-      lastValidatedAt: r.last_validated_at
-        ? new Date(r.last_validated_at).toISOString()
-        : null,
+      lastValidatedAt: r.last_validated_at ? new Date(r.last_validated_at).toISOString() : null,
       validationError: r.validation_error,
       authKind: r.auth_kind,
-      // Token presence, not blob presence: beginAuthorization writes a blob (nonce + PKCE/DCR state)
-      // BEFORE consent completes, so oauth_enc != null would show a started-but-cancelled consent as
-      // Connected. Only a stored access_token means a working connection. No token ever leaves the store.
       oauthConnected: this.oauthHasToken(r),
       needsReauth: r.auth_kind === 'oauth' && r.validation_error != null,
     };
   }
 
-  // ── writes ──────────────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Upsert a server definition. Splits secret header/env values out of `config` (null placeholder) into
-   * the encrypted `secrets_enc` blob. A `secret` entry with an EMPTY value preserves the stored value
-   * (the console shows presence, not the value; re-enter to change). Writing resets the validation state.
-   */
-  async write(
-    orgId: string,
-    dbScope: string,
-    name: string,
-    input: McpServerInput,
-  ): Promise<void> {
+  async write(orgId: string, dbScope: string, name: string, input: McpServerInput): Promise<void> {
     const existing = await this.servers.findOne({
       where: { org_id: orgId, scope: dbScope, name },
     });
@@ -157,17 +114,13 @@ export class McpServerStore {
     if (input.args && input.args.length > 0) config.args = input.args;
 
     const secrets: McpSecretValues = {};
-    const applyPairs = (
-      entries: McpHeaderInput[] | undefined,
-      slot: 'headers' | 'env',
-    ): void => {
+    const applyPairs = (entries: McpHeaderInput[] | undefined, slot: 'headers' | 'env'): void => {
       if (!entries || entries.length === 0) return;
       const bag: Record<string, string | null> = {};
       for (const e of entries) {
         if (!e.name) continue;
         if (e.secret) {
           bag[e.name] = null;
-          // Non-empty ⇒ new secret value; empty ⇒ keep the prior stored value (re-enter to change).
           const value = e.value !== '' ? e.value : prior[slot]?.[e.name];
           if (value !== undefined && value !== '') {
             (secrets[slot] ??= {})[e.name] = value;
@@ -181,42 +134,24 @@ export class McpServerStore {
     applyPairs(input.headers, 'headers');
     applyPairs(input.env, 'env');
 
-    // Non-secret OAuth knobs live in `config`; the tokens/DCR blob in `oauth_enc` is owned by McpOAuthService
-    // and deliberately NOT touched here (so editing e.g. the scope of a connected server keeps its tokens).
-    if (input.oauth && Object.keys(input.oauth).length > 0)
-      config.oauth = input.oauth;
+    if (input.oauth && Object.keys(input.oauth).length > 0) config.oauth = input.oauth;
 
     const hasSecrets = !!(secrets.headers || secrets.env);
-    const row =
-      existing ?? this.servers.create({ org_id: orgId, scope: dbScope, name });
+    const row = existing ?? this.servers.create({ org_id: orgId, scope: dbScope, name });
     row.transport = input.transport;
     row.auth_kind = input.authKind ?? 'static';
     row.config = config;
-    row.secrets_enc = hasSecrets
-      ? encryptSecret(JSON.stringify(secrets), this.key())
-      : null;
+    row.secrets_enc = hasSecrets ? encryptSecret(JSON.stringify(secrets), this.key()) : null;
     row.surfaces =
-      input.surfaces && input.surfaces.length > 0
-        ? input.surfaces
-        : ['brain', 'build'];
+      input.surfaces && input.surfaces.length > 0 ? input.surfaces : ['brain', 'build'];
     row.enabled = input.enabled ?? true;
-    // A changed config invalidates any prior validation probe.
     row.discovered_tools = null;
     row.last_validated_at = null;
     row.validation_error = null;
     await this.servers.save(row);
-    this.logger.log(
-      `wrote mcp server org=${orgId} scope=${dbScope} name=${name}`,
-    );
+    this.logger.log(`wrote mcp server org=${orgId} scope=${dbScope} name=${name}`);
   }
 
-  /**
-   * Set ONE secret slot value on an EXISTING server (read-modify-write) without touching the rest of the
-   * row — the owner-gated `provide-secret` MCP lane uses this so a provided key lands in `secrets_enc`
-   * beside a server the brain registered with empty placeholders. Adds the matching `config[slot][key]`
-   * = `null` placeholder if absent (so `redact()` surfaces it as a `secretKeys` entry). Returns `false`
-   * (no throw) if the server row is gone. Does NOT reset the validation state — the caller re-probes.
-   */
   async setSecret(
     orgId: string,
     dbScope: string,
@@ -244,12 +179,9 @@ export class McpServerStore {
 
   async delete(orgId: string, dbScope: string, name: string): Promise<void> {
     await this.servers.delete({ org_id: orgId, scope: dbScope, name });
-    this.logger.log(
-      `deleted mcp server org=${orgId} scope=${dbScope} name=${name}`,
-    );
+    this.logger.log(`deleted mcp server org=${orgId} scope=${dbScope} name=${name}`);
   }
 
-  /** Persist the outcome of a validation probe (tool list or error). */
   async recordValidation(
     orgId: string,
     dbScope: string,
@@ -266,9 +198,7 @@ export class McpServerStore {
     await this.servers.save(row);
   }
 
-  // ── resolution helpers (used by McpResolver) ─────────────────────────────────────────────────
 
-  /** Raw rows for the org's `'*'` scope plus one repo scope — the input to `McpResolver`. */
   async rowsForTurn(orgId: string, repoId: string): Promise<McpServerEntity[]> {
     return this.servers.find({
       where: [
@@ -278,23 +208,12 @@ export class McpServerStore {
     });
   }
 
-  /** Fetch one raw row (for a validation probe that needs the decrypted secrets). */
-  async rawRow(
-    orgId: string,
-    dbScope: string,
-    name: string,
-  ): Promise<McpServerEntity | null> {
+  async rawRow(orgId: string, dbScope: string, name: string): Promise<McpServerEntity | null> {
     return this.servers.findOne({
       where: { org_id: orgId, scope: dbScope, name },
     });
   }
 
-  /**
-   * For each ENABLED org/repo server, the declared secret slots (`header:<k>` / `env:<k>`) that have
-   * NO stored value yet — an approved MCP server that silently cannot authenticate until the operator
-   * fills them via `request_secret({ mcp })`. Surfaced as a Workspace Profile gap (see
-   * `WorkspaceProfileService.computeGaps`); NEVER returns any secret value, only the slot NAMES.
-   */
   async unfilledSecretSlots(
     orgId: string,
     repoId: string,
@@ -305,11 +224,8 @@ export class McpServerStore {
       if (!r.enabled) continue;
       const filled = this.decryptSecrets(r);
       const slots: string[] = [];
-      // A secret slot shows as a `null` placeholder in `config`; it is unfilled when the encrypted blob
-      // has no value for that key.
       for (const [k, v] of Object.entries(r.config.headers ?? {}))
-        if (v === null && filled.headers?.[k] == null)
-          slots.push(`header:${k}`);
+        if (v === null && filled.headers?.[k] == null) slots.push(`header:${k}`);
       for (const [k, v] of Object.entries(r.config.env ?? {}))
         if (v === null && filled.env?.[k] == null) slots.push(`env:${k}`);
       if (slots.length > 0)
@@ -322,15 +238,6 @@ export class McpServerStore {
     return out;
   }
 
-  /**
-   * For each ENABLED org/repo server whose last validation FAILED (`validation_error` is set) — a server
-   * that USED to work and later broke (an expired static secret → 401, or an OAuth refresh token that died
-   * → `McpOAuthService.markNeedsReauth` writes `'needs re-auth'`). Distinct from `unfilledSecretSlots`
-   * (a NEVER-filled slot); the caller de-dupes so an unfilled slot isn't also reported as broken auth.
-   * Surfaced as a Workspace Profile `broken_auth` gap. Returns secret-SAFE data only — `validation_error`
-   * is a safe message string, never a secret VALUE; `auth_kind` picks the right fix (static→request_secret,
-   * oauth→operator re-consent).
-   */
   async authFailingServers(
     orgId: string,
     repoId: string,
@@ -362,66 +269,40 @@ export class McpServerStore {
     return out;
   }
 
-  /**
-   * For each ENABLED org/repo OAuth server that is registered but NOT yet connected — no access token
-   * stored (a never-started, or started-but-cancelled, consent). Mirrors {@link authFailingServers} and
-   * keys off the same {@link oauthHasToken} predicate as `redact().oauthConnected`, so the "needs connect"
-   * gap and the card's "Connected" status never disagree. Surfaced as a Workspace Profile
-   * `needs_oauth_connect` gap. Returns secret-SAFE data only — name + scope, never a token.
-   */
   async needsOAuthConnect(
     orgId: string,
     repoId: string,
   ): Promise<{ name: string; scope: 'org' | string }[]> {
     const rows = await this.rowsForTurn(orgId, repoId);
     return rows
-      .filter(
-        (r) => r.enabled && r.auth_kind === 'oauth' && !this.oauthHasToken(r),
-      )
+      .filter((r) => r.enabled && r.auth_kind === 'oauth' && !this.oauthHasToken(r))
       .map((r) => ({
         name: r.name,
         scope: McpServerStore.fromDbScope(r.scope),
       }));
   }
 
-  /** Decrypt a row's secret blob into `{ headers?, env? }`, or `{}` when it has none. */
   decryptSecrets(row: McpServerEntity): McpSecretValues {
     if (!row.secrets_enc) return {};
-    return JSON.parse(
-      decryptSecret(row.secrets_enc, this.key()),
-    ) as McpSecretValues;
+    return JSON.parse(decryptSecret(row.secrets_enc, this.key())) as McpSecretValues;
   }
 
-  // ── OAuth blob (used ONLY by McpOAuthService) ─────────────────────────────────────────────────
 
-  /** Decrypt a row's `oauth_enc` into an {@link McpOAuthBlob}, or `{}` when it has none. */
   readOAuthBlob(row: McpServerEntity): McpOAuthBlob {
     if (!row.oauth_enc) return {};
     return JSON.parse(decryptSecret(row.oauth_enc, this.key())) as McpOAuthBlob;
   }
 
-  /**
-   * True only once a real access token is stored — the honest "connected" signal (blob presence is NOT).
-   * `beginAuthorization` writes a blob (nonce, then DCR client + PKCE verifier) BEFORE consent completes,
-   * so `oauth_enc != null` is true even for a started-but-cancelled consent that never got a token.
-   */
   private oauthHasToken(r: McpServerEntity): boolean {
     if (r.auth_kind !== 'oauth' || r.oauth_enc == null) return false;
     try {
       const accessToken = this.readOAuthBlob(r).tokens?.['access_token'];
       return typeof accessToken === 'string' && accessToken.length > 0;
     } catch {
-      // Undecryptable blob (e.g. key rotation) → treat as not-connected (the gap fires; safe).
       return false;
     }
   }
 
-  /**
-   * Encrypt + persist an {@link McpOAuthBlob} onto an EXISTING oauth server (read-modify-write of the single
-   * `oauth_enc` column; no other field touched). Optionally set/clear `validation_error` in the same write —
-   * `beginAuthorization`/`completeAuthorization` clear it, a failed refresh sets `'needs re-auth'`. Returns
-   * `false` (no throw) if the row is gone.
-   */
   async writeOAuthBlob(
     orgId: string,
     dbScope: string,
@@ -434,8 +315,7 @@ export class McpServerStore {
     });
     if (!row) return false;
     row.oauth_enc = encryptSecret(JSON.stringify(blob), this.key());
-    if (opts && 'validationError' in opts)
-      row.validation_error = opts.validationError ?? null;
+    if (opts && 'validationError' in opts) row.validation_error = opts.validationError ?? null;
     await this.servers.save(row);
     return true;
   }

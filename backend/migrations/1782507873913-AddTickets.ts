@@ -73,19 +73,13 @@ export class AddTickets1782507873913 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "tickets" DROP CONSTRAINT "fk_tickets_origin_thread_id_threads"`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "tickets" DROP CONSTRAINT "fk_tickets_repo_id_repos"`,
-    );
+    await queryRunner.query(`ALTER TABLE "tickets" DROP CONSTRAINT "fk_tickets_repo_id_repos"`);
     await queryRunner.query(
       `ALTER TABLE "tickets" DROP CONSTRAINT "fk_tickets_org_id_organizations"`,
     );
     await queryRunner.query(`DROP TABLE "ticket_counters"`);
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_ticket_dependencies_org_id_repo_id"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_ticket_dependencies_depends_on_ticket_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_ticket_dependencies_org_id_repo_id"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_ticket_dependencies_depends_on_ticket_id"`);
     await queryRunner.query(`DROP TABLE "ticket_dependencies"`);
     await queryRunner.query(`DROP INDEX "public"."idx_tickets_org_id_repo_id"`);
     await queryRunner.query(`DROP TABLE "tickets"`);

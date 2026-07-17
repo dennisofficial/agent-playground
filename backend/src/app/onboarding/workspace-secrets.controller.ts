@@ -7,8 +7,6 @@ import {
   NotFoundException,
   Put,
   UseGuards,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsOptional, IsString, MinLength } from 'class-validator';
@@ -18,10 +16,7 @@ import { OrgMembershipGuard } from '../org/org-membership.guard';
 import { OrgOwnerGuard } from '../org/org-owner.guard';
 import { DB_CONNECTION } from '../persistence/database.module';
 import { RepoEntity } from '../persistence/entities';
-import {
-  WorkspaceSecretFileStore,
-  type WorkspaceSecretFileRef,
-} from './workspace-secret.store';
+import { WorkspaceSecretFileStore, type WorkspaceSecretFileRef } from './workspace-secret.store';
 
 class SetFileDto {
   @IsString() @MinLength(1) repoId!: string;
@@ -35,16 +30,8 @@ class DeleteFileDto {
   @IsString() @MinLength(1) path!: string;
 }
 
-/**
- * `/web/orgs/:orgId/workspace-secrets` — manage the org's encrypted per-repo workspace secret FILES that
- * the hydrator renders into a repo's sandbox. GET returns file refs (repo + path + label) only — never
- * values — readable by any member. All mutations (PUT/DELETE `/files`) are an Administer action — owner
- * only (`OrgOwnerGuard`), mirroring {@link OrgCredentialsController}. A file row IS the authority:
- * without one, a repo's committed `.atlas/worktree.json` entry is inert.
- */
 @Controller('web/orgs/:orgId/workspace-secrets')
 @UseGuards(OrgMembershipGuard)
-@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class WorkspaceSecretsController {
   constructor(
     private readonly store: WorkspaceSecretFileStore,
@@ -76,9 +63,7 @@ export class WorkspaceSecretsController {
   }
 
   @Get()
-  async list(
-    @CurrentOrg() org: CurrentOrgCtx,
-  ): Promise<{ files: WorkspaceSecretFileRef[] }> {
+  async list(@CurrentOrg() org: CurrentOrgCtx): Promise<{ files: WorkspaceSecretFileRef[] }> {
     return { files: await this.store.list(org.id) };
   }
 
@@ -90,13 +75,7 @@ export class WorkspaceSecretsController {
   ): Promise<{ ok: boolean }> {
     await this.assertRepo(org.id, body.repoId);
     const path = this.normalizeSecretPath(body.path);
-    await this.store.write(
-      org.id,
-      body.repoId,
-      path,
-      body.value,
-      body.label ?? null,
-    );
+    await this.store.write(org.id, body.repoId, path, body.value, body.label ?? null);
     return { ok: true };
   }
 

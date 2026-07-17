@@ -3,30 +3,19 @@ import { statfsSync } from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import * as os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import {
-  CONTAINER_ENGINE,
-  type ContainerEngine,
-} from '../sandbox/container-engine.port';
+import { CONTAINER_ENGINE, type ContainerEngine } from '../sandbox/container-engine.port';
 import type { HostStatsDto } from './host-stats.types';
 
 const CACHE_MS = 2_000;
 const FIRST_SAMPLE_DELAY_MS = 200;
 
-// atlas.managed=1 is stamped on every Atlas sandbox container (see sandbox-manager.service.ts L_MANAGED).
-// Inlined as a stable string rather than imported, to avoid a module cycle.
 const SANDBOX_LABEL = 'atlas.managed=1';
 
-/** Aggregate idle/total CPU jiffies across every core, for computing a delta-based usage %. */
 type CpuAggregate = {
   idle: number;
   total: number;
 };
 
-/**
- * Collects a live snapshot of the host box (CPU/RAM/disk/containers/Docker disk) for the
- * `GET /web/host-stats` endpoint. Reads the disk path from `process.env` directly (not
- * `EnvService`) — it's a lean, prod-only path config, not part of the app's env schema.
- */
 @Injectable()
 export class HostStatsService {
   private readonly logger = new Logger(HostStatsService.name);
@@ -35,15 +24,12 @@ export class HostStatsService {
   private inflight?: Promise<HostStatsDto>;
   private prevCpu?: CpuAggregate;
 
-  constructor(
-    @Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine,
-  ) {
+  constructor(@Inject(CONTAINER_ENGINE) private readonly engine: ContainerEngine) {
     const candidate = process.env.HOST_STATS_DISK_PATH ?? '/srv/atlas/data';
     try {
       statfsSync(candidate);
       this.diskPath = candidate;
     } catch {
-      // e.g. dev/local where the bind-mounted host path is absent — fall back to the container root.
       this.diskPath = '/';
     }
   }
@@ -85,16 +71,13 @@ export class HostStatsService {
   private async sampleCpu(): Promise<HostStatsDto['cpu']> {
     let prev = this.prevCpu;
     if (!prev) {
-      // First call: no previous snapshot to delta against — sample, wait a beat, sample again so
-      // the very first response isn't a meaningless 0/NaN.
       prev = aggregateCpuTimes();
       await delay(FIRST_SAMPLE_DELAY_MS);
     }
     const next = aggregateCpuTimes();
     const deltaTotal = next.total - prev.total;
     const deltaIdle = next.idle - prev.idle;
-    const usagePct =
-      deltaTotal > 0 ? Math.round(100 * (1 - deltaIdle / deltaTotal)) : 0;
+    const usagePct = deltaTotal > 0 ? Math.round(100 * (1 - deltaIdle / deltaTotal)) : 0;
     this.prevCpu = next;
     return {
       usagePct,
@@ -155,7 +138,6 @@ export class HostStatsService {
   }
 }
 
-/** Sum idle/total jiffies across every core's `times`. */
 function aggregateCpuTimes(): CpuAggregate {
   return os.cpus().reduce<CpuAggregate>(
     (acc, cpu) => {

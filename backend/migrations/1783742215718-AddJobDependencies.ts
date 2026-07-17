@@ -4,9 +4,7 @@ export class AddJobDependencies1783742215718 implements MigrationInterface {
   name = 'AddJobDependencies1783742215718';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "jobs" ADD "blocked_seed_message" text`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" ADD "blocked_seed_message" text`);
     await queryRunner.query(
       `CREATE TABLE "job_dependencies" ("created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "id" uuid NOT NULL DEFAULT uuid_generate_v4(), "org_id" uuid NOT NULL, "repo_id" uuid NOT NULL, "job_id" uuid NOT NULL, "depends_on_job_id" uuid NOT NULL, CONSTRAINT "uq_job_dependencies_job_id_depends_on_job_id" UNIQUE ("job_id", "depends_on_job_id"), CONSTRAINT "pk_job_dependencies" PRIMARY KEY ("id"))`,
     );
@@ -43,15 +41,9 @@ export class AddJobDependencies1783742215718 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "job_dependencies" DROP CONSTRAINT "fk_job_dependencies_org_id_organizations"`,
     );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_job_dependencies_org_id_repo_id"`,
-    );
-    await queryRunner.query(
-      `DROP INDEX "public"."idx_job_dependencies_depends_on_job_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "public"."idx_job_dependencies_org_id_repo_id"`);
+    await queryRunner.query(`DROP INDEX "public"."idx_job_dependencies_depends_on_job_id"`);
     await queryRunner.query(`DROP TABLE "job_dependencies"`);
-    await queryRunner.query(
-      `ALTER TABLE "jobs" DROP COLUMN "blocked_seed_message"`,
-    );
+    await queryRunner.query(`ALTER TABLE "jobs" DROP COLUMN "blocked_seed_message"`);
   }
 }

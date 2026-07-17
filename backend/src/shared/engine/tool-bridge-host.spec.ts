@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dispatchToolRequest } from './tool-bridge-host';
 import type { ToolBridgeOptions, ToolRequestFrame } from './engine.types';
+import { dispatchToolRequest } from './tool-bridge-host';
 
 describe('dispatchToolRequest — the handler receives the flat payload', () => {
   const frame = (args: unknown): ToolRequestFrame =>
@@ -38,10 +38,7 @@ describe('dispatchToolRequest — the handler receives the flat payload', () => 
       jobId: 'j1',
       tools: { report_verification: impl },
     };
-    const reply = await dispatchToolRequest(
-      bridge,
-      frame({ jobId: 'other', passed: true }),
-    );
+    const reply = await dispatchToolRequest(bridge, frame({ jobId: 'other', passed: true }));
     expect(impl).not.toHaveBeenCalled();
     expect(reply).toMatchObject({ t: 'tool_error' });
   });
@@ -96,7 +93,6 @@ describe('dispatchToolRequest — a thrown error is NEVER serialised as an empty
   it("is total against a bare thrown string (`throw ''`) → still non-empty", async () => {
     const bridge: ToolBridgeOptions = {
       jobId: 'j1',
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
       tools: {
         get_pipeline_state: async () => {
           throw '';

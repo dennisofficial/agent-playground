@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { McpServerStore } from '../mcp';
-import { MemoryStore } from '../memory';
-import { webFileRequestCard, webSecretInputCard } from '../surface';
 import type { ToolImpl } from '@shared/engine/engine.types';
+import { randomUUID } from 'node:crypto';
+import { McpServerStore } from '../mcp/mcp-server.store';
+import { MemoryStore } from '../memory/memory.store';
+import { webFileRequestCard } from '../surface/web-file-request-card';
+import { webSecretInputCard } from '../surface/web-secret-input-card';
 import { BrainStoreService } from './brain-store.service';
 
-/** The tenant + authoring context a build/brain thread supplies when asking for this toolset. */
 type SelfSufficiencyContext = {
   jobId: string;
   orgId: string;
@@ -15,12 +15,6 @@ type SelfSufficiencyContext = {
   defaultQuery?: string;
 };
 
-/**
- * The self-sufficiency toolset (`request_secret`, `request_file`, `recall`, `remember`) — shared between the
- * brain (`AgentSessionManager`) and headless build/master_review threads (`ThreadDriverService`), so BOTH
- * dispatch through the SAME handler bodies instead of two copies drifting apart. Org/repo/job come from the
- * caller-supplied `ctx` (never tool args) — tenant safety.
- */
 @Injectable()
 export class SelfSufficiencyToolsService {
   private readonly logger = new Logger(SelfSufficiencyToolsService.name);
@@ -77,9 +71,7 @@ export class SelfSufficiencyToolsService {
         if (!id) return { forgotten: false, reason: 'id is required' };
         try {
           const { deleted } = await this.memory.forget(id, ctx.orgId);
-          return deleted
-            ? { forgotten: true }
-            : { forgotten: false, reason: 'no such memory' };
+          return deleted ? { forgotten: true } : { forgotten: false, reason: 'no such memory' };
         } catch (err) {
           return { forgotten: false, reason: String(err) };
         }
@@ -91,9 +83,7 @@ export class SelfSufficiencyToolsService {
         if (!fact) return { updated: false, reason: 'fact is required' };
         try {
           const { updated } = await this.memory.updateFact(id, fact, ctx.orgId);
-          return updated
-            ? { updated: true }
-            : { updated: false, reason: 'no such memory' };
+          return updated ? { updated: true } : { updated: false, reason: 'no such memory' };
         } catch (err) {
           return { updated: false, reason: String(err) };
         }
@@ -101,20 +91,11 @@ export class SelfSufficiencyToolsService {
     };
   }
 
-  /**
-   * `request_secret({ name, path, description })` — securely request an env-file SECRET VALUE from the
-   * operator. Mirrors `ask_question`: posts a value-FREE card + opens the durable `awaiting_secret_id`
-   * gate, then the brain stops and waits. The value never passes through this tool — it arrives only at the
-   * owner-gated `provide-secret` endpoint, which writes it to the encrypted store + grants it; the brain
-   * later sees a masked confirmation. org/repo come from the closure (never tool args) — tenant safety.
-   */
   private buildRequestSecretTool(ctx: SelfSufficiencyContext): ToolImpl {
     return async (args) => {
       const name = String(args['name'] ?? '').trim();
       const path = String(args['path'] ?? '').trim();
       const description = String(args['description'] ?? '').trim();
-      // Optional headless-login URL (e.g. `gcloud auth login --no-launch-browser`): surfaced as a clickable
-      // link on the card so the operator opens it, then pastes the resulting code back. https only.
       const rawUrl = String(args['url'] ?? '').trim();
       const url = /^https:\/\//.test(rawUrl) ? rawUrl : undefined;
       const ephemeral = args['ephemeral'] === true;
@@ -126,9 +107,6 @@ export class SelfSufficiencyToolsService {
           reason: 'description is required (why the secret is needed)',
         };
 
-      // EPHEMERAL: a one-time, short-lived value (an OAuth verification code, a 2FA code) piped straight to a
-      // process the brain has running and NEVER stored. `deliver_to` (an absolute in-container path — the FIFO
-      // the brain already wired its waiting process to read) replaces `path`; `name` is just a display label.
       if (ephemeral) {
         if (!deliverTo.startsWith('/') || deliverTo.split('/').includes('..')) {
           return {
@@ -141,8 +119,7 @@ export class SelfSufficiencyToolsService {
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(label)) {
           return {
             ok: false,
-            reason:
-              'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
+            reason: 'name (label) must be an identifier (e.g. GCLOUD_AUTH_CODE)',
           };
         }
         const requestId = `s-${randomUUID()}`;
@@ -177,10 +154,6 @@ export class SelfSufficiencyToolsService {
         };
       }
 
-      // MCP-TARGET: the value is a credential slot (header/env) for a user-defined MCP server the OWNER just
-      // approved (via propose_mcp_servers). It writes into `mcp_servers.secrets_enc` (McpServerStore.setSecret)
-      // — NOT the worktree store — and does not grant/rehydrate; the scope is re-derived from this thread's
-      // repo at commit (never trusted from the card). No worktree `path`.
       const mcpArg = args['mcp'];
       if (mcpArg && typeof mcpArg === 'object' && !Array.isArray(mcpArg)) {
         const m = mcpArg as Record<string, unknown>;
@@ -201,10 +174,6 @@ export class SelfSufficiencyToolsService {
             ok: false,
             reason: 'mcp.key is required (the header/env key name)',
           };
-        // An OAuth server has NO fillable secret slot — its Authorization is minted by the owner Connect flow
-        // (McpOAuthService), so a request_secret against it would inject a bearer that bypasses the token
-        // lifecycle. Reject early (the host provideSecret lane enforces this authoritatively too). MCP secrets
-        // land on THIS repo's scope, so check the repo-scoped row.
         const oauthRow = await this.mcpStore
           ?.rawRow(ctx.orgId, ctx.repoId, server)
           .catch(() => null);
@@ -245,15 +214,13 @@ export class SelfSufficiencyToolsService {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         return {
           ok: false,
-          reason:
-            'name must be an env-var-style identifier (e.g. DATABASE_URL)',
+          reason: 'name must be an env-var-style identifier (e.g. DATABASE_URL)',
         };
       }
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
         return {
           ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
+          reason: 'path must be a worktree-relative file path (e.g. .env), no leading / or ..',
         };
       }
       const requestId = `s-${randomUUID()}`;
@@ -285,15 +252,6 @@ export class SelfSufficiencyToolsService {
     };
   }
 
-  /**
-   * `request_file({ path, description })` — ask the operator to UPLOAD a file whose contents can't be
-   * typed (a service-account JSON, a keystore/`.pem`, a gitignored `.env.keys`). Posts a value-FREE card;
-   * the file arrives only at the owner-gated `provide-file` endpoint, which stores the contents ENCRYPTED
-   * (as a file-valued secret) + grants them to `path` for future build threads. PER-CARD (multiple may be
-   * open at once — no one-at-a-time gate). The brain only ever sees a masked confirmation. org/repo come
-   * from the closure (never tool args) — tenant safety. The destination MUST be gitignored, or the
-   * hydrator refuses to render it (it would leak into the PR).
-   */
   private buildRequestFileTool(ctx: SelfSufficiencyContext): ToolImpl {
     return async (args) => {
       const path = String(args['path'] ?? '').trim();
@@ -301,8 +259,7 @@ export class SelfSufficiencyToolsService {
       if (!path || path.startsWith('/') || path.split('/').includes('..')) {
         return {
           ok: false,
-          reason:
-            'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
+          reason: 'path must be a worktree-relative file path (e.g. .env.keys), no leading / or ..',
         };
       }
       if (!description)

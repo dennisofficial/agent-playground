@@ -1,21 +1,7 @@
-/**
- * The SINGLE canonical source of Zod schemas for every Atlas host-bridge tool, shared by both engines:
- * the Claude in-process bridge (`engine/turn-runner.service.ts` `makeProxyTool`) registers `TOOL_SHAPES[name]`
- * directly, and the Codex stdio bridge (`mcp-bridge-server.ts`) advertises `toolJsonSchema(name)`.
- *
- * The Claude SDK wraps each shape in a STRICT object that STRIPS unknown keys and REJECTS wrong types, so
- * EVERY field a host handler reads MUST be declared here or it is silently dropped before the handler sees
- * it. Enums are pinned with `z.enum` ONLY for closed, unconditionally-validated sets; every other enum-ish
- * field stays `z.string()` because the handler coerces/validates it tolerantly and a strict enum would
- * reject input the handler would have accepted.
- *
- * Side-effect-free and Nest-free: importable from the bundled sandbox entrypoints without pulling in the app.
- */
 import { z } from 'zod/v4';
 
 export type ToolShape = z.ZodRawShape;
 
-// Verification evidence a handler accepts as EITHER an array of structured records OR a free-text string.
 const verificationField = z.union([
   z.array(
     z.object({
@@ -28,7 +14,6 @@ const verificationField = z.union([
   z.string(),
 ]);
 
-// A single decision as review_plan / propose_plan / start_direct_build carry it.
 const decisionItem = z.object({
   decisionClass: z.string(),
   title: z.string(),
@@ -39,20 +24,16 @@ const decisionItem = z.object({
   confirmedByOperator: z.boolean().optional(),
 });
 
-// A single proposed thread (with optional steps) as review_plan / propose_plan carry it.
 const threadItem = z.object({
   title: z.string().optional(),
   brief: z.string().optional(),
   type: z.string().optional(),
   steps: z
-    .array(
-      z.object({ title: z.string().optional(), brief: z.string().optional() }),
-    )
+    .array(z.object({ title: z.string().optional(), brief: z.string().optional() }))
     .optional(),
 });
 
 export const TOOL_SHAPES: Record<string, ToolShape> = {
-  // ── Driver tools (buildTurnBridge) ────────────────────────────────────────────────────────────
   complete_thread: {
     summary: z.string(),
     changes: z.array(z.string()).optional(),
@@ -81,9 +62,7 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_update: {
     taskId: z.string(),
-    status: z
-      .enum(['pending', 'in_progress', 'completed', 'deleted'])
-      .optional(),
+    status: z.enum(['pending', 'in_progress', 'completed', 'deleted']).optional(),
     subject: z.string().optional(),
     description: z.string().optional(),
     activeForm: z.string().optional(),
@@ -95,14 +74,12 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
   },
   task_list: {},
   task_get: { taskId: z.string() },
-  // Superset serving BOTH the driver gate and the brain — all fields optional.
   report_verification: {
     passed: z.boolean().optional(),
     verification: verificationField.optional(),
     remaining: z.array(z.string()).optional(),
   },
 
-  // ── Brain tools (buildTools) ──────────────────────────────────────────────────────────────────
   get_pipeline_state: {},
   get_decision_record: {},
   dispatch_build: {},
@@ -180,7 +157,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     overview: z.string(),
     goal: z.string(),
     kind: z.string().optional(),
-    // When true, re-title the job from `goal` via the titler; when omitted/false, keep the current title.
     rename: z.boolean().optional(),
     decisions: z.array(decisionItem).optional(),
     threads: z.array(threadItem),
@@ -219,7 +195,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     detectHint: z.string().optional(),
   },
 
-  // ── Workspace-profile tools (intake + onboarding) ─────────────────────────────────────────────
   request_secret: {
     name: z.string().optional(),
     path: z.string().optional(),
@@ -307,8 +282,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
         url: z.string().optional(),
         command: z.string().optional(),
         args: z.array(z.string()).optional(),
-        // `'static'` (default) = header/env credential slots filled via request_secret. `'oauth'` = interactive
-        // OAuth 2.1 the OWNER completes in the console ("Connect"); http/sse only, no secret slots.
         authKind: z.enum(['static', 'oauth']).optional(),
         oauth: z
           .object({
@@ -356,7 +329,6 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
     verified: z.string(),
   },
 
-  // ── atlas-prod tools (relocated prod-diagnostics reads + gated write) ────────────────────────
   atlas_query: {
     sql: z.string(),
     params: z.array(z.unknown()).optional(),
@@ -398,16 +370,13 @@ export const TOOL_SHAPES: Record<string, ToolShape> = {
 };
 
 export const TOOL_DESCRIPTIONS: Record<string, string> = {
-  // ── Driver tools ──────────────────────────────────────────────────────────────────────────────
   complete_thread:
     'Assert this thread is DONE. Call exactly once when the work is complete and verified. Provide a ' +
     'one-line summary plus, ideally, the changes you made and the verification you ran.',
   request_operator_input:
     'Ask the operator a blocking question when you need a human decision before you can continue.',
-  record_leg_handoff:
-    'Record a handoff note for the next leg of this thread before you stop.',
-  record_deviation:
-    'Log a one-line off-spec change you made so it surfaces to the operator.',
+  record_leg_handoff: 'Record a handoff note for the next leg of this thread before you stop.',
+  record_deviation: 'Log a one-line off-spec change you made so it surfaces to the operator.',
   task_create:
     'Add ONE item to your live task list (shown to the operator as a checklist for this thread). Call it ' +
     'up front for each concrete step you plan to do, and as new work emerges. Returns the created task id.',
@@ -430,20 +399,16 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'live-verification judge over this evidence and refuses to ship a runtime change you only typechecked. ' +
     'If you cannot get things clean, pass passed:false with `remaining` listing the specific errors.',
 
-  // ── Brain tools ───────────────────────────────────────────────────────────────────────────────
-  get_pipeline_state:
-    'Read the current pipeline state (threads, decisions, plan) for this job.',
+  get_pipeline_state: 'Read the current pipeline state (threads, decisions, plan) for this job.',
   get_decision_record: 'Read the full decision record for this job.',
   dispatch_build:
     'Start the approved build after the base-check (branches internally: full plan → build pipeline, direct → in-session implement).',
   hold_build:
     'Hold the approved build and return to planning when the rebased base makes the plan redundant or requires revision (reason surfaced to the operator).',
-  finalize_build:
-    'Finalize the build once every thread is complete and verified.',
+  finalize_build: 'Finalize the build once every thread is complete and verified.',
   list_mcp_servers: 'List the MCP servers configured for this org/repo.',
   list_skills: 'List the skills available to this workspace.',
-  list_convention_profiles:
-    'List the convention (house-style) profiles for this repo.',
+  list_convention_profiles: 'List the convention (house-style) profiles for this repo.',
   recall: 'Recall stored facts relevant to an optional query.',
   remember: 'Store a durable fact at the given scope for later recall.',
   forget: 'Delete (soft) a stored memory by its id.',
@@ -459,12 +424,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   create_decision: 'Record a new decision for this job.',
   update_decision: 'Update an existing decision by id.',
   delete_decision: 'Delete a decision by id.',
-  review_plan:
-    'Review and revise the current plan overview, goal, decisions, and threads.',
-  propose_plan:
-    'Propose a plan: an overview, goal, decisions, and the threads to build.',
-  start_direct_build:
-    'Start a direct build with a summary, change outline, and decisions.',
+  review_plan: 'Review and revise the current plan overview, goal, decisions, and threads.',
+  propose_plan: 'Propose a plan: an overview, goal, decisions, and the threads to build.',
+  start_direct_build: 'Start a direct build with a summary, change outline, and decisions.',
   create_job:
     'Create a new job seeded with a first message; optionally dependsOn one or more existing job ids on this repo to be born blocked until they merge. ' +
     "Optionally autoMode: { approveMode?, merge? } to pre-arm the new job's automation; omitted fields inherit the org's defaults.",
@@ -476,15 +438,12 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   propose_convention_profile_change:
     'Propose a change to a convention (house-style) profile, with body and rationale.',
 
-  // ── Workspace-profile tools ───────────────────────────────────────────────────────────────────
   request_secret:
     'Request a secret from the operator (file, env, or MCP header/env slot). NOT for OAuth MCP servers — ' +
     'those are connected by the owner with the MCP proposal-card Connect button or in the console (MCP settings → Connect), never via a pasted secret.',
-  request_file:
-    'Request a file from the operator at a given path, with a description.',
+  request_file: 'Request a file from the operator at a given path, with a description.',
   withdraw_file_request: 'Withdraw a pending file request you no longer need.',
-  withdraw_secret_request:
-    'Withdraw a pending durable/MCP secret request you no longer need.',
+  withdraw_secret_request: 'Withdraw a pending durable/MCP secret request you no longer need.',
   write_workspace_config: 'Write the workspace config (mounts) for this repo.',
   write_setup_script:
     'Write the per-sandbox cold-boot setup script for this workspace — idempotent commands that ARM the box ' +
@@ -500,8 +459,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   read_preview_instructions:
     "Read the repo's current PREVIEW RECIPE (raw body) so you can edit it safely before write_preview_instructions " +
     '(which overwrites the whole thing). Returns { ok, present, instructions }.',
-  derive_secret:
-    'Derive and store a secret file at a path from a computed value.',
+  derive_secret: 'Derive and store a secret file at a path from a computed value.',
   reset_sandbox:
     'Recreate this job’s sandbox so you can PROVE it cold-boots from durable config. Default: recreates the ' +
     'CONTAINER only (worktree + session survive). `hard:true`: recreates the WHOLE sandbox from scratch — ' +
@@ -511,24 +469,20 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'a dirty tree or unpushed commits (the host never commits for you — commit + push first). The reset ' +
     'happens on your NEXT turn — call it, then STOP.',
   propose_skill: 'Propose a new skill for this org or repo, with rationale.',
-  propose_skill_install:
-    'Propose installing a skill from a source URL for this org or repo.',
-  request_skill_edit_access:
-    'Request edit access to an existing skill, with rationale.',
+  propose_skill_install: 'Propose installing a skill from a source URL for this org or repo.',
+  request_skill_edit_access: 'Request edit access to an existing skill, with rationale.',
   propose_skill_removal: 'Propose removing a skill from this org or repo.',
   propose_mcp_servers:
     'Propose one or more MCP servers for this org or repo. Use authKind:"oauth" (http/sse, no secret slot) ' +
     'for a server that needs interactive login — the owner completes it via the console Connect.',
   propose_mcp_removal: 'Propose removing an MCP server from this org or repo.',
-  propose_convention_profile:
-    'Propose a new convention (house-style) profile for this repo.',
+  propose_convention_profile: 'Propose a new convention (house-style) profile for this repo.',
   finish_onboarding:
     'Finish workspace onboarding with a summary and the verification you performed. For a repo with ' +
     'user-facing surfaces, `verified` must include live preview-accessibility evidence — each public preview ' +
     'URL loaded + hydrated as a browser via atlas-probe, plus the authed-handshake proof where a surface has ' +
     'auth — not just a local health check.',
 
-  // ── atlas-prod tools ──────────────────────────────────────────────────────────────────────────
   atlas_query:
     "Run ONE read-only SQL query (single SELECT/WITH only) against the production database and get the rows back. Multi-statement/DDL/DML are rejected; results default to a 1000-row cap (raise with `limit`, up to a 50000-row ceiling), run under a 10s statement timeout, and are passed through secret redaction. Call atlas_schema first to discover tables/columns. Optional positional bind params map to $1..$n. `format` selects the rendered text shape — all line-delimited (one row per line): jsonl (default; structured, jq-friendly), csv, or tsv. If a large result gets persisted to a file, DON'T whole-file Read it — extract just what you need with head/grep/jq or `duckdb -c \"SELECT ... FROM '<file>'\"`, or Read a line-range (offset/limit).",
   atlas_schema:
@@ -539,8 +493,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Raw Claude Code session JSONL for a job — list sessions, render a session (atlas-tx `show` semantics), or grep across sessions.',
   atlas_context_read:
     "A job's durable /context dir (specs/generated/artifacts) — a tree listing when path is omitted, else a file's contents or a subdir's tree.",
-  atlas_worktree_tree:
-    "A job's git worktree file tree (skips .git, node_modules).",
+  atlas_worktree_tree: "A job's git worktree file tree (skips .git, node_modules).",
   atlas_worktree_file: "One file's contents from a job's git worktree.",
   propose_prod_write:
     'Propose an arbitrary single-statement SQL WRITE (INSERT/UPDATE/DELETE/WITH) against the production ' +
@@ -548,13 +501,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
     'approve it before anything executes. Nothing runs unapproved.',
 };
 
-/**
- * The JSON Schema the Codex stdio bridge advertises for a tool. Native in zod 4 via `z.toJSONSchema`.
- * Unknown tools fall back to a permissive object so a call is never rejected before the host sees it.
- */
 export function toolJsonSchema(name: string): Record<string, unknown> {
   const shape = TOOL_SHAPES[name];
-  return shape
-    ? z.toJSONSchema(z.object(shape))
-    : { type: 'object', additionalProperties: true };
+  return shape ? z.toJSONSchema(z.object(shape)) : { type: 'object', additionalProperties: true };
 }

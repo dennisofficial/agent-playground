@@ -11,9 +11,7 @@ export class AllowSharedGithubAppInstallation1784040000000 implements MigrationI
   name = 'AllowSharedGithubAppInstallation1784040000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `DROP INDEX "UQ_org_credentials_github_app_installation_id"`,
-    );
+    await queryRunner.query(`DROP INDEX "UQ_org_credentials_github_app_installation_id"`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {

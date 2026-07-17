@@ -1,21 +1,11 @@
-/**
- * prompt-kit / groups / autonomy — announces AUTONOMOUS MODE when per-job auto-approve is ON.
- *
- * CONDITIONAL on `ctx.settings.autoApproveMode` (any value but 'off'); absent when off, so the assembled
- * prompt is byte-identical to the normal brain. The copy is derived from WHICH gate(s) the mode covers
- * ('plan' | 'ship' | 'both'), so the brain is only told to verify harder at the gate(s) that actually
- * auto-advance. Ordered 1250 — in the approval-context band (after planning ≤1240, before job-kind 1900).
- */
-import { Agent, SHIP_STAGES } from '../agent';
 import { modeApprovesPlan, modeApprovesShip } from '@workspace/shared';
-import { Fragment, FragmentGroup } from '../fragment.decorator';
+import { Agent, SHIP_STAGES } from '../agent';
 import { hasAutoApprove } from '../conditions';
+import { Fragment, FragmentGroup } from '../fragment.decorator';
 import type { PromptCtx } from '../prompt-ctx';
 
 @FragmentGroup()
 export class AutonomyGroup {
-  /** Tell the brain it is running autonomously — the gate(s) this mode covers auto-advance, so it must
-   *  self-verify harder there. */
   @Fragment({
     usedBy: [Agent.PLANNING],
     order: 1250,
@@ -55,9 +45,6 @@ export class AutonomyGroup {
     ].join('\n');
   }
 
-  /** Tell POST_BUILD/CI it is running autonomously — the ship-gate/auto-advance twin of `autonomousMode`,
-   *  reworded for the amend loop (POST_BUILD) and PR creation/auto-merge (CI) instead of propose_plan /
-   *  finalize_build. The plan-gate-only branch is PLANNING's concern and does not apply here. */
   @Fragment({
     usedBy: SHIP_STAGES,
     order: 8033,

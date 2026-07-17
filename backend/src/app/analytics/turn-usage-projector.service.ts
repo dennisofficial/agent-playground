@@ -1,42 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { type EngineUsage, resolveContextLimit } from '@shared/engine';
+import { Repository } from 'typeorm';
 import { AppVersionService } from '../cluster/app-version.service';
 import { DB_CONNECTION } from '../persistence/database.module';
-import {
-  JobEntity,
-  TurnModelUsageEntity,
-  TurnStatsEntity,
-} from '../persistence/entities';
+import { JobEntity, TurnModelUsageEntity, TurnStatsEntity } from '../persistence/entities';
 
-/** Everything the projector needs to attribute a completed turn. `orgId` is optional — resolved from
- *  `jobId` when the caller (e.g. autofix) doesn't have it in scope. */
 export interface TurnUsageIdentity {
   jobId: string;
   orgId?: string;
-  /** 'main' | 'thread:<threadId>' | 'phase:<stepId>' | 'codex-review:<jobId>'. */
   lane: string;
-  /** The turn's role / phase: 'brain' | 'step' | 'review' | 'gate' | 'autofix' | 'compaction'. */
   kind: string;
-  /** 'claude' | 'codex'. */
   engine: string;
-  /** The engine turn id when the caller has it; most completion sites don't (minted in the runner). */
   turnId?: string | null;
-  /** The claude_credentials.id that authed this turn (Claude only); null/absent for Codex + non-agentic (d3). */
   credentialId?: string | null;
-  /** Per-turn attribution tags (phaseId → step_id; the rest → `tags`): batchOrdinal/autofixId/lensId/… */
   metaTag?: Record<string, unknown> | null;
 }
 
-/**
- * Projects a completed turn's usage into the durable analytics tables (`turn_stats` +
- * per-model `turn_model_usage`). Called at each turn-completion site with the engine's `result.usage`.
- *
- * This exists because `EngineUsage.modelUsage` (the SDK's per-model breakdown, incl. writer subagents)
- * is otherwise only a transient `turn_meta` message and was historically collapsed to one model. Writes
- * are BEST-EFFORT: a failure here logs and returns — it must never fail a turn.
- */
 @Injectable()
 export class TurnUsageProjector {
   private readonly logger = new Logger(TurnUsageProjector.name);
@@ -51,32 +31,23 @@ export class TurnUsageProjector {
     private readonly version: AppVersionService,
   ) {}
 
-  async record(
-    identity: TurnUsageIdentity,
-    usage: EngineUsage | undefined,
-  ): Promise<void> {
+  async record(identity: TurnUsageIdentity, usage: EngineUsage | undefined): Promise<void> {
     if (!usage) return;
     try {
       const orgId = identity.orgId ?? (await this.resolveOrgId(identity.jobId));
       if (!orgId) {
-        this.logger.warn(
-          `turn usage: no org for job=${identity.jobId} — skipping`,
-        );
+        this.logger.warn(`turn usage: no org for job=${identity.jobId} — skipping`);
         return;
       }
 
       const tag = identity.metaTag ?? {};
-      const stepId =
-        pickUuid(tag.phaseId) ?? laneSuffix(identity.lane, 'phase:');
+      const stepId = pickUuid(tag.phaseId) ?? laneSuffix(identity.lane, 'phase:');
       const threadId = laneSuffix(identity.lane, 'thread:');
-      // Everything in metaTag except the phaseId we lifted to step_id.
       const { phaseId: _phaseId, ...restTags } = tag as Record<string, unknown>;
       const tags = Object.keys(restTags).length ? restTags : null;
 
       const contextLimit =
-        usage.contextTokens != null
-          ? resolveContextLimit(usage.contextModel ?? usage.model)
-          : null;
+        usage.contextTokens != null ? resolveContextLimit(usage.contextModel ?? usage.model) : null;
 
       const stat = await this.stats.save(
         this.stats.create({
@@ -134,12 +105,10 @@ export class TurnUsageProjector {
   }
 }
 
-/** `lane` = `<prefix><suffix>` → the suffix, else null. */
 function laneSuffix(lane: string, prefix: string): string | null {
   return lane.startsWith(prefix) ? lane.slice(prefix.length) : null;
 }
 
-/** A metaTag value that is a plain uuid string, else null. */
 function pickUuid(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }

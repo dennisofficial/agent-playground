@@ -1,9 +1,3 @@
-/**
- * prompt-kit / groups / ship — the ship-time Codex master review persona (`MASTER_REVIEW`). The persona is
- * decomposed one-concern-per-fragment (role+scope, full-sandbox access, sole-author, verify-the-whole, git,
- * task list, cloud-sandbox) rather than one fused body. The in-sandbox open-PR turn is NOT a ship-time agent
- * — it is a self-contained `messages/` message (`prompt-kit/messages/ship-open-pr.ts`).
- */
 import { Agent } from '../agent';
 import { Fragment, FragmentGroup } from '../fragment.decorator';
 import {
@@ -20,9 +14,6 @@ import {
 
 @FragmentGroup()
 export class ShipGroup {
-  /** Codex master review ROLE + review scope — the whole-diff review-AND-fix thread (runs in `execute` mode
-   *  as the build's last thread, before the PR opens). Reviews the merged diff, applies the smallest safe fix
-   *  per finding. Reuses the shared REVIEW_SCOPE_NOTE. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 100 })
   masterReview(): string {
     return (
@@ -35,7 +26,6 @@ export class ShipGroup {
     );
   }
 
-  /** Full sandbox access — nothing is fenced for the verification. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 102 })
   fullSandboxAccess(): string {
     return (
@@ -44,14 +34,11 @@ export class ShipGroup {
     );
   }
 
-  /** The sole-author invariant — the master review edits + commits, so it owns the checkout too. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 103 })
   soleAuthor(): string {
     return SOLE_AUTHOR_NOTE;
   }
 
-  /** Verify the integrated whole — the SAME live-validation contract the builders carry
-   *  (`VALIDATE_BY_RUNNING_NOTE` + `EVIDENCE_ARTIFACTS_NOTE`). */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 104 })
   verifyIntegratedWhole(): string {
     return (
@@ -65,14 +52,11 @@ export class ShipGroup {
     );
   }
 
-  /** Git safety — the master review runs git ops (commit + push), so it carries the same destructive-command
-   *  guardrail as the open-PR turn. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 105 })
   gitSafety(): string {
     return GIT_SAFETY_NOTE;
   }
 
-  /** Commit + push your own fixes; do not open the PR. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 106 })
   commitAndPush(): string {
     return (
@@ -83,7 +67,6 @@ export class ShipGroup {
     );
   }
 
-  /** The live task-list discipline for the master-review persona. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 108 })
   taskList(): string {
     return (
@@ -93,7 +76,6 @@ export class ShipGroup {
     );
   }
 
-  /** The cloud-sandbox framing — no operator-side machine to hand work to. */
   @Fragment({ usedBy: [Agent.MASTER_REVIEW], order: 110 })
   cloudSandbox(): string {
     return CLOUD_SANDBOX_NOTE;

@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { Agent } from './system/agent';
 import { primeFragments, renderAgentPrompt } from './system/assemble';
-import { AGENT_PROMPTS } from './system/preview';
-import type { PromptCtx } from './system/prompt-ctx';
 import {
+  AUTHOR_LIVE_VALIDATION_NOTE,
+  BASELINE_FIRST_NOTE,
   CANDOR_NOTE,
   CLARITY_OVER_COMMENTS_NOTE,
   CLOUD_SANDBOX_NOTE,
-  AUTHOR_LIVE_VALIDATION_NOTE,
-  BASELINE_FIRST_NOTE,
   DELETION_SAFETY_NOTE,
   DESIGN_DISCIPLINE_NOTE,
   DEVIATION_NOTE,
@@ -30,48 +28,30 @@ import {
   TS_STYLE_NOTE,
   VALIDATE_BY_RUNNING_NOTE,
 } from './system/fragments';
+import { AGENT_PROMPTS } from './system/preview';
+import type { PromptCtx } from './system/prompt-ctx';
 
-/**
- * prompt-lint — STRUCTURAL invariants over the assembled prompt matrix (a lint, not a golden snapshot). Each
- * assertion is a machine-checkable rule the DRY/SOLID pass established; a regression trips the specific rule
- * rather than showing up only as an eyeballed snapshot diff. Complements `prompt-kit.spec.ts` (which asserts
- * WHERE named fragments land) and `prompt-snapshots.spec.ts` (the verbatim regression net).
- */
 describe('prompt-lint / every fragment order is an integer', () => {
   it('no fractional or non-finite orders survive', () => {
     for (const f of primeFragments()) {
-      expect(
-        Number.isInteger(f.meta.order),
-        `${f.id} has order ${f.meta.order}`,
-      ).toBe(true);
+      expect(Number.isInteger(f.meta.order), `${f.id} has order ${f.meta.order}`).toBe(true);
     }
   });
 });
 
 describe('prompt-lint / no sentence-run double space in any assembled prompt', () => {
-  // Scoped to sentence punctuation + a run of spaces: that is the authoring bug the DRY pass fixed
-  // (`...explicitly.  WHEN...`). A bare `\S  \S` would false-positive on the INTENTIONAL description
-  // alignment inside indented list blocks (`  - tool  — what it does`), which is deliberate formatting.
   const SENTENCE_DOUBLE_SPACE = /[.!?] {2,}\S/;
   for (const entry of AGENT_PROMPTS) {
     it(`"${entry.id}" (${entry.agent})`, () => {
       const out = renderAgentPrompt(entry.agent, entry.ctx);
       const hit = SENTENCE_DOUBLE_SPACE.exec(out);
-      const near = hit
-        ? out.slice(Math.max(0, hit.index - 30), hit.index + 30)
-        : '';
-      expect(
-        hit,
-        near && `double space near: ${JSON.stringify(near)}`,
-      ).toBeNull();
+      const near = hit ? out.slice(Math.max(0, hit.index - 30), hit.index + 30) : '';
+      expect(hit, near && `double space near: ${JSON.stringify(near)}`).toBeNull();
     });
   }
 });
 
 describe('prompt-lint / every persona declares a role (+ review personas a report contract)', () => {
-  // A persona's assembled prompt must open with an explicit role ("You are ..." or a `<role>` block). Review
-  // personas additionally carry an output/report contract (the review dimensions, the JSON schema, or the
-  // plan-review `<output_contract>`), so a reader always knows WHAT to produce.
   const ROLE_MARKER = /\bYou are\b|<role>/;
   const PERSONAS: Array<{ agent: Agent; ctx: PromptCtx; contract?: string }> = [
     { agent: Agent.PLANNING, ctx: { jobKind: 'feature' } },
@@ -104,24 +84,15 @@ describe('prompt-lint / every persona declares a role (+ review personas a repor
     it(`${agent} (${ctx.jobKind ?? 'default'})`, () => {
       const out = renderAgentPrompt(agent, ctx);
       expect(out.length, String(agent)).toBeGreaterThan(0);
-      expect(ROLE_MARKER.test(out), `${agent} has no role statement`).toBe(
-        true,
-      );
+      expect(ROLE_MARKER.test(out), `${agent} has no role statement`).toBe(true);
       if (contract) {
-        expect(out, `${agent} is missing its report contract`).toContain(
-          contract,
-        );
+        expect(out, `${agent} is missing its report contract`).toContain(contract);
       }
     });
   }
 });
 
 describe('prompt-lint / no shared fragment is included twice for one agent', () => {
-  // Generalizes the per-fragment exactly-once checks in prompt-kit.spec.ts: for EVERY agent×ctx in the
-  // matrix, each canonical shared note appears at most once (0 = the agent does not get it; 2+ = a
-  // consolidation slipped and the same prose is duplicated). Building-block sub-fragments that are
-  // deliberately spliced into more than one parent note (e.g. the monorepo/verify hint) are excluded — they
-  // legitimately recur — leaving the top-level persona notes that must be unique.
   const SHARED_NOTES: Array<[string, string]> = [
     ['CLOUD_SANDBOX_NOTE', CLOUD_SANDBOX_NOTE],
     ['SOLE_AUTHOR_NOTE', SOLE_AUTHOR_NOTE],
@@ -154,10 +125,9 @@ describe('prompt-lint / no shared fragment is included twice for one agent', () 
       const out = renderAgentPrompt(entry.agent, entry.ctx);
       for (const [name, note] of SHARED_NOTES) {
         const occurrences = out.split(note).length - 1;
-        expect(
-          occurrences,
-          `${name} appears ${occurrences}× in ${entry.id}`,
-        ).toBeLessThanOrEqual(1);
+        expect(occurrences, `${name} appears ${occurrences}× in ${entry.id}`).toBeLessThanOrEqual(
+          1,
+        );
       }
     });
   }

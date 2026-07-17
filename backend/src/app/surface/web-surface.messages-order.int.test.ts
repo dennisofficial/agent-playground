@@ -23,9 +23,10 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CLASSIFIER_LLM } from '../decision-gate';
+import { CLASSIFIER_LLM } from '../decision-gate/classifier-llm';
 import { ENGINE_RUNNER } from '@shared/engine';
-import { GithubPrService, LocalGitService } from '../git';
+import { GithubPrService } from '../git/github-pr.service';
+import { LocalGitService } from '../git/local-git.service';
 import { AppModule } from '../app.module';
 import { DB_CONNECTION } from '../persistence/database.module';
 import {
@@ -34,7 +35,7 @@ import {
   FakeLocalGitService,
   FakeThreadTitler,
 } from '../e2e/e2e-stubs';
-import { JobTitler } from '../titling';
+import { JobTitler } from '../titling/job-titler.service';
 import { CredentialResolver } from '../onboarding/credential-resolver.service';
 
 const fakeCreds = {

@@ -1,8 +1,3 @@
-// ABORTING — a mid-turn cooperative abort stops a running turn promptly with a CLEAN terminal frame. The
-// engine only subscribes to `turn:{T}:abort` for a `steerable` turn, so this drives a steerable long turn,
-// then PUBLISHes `{t:'abort'}` to `turn:{T}:abort` (exactly what `RedisEngineRunner.stop()` does). Asserts a
-// `final` frame lands within a short grace after the abort (a graceful stop — engine-core turns a cooperative
-// cancel of a streaming turn into a normal `final` with the partial transcript), i.e. no hang, no error frame.
 import {
   cleanup,
   frameKinds,
@@ -19,7 +14,6 @@ import {
   type ScenarioResult,
 } from './lib/harness';
 
-/** Max wait from publishing abort to the terminal frame before we call it a hang. */
 const ABORT_GRACE_MS = 30_000;
 
 export async function run(sandbox: string): Promise<ScenarioResult> {
@@ -31,8 +25,7 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
       homeType: 'brain',
       steerable: true,
       richStream: true,
-      task:
-        'Count slowly from 1 to 100. Print each number on its own line with a one-sentence factoid. Go slowly.',
+      task: 'Count slowly from 1 to 100. Print each number on its own line with a one-sentence factoid. Go slowly.',
       systemPrompt: 'You are a verbose test assistant; produce a long multi-line streamed answer.',
     });
     console.log(`[aborting] turn ${turnId} on ${sandbox}`);
@@ -46,7 +39,6 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
       if (!aborted && f.t === 'event' && (kind === 'text' || kind === 'text_delta')) {
         aborted = true;
         abortedAt = Date.now();
-        // pub/sub abort — the engine subscribed on startup (steerable), so publish once it is streaming.
         void redis.publish(k.abort, JSON.stringify({ t: 'abort' }));
         console.log('[aborting] published abort to :abort at first streamed text');
       }
@@ -64,8 +56,11 @@ export async function run(sandbox: string): Promise<ScenarioResult> {
       `[aborting] terminal=${final ? 'final' : error ? 'error' : 'NONE'} ${stoppedAfterMs}ms after abort; timedOut=${timedOut}`,
     );
     if (timedOut) return { pass: false, detail: 'HANG: no terminal frame within 150s of abort' };
-    if (error) return { pass: false, detail: `abort produced an error frame, not a clean stop: ${String(error.message).slice(0, 160)}` };
-    // A clean, prompt graceful stop: a `final` frame within the abort grace window.
+    if (error)
+      return {
+        pass: false,
+        detail: `abort produced an error frame, not a clean stop: ${String(error.message).slice(0, 160)}`,
+      };
     const prompt = stoppedAfterMs >= 0 && stoppedAfterMs <= ABORT_GRACE_MS;
     return {
       pass: !!final && prompt,

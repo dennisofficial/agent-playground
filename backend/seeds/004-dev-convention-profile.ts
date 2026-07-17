@@ -15,8 +15,7 @@ export default (async (ds) => {
   const slug = 'nestjs-next-shared';
 
   const row =
-    (await profiles.findOne({ where: { org_id, slug } })) ??
-    profiles.create({ org_id, slug });
+    (await profiles.findOne({ where: { org_id, slug } })) ?? profiles.create({ org_id, slug });
   row.name = 'NestJS + Next.js + shared contract';
   row.detect_hint =
     'A pnpm/turbo monorepo (or paired repos) with a NestJS backend AND a Next.js frontend, wired together ' +

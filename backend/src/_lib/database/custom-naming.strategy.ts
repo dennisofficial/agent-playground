@@ -1,10 +1,6 @@
 import { Table, View } from 'typeorm';
 import { SnakeNamingStrategy } from 'typeorm-naming-strategies';
 
-/**
- * Snake-case naming + meaningful constraint/index names (pk_*, fk_*, uq_*, idx_*, …) for easier
- * schema debugging. House standard, copied from rs-crm-app/cubix-infra/mls-studio.
- */
 export class CustomNamingStrategy extends SnakeNamingStrategy {
   getTableName(tableOrName: Table | View | string): string {
     return typeof tableOrName === 'string' ? tableOrName : tableOrName.name;
@@ -14,17 +10,11 @@ export class CustomNamingStrategy extends SnakeNamingStrategy {
     return `pk_${this.getTableName(tableOrName)}`;
   }
 
-  uniqueConstraintName(
-    tableOrName: Table | string,
-    columnNames: string[],
-  ): string {
+  uniqueConstraintName(tableOrName: Table | string, columnNames: string[]): string {
     return `uq_${this.getTableName(tableOrName)}_${columnNames.join('_')}`;
   }
 
-  relationConstraintName(
-    tableOrName: Table | string,
-    columnNames: string[],
-  ): string {
+  relationConstraintName(tableOrName: Table | string, columnNames: string[]): string {
     return `rel_${this.getTableName(tableOrName)}_${columnNames.join('_')}`;
   }
 
@@ -40,10 +30,7 @@ export class CustomNamingStrategy extends SnakeNamingStrategy {
     return `idx_${this.getTableName(tableOrName)}_${columns.join('_')}`;
   }
 
-  defaultConstraintName(
-    tableOrName: Table | string,
-    columnName: string,
-  ): string {
+  defaultConstraintName(tableOrName: Table | string, columnName: string): string {
     return `df_${this.getTableName(tableOrName)}_${columnName}`;
   }
 
@@ -51,10 +38,7 @@ export class CustomNamingStrategy extends SnakeNamingStrategy {
     return `chk_${this.getTableName(tableOrName)}_${this.shortHash(expression)}`;
   }
 
-  exclusionConstraintName(
-    tableOrName: Table | string,
-    expression: string,
-  ): string {
+  exclusionConstraintName(tableOrName: Table | string, expression: string): string {
     return `excl_${this.getTableName(tableOrName)}_${this.shortHash(expression)}`;
   }
 

@@ -10,8 +10,6 @@ export class AddDoneWakeGeneration1783702678254 implements MigrationInterface {
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `ALTER TABLE "threads" DROP COLUMN "done_wake_gen"`,
-    );
+    await queryRunner.query(`ALTER TABLE "threads" DROP COLUMN "done_wake_gen"`);
   }
 }

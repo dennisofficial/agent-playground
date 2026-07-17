@@ -11,15 +11,12 @@ export type JobDiffHunk = {
 export type JobDiffStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export type JobDiffFile = {
-  /** post-rename, repo-relative POSIX path (`a/`/`b/` prefixes stripped). */
   path: string;
-  /** set only when the file was renamed. */
   oldPath?: string;
   status: JobDiffStatus;
   binary: boolean;
   additions: number;
   deletions: number;
-  /** [] for binary files or when the whole diff was too large to parse (see `truncated`). */
   hunks: JobDiffHunk[];
 };
 
@@ -43,7 +40,6 @@ export type JobDiffSummaryFile = JobDiffNumstatEntry &
 
 export type JobDiffSummary = { files: JobDiffSummaryFile[] };
 
-/** Summary-only view (numstat, no hunks) for the sidebar's +/- totals. */
 export function buildDiffSummary(
   numstat: JobDiffNumstatEntry[],
   nameStatus: JobDiffNameStatusEntry[] = [],
@@ -61,7 +57,6 @@ export function buildDiffSummary(
   };
 }
 
-/** Strip a leading `a/` or `b/` diff prefix; `/dev/null` and undefined pass through unchanged. */
 function stripDiffPrefix(name: string | undefined): string | undefined {
   if (name === undefined) return undefined;
   if (name.startsWith('a/') || name.startsWith('b/')) return name.slice(2);
@@ -83,19 +78,12 @@ function countSignLines(hunks: { lines: string[] }[]): {
   return { additions, deletions };
 }
 
-/**
- * Parse a unified diff (as produced by `LocalGitService.diffFromMergeBase`) into the structured shape
- * the diff-viewer frontend consumes, joining in per-file counts/binary-ness from `git diff --numstat`
- * (the authoritative source — parsing `+`/`-` lines is only a fallback for entries numstat didn't cover,
- * e.g. a pure rename with no content change).
- */
 export function parseGitDiff(
   raw: string,
   numstat: JobDiffNumstatEntry[],
   opts: { maxBytes: number },
 ): JobDiff {
   const numstatByPath = new Map(numstat.map((entry) => [entry.path, entry]));
-  // Simplest safe cap for v1: an oversized diff still reports every file's header/counts, just no hunks.
   const truncated = raw.length > opts.maxBytes;
 
   const files: JobDiffFile[] = parsePatch(raw).map((patch) => {
